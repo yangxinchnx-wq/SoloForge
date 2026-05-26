@@ -13,37 +13,33 @@ import { Surreal } from 'surrealdb';
 import { TransactionKernel } from './data/transaction_kernel';
 import { DeleteProtection } from './data/delete_protection';
 import { GeminiRustSchedulerClient } from './kernel/scheduler-client';
-import { GeminiRTRRacerEngine, ModelStrategyCandidate } from './core/decision/rtr-racer-engine';
-import { GeminiConsensAgentCourtRoom, AdjudicationArgumentClaim } from './core/court/consensagent';
+import { GeminiRTRRacerEngine } from './core/decision/rtr-racer-engine';
+import { GeminiConsensAgentCourtRoom } from './core/court/consensagent';
 import { GeminiMappoResourceGovernorClient } from './core/governor/mappo-client';
 import { GeminiPersistenceManager, SurrealDbDriverInterface } from './data/surreal_persistence';
 import { SurrealLiveWebSocketDriver } from './data/surreal_driver_live';
 
-// 🔗 物理引入 Layer 1 主权自治安全内核
+// 🔗 引入 Layer 1 主权自治安全内核
 import { SovereignRuntimeKernel } from './kernel/runtime-kernel';
 
-/**
- * 💾 弹性同步安全桩：当物理嵌入式数据库未就位或网络正在握手时，死锁全局时间真空期
- */
-class LocalMemoryFallbackDriver implements SurrealDbDriverInterface {
-  public async query(sqlStatement: string, queryBindings: Record<string, any>): Promise<any[][]> {
-    return [[]];
-  }
-}
+// 🔗 引入真实的多智能体行为实体内核与最高司法大模型终审庭
+import { AutonomousNetworkAgent } from './core/agent/autonomous_agent';
+import { LlmEscalationRoom } from './core/court/llm_escalation';
 
 class SoloForgeDaemonSupervisor {
-  // 双内核纵向解耦互锁
   private runtimeKernel: SovereignRuntimeKernel; 
   private txKernel: TransactionKernel;           
   
   private shield: DeleteProtection;
   private rustScheduler: GeminiRustSchedulerClient;
-  private racerEngine: GeminiRTRRacerEngine;
-  private courtRoom: GeminiConsensAgentCourtRoom;
+  private racerEngine!: GeminiRTRRacerEngine;
+  private courtRoom!: GeminiConsensAgentCourtRoom;
   private governor: GeminiMappoResourceGovernorClient;
+  private llmSupremeCourt: LlmEscalationRoom;
   
-  // 嵌入式数据落盘仓储层核心管理器
-  private persistenceManager: GeminiPersistenceManager;
+  private agents: AutonomousNetworkAgent[] = [];
+  
+  private persistenceManager!: GeminiPersistenceManager;
   private surrealRawClient: Surreal | null = null;
   private databaseProcess: ChildProcess | null = null;
   
@@ -51,53 +47,43 @@ class SoloForgeDaemonSupervisor {
   private isShuttingDown = false;
   private telemetryCycles = 0;
 
+  // 🔐 生产级内部隔离安全端口
+  private readonly DB_PORT = 8003; 
+
   constructor() {
     console.log('\n[BOOT] ──────────────────────────────────────────────────');
     console.log('[BOOT] 🚀 SoloForge 主自治骨干网络守护进程开始全量初始化...');
     
-    // 1. 物理拉起项目内置的嵌入式数据库长驻子进程（严格基于工作目录相对寻址）
-    this.bootEmbeddedDatabase();
-
-    // 2. 初始化 Layer 1 核心双主权自治内核底座
     this.runtimeKernel = new SovereignRuntimeKernel();
-    this.txKernel = new TransactionKernel({ system_status: 'BOOTING', active_agents: 0, telemetry_cycles: 0 });
+    this.txKernel = new TransactionKernel({ system_status: 'BOOTING', active_agents: 3, telemetry_cycles: 0 });
     this.shield = new DeleteProtection();
 
-    // 3. 🛡️ 【时序硬互锁】率先分配默认内存桩，彻底绝杀一微秒的异步未初始化空窗期
-    const fallbackDriver = new LocalMemoryFallbackDriver();
-    this.persistenceManager = new GeminiPersistenceManager(fallbackDriver);
+    this.agents = [
+      new AutonomousNetworkAgent('agent-alpha-fast-edge', 'direct', 1.0),
+      new AutonomousNetworkAgent('agent-beta-heavy-thought', 'chain_of_thought', 1.0),
+      new AutonomousNetworkAgent('agent-gamma-unstable-intruder', 'few_shot', 0.8)
+    ];
+    console.log(`[BOOT] 🤖 成功孵化 3 组跨语言自治 Agent 集群. 初始信用分边界已强行卡死。`);
 
-    // 4. 初始化 Layer 4 跨语言 Rust 高性能优先调度看门狗
     this.rustScheduler = new GeminiRustSchedulerClient();
     this.rustScheduler.initialize(); 
     console.log('[BOOT] 🦀 Rust 高性能最大堆 Aging 调度守护进程拉起成功.');
 
-    // 5. 总装 Layer 2 RTR-RACER 流控决策引擎与 Layer 3 司法共识盲审法庭
-    this.racerEngine = new GeminiRTRRacerEngine(this.runtimeKernel, this.rustScheduler);
-    this.courtRoom = new GeminiConsensAgentCourtRoom(this.runtimeKernel, fallbackDriver as any);
-
-    // 6. 拉起跨语言 Python MAPPO 顶置资源控流子进程
+    this.llmSupremeCourt = new LlmEscalationRoom();
     this.governor = new GeminiMappoResourceGovernorClient();
-    
-    // 7. 在后台安全启动物理存储异步升级探测与 DDL 自动热迁移宪法
-    this.tryUpgradeToLiveStorage();
-
-    console.log('[BOOT] 🔒 全层级核心组件（TS/Rust/Python/嵌入式Surreal）数据交火闭合.');
-    console.log('[BOOT] ──────────────────────────────────────────────────\n');
   }
 
   /**
-   * 🛢️ 随生随灭：严格基于当前软件运行工作目录（Portable CWD）定位二进制文件
+   * 🛢️ 随生随灭：自拉起项目本地 bin/ 目录下的嵌入式数据库进程
    */
   private bootEmbeddedDatabase(): void {
     const baseWorkspace = process.cwd();
-    const dbDataPath = path.join(baseWorkspace, 'data', 'soloforge_db');
     
+    const dbDataPath = path.join(baseWorkspace, 'data');
     if (!fs.existsSync(dbDataPath)) {
       fs.mkdirSync(dbDataPath, { recursive: true });
     }
 
-    // 🔐 生产级便携寻址：锁死在当前运行目录 bin/ 文件夹下，保障随包迁移不产生任何路径泄露
     const ext = process.platform === 'win32' ? '.exe' : '';
     const surrealBinaryPath = path.join(baseWorkspace, 'bin', `surreal${ext}`);
 
@@ -105,58 +91,102 @@ class SoloForgeDaemonSupervisor {
       'start',
       '--user', 'root',
       '--pass', 'root',
-      '--bind', '127.0.0.1:8000',
-      `file:${dbDataPath}`
+      '--bind', `127.0.0.1:${this.DB_PORT}`,
+      'surrealkv:data/soloforge_db' 
     ]);
 
-    // 拦截不可达异常，降级切换保护，绝不让拉起故障向上传导破坏主生命周期
+    this.databaseProcess.stderr?.on('data', (data) => {
+      const errorMsg = data.toString().trim();
+      console.warn(`[DATABASE_STDERR] 🛢️  SurrealDB 内核输出: ${errorMsg}`);
+    });
+
     this.databaseProcess.on('error', (err: any) => {
-      console.warn(`\n[DATABASE_WARN] ⚠️ 无法在预定便携路径 [${surrealBinaryPath}] 下直接拉起物理进程: ${err.message}`);
-      console.warn('[DATABASE_WARN] 🔌 数据管理服务已自动切入【高性能本地内存沙盒桩】托管运转，确保主计算链稳定。\n');
+      console.error(`[DATABASE_FATAL] 💥 无法在便携路径下直接拉起物理进程: ${err.message}`);
     });
   }
 
   /**
-   * 💾 自动热迁移与存储层平滑热升级
+   * 🔒 同步阻塞点流锁（网络连接与 DDL 宪法热迁移完全解耦隔离版）
    */
-  private async tryUpgradeToLiveStorage(): Promise<void> {
-    let retryAttempts = 5; 
-    while (retryAttempts > 0 && !this.isShuttingDown) {
+  public async initializeSovereignStorage(): Promise<void> {
+    this.bootEmbeddedDatabase();
+
+    let retryAttempts = 15; 
+    let maxWaitCycles = 15;
+    console.log('[BOOT] 🛢️  正在物理联络嵌入式 SurrealDB 存储层服务并灌入 Schema 宪法...');
+    
+    while (retryAttempts > 0) {
+      const currentTry = maxWaitCycles - retryAttempts + 1;
+      console.log(`  ├── [握手脉冲 #${currentTry}] 正在尝试建立 WebSocket 物理穿透...`);
+      
       try {
         this.surrealRawClient = new Surreal();
-        await this.surrealRawClient.connect('ws://127.0.0.1:8000/rpc', {
-          namespace: 'soloforge_core',
-          database: 'autonomous_network',
-          auth: { user: 'root', pass: 'root' }
+        
+        // 1. 物理网络建立握手
+        await Promise.race([
+          this.surrealRawClient.connect(`ws://127.0.0.1:${this.DB_PORT}/rpc`),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT_1500MS')), 1500))
+        ]);
+
+        // 2. 身份主权签到
+        await this.surrealRawClient.signin({
+          username: 'root',
+          password: 'root'
         });
 
-        // 自动读取项目包内固定的全量 Schema 强类型约束并执行热迁移
-        const schemaFilePath = path.join(process.cwd(), 'infra', 'schema.surql');
-        if (fs.existsSync(schemaFilePath)) {
-          const schemaSql = fs.readFileSync(schemaFilePath, 'utf8');
-          await this.surrealRawClient.query(schemaSql);
-          console.log('[ASYNC_STORAGE] 📜 存储层成功自动灌入本地全量 Schema 强类型宪法迁移约束.');
+        // 3. 锁定业务领域域
+        await this.surrealRawClient.use({
+          namespace: 'soloforge_core',
+          database: 'autonomous_network'
+        });
+
+        // 4. 🔥 核心解耦带：幂等注入 Schema 强类型约束
+        try {
+          const schemaFilePath = path.join(process.cwd(), 'infra', 'schema.surql');
+          if (fs.existsSync(schemaFilePath)) {
+            const schemaSql = fs.readFileSync(schemaFilePath, 'utf8');
+            await this.surrealRawClient.query(schemaSql);
+            console.log('[BOOT] 📜 存储层成功自动灌入本地全量 Schema 强类型宪法迁移约束.');
+          }
+        } catch (schemaErr: any) {
+          const errMsg = schemaErr.message || '';
+          // 🛡️ 如果只是表已经存在，说明数据库已就位，属于健康的可忽略 warn，直接平滑放行
+          if (errMsg.includes('already exists')) {
+            console.log('[BOOT] 📜 检测到本地硬盘已存在完备的持久化 Schema 强类型结构，自动跳过热迁移。');
+          } else {
+            // 如果是其他真正的 SQL 语法错误，则必须向上传导拉响警报
+            throw schemaErr;
+          }
         }
 
         const liveDriver = new SurrealLiveWebSocketDriver(this.surrealRawClient);
         this.persistenceManager = new GeminiPersistenceManager(liveDriver);
+        
+        this.racerEngine = new GeminiRTRRacerEngine(this.runtimeKernel, this.rustScheduler);
         this.courtRoom = new GeminiConsensAgentCourtRoom(this.runtimeKernel, liveDriver as any);
         
-        console.log('[ASYNC_STORAGE] 🛢️  [REAL STATE] 成功物理介入嵌入式 SurrealDB 数据库集群！真实数据落盘安全激活。');
+        console.log('[BOOT] 🛢️  [REAL STATE] 成功物理介入嵌入式 SurrealDB 数据库集群！真实落盘安全激活。');
+        console.log('[BOOT] 🔒 全层级核心组件（TS/Rust/Python/嵌入式Surreal）数据交火闭合.');
+        console.log('[BOOT] ──────────────────────────────────────────────────\n');
         return;
       } catch (err) {
         retryAttempts--;
-        if (retryAttempts === 0) {
-          console.log('[ASYNC_STORAGE] 🛡️  物理存储联络挂起。控制大盘全面进入【高性能内存沙盒桩】托管。');
-        } else {
-          await new Promise(resolve => setTimeout(resolve, 300)); 
+        console.log(`  ├── [⚠️ 脉冲挂起] 连接暂未对齐: ${(err as Error).message}. 300ms后自动重试...`);
+        
+        if (this.surrealRawClient) {
+          try { this.surrealRawClient.close(); } catch {}
         }
+        
+        if (retryAttempts === 0) {
+          throw new Error('💥 核心存储硬链接遭遇毁灭性阻断：嵌入式数据库未能按时建立物理握手。');
+        }
+        await new Promise(resolve => setTimeout(resolve, 300)); 
       }
     }
   }
 
   /**
-   * 启动常驻主循环脉冲
+   * 启动长驻主循环脉冲
    */
   public startRuntimeEventLoop(): void {
     console.log('[RUNTIME] 🌀 全链路跨语言控流主循环已点火. 正在监控系统性能拓扑...\n');
@@ -167,10 +197,10 @@ class SoloForgeDaemonSupervisor {
       const currentCycle = this.telemetryCycles;
 
       console.log(`\n--- [CYCLE #${currentCycle}] 拓扑脉冲扫描开始 ---`);
-      const runtimeUuid = crypto.randomUUID(); // 🔗 全链路唯一追踪链锚点（traceId）
+      const runtimeUuid = crypto.randomUUID(); 
 
       // ─────────────────────────────────────────────────────────────
-      // 📝 阶段一：高并发物理资源检测 + Python MAPPO 推理 + 特征流仓储持久化
+      // 📝 阶段一：动态物理资源检测 + Python MAPPO 推理 + 特征流持久化
       // ─────────────────────────────────────────────────────────────
       const mockCpu = currentCycle % 4 === 0 ? 0.96 : 0.45; 
       const globalState = [mockCpu, 0.35, 0.12];
@@ -180,7 +210,6 @@ class SoloForgeDaemonSupervisor {
         const action = await this.governor.evaluateMappoResourceVector(globalState, localObs);
         console.log(`[TELEMETRY] 🐍 Python MAPPO 推理完成 | 负载: ${mockCpu} | Action: ${action}`);
 
-        // 🔗 仓储层对接：写入特征轨迹，打入统一追踪链 traceId
         await this.persistenceManager.logMarlEpisode({
           id: `marl_${runtimeUuid}`,
           traceId: runtimeUuid, 
@@ -190,7 +219,6 @@ class SoloForgeDaemonSupervisor {
           executedAction: action
         });
 
-        // 🔗 蓝图要求：同步持久化内核审计日志（对应 v5_events 规范）
         await this.persistenceManager.logEvent({
           id: `evt_${crypto.randomUUID()}`,
           traceId: runtimeUuid,
@@ -208,22 +236,21 @@ class SoloForgeDaemonSupervisor {
       }
 
       // ─────────────────────────────────────────────────────────────
-      // 📝 阶段二：多智能体流量涌入 + Rust 时序最大堆演化 + 决策记录仓储落地
+      // 📝 阶段二：真实业务流量竞争 + 多智能体哈希签名执行 + 仓储数据落盘
       // ─────────────────────────────────────────────────────────────
-      const candidates: ModelStrategyCandidate[] = [
-        { modelName: 'agent-alpha-fast', reasoningStrategy: 'direct', baseGenerationQuality: 0.7, normalizedLatencyScore: 0.9, normalizedCostEfficiency: 0.8, historicalSuccessIndex: 0.85 },
-        { modelName: 'agent-beta-heavy', reasoningStrategy: 'chain_of_thought', baseGenerationQuality: 0.95, normalizedLatencyScore: 0.3, normalizedCostEfficiency: 0.4, historicalSuccessIndex: 0.90 },
-        { modelName: 'agent-gamma-unstable', reasoningStrategy: 'few_shot', baseGenerationQuality: 0.6, normalizedLatencyScore: 0.6, normalizedCostEfficiency: 0.5, historicalSuccessIndex: 0.40 }
-      ];
+      const currentPacketSize = Math.floor(100 + Math.random() * 800);
+      const dynamicCandidates = this.agents.map(agent => agent.generateRoutingCandidateState(mockCpu));
 
       const targetStateKey = 'core_scheduler_memory'; 
       try {
-        const workerExecutionStub = async (chosen: ModelStrategyCandidate) => {
-          return `SUCCESS_UPSTREAM_RESPONSE_FROM_${chosen.modelName.toUpperCase()}`;
+        const workerExecutionStub = async (chosen: any) => {
+          const winnerInstance = this.agents.find(a => a.agentId === chosen.modelName);
+          if (!winnerInstance) throw new Error(`CRITICAL_ORPHAN_AGENT: ${chosen.modelName}`);
+          return await winnerInstance.executeNetworkPacketTask(runtimeUuid, currentPacketSize);
         };
 
         const finalRouteOutput = await this.racerEngine.coordinateRacerFlow(
-          candidates,
+          dynamicCandidates,
           targetStateKey,
           true, 
           0.2, 
@@ -232,23 +259,21 @@ class SoloForgeDaemonSupervisor {
           { globalFailureRate: 0.2 }
         );
 
-        console.log(`[FLOW_COMPLETED] 🎯 RACER 路由分发成功. 归集输出: ${finalRouteOutput}`);
+        console.log(`[FLOW_COMPLETED] 🎯 RACER 优选执行链响应成功:\n  └──> ${finalRouteOutput}`);
 
-        // 🔗 仓储层对接：写入决策链路数据，绑定全局一致的 traceId
         await this.persistenceManager.commitDecision({
           id: `decision_${runtimeUuid}`,
           traceId: runtimeUuid,
-          selectedStrategy: 'chain_of_thought',
-          strategyReason: `Route completed via Rust Scheduler. Output: ${finalRouteOutput}`,
-          budgetUsed: 25,
+          selectedStrategy: 'dynamic_marl_routing',
+          strategyReason: `Optimized execution packet. Result: ${finalRouteOutput}`,
+          budgetUsed: Math.floor(currentPacketSize / 10),
           budgetLimit: 100,
-          confidenceTier: 'low',
-          subsetSize: 3,
-          aggregationMethod: 'plurality_vote',
-          aggregatedCandidates: candidates.map(c => c.modelName)
+          confidenceTier: 'high',
+          subsetSize: this.agents.length,
+          aggregationMethod: 'racer_heap_sort',
+          aggregatedCandidates: dynamicCandidates.map(c => c.modelName)
         });
 
-        // 驱动原子内核状态账本版本步进递增
         const currentSnapshot = this.txKernel.getSnapshot();
         this.txKernel.commitTransaction([
           { targetKey: 'telemetry_cycles', value: currentCycle }
@@ -260,37 +285,73 @@ class SoloForgeDaemonSupervisor {
       }
 
       // ─────────────────────────────────────────────────────────────
-      // 📝 阶段三：争议所有权司法审判 + 盲审决议仓储持久化沉淀
+      // 📝 阶段三：多智能体争议诉讼 + 共识盲审法庭判决 + 大模型最高二级终审
       // ─────────────────────────────────────────────────────────────
       if (currentCycle % 2 === 0) {
         console.log(`[TRIGGER] ⚖️ 触发时序状态所有权争议，唤醒自治法庭...`);
         this.courtRoom.enforcePhase1LockState(true);
 
         const disputeKey = 'court_case_registry_session_active';
-        const claims: AdjudicationArgumentClaim[] = [
-          { originatingAgentId: 'agent-alpha-fast', disputedClaimStatement: '自治网络流控调度底座核心', linkedEvidenceRegistry: ['evidence_secure_token_001'] },
-          { originatingAgentId: 'agent-gamma-unstable', disputedClaimStatement: '破坏性篡改篡改', linkedEvidenceRegistry: ['evidence_fraud_pointer_999'] }
+        
+        const dynamicClaims = [
+          this.agents[0].forgeDisputeClaim('确权核心路由底座主权', 'legitimate'),
+          this.agents[2].forgeDisputeClaim('破坏性越权篡改重排', 'sybil_fraud')
         ];
 
         try {
-          const verdict = await this.courtRoom.executeEvidentiaryArbitration(claims, disputeKey);
-          console.log(`[COURT_VERDICT] 🏛️ 法庭盲审结论: 状态=${verdict.verdictResolutionStatus} | 胜诉者=${verdict.winningAgentSignature}`);
+          const verdict = await this.courtRoom.executeEvidentiaryArbitration(dynamicClaims, disputeKey);
+          console.log(`[COURT_VERDICT] 🏛️ 一审密码学盲审结果: 状态=${verdict.verdictResolutionStatus}`);
 
-          // 🔗 仓储层对接：审判决议物理落盘，锁死对应周期的追踪链 traceId
+          let finalWinnerId: string | null = verdict.winningAgentSignature;
+          let finalStatus = verdict.verdictResolutionStatus === 'DECIDED_LEGITIMATE' ? 'complete' : 'phase_1';
+          let decisionText = `Arbitration resolved via blind crypto audit. Winner: ${verdict.winningAgentSignature}`;
+
+          if (verdict.verdictResolutionStatus === 'CONSERVATIVE_DEADLOCK_TRIGGER') {
+            console.warn(`[COURT_ALERT] 🚨 一审证据链冲突陷入技术死锁！越级唤醒【最高大模型终审庭】执行高级语义剖析...`);
+            
+            // 给异步写队列调度预留足够的微秒级硬件写入窗口，随后拉起卷宗
+            await new Promise(resolve => setTimeout(resolve, 150));
+            
+            const supremeVerdict = await this.llmSupremeCourt.adjudicateDeadlock(runtimeUuid, this.persistenceManager);
+            
+            console.log(`[COURT_VERDICT] ⚖️  最高大模型终审下达判决：`);
+            console.log(`  ├── 判定胜诉者 : [${supremeVerdict.finalWinner}]`);
+            console.log(`  └── 终审法理依据 : ${supremeVerdict.adjudicationReason}`);
+
+            finalWinnerId = supremeVerdict.finalWinner;
+            finalStatus = 'complete';
+            decisionText = supremeVerdict.adjudicationReason;
+
+            if (supremeVerdict.finalWinner) {
+              const winner = this.agents.find(a => a.agentId === supremeVerdict.finalWinner);
+              if (winner) {
+                winner.rewardReputation(0.08);
+                console.log(`[JUDICIAL_REWARD] 📈 终审清白者 [${winner.agentId}] 信用修复提升至: ${winner.reputationScore.toFixed(2)}`);
+              }
+            }
+            if (supremeVerdict.sanctionedLoser) {
+              const loser = this.agents.find(a => a.agentId === supremeVerdict.sanctionedLoser);
+              if (loser) {
+                loser.penalizeReputation(0.25);
+                console.warn(`[JUDICIAL_SANCTION] 📉 终审欺诈者 [${loser.agentId}] 惨遭实锤反制，信用分物理暴跌至: ${loser.reputationScore.toFixed(2)}`);
+              }
+            }
+          }
+
           await this.persistenceManager.commitCourtSubmission({
             id: `court_${runtimeUuid}`,
             traceId: runtimeUuid,
-            phase: verdict.verdictResolutionStatus === 'DECIDED_LEGITIMATE' ? 'complete' : 'phase_1',
+            phase: finalStatus as any,
             phase1Deadline: Math.floor(Date.now() / 1000) + 3600,
-            judgmentBasis: `Arbitration completed. Winner: ${verdict.winningAgentSignature}`,
-            winnerScore: verdict.adjudicatedMetricScore,
+            judgmentBasis: decisionText,
+            winnerScore: verdict.adjudicatedMetricScore || 1.0,
             loserScore: 0.0,
             escalatedToHuman: false,
             escalationReason: 'NONE'
           });
 
         } catch (courtErr) {
-          console.error(`[COURT_FAULT] 法庭审理程序性崩溃:`, (courtErr as Error).message);
+          console.error(`[COURT_FAULT] 司法体系陷入非预期的程序性瘫痪:`, (courtErr as Error).message);
         }
       }
 
@@ -298,7 +359,7 @@ class SoloForgeDaemonSupervisor {
   }
 
   /**
-   * 工业级优雅关机守卫：随主进程一同平稳注销，强杀黑盒句柄释放内存
+   * 工业级优雅关机守卫
    */
   public async terminateGracefully(signalSource: string): Promise<void> {
     if (this.isShuttingDown) return;
@@ -321,7 +382,7 @@ class SoloForgeDaemonSupervisor {
       }
 
       if (this.databaseProcess) {
-        this.databaseProcess.kill(); // 💥 强杀线：物理强杀包内自带子进程
+        this.databaseProcess.kill(); 
         console.log('[SHUTDOWN] 🛢️  嵌入式 SurrealDB 数据库进程已被主程序强杀清理，内存全量归还系统。');
       }
     } catch (e) {
@@ -334,8 +395,12 @@ class SoloForgeDaemonSupervisor {
   }
 }
 
-const supervisor = new SoloForgeDaemonSupervisor();
-supervisor.startRuntimeEventLoop();
+async function main() {
+  const supervisor = new SoloForgeDaemonSupervisor();
+  await supervisor.initializeSovereignStorage();
+  supervisor.startRuntimeEventLoop();
+}
 
-process.on('SIGINT', () => supervisor.terminateGracefully('SIGINT'));
-process.on('SIGTERM', () => supervisor.terminateGracefully('SIGTERM'));
+main().catch(err => {
+  console.error('[FATAL_BOOT_FAILURE] 核心守护进程遭遇毁灭性阻断，点火终止:', err);
+});

@@ -1,0 +1,117 @@
+// ─────────────────────────────────────────────────────────────────
+// SoloForge Agent Core: Autonomous Network Multi-Agent State Machine
+// Path: src/core/agent/autonomous_agent.ts
+// ─────────────────────────────────────────────────────────────────
+
+import crypto from 'crypto';
+import { ModelStrategyCandidate } from '../decision/rtr-racer-engine';
+import { AdjudicationArgumentClaim } from '../court/consensagent';
+
+/**
+ * 🤖 自治骨干网智能体行为实体类（升级版：支持真实本地网络数据包任务流）
+ */
+export class AutonomousNetworkAgent {
+  public agentId: string;
+  public strategyType: 'direct' | 'chain_of_thought' | 'few_shot';
+  public reputationScore: number;       // 信用分：会随着法庭盲审的结果动态发生物理改变
+  private evidenceVault: Set<string> = new Set(); // 智能体自身的密码学合法凭证库
+
+  constructor(id: string, strategy: 'direct' | 'chain_of_thought' | 'few_shot', initialReputation = 1.0) {
+    this.agentId = id;
+    this.strategyType = strategy;
+    this.reputationScore = initialReputation;
+  }
+
+  /**
+   * 🔑 生产合法凭证：模拟智能体在网络中执行合法计算时获得的资产指纹
+   */
+  public mintLegitimateEvidenceToken(): string {
+    const token = `token_legit_${crypto.randomBytes(4).toString('hex')}`;
+    this.evidenceVault.add(token);
+    return token;
+  }
+
+  /**
+   * 📊 动态路由竞价响应：根据当前大盘 CPU 负载，动态向 RACER 引擎提供自身的性能状态参数
+   */
+  public generateRoutingCandidateState(currentCpuLoad: number): ModelStrategyCandidate {
+    let latencyScore = 0.9;
+    let qualityScore = 0.7;
+
+    if (this.strategyType === 'chain_of_thought') {
+      // 深度思考型（Beta）：负载越高，延迟劣化越严重，但生成质量始终处于顶级
+      latencyScore = Math.max(0.1, 0.5 - currentCpuLoad * 0.2);
+      qualityScore = 0.95;
+    } else if (this.strategyType === 'direct') {
+      // 边缘快速型（Alpha）：牺牲质量换取绝对的响应速度
+      latencyScore = Math.max(0.6, 0.95 - currentCpuLoad * 0.1);
+      qualityScore = 0.65;
+    }
+
+    return {
+      modelName: this.agentId,
+      reasoningStrategy: this.strategyType,
+      baseGenerationQuality: qualityScore,
+      normalizedLatencyScore: latencyScore,
+      normalizedCostEfficiency: this.strategyType === 'direct' ? 0.8 : 0.3,
+      historicalSuccessIndex: this.reputationScore // 绑定真实的信用分，信用崩盘将直接导致流控落选
+    };
+  }
+
+  /**
+   * ⚡ 真实业务执行管道：承接真实的本地数据包分发与密码学哈希签名
+   */
+  public async executeNetworkPacketTask(packetUuid: string, packetSizeKb: number): Promise<string> {
+    // 模拟不同性格 Agent 在承接真实数据处理时的计算延迟差异
+    const simulationDelay = this.strategyType === 'chain_of_thought' ? 80 : 15;
+    await new Promise(resolve => setTimeout(resolve, simulationDelay));
+
+    // 执行真实的密码学动作，基于数据包指纹和自身私密身份生成防篡改签名
+    const hmac = crypto.createHmac('sha256', this.agentId);
+    hmac.update(`${packetUuid}_${packetSizeKb}`);
+    const integritySignature = hmac.digest('hex').substring(0, 16);
+
+    // 生产一条代表此次合法劳动的凭证指纹，存入自身资产库，作为未来打官司的证据
+    this.mintLegitimateEvidenceToken();
+
+    return `PACKET_EXEC_DONE_BY[${this.agentId.toUpperCase()}]_SIZE[${packetSizeKb}KB]_SIG[${integritySignature}]`;
+  }
+
+  /**
+   * ⚖️ 司法冲突确权：当爆发时序状态所有权抢夺时，智能体向法庭递交诉状与证据链
+   */
+  public forgeDisputeClaim(disputeStatement: string, attackMode: 'legitimate' | 'sybil_fraud'): AdjudicationArgumentClaim {
+    const registry: string[] = [];
+
+    if (attackMode === 'legitimate') {
+      // 合法防御：拿出自己资产库里在 executeNetworkPacketTask 中沉淀的真实计算凭证
+      if (this.evidenceVault.size === 0) {
+        this.mintLegitimateEvidenceToken();
+      }
+      registry.push(...Array.from(this.evidenceVault));
+    } else {
+      // 欺诈攻击（如 Gamma 破坏者）：伪造完全不存在的野指针凭证，尝试攻破法庭
+      registry.push(`evidence_fraud_poison_${crypto.randomBytes(2).toString('hex')}`);
+    }
+
+    return {
+      originatingAgentId: this.agentId,
+      disputedClaimStatement: disputeStatement,
+      linkedEvidenceRegistry: registry
+    };
+  }
+
+  /**
+   * 📉 司法制裁：因欺诈被盲审法庭记录并裁决败诉时，强行物理扣减其信用分
+   */
+  public penalizeReputation(deduction: number): void {
+    this.reputationScore = Math.max(0.0, this.reputationScore - deduction);
+  }
+
+  /**
+   * 📈 司法平反：胜诉时，恢复并增加其信用分
+   */
+  public rewardReputation(bonus: number): void {
+    this.reputationScore = Math.min(1.0, this.reputationScore + bonus);
+  }
+}
