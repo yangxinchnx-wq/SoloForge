@@ -1,0 +1,13 @@
+{
+  "name": "soloforge",
+  "version": "1.0.0",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "tsx": "^4.22.3",
+    "vitest": "^4.1.7"
+  }
+}

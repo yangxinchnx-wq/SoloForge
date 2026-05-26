@@ -1,0 +1,12 @@
+[package]
+name = "rust_core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "rust_core"
+path = "src/scheduler/actor_queue.rs"
+
+[[bin]]
+name = "scheduler_daemon"
+path = "src/main.rs"
