@@ -3,156 +3,212 @@
 // Path: src/index.ts
 // ─────────────────────────────────────────────────────────────────
 
-import { SovereignRuntimeKernel } from './kernel/runtime-kernel';
+import crypto from 'crypto';
+import { spawn, ChildProcess } from 'child_process';
+import path from 'path';
+import fs from 'fs';
+import { Surreal } from 'surrealdb';
+
+// 🔗 引入全层级核心安全、控制、算法及持久化骨干组件
+import { TransactionKernel } from './data/transaction_kernel';
+import { DeleteProtection } from './data/delete_protection';
 import { GeminiRustSchedulerClient } from './kernel/scheduler-client';
 import { GeminiRTRRacerEngine, ModelStrategyCandidate } from './core/decision/rtr-racer-engine';
-import { GeminiConsensAgentCourtRoom, AdjudicationArgumentClaim, SurrealDatabaseInterface } from './core/court/consensagent';
+import { GeminiConsensAgentCourtRoom, AdjudicationArgumentClaim } from './core/court/consensagent';
 import { GeminiMappoResourceGovernorClient } from './core/governor/mappo-client';
+import { GeminiPersistenceManager, SurrealDbDriverInterface } from './data/surreal_persistence';
+import { SurrealLiveWebSocketDriver } from './data/surreal_driver_live';
 
-import { DecisionEvent } from './core/events/decision-events';
-import { CourtEvent } from './core/events/court-events';
+// 🔗 物理引入 Layer 1 主权自治安全内核
+import { SovereignRuntimeKernel } from './kernel/runtime-kernel';
 
-// 严格对齐 Surreal 契约的内存落盘桩，为法庭盲审提供瞬时状态支撑
-class SurrealLocalMemoryDriver implements SurrealDatabaseInterface {
-  private memoryRegistry = new Map<string, any>();
-  
-  constructor() {
-    // 预埋一条中文字征的合法证据资产
-    this.memoryRegistry.set('evidence_secure_token_001', {
-      id: 'evidence_secure_token_001',
-      credibilityIndex: 0.95,
-      relevanceWeight: 0.88,
-      temporalRecencyValue: 0.90,
-      rawContent: 'SoloForge 自治网络流控调度底座核心安全授信凭证'
-    });
-  }
-
+/**
+ * 💾 弹性同步安全桩：当物理嵌入式数据库未就位或网络正在握手时，死锁全局时间真空期
+ */
+class LocalMemoryFallbackDriver implements SurrealDbDriverInterface {
   public async query(sqlStatement: string, queryBindings: Record<string, any>): Promise<any[][]> {
-    const targetId = queryBindings.id;
-    const record = this.memoryRegistry.get(targetId);
-    return record ? [[record]] : [[]];
+    return [[]];
   }
 }
 
 class SoloForgeDaemonSupervisor {
-  private kernel: SovereignRuntimeKernel;
+  // 双内核纵向解耦互锁
+  private runtimeKernel: SovereignRuntimeKernel; 
+  private txKernel: TransactionKernel;           
+  
+  private shield: DeleteProtection;
   private rustScheduler: GeminiRustSchedulerClient;
   private racerEngine: GeminiRTRRacerEngine;
   private courtRoom: GeminiConsensAgentCourtRoom;
-  private pythonGovernor: GeminiMappoResourceGovernorClient;
+  private governor: GeminiMappoResourceGovernorClient;
+  
+  // 嵌入式数据落盘仓储层核心管理器
+  private persistenceManager: GeminiPersistenceManager;
+  private surrealRawClient: Surreal | null = null;
+  private databaseProcess: ChildProcess | null = null;
   
   private pollingTimer: NodeJS.Timeout | null = null;
   private isShuttingDown = false;
-  
-  // ✅ 维护一个全盘遥测账本的增量读取指针，防止重复打印
-  private lastProcessedLogIndex = 0;
+  private telemetryCycles = 0;
 
   constructor() {
     console.log('\n[BOOT] ──────────────────────────────────────────────────');
-    console.log('[BOOT] 🚀 SoloForge 主自治骨干网络守护进程开始全量总装初始化...');
+    console.log('[BOOT] 🚀 SoloForge 主自治骨干网络守护进程开始全量初始化...');
     
-    // 1. 初始化 Layer 1 自治内核所有权宪法底座
-    this.kernel = new SovereignRuntimeKernel();
+    // 1. 物理拉起项目内置的嵌入式数据库长驻子进程（严格基于工作目录相对寻址）
+    this.bootEmbeddedDatabase();
 
-    // 2. 初始化 Layer 4 跨语言 Rust 高性能优先调度客户端
+    // 2. 初始化 Layer 1 核心双主权自治内核底座
+    this.runtimeKernel = new SovereignRuntimeKernel();
+    this.txKernel = new TransactionKernel({ system_status: 'BOOTING', active_agents: 0, telemetry_cycles: 0 });
+    this.shield = new DeleteProtection();
+
+    // 3. 🛡️ 【时序硬互锁】率先分配默认内存桩，彻底绝杀一微秒的异步未初始化空窗期
+    const fallbackDriver = new LocalMemoryFallbackDriver();
+    this.persistenceManager = new GeminiPersistenceManager(fallbackDriver);
+
+    // 4. 初始化 Layer 4 跨语言 Rust 高性能优先调度看门狗
     this.rustScheduler = new GeminiRustSchedulerClient();
-    this.rustScheduler.initialize(); // 物理唤醒底层 scheduler_daemon.exe 实体
+    this.rustScheduler.initialize(); 
     console.log('[BOOT] 🦀 Rust 高性能最大堆 Aging 调度守护进程拉起成功.');
 
-    // 3. 总装 Layer 2 RTR-RACER 智能流控决策引擎（硬互锁挂载 Rust 队列）
-    this.racerEngine = new GeminiRTRRacerEngine(this.kernel, this.rustScheduler);
+    // 5. 总装 Layer 2 RTR-RACER 流控决策引擎与 Layer 3 司法共识盲审法庭
+    this.racerEngine = new GeminiRTRRacerEngine(this.runtimeKernel, this.rustScheduler);
+    this.courtRoom = new GeminiConsensAgentCourtRoom(this.runtimeKernel, fallbackDriver as any);
 
-    // 4. 总装 Layer 3 司法共识盲审 courtroom
-    const dbDriver = new SurrealLocalMemoryDriver();
-    this.courtRoom = new GeminiConsensAgentCourtRoom(this.kernel, dbDriver);
+    // 6. 拉起跨语言 Python MAPPO 顶置资源控流子进程
+    this.governor = new GeminiMappoResourceGovernorClient();
+    
+    // 7. 在后台安全启动物理存储异步升级探测与 DDL 自动热迁移宪法
+    this.tryUpgradeToLiveStorage();
 
-    // 5. 拉起跨语言 Python MAPPO 顶置资源控流子进程
-    this.pythonGovernor = new GeminiMappoResourceGovernorClient();
-
-    console.log('[BOOT] 🔒 全层级核心组件（TS/Rust/Python）串联完毕，安全护盾全面合拢.');
+    console.log('[BOOT] 🔒 全层级核心组件（TS/Rust/Python/嵌入式Surreal）数据交火闭合.');
     console.log('[BOOT] ──────────────────────────────────────────────────\n');
   }
 
   /**
-   * ✅ 增量冲刷账本日志（Pull 模式）：完美对齐 SimpleEventBus 的 .getEventLog() 契约
+   * 🛢️ 随生随灭：严格基于当前软件运行工作目录（Portable CWD）定位二进制文件
    */
-  private flushTelemetryLogs(): void {
-    const eventBus = this.kernel.getEventBus() as any;
-    if (!eventBus || typeof eventBus.getEventLog !== 'function') return;
-
-    const allLogs = eventBus.getEventLog();
-    for (let i = this.lastProcessedLogIndex; i < allLogs.length; i++) {
-      const entry = allLogs[i];
-      const eventName = entry.event;
-      const data = entry.payload || {};
-
-      switch (eventName) {
-        // RTR 流控决策流
-        case DecisionEvent.ROUTE_REQUESTED:
-          console.log(`[EVENT_RTR] 🔍 接收到流控路由请求 | 候选节点数: ${data.totalCandidates}`);
-          break;
-        case DecisionEvent.CONFIDENCE_CALCULATED:
-          console.log(`[EVENT_RTR] 📊 实时收敛置信度推演值: ${data.confidence?.toFixed(4)}`);
-          break;
-        case DecisionEvent.VOTE_TRIGGERED:
-          console.warn(`[EVENT_RTR] ⚠️ 置信度低！物理交割 Rust 队列，并发激活 ${data.subsetExpandedSize} 路多数博弈投票！`);
-          break;
-        case DecisionEvent.ADAPTIVE_PENALTY_APPLIED:
-          console.warn(`[EVENT_RTR] 📉 触发自学习环境惩罚 -> 节点 [${data.modelName}] 权重降级.`);
-          break;
-
-        // 司法盲审流
-        case CourtEvent.CLAIM_SUBMITTED:
-          console.log(`[EVENT_COURT] ⚖️ 智能法庭介入对抗裁决 | 存疑断言数: ${data.activeClaims}`);
-          break;
-        case CourtEvent.ARBITRATION_DECIDED:
-          console.log(`[EVENT_COURT] 🎉 司法盲审裁决完成！胜出节点签名: [${data.winner}]`);
-          break;
-        case CourtEvent.DEADLOCK_DETECTED:
-          console.error(`[EVENT_COURT] 🚨 触发平局死锁保护机制！胜出分差过小，流控硬性拦截挂起。`);
-          break;
-      }
+  private bootEmbeddedDatabase(): void {
+    const baseWorkspace = process.cwd();
+    const dbDataPath = path.join(baseWorkspace, 'data', 'soloforge_db');
+    
+    if (!fs.existsSync(dbDataPath)) {
+      fs.mkdirSync(dbDataPath, { recursive: true });
     }
-    // 指针前移，确保下一轮循环只消费增量数据
-    this.lastProcessedLogIndex = allLogs.length;
+
+    // 🔐 生产级便携寻址：锁死在当前运行目录 bin/ 文件夹下，保障随包迁移不产生任何路径泄露
+    const ext = process.platform === 'win32' ? '.exe' : '';
+    const surrealBinaryPath = path.join(baseWorkspace, 'bin', `surreal${ext}`);
+
+    this.databaseProcess = spawn(surrealBinaryPath, [
+      'start',
+      '--user', 'root',
+      '--pass', 'root',
+      '--bind', '127.0.0.1:8000',
+      `file:${dbDataPath}`
+    ]);
+
+    // 拦截不可达异常，降级切换保护，绝不让拉起故障向上传导破坏主生命周期
+    this.databaseProcess.on('error', (err: any) => {
+      console.warn(`\n[DATABASE_WARN] ⚠️ 无法在预定便携路径 [${surrealBinaryPath}] 下直接拉起物理进程: ${err.message}`);
+      console.warn('[DATABASE_WARN] 🔌 数据管理服务已自动切入【高性能本地内存沙盒桩】托管运转，确保主计算链稳定。\n');
+    });
   }
 
   /**
-   * 启动常驻主循环
+   * 💾 自动热迁移与存储层平滑热升级
+   */
+  private async tryUpgradeToLiveStorage(): Promise<void> {
+    let retryAttempts = 5; 
+    while (retryAttempts > 0 && !this.isShuttingDown) {
+      try {
+        this.surrealRawClient = new Surreal();
+        await this.surrealRawClient.connect('ws://127.0.0.1:8000/rpc', {
+          namespace: 'soloforge_core',
+          database: 'autonomous_network',
+          auth: { user: 'root', pass: 'root' }
+        });
+
+        // 自动读取项目包内固定的全量 Schema 强类型约束并执行热迁移
+        const schemaFilePath = path.join(process.cwd(), 'infra', 'schema.surql');
+        if (fs.existsSync(schemaFilePath)) {
+          const schemaSql = fs.readFileSync(schemaFilePath, 'utf8');
+          await this.surrealRawClient.query(schemaSql);
+          console.log('[ASYNC_STORAGE] 📜 存储层成功自动灌入本地全量 Schema 强类型宪法迁移约束.');
+        }
+
+        const liveDriver = new SurrealLiveWebSocketDriver(this.surrealRawClient);
+        this.persistenceManager = new GeminiPersistenceManager(liveDriver);
+        this.courtRoom = new GeminiConsensAgentCourtRoom(this.runtimeKernel, liveDriver as any);
+        
+        console.log('[ASYNC_STORAGE] 🛢️  [REAL STATE] 成功物理介入嵌入式 SurrealDB 数据库集群！真实数据落盘安全激活。');
+        return;
+      } catch (err) {
+        retryAttempts--;
+        if (retryAttempts === 0) {
+          console.log('[ASYNC_STORAGE] 🛡️  物理存储联络挂起。控制大盘全面进入【高性能内存沙盒桩】托管。');
+        } else {
+          await new Promise(resolve => setTimeout(resolve, 300)); 
+        }
+      }
+    }
+  }
+
+  /**
+   * 启动常驻主循环脉冲
    */
   public startRuntimeEventLoop(): void {
     console.log('[RUNTIME] 🌀 全链路跨语言控流主循环已点火. 正在监控系统性能拓扑...\n');
 
-    let cycleCounter = 0;
-
     this.pollingTimer = setInterval(async () => {
       if (this.isShuttingDown) return;
-      cycleCounter++;
+      this.telemetryCycles++;
+      const currentCycle = this.telemetryCycles;
 
-      console.log(`\n--- [CYCLE #${cycleCounter}] 拓扑脉冲扫描开始 ---`);
+      console.log(`\n--- [CYCLE #${currentCycle}] 拓扑脉冲扫描开始 ---`);
+      const runtimeUuid = crypto.randomUUID(); // 🔗 全链路唯一追踪链锚点（traceId）
 
       // ─────────────────────────────────────────────────────────────
-      // 📝 阶段一：高并发状态下的动态物理资源上报（对接 Python MAPPO 顶置降级）
+      // 📝 阶段一：高并发物理资源检测 + Python MAPPO 推理 + 特征流仓储持久化
       // ─────────────────────────────────────────────────────────────
-      const mockCpu = cycleCounter % 4 === 0 ? 0.96 : 0.45; 
+      const mockCpu = currentCycle % 4 === 0 ? 0.96 : 0.45; 
       const globalState = [mockCpu, 0.35, 0.12];
       const localObs = [0.0, 0.0];
 
       try {
-        const action = await this.pythonGovernor.evaluateMappoResourceVector(globalState, localObs);
-        console.log(`[TELEMETRY] 🐍 Python MAPPO 推理响应完成 | 负载: ${mockCpu} | 决策 Action: ${action}`);
+        const action = await this.governor.evaluateMappoResourceVector(globalState, localObs);
+        console.log(`[TELEMETRY] 🐍 Python MAPPO 推理完成 | 负载: ${mockCpu} | Action: ${action}`);
+
+        // 🔗 仓储层对接：写入特征轨迹，打入统一追踪链 traceId
+        await this.persistenceManager.logMarlEpisode({
+          id: `marl_${runtimeUuid}`,
+          traceId: runtimeUuid, 
+          episodeCount: currentCycle,
+          cpuMetric: mockCpu,
+          memoryMetric: 0.35,
+          executedAction: action
+        });
+
+        // 🔗 蓝图要求：同步持久化内核审计日志（对应 v5_events 规范）
+        await this.persistenceManager.logEvent({
+          id: `evt_${crypto.randomUUID()}`,
+          traceId: runtimeUuid,
+          event: 'telemetry.mappo.resolved',
+          payload: `Action ${action} inferred under load ${mockCpu}`,
+          timestamp: Math.floor(Date.now() / 1000)
+        });
 
         if (action === 2) {
-          console.error(`[CIRCUIT_BREAKER] 🚨 触发最高优先级别熔断！Python 拒绝向下游分发请求！`);
-          this.flushTelemetryLogs(); // 熔断前也要冲刷日志
+          console.error(`[CIRCUIT_BREAKER] 🚨 触发最高级别熔断！强行阻断本次循环流控。`);
           return; 
         }
       } catch (err) {
-        console.error(`[IPC_ERROR] Python 遥测流水线阻断:`, (err as Error).message);
+        console.error(`[IPC_ERROR] Python 遥测流突发阻断:`, (err as Error).message);
       }
 
       // ─────────────────────────────────────────────────────────────
-      // 📝 阶段二：多智能体任务涌入（对接 TS 流控引擎 + Rust 高性能自愈老化队列）
+      // 📝 阶段二：多智能体流量涌入 + Rust 时序最大堆演化 + 决策记录仓储落地
       // ─────────────────────────────────────────────────────────────
       const candidates: ModelStrategyCandidate[] = [
         { modelName: 'agent-alpha-fast', reasoningStrategy: 'direct', baseGenerationQuality: 0.7, normalizedLatencyScore: 0.9, normalizedCostEfficiency: 0.8, historicalSuccessIndex: 0.85 },
@@ -161,9 +217,6 @@ class SoloForgeDaemonSupervisor {
       ];
 
       const targetStateKey = 'core_scheduler_memory'; 
-      const globalConfidenceMetric = 0.2; 
-      const taskComplexityMetrics = 0.9; 
-
       try {
         const workerExecutionStub = async (chosen: ModelStrategyCandidate) => {
           return `SUCCESS_UPSTREAM_RESPONSE_FROM_${chosen.modelName.toUpperCase()}`;
@@ -173,78 +226,109 @@ class SoloForgeDaemonSupervisor {
           candidates,
           targetStateKey,
           true, 
-          globalConfidenceMetric,
-          taskComplexityMetrics,
+          0.2, 
+          0.9, 
           workerExecutionStub,
           { globalFailureRate: 0.2 }
         );
 
-        console.log(`[FLOW_COMPLETED] 🎯 核心流控总控分发成功. 最终归集输出: ${finalRouteOutput}`);
+        console.log(`[FLOW_COMPLETED] 🎯 RACER 路由分发成功. 归集输出: ${finalRouteOutput}`);
+
+        // 🔗 仓储层对接：写入决策链路数据，绑定全局一致的 traceId
+        await this.persistenceManager.commitDecision({
+          id: `decision_${runtimeUuid}`,
+          traceId: runtimeUuid,
+          selectedStrategy: 'chain_of_thought',
+          strategyReason: `Route completed via Rust Scheduler. Output: ${finalRouteOutput}`,
+          budgetUsed: 25,
+          budgetLimit: 100,
+          confidenceTier: 'low',
+          subsetSize: 3,
+          aggregationMethod: 'plurality_vote',
+          aggregatedCandidates: candidates.map(c => c.modelName)
+        });
+
+        // 驱动原子内核状态账本版本步进递增
+        const currentSnapshot = this.txKernel.getSnapshot();
+        this.txKernel.commitTransaction([
+          { targetKey: 'telemetry_cycles', value: currentCycle }
+        ], currentSnapshot.version);
+        console.log(`[SYS_TRANSACTION] 事务提交成功. 新版本: ${currentSnapshot.version + 1}`);
+
       } catch (flowException) {
         console.error(`[CORE_FLOW_ERROR] 流控主链塌陷:`, (flowException as Error).message);
       }
 
       // ─────────────────────────────────────────────────────────────
-      // 📝 阶段三：模拟突发状态争议冲突（对接 Layer 3 司法盲审法庭）
+      // 📝 阶段三：争议所有权司法审判 + 盲审决议仓储持久化沉淀
       // ─────────────────────────────────────────────────────────────
-      if (cycleCounter % 2 === 0) {
-        console.log(`[TRIGGER] ⚖️ 触发时序状态所有权存疑冲突，唤醒自治法庭...`);
-        
+      if (currentCycle % 2 === 0) {
+        console.log(`[TRIGGER] ⚖️ 触发时序状态所有权争议，唤醒自治法庭...`);
         this.courtRoom.enforcePhase1LockState(true);
 
         const disputeKey = 'court_case_registry_session_active';
         const claims: AdjudicationArgumentClaim[] = [
-          {
-            originatingAgentId: 'agent-alpha-fast',
-            disputedClaimStatement: '自治网络流控调度底座核心', 
-            linkedEvidenceRegistry: ['evidence_secure_token_001'] 
-          },
-          {
-            originatingAgentId: 'agent-gamma-unstable',
-            disputedClaimStatement: '破坏性篡改篡改',
-            linkedEvidenceRegistry: ['evidence_fraud_pointer_999'] 
-          }
+          { originatingAgentId: 'agent-alpha-fast', disputedClaimStatement: '自治网络流控调度底座核心', linkedEvidenceRegistry: ['evidence_secure_token_001'] },
+          { originatingAgentId: 'agent-gamma-unstable', disputedClaimStatement: '破坏性篡改篡改', linkedEvidenceRegistry: ['evidence_fraud_pointer_999'] }
         ];
 
         try {
           const verdict = await this.courtRoom.executeEvidentiaryArbitration(claims, disputeKey);
-          console.log(`[COURT_VERDICT] 🏛️ 法庭最终结论: 状态=${verdict.verdictResolutionStatus} | 胜诉者=${verdict.winningAgentSignature} | 最终得分=${verdict.adjudicatedMetricScore.toFixed(2)}`);
+          console.log(`[COURT_VERDICT] 🏛️ 法庭盲审结论: 状态=${verdict.verdictResolutionStatus} | 胜诉者=${verdict.winningAgentSignature}`);
+
+          // 🔗 仓储层对接：审判决议物理落盘，锁死对应周期的追踪链 traceId
+          await this.persistenceManager.commitCourtSubmission({
+            id: `court_${runtimeUuid}`,
+            traceId: runtimeUuid,
+            phase: verdict.verdictResolutionStatus === 'DECIDED_LEGITIMATE' ? 'complete' : 'phase_1',
+            phase1Deadline: Math.floor(Date.now() / 1000) + 3600,
+            judgmentBasis: `Arbitration completed. Winner: ${verdict.winningAgentSignature}`,
+            winnerScore: verdict.adjudicatedMetricScore,
+            loserScore: 0.0,
+            escalatedToHuman: false,
+            escalationReason: 'NONE'
+          });
+
         } catch (courtErr) {
           console.error(`[COURT_FAULT] 法庭审理程序性崩溃:`, (courtErr as Error).message);
         }
       }
 
-      // ⚡ 脉冲收尾：物理刷盘打印当前周期产生的所有内核账目日志
-      this.flushTelemetryLogs();
-
     }, 2000); 
   }
 
   /**
-   * 工业级优雅关机守卫：彻底斩断跨语言孤儿进程残留
+   * 工业级优雅关机守卫：随主进程一同平稳注销，强杀黑盒句柄释放内存
    */
   public async terminateGracefully(signalSource: string): Promise<void> {
     if (this.isShuttingDown) return;
     this.isShuttingDown = true;
     
     console.log('\n[SHUTDOWN] ──────────────────────────────────────────────');
-    console.log(`[SHUTDOWN] 🛑 捕获到操作系统级终止信号 [${signalSource}]. 开始回收全链路跨语言常驻句柄...`);
+    console.log(`[SHUTDOWN] 🛑 捕获终止信号 [${signalSource}]. 开始回收全链路跨语言常驻句柄...`);
 
-    if (this.pollingTimer) {
-      clearInterval(this.pollingTimer);
-    }
+    if (this.pollingTimer) clearInterval(this.pollingTimer);
 
     try {
       this.rustScheduler.shutdown();
-      console.log('[SHUTDOWN] 🦀 Rust 高性能老化调度引擎底层二进制句柄已安全注销。');
+      console.log('[SHUTDOWN] 🦀 Rust 高性能最大堆优先调度看门狗子进程已安全释放。');
 
-      this.pythonGovernor.safelyTerminateGovernorContext();
-      console.log('[SHUTDOWN] 🐍 Python 资源控流常驻推理管道已物理回收。');
+      this.governor.safelyTerminateGovernorContext();
+      console.log('[SHUTDOWN] 🐍 Python 常驻资源控流子进程底层管道已物理回收。');
+
+      if (this.surrealRawClient) {
+        await this.surrealRawClient.close();
+      }
+
+      if (this.databaseProcess) {
+        this.databaseProcess.kill(); // 💥 强杀线：物理强杀包内自带子进程
+        console.log('[SHUTDOWN] 🛢️  嵌入式 SurrealDB 数据库进程已被主程序强杀清理，内存全量归还系统。');
+      }
     } catch (e) {
-      console.error('[SHUTDOWN_ERROR] 跨语言常驻句柄回收出现残余破损:', e);
+      console.error('[SHUTDOWN_ERROR] 子进程句柄归还出现残余破损:', e);
     }
 
-    console.log('[SHUTDOWN] 🏆 核心层、控制层全链状态圆满归档，骨干网平稳闭合. [PASS]');
+    console.log('[SHUTDOWN] 🏆 全链路控制面完美解耦归档，骨干网平稳闭合. [PASS]');
     console.log('[SHUTDOWN] ──────────────────────────────────────────────');
     process.exit(0);
   }
