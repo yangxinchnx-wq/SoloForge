@@ -1,0 +1,11 @@
+[package]
+name = "rust_core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "rust_core"
+path = "src/scheduler/actor_queue.rs"
+
+[dependencies]
+# 当前 actor_queue 仅依赖 Rust 标准库，暂无外部依赖噪音
