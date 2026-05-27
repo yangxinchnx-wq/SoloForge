@@ -3,7 +3,7 @@
 // Path: src/kernel/runtime-kernel.ts
 // ─────────────────────────────────────────────────────────────────
 
-import { ULID } from 'ulid';
+import { ulid } from 'ulid'; 
 import { logger } from '../core/logger';
 import { EventBus } from '../core/events';
 import { RuntimeEvent } from '../core/events/runtime-events';
@@ -26,22 +26,15 @@ export interface Command {
   [key: string]: any;
 }
 
-/**
- * 🚀 RuntimeKernel - SoloForge 唯一真相微内核
- * 严格遵循 V3.0 融合文档 + 系统规格说明
- */
 export class RuntimeKernel {
   private static instance: RuntimeKernel | null = null;
-
   public readonly id: string;
   public readonly startedAt: number;
   public version: number = 0;
 
-  // 核心总线
   public readonly eventBus: EventBus;
   public readonly ownershipRegistry: StateOwnerRegistry;
 
-  // 依赖注入契约（由 index.ts 负责装配）
   public commandBus: { execute: (cmd: Command) => Promise<any> } | null = null;
   public transactionManager: any = null;
   public projectionManager: any = null;
@@ -53,9 +46,8 @@ export class RuntimeKernel {
   private replaying: boolean = false;
 
   private constructor() {
-    this.id = `kernel_${ULID()}`;
+    this.id = `kernel_${ulid()}`; 
     this.startedAt = Date.now();
-
     this.eventBus = new EventBus();
     this.ownershipRegistry = new StateOwnerRegistry();
 
@@ -87,7 +79,6 @@ export class RuntimeKernel {
     this.projectionManager = components.projectionManager;
     this.snapshotManager = components.snapshotManager;
     this.scheduler = components.scheduler;
-
     logger.info('RuntimeKernel', '✅ Core linkages bootstrapped successfully');
   }
 
@@ -96,7 +87,7 @@ export class RuntimeKernel {
       'WorkspaceRuntime', 'TaskRuntime', 'AIRuntime', 
       'PatchRuntime', 'MemoryRuntime', 'ProjectionRuntime', 'GovernorRuntime'
     ];
-    
+        
     domains.forEach(domain => {
       this.ownershipRegistry.registerDomain(domain);
       this.domains.set(domain, null);
@@ -109,7 +100,6 @@ export class RuntimeKernel {
     });
   }
 
-  /** 所有状态变更的唯一入口 */
   public async executeCommand<T = any>(command: Command): Promise<T> {
     if (this.replaying) {
       throw new Error('ERR_KERNEL_REPLAY: Write operations blocked during replay');
@@ -118,19 +108,15 @@ export class RuntimeKernel {
       throw new Error('ERR_KERNEL_UNBOOTED: Call bootstrapCoreLinkages first');
     }
 
-    const commandId = `cmd_${ULID()}`;
+    const commandId = `cmd_${ulid()}`; 
     let txId: string | null = null;
 
     try {
-      // 所有权校验
       this.ownershipRegistry.verifyCommandOwnership(command);
-
-      // 事务开启
       const tx = await this.transactionManager.begin(commandId, command.domain);
       txId = tx.id;
 
       const result = await this.commandBus.execute(command);
-
       await this.transactionManager.commit(txId);
       txId = null;
 
@@ -140,7 +126,6 @@ export class RuntimeKernel {
         result, 
         version: this.version 
       });
-
       return result;
     } catch (error: any) {
       if (txId && this.transactionManager) {
@@ -159,10 +144,8 @@ export class RuntimeKernel {
     if (!this.projectionManager || !this.snapshotManager) {
       throw new Error('ERR_KERNEL_MISSING_PROJECTION');
     }
-
     this.replaying = true;
     this.setMode(RuntimeMode.REPLAY);
-
     try {
       const sorted = [...events].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
       for (const event of sorted) {
@@ -183,9 +166,7 @@ export class RuntimeKernel {
     this.eventBus.emit(RuntimeEvent.RuntimeModeChanged, { oldMode, mode });
   }
 
-  public getMode(): RuntimeMode {
-    return this.mode;
-  }
+  public getMode(): RuntimeMode { return this.mode; }
 
   public registerDomain(name: string, instance: any): void {
     this.domains.set(name, instance);
@@ -194,16 +175,30 @@ export class RuntimeKernel {
 
   public async shutdown(): Promise<void> {
     logger.warn('RuntimeKernel', '🛑 Shutting down microkernel...');
+    
+    // 🛡️ 【修复断层二】：使用极其刚性的内聚 try-catch 块，消灭对同步函数执行异步 .catch() 引发的运行时崩溃
+    if (this.scheduler) {
+      try {
+        if (typeof this.scheduler.drain === 'function') {
+          await this.scheduler.drain();
+        } else if (typeof this.scheduler.shutdown === 'function') {
+          // 同步执行释放，即使返回 void/undefined 也能被 try 块安全护航
+          await this.scheduler.shutdown();
+        }
+      } catch (e) {}
+    }
 
-    if (this.scheduler) await this.scheduler.drain().catch(() => {});
-    if (this.transactionManager) await this.transactionManager.drain?.().catch(() => {});
-    if (this.snapshotManager) await this.snapshotManager.createFullSnapshot?.('shutdown').catch(() => {});
+    if (this.transactionManager && typeof this.transactionManager.drain === 'function') {
+      try { await this.transactionManager.drain(); } catch (e) {}
+    }
+    if (this.snapshotManager && typeof this.snapshotManager.createFullSnapshot === 'function') {
+      try { await this.snapshotManager.createFullSnapshot('shutdown'); } catch (e) {}
+    }
 
     this.setMode(RuntimeMode.SHUTDOWN);
     logger.info('RuntimeKernel', '✅ Kernel shutdown completed');
   }
 }
 
-// 单例导出（供 index.ts 使用）
 export const kernel = RuntimeKernel.getInstance();
 export default kernel;
