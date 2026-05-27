@@ -1,13 +1,14 @@
-// src/kernel/runtime-kernel.ts
+// ─────────────────────────────────────────────────────────────────
+// SoloForge Kernel Layer: Unified Truth Microkernel Core
+// Path: src/kernel/runtime-kernel.ts
+// ─────────────────────────────────────────────────────────────────
+
 import { ULID } from 'ulid';
 import { logger } from '../core/logger';
 import { EventBus } from '../core/events';
 import { RuntimeEvent } from '../core/events/runtime-events';
-import { Governor } from '../core/governor';
-import { FeatureFlag } from '../core/feature-flag';
 import { StateOwnerRegistry } from './state-ownership';
 
-// ======================== 类型定义 ========================
 export enum RuntimeMode {
   NORMAL = 'normal',
   REPLAY = 'replay',
@@ -25,7 +26,10 @@ export interface Command {
   [key: string]: any;
 }
 
-// ======================== 主类 ========================
+/**
+ * 🚀 RuntimeKernel - SoloForge 唯一真相微内核
+ * 严格遵循 V3.0 融合文档 + 系统规格说明
+ */
 export class RuntimeKernel {
   private static instance: RuntimeKernel | null = null;
 
@@ -33,170 +37,173 @@ export class RuntimeKernel {
   public readonly startedAt: number;
   public version: number = 0;
 
-  // 核心组件
+  // 核心总线
   public readonly eventBus: EventBus;
-  public readonly governor: Governor;
   public readonly ownershipRegistry: StateOwnerRegistry;
 
-  // 管理器（这里简化实现，生产环境建议单独文件）
-  private commandBus: any;
-  private transactionManager: any;
-  private projectionManager: any;
-  private snapshotManager: any;
-  private scheduler: any;
+  // 依赖注入契约（由 index.ts 负责装配）
+  public commandBus: { execute: (cmd: Command) => Promise<any> } | null = null;
+  public transactionManager: any = null;
+  public projectionManager: any = null;
+  public snapshotManager: any = null;
+  public scheduler: any = null;
 
   private mode: RuntimeMode = RuntimeMode.NORMAL;
   private domains: Map<string, any> = new Map();
-  private isHeadless: boolean = false;
   private replaying: boolean = false;
 
-  private constructor(config: { headless?: boolean } = {}) {
+  private constructor() {
     this.id = `kernel_${ULID()}`;
     this.startedAt = Date.now();
-    this.isHeadless = config.headless ?? false;
 
     this.eventBus = new EventBus();
-    this.governor = Governor.getInstance();
     this.ownershipRegistry = new StateOwnerRegistry();
 
-    this.initManagers();
     this.registerCoreDomains();
     this.setupEventListeners();
 
-    logger.info('RuntimeKernel', `🚀 SoloForge RuntimeKernel Final Version Ready`, {
-      id: this.id,
-      headless: this.isHeadless,
-      mode: this.mode
+    logger.info('RuntimeKernel', `🚀 Microkernel initialized`, { 
+      id: this.id, 
+      version: this.version 
     });
   }
 
-  public static getInstance(config?: { headless?: boolean }): RuntimeKernel {
+  public static getInstance(): RuntimeKernel {
     if (!RuntimeKernel.instance) {
-      RuntimeKernel.instance = new RuntimeKernel(config);
+      RuntimeKernel.instance = new RuntimeKernel();
     }
     return RuntimeKernel.instance;
   }
 
-  private initManagers() {
-    // 实际项目中建议拆分成独立文件，这里提供结构
-    this.commandBus = { execute: async (cmd: Command) => cmd.payload };
-    this.transactionManager = {
-      begin: async () => ({ id: ULID() }),
-      commit: async () => {},
-      rollback: async () => {}
-    };
-    this.projectionManager = { updateAll: () => {}, replayEvent: () => {} };
-    this.snapshotManager = { 
-      createFullSnapshot: async () => ULID(),
-      recover: async () => {},
-      replayEvent: () => {}
-    };
-    this.scheduler = { drain: async () => {} };
+  public bootstrapCoreLinkages(components: {
+    commandBus: any;
+    transactionManager: any;
+    projectionManager: any;
+    snapshotManager: any;
+    scheduler: any;
+  }): void {
+    this.commandBus = components.commandBus;
+    this.transactionManager = components.transactionManager;
+    this.projectionManager = components.projectionManager;
+    this.snapshotManager = components.snapshotManager;
+    this.scheduler = components.scheduler;
+
+    logger.info('RuntimeKernel', '✅ Core linkages bootstrapped successfully');
   }
 
   private registerCoreDomains() {
-    const cores = ['WorkspaceRuntime', 'TaskRuntime', 'AIRuntime', 'PatchRuntime', 
-                  'MemoryRuntime', 'ProjectionRuntime', 'GovernorRuntime'];
+    const domains = [
+      'WorkspaceRuntime', 'TaskRuntime', 'AIRuntime', 
+      'PatchRuntime', 'MemoryRuntime', 'ProjectionRuntime', 'GovernorRuntime'
+    ];
     
-    cores.forEach(domain => {
+    domains.forEach(domain => {
       this.ownershipRegistry.registerDomain(domain);
       this.domains.set(domain, null);
     });
   }
 
   private setupEventListeners() {
-    this.eventBus.on(RuntimeEvent.TransactionCommitted, (p) => {
+    this.eventBus.on(RuntimeEvent.TransactionCommitted, () => {
       this.version++;
-      this.projectionManager.updateAll(p);
-      this.governor.onTransactionCommitted(p);
     });
   }
 
-  /** ==================== 核心执行入口 ==================== */
+  /** 所有状态变更的唯一入口 */
   public async executeCommand<T = any>(command: Command): Promise<T> {
-    if (this.replaying) throw new Error('Cannot execute commands during replay');
+    if (this.replaying) {
+      throw new Error('ERR_KERNEL_REPLAY: Write operations blocked during replay');
+    }
+    if (!this.commandBus || !this.transactionManager) {
+      throw new Error('ERR_KERNEL_UNBOOTED: Call bootstrapCoreLinkages first');
+    }
 
     const commandId = `cmd_${ULID()}`;
+    let txId: string | null = null;
 
     try {
-      // 1. 安全检查
-      if (FeatureFlag.isEnabled('kernel_safety_mode') && command.riskLevel === 'high') {
-        await this.governor.validateHighRiskCommand(command);
-      }
-
-      // 2. 所有权校验（宪法核心）
+      // 所有权校验
       this.ownershipRegistry.verifyCommandOwnership(command);
 
-      // 3. Governor 资源检查
-      await this.governor.beforeCommand(command);
-
-      // 4. 事务执行
+      // 事务开启
       const tx = await this.transactionManager.begin(commandId, command.domain);
-      const result = await this.commandBus.execute(command);
-      await this.transactionManager.commit(tx.id);
+      txId = tx.id;
 
-      this.eventBus.emit(RuntimeEvent.CommandAccepted, { commandId, ...command, result });
+      const result = await this.commandBus.execute(command);
+
+      await this.transactionManager.commit(txId);
+      txId = null;
+
+      this.eventBus.emit(RuntimeEvent.CommandAccepted, { 
+        commandId, 
+        ...command, 
+        result, 
+        version: this.version 
+      });
+
       return result;
     } catch (error: any) {
-      await this.transactionManager.rollback(commandId, error);
-      this.eventBus.emit(RuntimeEvent.CommandRejected, { commandId, error: error.message });
+      if (txId && this.transactionManager) {
+        await this.transactionManager.rollback(commandId, error).catch(() => {});
+      }
+      this.eventBus.emit(RuntimeEvent.CommandRejected, { 
+        commandId, 
+        type: command.type, 
+        error: error.message 
+      });
       throw error;
     }
   }
 
-  /** ==================== Replay & Recovery ==================== */
   public async replay(events: any[]): Promise<void> {
+    if (!this.projectionManager || !this.snapshotManager) {
+      throw new Error('ERR_KERNEL_MISSING_PROJECTION');
+    }
+
     this.replaying = true;
     this.setMode(RuntimeMode.REPLAY);
-    logger.info('RuntimeKernel', `Replaying ${events.length} events...`);
 
     try {
-      for (const event of events.sort((a, b) => a.timestamp - b.timestamp)) {
+      const sorted = [...events].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+      for (const event of sorted) {
+        this.version = Math.max(this.version, event.version || 0);
         await this.projectionManager.replayEvent(event);
         await this.snapshotManager.replayEvent(event);
-        this.version = Math.max(this.version, event.version || 0);
       }
-      logger.info('RuntimeKernel', '✅ Replay completed successfully');
+      logger.info('RuntimeKernel', `✅ Replay completed, version locked at v${this.version}`);
     } finally {
       this.replaying = false;
       this.setMode(RuntimeMode.NORMAL);
     }
   }
 
-  public async createSnapshot(reason = 'manual'): Promise<string> {
-    return this.snapshotManager.createFullSnapshot(reason);
-  }
-
-  public async recover(snapshotId: string): Promise<void> {
-    this.setMode(RuntimeMode.RECOVERY);
-    await this.snapshotManager.recover(snapshotId);
-    this.setMode(RuntimeMode.NORMAL);
-  }
-
-  /** ==================== 其他方法 ==================== */
   public setMode(mode: RuntimeMode): void {
-    const old = this.mode;
+    const oldMode = this.mode;
     this.mode = mode;
-    this.eventBus.emit(RuntimeEvent.RuntimeModeChanged, { oldMode: old, mode });
+    this.eventBus.emit(RuntimeEvent.RuntimeModeChanged, { oldMode, mode });
   }
 
-  public getMode(): RuntimeMode { return this.mode; }
+  public getMode(): RuntimeMode {
+    return this.mode;
+  }
 
   public registerDomain(name: string, instance: any): void {
     this.domains.set(name, instance);
     this.ownershipRegistry.registerDomain(name);
-    logger.info('RuntimeKernel', `Domain mounted: ${name}`);
   }
 
   public async shutdown(): Promise<void> {
-    logger.info('RuntimeKernel', 'Shutting down...');
-    await this.scheduler.drain();
-    await this.snapshotManager.createFullSnapshot('shutdown');
+    logger.warn('RuntimeKernel', '🛑 Shutting down microkernel...');
+
+    if (this.scheduler) await this.scheduler.drain().catch(() => {});
+    if (this.transactionManager) await this.transactionManager.drain?.().catch(() => {});
+    if (this.snapshotManager) await this.snapshotManager.createFullSnapshot?.('shutdown').catch(() => {});
+
     this.setMode(RuntimeMode.SHUTDOWN);
-    logger.info('RuntimeKernel', 'Shutdown completed');
+    logger.info('RuntimeKernel', '✅ Kernel shutdown completed');
   }
 }
 
-// ======================== 导出 ========================
+// 单例导出（供 index.ts 使用）
 export const kernel = RuntimeKernel.getInstance();
 export default kernel;
