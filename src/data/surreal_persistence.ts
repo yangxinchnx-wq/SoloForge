@@ -32,7 +32,7 @@ export class GeminiPersistenceManager {
     executedAction: number;
   }): Promise<void> {
     const sql = `
-      CREATE type::record('marlEpisode', $id) SET 
+      CREATE type::thing('marlEpisode', $id) SET 
         traceId = $traceId, 
         episodeCount = $episodeCount, 
         cpuMetric = $cpuMetric, 
@@ -55,9 +55,8 @@ export class GeminiPersistenceManager {
     payload: string;
     timestamp: number;
   }): Promise<void> {
-    // 🛡️ 精准对齐 eventLog 专属轻量约束：没有 createdAt/updatedAt，只保留标准 timestamp 转换
     const sql = `
-      CREATE type::record('eventLog', $id) SET 
+      CREATE type::thing('eventLog', $id) SET 
         traceId = $traceId, 
         event = $event, 
         payload = $payload, 
@@ -68,10 +67,11 @@ export class GeminiPersistenceManager {
 
   /**
    * 🎯 决策表持久化：记录 RACER 引擎动态竞价流控细节
+   * traceId 为可选字段，兼容不传 traceId 的调用场景
    */
   public async commitDecision(data: {
     id: string;
-    traceId: string;
+    traceId?: string;
     selectedStrategy: string;
     strategyReason: string;
     budgetUsed: number;
@@ -82,7 +82,7 @@ export class GeminiPersistenceManager {
     aggregatedCandidates: string[];
   }): Promise<void> {
     const sql = `
-      CREATE type::record('decision', $id) SET 
+      CREATE type::thing('decision', $id) SET 
         traceId = $traceId, 
         selectedStrategy = $selectedStrategy, 
         strategyReason = $strategyReason, 
@@ -100,6 +100,41 @@ export class GeminiPersistenceManager {
   }
 
   /**
+   * 🔒 乐观并发锁更新：仅当记录当前版本号与 currentVersion 完全匹配时才允许写入
+   * 版本不匹配时抛出 ERR_OPTIMISTIC_LOCK_FAILED，防止并发覆盖
+   */
+  public async updateDecisionWithOptimisticLock(
+    id: string,
+    currentVersion: number,
+    patch: Partial<{
+      selectedStrategy: string;
+      strategyReason: string;
+      budgetUsed: number;
+      budgetLimit: number;
+      confidenceTier: string;
+      subsetSize: number;
+      aggregationMethod: string;
+      aggregatedCandidates: string[];
+    }>
+  ): Promise<void> {
+    const sql = `
+      UPDATE type::thing('decision', $id)
+        SET ${Object.keys(patch).map(k => `${k} = $${k}`).join(', ')}, version = $currentVersion + 1, updatedAt = time::now()
+        WHERE version = $currentVersion;
+    `;
+    const bindings = { id, currentVersion, ...patch };
+    const result = await this.driver.query(sql, bindings);
+
+    // SurrealDB 行为：WHERE 条件未命中时返回空数组 — 视为乐观锁冲突
+    if (!result[0] || result[0].length === 0) {
+      throw new Error(
+        `ERR_OPTIMISTIC_LOCK_FAILED: Record [decision:${id}] version mismatch. ` +
+        `Expected version=${currentVersion}, record may have been modified by another transaction.`
+      );
+    }
+  }
+
+  /**
    * ⚖️ 司法表持久化：记录一审盲审与大模型终审决议卷宗
    */
   public async commitCourtSubmission(data: {
@@ -114,7 +149,7 @@ export class GeminiPersistenceManager {
     escalationReason: string;
   }): Promise<void> {
     const sql = `
-      CREATE type::record('courtSubmission', $id) SET 
+      CREATE type::thing('courtSubmission', $id) SET 
         traceId = $traceId, 
         phase = $phase, 
         phase1Deadline = time::from_unix($phase1Deadline),
