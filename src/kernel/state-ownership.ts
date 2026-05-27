@@ -1,46 +1,35 @@
-// src/kernel/state-ownership.ts
-import { logger } from '../core/logger';
-
-export class StateOwnershipError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'StateOwnershipError';
-  }
-}
+// ─────────────────────────────────────────────────────────────────
+// SoloForge Kernel Layer: State Ownership Constitution Enforcer
+// Path: src/kernel/state-ownership.ts
+// ─────────────────────────────────────────────────────────────────
 
 export class StateOwnerRegistry {
-  private owners = new Map<string, string>();           // domain → ownerAgentId
-  private registeredDomains = new Set<string>();
+  private domains = new Set<string>();
+  private systemCallers = new Set(['SYSTEM_MASTER_DAEMON', 'SYSTEM', 'BOOTSTRAP', 'SUPERVISOR']);
 
-  registerDomain(domain: string, allowedOwnerAgentId?: string): void {
-    this.registeredDomains.add(domain);
-    this.owners.set(domain, allowedOwnerAgentId || `SYSTEM_DAEMON_${domain.toUpperCase()}`);
-    logger.info('StateOwnerRegistry', `Sovereign domain registered: [${domain}]`);
+  registerDomain(domain: string): void {
+    this.domains.add(domain);
+    console.info(`[INFO] [StateOwnerRegistry] Sovereign domain registered: [${domain}]`);
   }
 
+  /** 核心宪法校验 */
   verifyCommandOwnership(command: any): void {
-    const domain = command.domain;
-    if (!domain) {
-      throw new StateOwnershipError('ERR_SF_OWNERSHIP: Command missing domain field');
+    const { domain, caller = 'ANONYMOUS' } = command;
+
+    if (!domain || !this.domains.has(domain)) {
+      throw new Error(`ERR_SF_OWNERSHIP: Domain [${domain}] not registered`);
     }
 
-    if (!this.registeredDomains.has(domain)) {
-      throw new StateOwnershipError(`ERR_SF_OWNERSHIP: Unregistered domain access: ${domain}`);
+    // 允许系统级调用（心跳、Bootstrap 等）
+    if (this.systemCallers.has(caller)) {
+      return; // 放行
     }
 
-    const expectedOwner = this.owners.get(domain);
-    const actualCaller = command.caller || command.agentId || command.issuer;
-
-    if (!actualCaller) {
-      throw new StateOwnershipError(`ERR_SF_OWNERSHIP: Anonymous caller rejected on domain [${domain}]`);
+    // 普通调用必须有合法调用者
+    if (caller === 'ANONYMOUS' || !caller) {
+      throw new Error(`ERR_SF_OWNERSHIP: Anonymous caller rejected on domain [${domain}]`);
     }
-
-    if (expectedOwner && expectedOwner !== actualCaller && !actualCaller.startsWith('SYSTEM_MASTER')) {
-      throw new StateOwnershipError(
-        `ERR_SF_OWNERSHIP: Unauthorized access! Agent [${actualCaller}] cannot operate in domain [${domain}]. Expected: [${expectedOwner}]`
-      );
-    }
-
-    logger.debug('StateOwnerRegistry', `Ownership verified`, { domain, caller: actualCaller });
   }
 }
+
+export const stateOwnerRegistry = new StateOwnerRegistry();

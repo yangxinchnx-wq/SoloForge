@@ -1,5 +1,9 @@
-// src/kernel/transaction-manager.ts
-import { ULID } from 'ulid';
+// ─────────────────────────────────────────────────────────────────
+// SoloForge Kernel Layer: Hardened Transaction Manager Engine
+// Path: src/kernel/transaction-manager.ts
+// ─────────────────────────────────────────────────────────────────
+
+import { ulid } from 'ulid'; // 🔒 强行校正为小写官方导出
 import { logger } from '../core/logger';
 import { RuntimeKernel } from './runtime-kernel';
 import { RuntimeEvent } from '../core/events/runtime-events';
@@ -15,9 +19,9 @@ export class TransactionManager {
 
   constructor(private kernel: RuntimeKernel) {}
 
-  async begin(commandId: string, domain: string, initialPayload?: any) {
+  public async begin(commandId: string, domain: string, initialPayload?: any) {
     const tx = {
-      id: `tx_${ULID()}`,
+      id: `tx_${ulid()}`, // 🔒 强行校正为小写函数调用
       commandId,
       domain,
       startedAt: Date.now(),
@@ -28,7 +32,7 @@ export class TransactionManager {
     return tx;
   }
 
-  async commit(txId: string): Promise<void> {
+  public async commit(txId: string): Promise<void> {
     const tx = this.activeTransactions.get(txId);
     if (!tx) {
       throw new Error(`ERR_SF_TX: Transaction ${txId} not found or already committed`);
@@ -36,7 +40,6 @@ export class TransactionManager {
 
     this.activeTransactions.delete(txId);
 
-    // 关键修复：必须在这里发射事件，激活内核版本钟和投影系统
     this.kernel.eventBus.emit(RuntimeEvent.TransactionCommitted, {
       txId: tx.id,
       commandId: tx.commandId,
@@ -49,9 +52,8 @@ export class TransactionManager {
     logger.debug('TransactionManager', `Transaction committed successfully`, { txId });
   }
 
-  async rollback(commandId: string, error: any): Promise<void> {
+  public async rollback(commandId: string, error: any): Promise<void> {
     logger.warn('TransactionManager', `Rollback triggered`, { commandId, cause: error?.message });
-
     for (const [txId, tx] of this.activeTransactions.entries()) {
       if (tx.commandId === commandId) {
         this.activeTransactions.delete(txId);
@@ -64,7 +66,7 @@ export class TransactionManager {
     }
   }
 
-  async drain(): Promise<void> {
+  public async drain(): Promise<void> {
     this.activeTransactions.clear();
   }
 }

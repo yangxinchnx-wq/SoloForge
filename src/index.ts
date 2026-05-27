@@ -30,7 +30,7 @@ class SoloForgePureSupervisor {
       const tester = net.createServer();
       tester.once('error', (err: any) => {
         if (err.code === 'EADDRINUSE') {
-          logger.error('Supervisor', `💥 端口 ${this.DB_PORT} 已被占用，启动终止。`);
+          logger.error('Supervisor', `💥 端口 ${this.DB_PORT} 已被占用`);
           resolve(false);
         }
       });
@@ -94,10 +94,9 @@ class SoloForgePureSupervisor {
           }
         }
 
-        // 统一组装入口
         const { bootstrapSystemNetwork } = await import('./bootstrap').catch(() => ({
           bootstrapSystemNetwork: async (k: any) => {
-            logger.warn('Bootstrap', 'bootstrap.ts 尚未创建，使用轻量兜底装配');
+            logger.warn('Bootstrap', '使用轻量兜底装配');
             k.bootstrapCoreLinkages({
               commandBus: { execute: async (cmd: any) => ({ success: true, cmd }) },
               transactionManager: { begin: async () => ({ id: 'tx' }), commit: async () => {}, rollback: async () => {}, drain: async () => {} },
@@ -128,19 +127,24 @@ class SoloForgePureSupervisor {
       this.telemetryCycles++;
 
       try {
-        await this.kernel.executeCommand({
-          type: 'SYS_HEARTBEAT',
-          domain: 'WorkspaceRuntime',        // 当前最安全的域
-          payload: {
-            tickId: this.telemetryCycles,
-            timestamp: Date.now()
-          }
-        });
-        logger.debug('Supervisor', `❤️ 心跳 #${this.telemetryCycles} 已送达`);
+        await Promise.race([
+          this.kernel.executeCommand({
+            type: 'SYS_HEARTBEAT',
+            domain: 'WorkspaceRuntime',
+            caller: 'SYSTEM_MASTER_DAEMON',   // 关键修复
+            payload: {
+              tickId: this.telemetryCycles,
+              timestamp: Date.now()
+            }
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('HEARTBEAT_TIMEOUT')), 1000))
+        ]);
+
+        logger.info('Supervisor', `❤️ 心跳 #${this.telemetryCycles} 执行成功`);
       } catch (err: any) {
-        logger.error('Supervisor', `心跳异常 #${this.telemetryCycles}`, err);
+        logger.error('Supervisor', `💥 心跳异常 #${this.telemetryCycles}`, { error: err.message });
         this.kernel.setMode(RuntimeMode.RECOVERY);
-        setTimeout(() => this.kernel.setMode(RuntimeMode.NORMAL), 2500);
+        setTimeout(() => this.kernel.setMode(RuntimeMode.NORMAL), 2000);
       }
     };
 
@@ -159,7 +163,7 @@ class SoloForgePureSupervisor {
       if (this.surrealRawClient) await this.surrealRawClient.close();
       if (this.databaseProcess) this.databaseProcess.kill();
     } catch (e) {
-      logger.error('Supervisor', '关闭错误', e);
+      logger.error('Supervisor', '关闭时发生错误', e);
     }
 
     logger.info('Supervisor', '✅ SoloForge 安全退出');
