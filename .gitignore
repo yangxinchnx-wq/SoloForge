@@ -11,3 +11,22 @@ __pycache__/
 *.pyc
 .next/
 coverage/
+
+# Rust
+rust_core/target/
+**/target/
+Cargo.lock
+*.rs.bk
+
+# Rust tooling
+.fleet/
+.rustup/
+flycheck*
+
+# Runtime temp files
+*.tmp
+*.temp
+*.cache
+
+# OS / editor
+Thumbs.db
