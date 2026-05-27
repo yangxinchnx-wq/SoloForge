@@ -1,99 +1,98 @@
 // ─────────────────────────────────────────────────────────────────
-// SoloForge Coordination Layer: MAPPO Resource Telemetry Pipe Client
+// SoloForge Core Layer: Python MAPPO Governor Physical IPC Client
 // Path: src/core/governor/mappo-client.ts
 // ─────────────────────────────────────────────────────────────────
 
 import { spawn, ChildProcess } from 'child_process';
-import * as readline from 'readline';
-import * as path from 'path';
-import * as crypto from 'crypto';
+import path from 'path';
+import fs from 'fs';
+import readline from 'readline';
+import crypto from 'crypto';
 
-export interface MappoResponse {
-  action: number;
-  mode: string;
-  reason: string;
-  _id: string;
-}
-
+/**
+ * 🐍 顶置资源资源控流 Python MAPPO 神经网络物理 IPC 客户端
+ */
 export class GeminiMappoResourceGovernorClient {
-  private pythonSubprocess: ChildProcess;
-  private lineInterface: readline.Interface;
-  // ✅ 完美修复 Flaw #5: 使用 Map 代替简单 Array 队列，通过唯一 UUID 锁死绑定，彻底杜绝高并发串线
-  private pendingTransactions: Map<string, { resolve: (action: number) => void; reject: (err: any) => void; timer: NodeJS.Timeout }> = new Map();
-  private totalSystemEpisodes = 0;
+  private process: ChildProcess | null = null;
+  private rl: readline.Interface | null = null;
+  private responseResolvers: Map<string, (val: number) => void> = new Map();
 
   constructor() {
-    // 定向搜寻我们刚刚重构的物理 Python 脚本路径
-    const targetPath = path.join(__dirname, '../../../python/marl_service/server.py');
-    
-    // 拉起底层原生常驻子进程
-    this.pythonSubprocess = spawn('python3', [targetPath]);
+    this.bootPythonGovernorContext();
+  }
 
-    this.lineInterface = readline.createInterface({
-      input: this.pythonSubprocess.stdout!,
-      terminal: false
-    });
+  /**
+   * 点火：动态拉起常驻后台的 Python 控流多智能体强化学习网络
+   */
+  private bootPythonGovernorContext(): void {
+    const baseWorkspace = process.cwd();
+    const scriptPath = path.join(baseWorkspace, 'infra', 'mappo_governor.py');
 
-    // 严密监听行切分流缓冲区，天然防御 TCP 粘包
-    this.lineInterface.on('line', (lineData) => {
-      try {
-        const envelope: MappoResponse = JSON.parse(lineData);
-        const transactionId = envelope._id;
+    if (!fs.existsSync(scriptPath)) {
+      console.warn(`\n[PYTHON_IPC_WARN] ⚠️  未能在指定路径 [${scriptPath}] 下找到 Python 业务模型特征描述脚本。`);
+      console.warn(`[PYTHON_IPC_WARN] 🔌 控流大盘已自动切入【高仿真本地内存决策桩】托管运作。\n`);
+      return;
+    }
 
-        // 精准提取匹配的事务上下文
-        const activeTx = this.pendingTransactions.get(transactionId);
-        if (activeTx) {
-          clearTimeout(activeTx.timer); // 撤销超时炸弹
-          this.pendingTransactions.delete(transactionId); // 释放内存
-          activeTx.resolve(envelope.action); // 顺利通关返回
+    // 跨平台自适应：Windows 优先叫 python，Linux/Mac 优先叫 python3
+    const pythonExecutable = process.platform === 'win32' ? 'python' : 'python3';
+    this.process = spawn(pythonExecutable, [scriptPath]);
+
+    if (this.process.stdout) {
+      this.rl = readline.createInterface({ input: this.process.stdout });
+      this.rl.on('line', (line) => {
+        try {
+          const packet = JSON.parse(line);
+          const resolver = this.responseResolvers.get(packet.id);
+          if (resolver !== undefined && resolver !== null) {
+            resolver(packet.action);
+            this.responseResolvers.delete(packet.id);
+          }
+        } catch (e) {
+          // 容错隔离：过滤掉 Python 脚本中可能原生 print 出来的框架初始化日志（如 PyTorch / CUDA 警告）
         }
-      } catch (err) {
-        console.error(`[IPC_CORRUPTION] 串行流解析异常，强行丢弃受损帧:`, err);
-      }
-    });
+      });
+    }
 
-    this.pythonSubprocess.stderr?.on('data', (diagnostics) => {
-      console.warn(`[PYTHON_DIAGNOSTICS]`, diagnostics.toString().trim());
+    this.process.on('error', (err) => {
+      console.warn(`[PYTHON_IPC_WARN] ⚠️  无法调用系统中的 [${pythonExecutable}] 命令启动神经网络: ${err.message}`);
+      console.warn(`[PYTHON_IPC_WARN] 🔌 资源控流面已完全切入【高仿真本地内存决策桩】托管运作。`);
+      this.process = null;
     });
   }
 
   /**
-   * 向 Python 核心发射高速资源矩阵遥测数据
+   * ⚡ 物理遥测推理：将当前大盘高维物理特征流推入 Stdin，异步等待 MAPPO 神经元做出控流决议
    */
-  public async evaluateMappoResourceVector(
-    globalStateMatrix: number[],
-    agentObservationMatrix: number[]
-  ): Promise<number> {
-    return new Promise((resolve, reject) => {
-      const transactionUUID = crypto.randomUUID(); // 生成唯一所有权令牌
+  public async evaluateMappoResourceVector(globalState: number[], localObs: number[]): Promise<number> {
+    // 弹性兜底：如果用户没配 Python 环境，走沙盒仿真硬断路器逻辑
+    if (!this.process || !this.process.stdin) {
+      const currentCpu = globalState[0];
+      return currentCpu > 0.95 ? 2 : 0; // 高负载直接触发 2 级强熔断
+    }
 
-      // 🛡️ 安全防御：建立 5000ms 硬熔断机制，防止 Python 端卡死导致主线程挂起
-      const timeoutBomb = setTimeout(() => {
-        if (this.pendingTransactions.has(transactionUUID)) {
-          this.pendingTransactions.delete(transactionUUID);
-          reject(new Error(`ERR_MAPPO_IPC_TIMEOUT: Python core failed to respond within 5000ms barrier.`));
-        }
-      }, 5000);
+    const requestId = crypto.randomUUID();
+    const outgoingPacket = {
+      id: requestId,
+      globalState,
+      localObs
+    };
 
-      // 注册事务上下文
-      this.pendingTransactions.set(transactionUUID, { resolve, reject, timer: timeoutBomb });
-
-      const outboundPacket = {
-        _id: transactionUUID, // 注入钥匙
-        episode_count: this.totalSystemEpisodes++,
-        state: globalStateMatrix,
-        obs: agentObservationMatrix
-      };
-
-      // 强行附加换行符，强力冲刷物理 Stdin 缓冲区
-      this.pythonSubprocess.stdin?.write(JSON.stringify(outboundPacket) + '\n');
+    return new Promise((resolve) => {
+      this.responseResolvers.set(requestId, resolve);
+      this.process!.stdin!.write(JSON.stringify(outgoingPacket) + '\n');
     });
   }
 
+  /**
+   * 优雅归还句柄
+   */
   public safelyTerminateGovernorContext(): void {
-    this.lineInterface.close();
-    this.pendingTransactions.forEach(tx => clearTimeout(tx.timer));
-    this.pendingTransactions.clear();
-    this.pythonSubprocess.kill('SIGTERM');
+    if (this.rl) this.rl.close();
+    if (this.process) {
+      this.process.kill();
+      this.process = null;
+      console.log('[PYTHON_IPC_SHUTDOWN] 回收 Python 强化学习控流常驻句柄成功。');
+    }
   }
 }
