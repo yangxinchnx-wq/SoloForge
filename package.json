@@ -7,6 +7,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "tsx": "^4.22.3",
     "vitest": "^4.1.7"
   },

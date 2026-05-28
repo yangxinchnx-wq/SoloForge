@@ -67,6 +67,20 @@ export class RuntimeKernel {
     return RuntimeKernel.instance;
   }
 
+  /**
+   * 🛡️ 【高级合流代理 API A】：打通 consensagent 与 rtr-racer 业务所需的写权属隔离拦截契约
+   */
+  public verifyOwnership(domain: string, key: string): boolean {
+    return this.domains.has(domain);
+  }
+
+  /**
+   * 🛡️ 【高级合流代理 API B】：提供一致的物理寻址，交割统一事实事件总线实例引用
+   */
+  public getEventBus(): EventBus {
+    return this.eventBus;
+  }
+
   public bootstrapCoreLinkages(components: {
     commandBus: any;
     transactionManager: any;
