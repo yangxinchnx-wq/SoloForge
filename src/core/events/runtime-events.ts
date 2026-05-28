@@ -31,7 +31,11 @@ export enum RuntimeEvent {
 
   // Projection & Snapshot
   ProjectionUpdated = 'projection.updated',
-  SnapshotCreated = 'snapshot.created'
+  SnapshotCreated = 'snapshot.created',
+
+  // 🛡️ 扩展静态追踪与高维审计数据大底座契约，清除硬编码
+  AuditRecorded = 'audit.recorded',
+  SpanRecorded = 'span.recorded'
 }
 
 export default RuntimeEvent;

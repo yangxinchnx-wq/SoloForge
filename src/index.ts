@@ -10,10 +10,15 @@ import net from 'net';
 import { Surreal } from 'surrealdb';
 
 import { kernel, RuntimeMode } from './kernel/runtime-kernel';
+import { ComponentRegistry } from './kernel/registry';
+import { RuntimeWatchdog } from './kernel/watchdog';
 import { logger } from './core/logger';
 
 class SoloForgePureSupervisor {
   private readonly kernel = kernel;
+  private registry = ComponentRegistry.getInstance();
+  private watchdog = RuntimeWatchdog.getInstance();
+
   private surrealRawClient: Surreal | null = null;
   private databaseProcess: ChildProcess | null = null;
   private pollingTimer: NodeJS.Timeout | null = null;
@@ -97,18 +102,14 @@ class SoloForgePureSupervisor {
         const { bootstrapSystemNetwork } = await import('./bootstrap').catch(() => ({
           bootstrapSystemNetwork: async (k: any) => {
             logger.warn('Bootstrap', '使用轻量兜底装配');
-            k.bootstrapCoreLinkages({
-              commandBus: { execute: async (cmd: any) => ({ success: true, cmd }) },
-              transactionManager: { begin: async () => ({ id: 'tx' }), commit: async () => {}, rollback: async () => {}, drain: async () => {} },
-              projectionManager: { updateAll: () => {}, replayEvent: async () => {} },
-              snapshotManager: { createFullSnapshot: async () => 'snap', recover: async () => {}, replayEvent: async () => {} },
-              scheduler: { drain: async () => {} }
-            });
           }
         }));
 
         await bootstrapSystemNetwork(this.kernel, this.surrealRawClient);
-        logger.info('Supervisor', '✅ SoloForge 纯净看门狗基础设施就绪');
+
+        this.watchdog.start({ tickIntervalMs: 5000 });
+
+        logger.info('Supervisor', '✅ SoloForge 纯净看门狗基础设施与流控自愈集群就绪');
         return;
       } catch (err) {
         retries--;
@@ -131,7 +132,7 @@ class SoloForgePureSupervisor {
           this.kernel.executeCommand({
             type: 'SYS_HEARTBEAT',
             domain: 'WorkspaceRuntime',
-            caller: 'SYSTEM_MASTER_DAEMON',   // 关键修复
+            caller: 'SYSTEM_MASTER_DAEMON',
             payload: {
               tickId: this.telemetryCycles,
               timestamp: Date.now()
@@ -140,7 +141,14 @@ class SoloForgePureSupervisor {
           new Promise((_, reject) => setTimeout(() => reject(new Error('HEARTBEAT_TIMEOUT')), 1000))
         ]);
 
-        logger.info('Supervisor', `❤️ 心跳 #${this.telemetryCycles} 执行成功`);
+        const healthSnapshot = this.registry.getGlobalHealthSnapshotSync();
+        const bpMetrics = this.registry.getBackpressureManager().getMetrics();
+
+        logger.info(
+          'Supervisor',
+          `❤️ 心跳 #${this.telemetryCycles} 执行成功 | 内核事实源: v${this.kernel.version} | ` +
+          `限流层级: ${bpMetrics.pressureLevel} (免检隐式格: ${healthSnapshot.implicitHealthyComponents})`
+        );
       } catch (err: any) {
         logger.error('Supervisor', `💥 心跳异常 #${this.telemetryCycles}`, { error: err.message });
         this.kernel.setMode(RuntimeMode.RECOVERY);
@@ -159,6 +167,7 @@ class SoloForgePureSupervisor {
     if (this.pollingTimer) clearInterval(this.pollingTimer);
 
     try {
+      this.watchdog.shutdown();
       await this.kernel.shutdown();
       if (this.surrealRawClient) await this.surrealRawClient.close();
       if (this.databaseProcess) this.databaseProcess.kill();
