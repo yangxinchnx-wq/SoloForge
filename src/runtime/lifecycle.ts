@@ -22,7 +22,7 @@ export interface HealthReport {
 export interface RuntimeComponent {
   readonly id: string;
   phase: RuntimePhase;
-  
+
   start(): Promise<void>;
   stop(): Promise<void>;
   health(): Promise<HealthReport>;

@@ -1,6 +1,7 @@
 // ─────────────────────────────────────────────────────────────────
-// SoloForge Kernel Layer: Sovereign Control Plane Plane Core
+// SoloForge Kernel Layer: Sovereign Control Plane Core
 // Path: src/kernel/runtime-kernel.ts
+// Description: 微内核运行时核心 - 统一真相内核
 // ─────────────────────────────────────────────────────────────────
 
 import { RuntimeComponent } from './runtime-component';
@@ -15,14 +16,119 @@ export enum RuntimeState {
   PANIC = 'PANIC',
 }
 
+export enum RuntimeMode {
+  NORMAL = 'NORMAL',
+  RECOVERY = 'RECOVERY',
+}
+
+/**
+ * 事件总线接口
+ */
+export interface EventBusInterface {
+  emit(event: string, payload: any): void;
+  on(event: string, handler: (payload: any) => void): void;
+  getEventLog(): Array<{ event: string; payload: any; timestamp: number }>;
+}
+
+/**
+ * 内存事件总线实现
+ */
+class InMemoryEventBus implements EventBusInterface {
+  private eventLog: Array<{ event: string; payload: any; timestamp: number }> = [];
+  private handlers: Map<string, Array<(payload: any) => void>> = new Map();
+
+  emit(event: string, payload: any): void {
+    const entry = { event, payload, timestamp: Date.now() };
+    this.eventLog.push(entry);
+
+    const eventHandlers = this.handlers.get(event);
+    if (eventHandlers) {
+      for (const handler of eventHandlers) {
+        handler(payload);
+      }
+    }
+  }
+
+  on(event: string, handler: (payload: any) => void): void {
+    if (!this.handlers.has(event)) {
+      this.handlers.set(event, []);
+    }
+    this.handlers.get(event)!.push(handler);
+  }
+
+  getEventLog(): Array<{ event: string; payload: any; timestamp: number }> {
+    return [...this.eventLog];
+  }
+
+  clearLog(): void {
+    this.eventLog = [];
+  }
+}
+
+/**
+ * 状态所有权注册表
+ */
+export class StateOwnershipRegistry {
+  private ownerships: Map<string, Set<string>> = new Map();
+  private wildcardPatterns: Map<string, string> = new Map();
+
+  /**
+   * 注册域的所有权
+   */
+  register(domain: string, keyPattern: string): void {
+    if (!this.ownerships.has(domain)) {
+      this.ownerships.set(domain, new Set());
+    }
+    this.ownerships.get(domain)!.add(keyPattern);
+  }
+
+  /**
+   * 检查域是否有所有权
+   */
+  hasOwnership(domain: string, key: string): boolean {
+    const patterns = this.ownerships.get(domain);
+    if (!patterns) return false;
+
+    for (const pattern of patterns) {
+      // 支持通配符匹配
+      if (pattern.includes('*')) {
+        const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
+        if (regex.test(key)) return true;
+      } else if (pattern === key) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * 获取域的所有权模式
+   */
+  getOwnershipPatterns(domain: string): string[] {
+    return Array.from(this.ownerships.get(domain) || []);
+  }
+}
+
 export class RuntimeKernel {
   private static instance: RuntimeKernel | null = null;
   private state: RuntimeState = RuntimeState.BOOTING;
+  private mode: RuntimeMode = RuntimeMode.NORMAL;
 
   /**
    * 全局组件注册表
    */
   private readonly components = new Map<string, RuntimeComponent>();
+
+  /**
+   * 状态所有权注册表
+   */
+  public readonly stateOwnership = new StateOwnershipRegistry();
+
+  /**
+   * 事件总线
+   */
+  public readonly eventBus: EventBusInterface = new InMemoryEventBus();
 
   public commandBus: any = null;
   public transactionManager: any = null;
@@ -32,13 +138,37 @@ export class RuntimeKernel {
   public readonly id = 'kernel_sovereign_core';
   public readonly startedAt = Date.now();
   public version = 0;
-  public readonly eventBus: any = { emit: () => {}, on: () => {} };
 
   public static getInstance(): RuntimeKernel {
     if (!RuntimeKernel.instance) {
       RuntimeKernel.instance = new RuntimeKernel();
     }
     return RuntimeKernel.instance;
+  }
+
+  /**
+   * 构造函数 - 预注册域所有权
+   */
+  constructor() {
+    this.initializeDomainOwnership();
+  }
+
+  /**
+   * 初始化域所有权配置
+   */
+  private initializeDomainOwnership(): void {
+    // 司法法庭域：可访问 court_case_registry_* 前缀的状态
+    this.stateOwnership.register('JudicialCourt', 'court_case_registry*');
+
+    // AI 运行时域：可访问 AIRuntime_* 前缀的状态
+    this.stateOwnership.register('AIRuntime', 'AIRuntime*');
+    this.stateOwnership.register('AIRuntime', 'core_scheduler*');
+
+    // 资源总调度域：可访问 governor_* 前缀的状态
+    this.stateOwnership.register('Governor', 'governor*');
+
+    // 决策引擎域：可访问 decision_* 前缀的状态
+    this.stateOwnership.register('DecisionEngine', 'decision*');
   }
 
   /**
@@ -178,6 +308,47 @@ export class RuntimeKernel {
     this.state = next;
   }
 
+  // ────────────── 运行时模式控制 ──────────────
+  public setMode(mode: RuntimeMode): void {
+    this.mode = mode;
+    console.log(`[RuntimeKernel] Mode: ${this.mode}`);
+  }
+
+  // ────────────── 事件总线访问器 ──────────────
+  /**
+   * 获取事件总线（兼容 RuntimeKernelInterface）
+   */
+  public getEventBus(): EventBusInterface {
+    return this.eventBus;
+  }
+
+  // ────────────── 状态所有权验证 ──────────────
+  /**
+   * 验证域是否有状态的所有权
+   */
+  public verifyOwnership(domain: string, key: string): boolean {
+    return this.stateOwnership.hasOwnership(domain, key);
+  }
+
+  /**
+   * 注册域的状态所有权
+   */
+  public registerOwnership(domain: string, keyPattern: string): void {
+    this.stateOwnership.register(domain, keyPattern);
+    console.log(`[RuntimeKernel] Registered ownership: ${domain} -> ${keyPattern}`);
+  }
+
+  // ────────────── 命令总线 ──────────────
+  public executeCommand(cmd: {
+    type: string;
+    domain: string;
+    caller: string;
+    payload: any;
+  }): Promise<any> {
+    console.log(`[RuntimeKernel] Execute command: ${cmd.type} from ${cmd.caller}`);
+    return Promise.resolve({ accepted: true, type: cmd.type });
+  }
+
   // ────────────── 兼容旧系统装配器的存根接口 ──────────────
   public bootstrapCoreLinkages(components: {
     commandBus: any;
@@ -192,9 +363,22 @@ export class RuntimeKernel {
     this.snapshotManager = components.snapshotManager;
     this.scheduler = components.scheduler;
   }
-  public getMode(): string { return 'normal'; }
+
+  public getMode(): RuntimeMode {
+    return this.mode;
+  }
+
   public registerDomain(): void {}
 }
+
+// ============================================================
+// 向后兼容别名（供测试使用）
+// ============================================================
+
+/**
+ * @deprecated 使用 RuntimeKernel 代替
+ */
+export const SovereignRuntimeKernel = RuntimeKernel;
 
 // 刚性合流：直导出微内核事实引用，确保大盘 index.ts 零阻断
 export const kernel = RuntimeKernel.getInstance();

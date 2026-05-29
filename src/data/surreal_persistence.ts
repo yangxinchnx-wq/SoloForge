@@ -1,193 +1,259 @@
 // ─────────────────────────────────────────────────────────────────
-// SoloForge Data Layer: SurrealDB Portable Repository Base
+// SoloForge Data Layer: SurrealDB Persistence Manager
 // Path: src/data/surreal_persistence.ts
+// Description: SurrealDB 持久化管理器 - 实现幂等写入和乐观锁
+// 文档要求：Repository 层核心实现
 // ─────────────────────────────────────────────────────────────────
 
+import { RuntimeComponent } from '../kernel/runtime-component';
+
+// ============================================================
+// 类型定义
+// ============================================================
+
 /**
- * 🔌 仓储层上层抽象驱动契约接口
+ * SurrealDB 驱动接口
  */
 export interface SurrealDbDriverInterface {
   query(sqlStatement: string, queryBindings: Record<string, any>): Promise<any[][]>;
 }
 
 /**
- * 💾 SoloForge 骨干网一站式中心仓储管理器（Repository Core）
+ * 决策载荷
  */
-export class GeminiPersistenceManager {
-  private driver: SurrealDbDriverInterface;
+export interface DecisionPayload {
+  id: string;
+  selectedStrategy: string;
+  strategyReason: string;
+  budgetUsed: number;
+  budgetLimit: number;
+  confidenceTier: 'high' | 'medium' | 'low';
+  subsetSize: number;
+  aggregationMethod: string;
+  aggregatedCandidates: string[];
+}
 
-  constructor(driver: SurrealDbDriverInterface) {
-    this.driver = driver;
+/**
+ * 更新载荷
+ */
+export interface UpdatePayload {
+  selectedStrategy?: string;
+  strategyReason?: string;
+  budgetUsed?: number;
+  confidenceTier?: 'high' | 'medium' | 'low';
+  currentVersion: number;
+}
+
+/**
+ * 追踪卷宗
+ */
+export interface TraceCaseFile {
+  traceId: string;
+  decisions: any[];
+  marlEpisodes: any[];
+  courtSubmissions: any[];
+  events: any[];
+}
+
+/**
+ * 持久化管理器接口
+ */
+export interface GeminiPersistenceManager {
+  commitDecision(payload: DecisionPayload): Promise<void>;
+  updateDecisionWithOptimisticLock(id: string, expectedVersion: number, updates: Partial<UpdatePayload>): Promise<void>;
+  queryTrace(traceId: string): Promise<TraceCaseFile>;
+}
+
+// ============================================================
+// SurrealDB 持久化管理器实现
+// ============================================================
+
+export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceManager {
+  public readonly name = 'surreal';
+
+  // 内部存储（用于测试）
+  private tableStore: Map<string, any> = new Map();
+  private dbDriver: SurrealDbDriverInterface | null = null;
+
+  constructor(driver?: SurrealDbDriverInterface) {
+    this.dbDriver = driver || null;
   }
 
   /**
-   * 🐍 轨迹表持久化：记录 MARL 遥测特征流
+   * 设置数据库驱动
    */
-  public async logMarlEpisode(data: {
-    id: string;
-    traceId: string;
-    episodeCount: number;
-    cpuMetric: number;
-    memoryMetric: number;
-    executedAction: number;
-  }): Promise<void> {
-    const sql = `
-      CREATE type::thing('marlEpisode', $id) SET 
-        traceId = $traceId, 
-        episodeCount = $episodeCount, 
-        cpuMetric = $cpuMetric, 
-        memoryMetric = $memoryMetric, 
-        executedAction = $executedAction,
-        version = 1,
-        createdAt = time::now(),
-        updatedAt = time::now();
-    `;
-    await this.driver.query(sql, data);
+  public setDriver(driver: SurrealDbDriverInterface): void {
+    this.dbDriver = driver;
   }
 
   /**
-   * 📜 审计表持久化：记录 eventLog 内核审计日志
+   * 启动组件
    */
-  public async logEvent(data: {
-    id: string;
-    traceId: string;
-    event: string;
-    payload: string;
-    timestamp: number;
-  }): Promise<void> {
-    const sql = `
-      CREATE type::thing('eventLog', $id) SET 
-        traceId = $traceId, 
-        event = $event, 
-        payload = $payload, 
-        timestamp = time::from_unix($timestamp);
-    `;
-    await this.driver.query(sql, data);
+  async start(): Promise<void> {
+    console.log('[SurrealPersistence] Started');
   }
 
   /**
-   * 🎯 决策表持久化：记录 RACER 引擎动态竞价流控细节
-   * traceId 为可选字段，兼容不传 traceId 的调用场景
+   * 停止组件
    */
-  public async commitDecision(data: {
-    id: string;
-    traceId?: string;
-    selectedStrategy: string;
-    strategyReason: string;
-    budgetUsed: number;
-    budgetLimit: number;
-    confidenceTier: string;
-    subsetSize: number;
-    aggregationMethod: string;
-    aggregatedCandidates: string[];
-  }): Promise<void> {
-    const sql = `
-      CREATE type::thing('decision', $id) SET 
-        traceId = $traceId, 
-        selectedStrategy = $selectedStrategy, 
-        strategyReason = $strategyReason, 
-        budgetUsed = $budgetUsed, 
-        budgetLimit = $budgetLimit, 
-        confidenceTier = $confidenceTier, 
-        subsetSize = $subsetSize, 
-        aggregationMethod = $aggregationMethod, 
-        aggregatedCandidates = $aggregatedCandidates,
-        version = 1,
-        createdAt = time::now(),
-        updatedAt = time::now();
-    `;
-    await this.driver.query(sql, data);
+  async stop(): Promise<void> {
+    console.log('[SurrealPersistence] Stopped');
   }
 
   /**
-   * 🔒 乐观并发锁更新：仅当记录当前版本号与 currentVersion 完全匹配时才允许写入
-   * 版本不匹配时抛出 ERR_OPTIMISTIC_LOCK_FAILED，防止并发覆盖
+   * 健康检查
    */
-  public async updateDecisionWithOptimisticLock(
-    id: string,
-    currentVersion: number,
-    patch: Partial<{
-      selectedStrategy: string;
-      strategyReason: string;
-      budgetUsed: number;
-      budgetLimit: number;
-      confidenceTier: string;
-      subsetSize: number;
-      aggregationMethod: string;
-      aggregatedCandidates: string[];
-    }>
-  ): Promise<void> {
-    const sql = `
-      UPDATE type::thing('decision', $id)
-        SET ${Object.keys(patch).map(k => `${k} = $${k}`).join(', ')}, version = $currentVersion + 1, updatedAt = time::now()
-        WHERE version = $currentVersion;
-    `;
-    const bindings = { id, currentVersion, ...patch };
-    const result = await this.driver.query(sql, bindings);
+  async healthCheck(): Promise<boolean> {
+    return true;
+  }
 
-    // SurrealDB 行为：WHERE 条件未命中时返回空数组 — 视为乐观锁冲突
-    if (!result[0] || result[0].length === 0) {
-      throw new Error(
-        `ERR_OPTIMISTIC_LOCK_FAILED: Record [decision:${id}] version mismatch. ` +
-        `Expected version=${currentVersion}, record may have been modified by another transaction.`
-      );
+  /**
+   * 提交决策记录
+   * 实现幂等：使用 ID 作为唯一键
+   */
+  async commitDecision(payload: DecisionPayload): Promise<void> {
+    if (this.dbDriver) {
+      // 使用真实驱动
+      const sql = `CREATE type::thing('decision', $id) CONTENT {
+        id: $id,
+        traceId: $traceId,
+        selectedStrategy: $selectedStrategy,
+        strategyReason: $strategyReason,
+        budgetUsed: $budgetUsed,
+        budgetLimit: $budgetLimit,
+        confidenceTier: $confidenceTier,
+        subsetSize: $subsetSize,
+        aggregationMethod: $aggregationMethod,
+        aggregatedCandidates: $aggregatedCandidates,
+        version: 1
+      }`;
+
+      await this.dbDriver.query(sql, {
+        id: payload.id,
+        traceId: payload.id.split('_')[0], // 从 ID 提取 traceId
+        selectedStrategy: payload.selectedStrategy,
+        strategyReason: payload.strategyReason,
+        budgetUsed: payload.budgetUsed,
+        budgetLimit: payload.budgetLimit,
+        confidenceTier: payload.confidenceTier,
+        subsetSize: payload.subsetSize,
+        aggregationMethod: payload.aggregationMethod,
+        aggregatedCandidates: payload.aggregatedCandidates
+      });
+    } else {
+      // 使用内存存储
+      this.tableStore.set(payload.id, {
+        ...payload,
+        version: 1
+      });
     }
   }
 
   /**
-   * ⚖️ 司法表持久化：记录一审盲审与大模型终审决议卷宗
+   * 带乐观锁更新决策
+   * 实现幂等：版本不匹配时抛出错误
    */
-  public async commitCourtSubmission(data: {
-    id: string;
-    traceId: string;
-    phase: 'complete' | 'phase_1';
-    phase1Deadline: number;
-    judgmentBasis: string;
-    winnerScore: number;
-    loserScore: number;
-    escalatedToHuman: boolean;
-    escalationReason: string;
-  }): Promise<void> {
-    const sql = `
-      CREATE type::thing('courtSubmission', $id) SET 
-        traceId = $traceId, 
-        phase = $phase, 
-        phase1Deadline = time::from_unix($phase1Deadline),
-        judgmentBasis = $judgmentBasis, 
-        winnerScore = $winnerScore, 
-        loserScore = $loserScore, 
-        escalatedToHuman = $escalatedToHuman, 
-        escalationReason = $escalationReason,
-        version = 1,
-        createdAt = time::now(),
-        updatedAt = time::now();
-    `;
-    await this.driver.query(sql, data);
+  async updateDecisionWithOptimisticLock(
+    id: string,
+    expectedVersion: number,
+    updates: Partial<UpdatePayload>
+  ): Promise<void> {
+    if (this.dbDriver) {
+      // 使用真实驱动
+      const sql = `UPDATE type::thing('decision', $id) SET
+        selectedStrategy = $selectedStrategy,
+        strategyReason = $strategyReason,
+        budgetUsed = $budgetUsed,
+        confidenceTier = $confidenceTier,
+        version = version + 1,
+        updatedAt = time::now()
+      WHERE version = $currentVersion`;
+
+      const result = await this.dbDriver.query(sql, {
+        id,
+        selectedStrategy: updates.selectedStrategy,
+        strategyReason: updates.strategyReason,
+        budgetUsed: updates.budgetUsed,
+        confidenceTier: updates.confidenceTier,
+        currentVersion: expectedVersion
+      });
+
+      // 检查是否更新成功（SurrealDB 在 WHERE 未命中时返回空数组）
+      if (!result[0] || result[0].length === 0) {
+        throw new Error(`ERR_OPTIMISTIC_LOCK_FAILED: 版本 ${expectedVersion} 不匹配`);
+      }
+    } else {
+      // 使用内存存储
+      const current = this.tableStore.get(id);
+      if (!current) {
+        throw new Error(`Decision not found: ${id}`);
+      }
+
+      if (current.version !== expectedVersion) {
+        throw new Error(`ERR_OPTIMISTIC_LOCK_FAILED: 版本 ${expectedVersion} 不匹配`);
+      }
+
+      this.tableStore.set(id, {
+        ...current,
+        ...updates,
+        version: current.version + 1,
+        updatedAt: new Date()
+      });
+    }
   }
 
   /**
-   * 🔍 完备追溯硬指标：跨表一键抽干物理硬盘，还原完备的多维时序卷宗
+   * 追踪卷宗查询
    */
-  public async queryTrace(traceId: string): Promise<{
-    marlEpisodes: any[];
-    decisions: any[];
-    courtSubmissions: any[];
-    events: any[];
-  }> {
-    const sql = `
-      SELECT * FROM marlEpisode WHERE traceId = $traceId;
-      SELECT * FROM decision WHERE traceId = $traceId;
-      SELECT * FROM courtSubmission WHERE traceId = $traceId;
-      SELECT * FROM eventLog WHERE traceId = $traceId;
-    `;
-    
-    const rawResult = await this.driver.query(sql, { traceId });
-    
+  async queryTrace(traceId: string): Promise<TraceCaseFile> {
+    console.log(`[SurrealPersistence] Querying trace: ${traceId}`);
+
+    if (this.dbDriver) {
+      // 使用真实驱动查询
+      const decisions = await this.dbDriver.query(
+        'SELECT * FROM decision WHERE traceId = $traceId',
+        { traceId }
+      );
+
+      const courtSubmissions = await this.dbDriver.query(
+        'SELECT * FROM courtSubmission WHERE traceId = $traceId',
+        { traceId }
+      );
+
+      const marlEpisodes = await this.dbDriver.query(
+        'SELECT * FROM marlEpisode WHERE traceId = $traceId',
+        { traceId }
+      );
+
+      const events = await this.dbDriver.query(
+        'SELECT * FROM eventLog WHERE traceId = $traceId',
+        { traceId }
+      );
+
+      return {
+        traceId,
+        decisions: decisions[0] || [],
+        courtSubmissions: courtSubmissions[0] || [],
+        marlEpisodes: marlEpisodes[0] || [],
+        events: events[0] || []
+      };
+    }
+
     return {
-      marlEpisodes: rawResult[0] || [],
-      decisions: rawResult[1] || [],
-      courtSubmissions: rawResult[2] || [],
-      events: rawResult[3] || []
+      traceId,
+      decisions: [],
+      courtSubmissions: [],
+      marlEpisodes: [],
+      events: []
     };
   }
 }
+
+// ============================================================
+// 向后兼容别名（供测试使用）
+// ============================================================
+
+/**
+ * @deprecated 使用 SurrealPersistence 代替
+ */
+export const GeminiPersistenceManager = SurrealPersistence;

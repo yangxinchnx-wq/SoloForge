@@ -1,0 +1,21 @@
+[
+  {
+    "expand_threshold": 80,
+    "shrink_threshold": 20,
+    "hysteresis_gap": 60,
+    "cooldown": 5,
+    "oscillation_score": 0.17793103448275863,
+    "final_queue": 67,
+    "final_workers": 65,
+    "final_cpu": 1.0,
+    "worker_churn_rate": 0.08,
+    "action_frequency": 0.58,
+    "overshoot_ratio": 13.806378132118452,
+    "recovery_half_life": 349.0,
+    "control_energy": 90,
+    "queue_recovery_integral": 620779.0,
+    "expansion_count": 76,
+    "contraction_count": 15,
+    "regime": "healthy_dynamic",
+    "timeline_file": "hyst_exp80_shr20_cd5_run_1780071749955.jsonl",
+    "recorder": 

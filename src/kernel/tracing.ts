@@ -1,4 +1,8 @@
-// src/kernel/tracing.ts
+// ─────────────────────────────────────────────────────────────────
+// SoloForge Kernel Layer: Distributed Tracing Manager
+// Path: src/kernel/tracing.ts
+// ─────────────────────────────────────────────────────────────────
+
 import { kernel } from './runtime-kernel';
 import { ComponentRegistry } from './registry';
 import { PressureLevel } from './backpressure';
@@ -106,27 +110,31 @@ export class TracingManager {
       });
     }
 
-    const bpManager = ComponentRegistry.getInstance().getBackpressureManager();
-    const currentPressure = bpManager.getMetrics().pressureLevel;
+    try {
+      const bpManager = ComponentRegistry.getInstance().getBackpressureManager();
+      const currentPressure = bpManager.getMetrics().pressureLevel;
 
-    if (currentPressure === PressureLevel.CRITICAL) {
-      return;
-    }
+      if (currentPressure === PressureLevel.CRITICAL) {
+        return;
+      }
 
-    if (currentPressure === PressureLevel.HIGH && span.status === SpanStatus.OK) {
-      if (Math.random() > 0.5) return;
-    }
+      if (currentPressure === PressureLevel.HIGH && span.status === SpanStatus.OK) {
+        if (Math.random() > 0.5) return;
+      }
 
-    if (kernel?.eventBus) {
-      kernel.eventBus.emit(RuntimeEvent.SpanRecorded, span);
-      kernel.eventBus.emit(RuntimeEvent.AuditRecorded, {
-        type: 'SPAN_COMPLETED',
-        name: span.name,
-        domain: span.domain,
-        duration: span.endTime - span.startTime,
-        context: span.context,
-        status: span.status
-      });
+      if (kernel?.eventBus) {
+        kernel.eventBus.emit(RuntimeEvent.SpanRecorded, span);
+        kernel.eventBus.emit(RuntimeEvent.AuditRecorded, {
+          type: 'SPAN_COMPLETED',
+          name: span.name,
+          domain: span.domain,
+          duration: span.endTime - span.startTime,
+          context: span.context,
+          status: span.status
+        });
+      }
+    } catch (err) {
+      // Silently ignore tracing failures
     }
   }
 

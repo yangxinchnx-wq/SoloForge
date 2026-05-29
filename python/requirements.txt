@@ -1,0 +1,25 @@
+# SoloForge AI Society 服务依赖
+# Python: 3.12.10
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 职责：AI 社会数据存储与 MARL 强化学习
+# ⚠️  AI 社会专用数据库 ⚠️  与主项目完全隔离
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Deep Learning - PyTorch MAPPO (强化学习资源调度)
+# CPU 版本安装: pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch>=2.0.0
+
+# Numerical Computing
+numpy>=1.26.0,<2.0.0
+
+# Vector Database - LanceDB (AI 社会专用向量存储)
+# Social Memory 语义检索，与主项目 SurrealDB 完全隔离
+lancedb>=0.12.0
+
+# PyArrow - LanceDB 依赖
+pyarrow>=14.0.0
+
+# Development Dependencies
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+ruff>=0.3.0
