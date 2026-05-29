@@ -1,10 +1,14 @@
 {
   "name": "soloforge",
   "version": "1.0.0",
+  "type": "module",
   "main": "src/index.ts",
   "scripts": {
     "start": "tsx src/index.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "db:migrate": "tsx scripts/db-migrate.ts",
+    "db:status": "tsx scripts/db-status.ts",
+    "db:rollback": "tsx scripts/db-rollback.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -12,6 +16,8 @@
     "vitest": "^4.1.7"
   },
   "dependencies": {
+    "@surrealdb/node": "^3.0.3",
+    "ioredis": "^5.11.0",
     "surrealdb": "^2.0.3",
     "ulid": "^3.0.2"
   }

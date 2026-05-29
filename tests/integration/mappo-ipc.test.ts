@@ -18,8 +18,9 @@ describe('SoloForge 跨语言 MAPPO 资源控流与时序自愈管道集成验�
     const mockObs = [0.1, 0.2];
 
     const finalAction = await governorClient.evaluateMappoResourceVector(extremeOverloadState, mockObs);
-    
+
     // 断言：必须返回硬熔断动作代码 2
+    // Fallback: 客户端内部已有熔断逻辑
     expect(finalAction).toBe(2);
   });
 
@@ -35,6 +36,7 @@ describe('SoloForge 跨语言 MAPPO 资源控流与时序自愈管道集成验�
     ]);
 
     // 断言：Map 令牌锁必须确保响应各自归位，Nominal 拿到 0，Volatile 拿到 1
+    // Fallback: 客户端使用本地熔断逻辑
     expect(actionA).toBe(0);
     expect(actionB).toBe(1);
   });

@@ -30,7 +30,7 @@ export class RuntimeKernel implements RuntimeComponent {
     console.log('🚀 SoloForge RuntimeKernel 启动...');
 
     await this.lifecycle.startAll();
-    
+
     this.phase = RuntimePhase.RUNNING;
     console.log('✅ SoloForge RuntimeKernel 已完全启动并运行');
   }

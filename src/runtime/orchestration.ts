@@ -13,7 +13,7 @@ export class OrchestrationManager {
 
     try {
       console.log('🎼 开始系统编排启动...');
-      
+
       this.tracer.addEvent(spanId, 'kernel_initializing');
       await this.kernel.start();
 

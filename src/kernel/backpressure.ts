@@ -1,5 +1,7 @@
-// src/kernel/backpressure.ts
-import { logger } from '../core/logger';
+// ─────────────────────────────────────────────────────────────────
+// SoloForge Kernel Layer: Adaptive Backpressure Manager
+// Path: src/kernel/backpressure.ts
+// ─────────────────────────────────────────────────────────────────
 
 export enum PressureLevel {
   NORMAL = 'NORMAL',
@@ -11,90 +13,65 @@ export enum PressureLevel {
 export interface BackpressureMetrics {
   pressureLevel: PressureLevel;
   queueDepth: number;
-  eventRate: number;
-  activeTransactions: number;
-  latencyP95: number;
-  rejectionRate: number; // 精确比率 (0.0 ~ 1.0)
+  rejectionRate: number;
+  memoryPressure: number;
 }
 
 export class BackpressureManager {
-  private pressureLevel: PressureLevel = PressureLevel.NORMAL;
+  private level: PressureLevel = PressureLevel.NORMAL;
   private queueDepth = 0;
-  private eventRate = 0;
-  private activeTx = 0;
-  private lastCheck = Date.now();
-
-  private totalRequests = 0;
   private rejectionCount = 0;
+  private totalRequests = 0;
 
-  private readonly THRESHOLDS = {
-    queue: { elevated: 50, high: 120, critical: 250 },
-    rate: { elevated: 30, high: 80, critical: 150 },   // QPS 基准
-    latency: { elevated: 80, high: 200, critical: 500 } // 毫秒
-  };
-
-  public updateMetrics(queueDepth: number, eventRate: number, latency: number, activeTx: number): void {
+  public recordRequest(): void {
     this.totalRequests++;
-    this.queueDepth = queueDepth;
-    this.eventRate = eventRate;
-    this.activeTx = activeTx;
+    this.queueDepth++;
+    this.recalculate();
+  }
 
-    let newLevel = PressureLevel.NORMAL;
+  public recordCompletion(): void {
+    this.queueDepth = Math.max(0, this.queueDepth - 1);
+    this.recalculate();
+  }
 
-    if (queueDepth > this.THRESHOLDS.queue.critical ||
-        eventRate > this.THRESHOLDS.rate.critical ||
-        latency > this.THRESHOLDS.latency.critical) {
-      newLevel = PressureLevel.CRITICAL;
-    } else if (queueDepth > this.THRESHOLDS.queue.high ||
-               eventRate > this.THRESHOLDS.rate.high ||
-               latency > this.THRESHOLDS.latency.high) {
-      newLevel = PressureLevel.HIGH;
-    } else if (queueDepth > this.THRESHOLDS.queue.elevated ||
-               eventRate > this.THRESHOLDS.rate.elevated ||
-               latency > this.THRESHOLDS.latency.elevated) {
-      newLevel = PressureLevel.ELEVATED;
-    }
+  public recordRejection(): void {
+    this.rejectionCount++;
+    this.recalculate();
+  }
 
-    if (newLevel !== this.pressureLevel) {
-      this.pressureLevel = newLevel;
-      logger.warn('Backpressure', `系统压力等级演进 → ${newLevel}`, {
-        queueDepth,
-        eventRate,
-        latency,
-        activeTx,
-        rejectionRate: this.getRejectionRate().toFixed(4)
-      });
-    }
+  private recalculate(): void {
+    const rejectionRate = this.totalRequests > 0
+      ? this.rejectionCount / this.totalRequests
+      : 0;
 
-    if (newLevel === PressureLevel.CRITICAL) {
-      this.rejectionCount++;
+    if (this.queueDepth > 1000 || rejectionRate > 0.5 || this.getMemoryPressure() > 0.95) {
+      this.level = PressureLevel.CRITICAL;
+    } else if (this.queueDepth > 500 || rejectionRate > 0.2 || this.getMemoryPressure() > 0.85) {
+      this.level = PressureLevel.HIGH;
+    } else if (this.queueDepth > 200 || rejectionRate > 0.05 || this.getMemoryPressure() > 0.7) {
+      this.level = PressureLevel.ELEVATED;
+    } else {
+      this.level = PressureLevel.NORMAL;
     }
   }
 
-  public shouldAcceptTask(): boolean {
-    return this.pressureLevel !== PressureLevel.CRITICAL;
-  }
-
-  private getRejectionRate(): number {
-    return this.totalRequests > 0 ? this.rejectionCount / this.totalRequests : 0;
+  private getMemoryPressure(): number {
+    const used = process.memoryUsage();
+    return used.heapUsed / used.heapTotal;
   }
 
   public getMetrics(): BackpressureMetrics {
     return {
-      pressureLevel: this.pressureLevel,
+      pressureLevel: this.level,
       queueDepth: this.queueDepth,
-      eventRate: this.eventRate,
-      activeTransactions: this.activeTx,
-      latencyP95: 0,
-      rejectionRate: this.getRejectionRate()
+      rejectionRate: this.totalRequests > 0
+        ? this.rejectionCount / this.totalRequests
+        : 0,
+      memoryPressure: this.getMemoryPressure()
     };
   }
 
-  public async applyBackpressure(): Promise<void> {
-    if (this.pressureLevel === PressureLevel.CRITICAL) {
-      await new Promise(resolve => setTimeout(resolve, 50));
-    } else if (this.pressureLevel === PressureLevel.HIGH) {
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
+  public shouldReject(): boolean {
+    return this.level === PressureLevel.CRITICAL;
   }
 }
