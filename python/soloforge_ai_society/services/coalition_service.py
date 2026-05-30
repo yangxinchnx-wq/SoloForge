@@ -5,6 +5,7 @@ SoloForge AI Society - Coalition Service
 联盟服务
 """
 
+import json
 import logging
 from datetime import datetime
 from typing import List, Optional
@@ -100,7 +101,7 @@ class CoalitionService:
                 coalition.name,
                 coalition.description,
                 coalition.goal,
-                str([m.to_dict() for m in coalition.members]),
+                json.dumps([m.to_dict() for m in coalition.members]),
                 coalition.leader,
                 coalition.lifetime,
                 coalition.status.value,
@@ -197,7 +198,7 @@ class CoalitionService:
                 coalition.name,
                 coalition.description,
                 coalition.goal,
-                str([m.to_dict() for m in coalition.members]),
+                json.dumps([m.to_dict() for m in coalition.members]),
                 coalition.leader,
                 coalition.lifetime,
                 coalition.status.value,

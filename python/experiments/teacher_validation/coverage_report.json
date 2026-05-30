@@ -1,0 +1,97 @@
+{
+  "timeline_path": "datasets/timeline_v3_1.jsonl",
+  "total_entries": 157000,
+  "checks": {
+    "Action Coverage": true,
+    "Action Entropy": true,
+    "Zone Coverage": true,
+    "Zone→Action Drift": true
+  },
+  "action_coverage": {
+    "distribution": {
+      "shrink2": 0.17684076433121018,
+      "shrink1": 0.06007643312101911,
+      "noop": 0.31722292993630574,
+      "expand1": 0.25477707006369427,
+      "expand2": 0.1910828025477707
+    },
+    "status": {
+      "shrink2": true,
+      "shrink1": true,
+      "noop": true,
+      "expand1": true,
+      "expand2": true
+    },
+    "all_pass": true
+  },
+  "entropy": {
+    "entropy": 1.504165361823501,
+    "normalized_entropy": 0.9345904866554399,
+    "meets_threshold": true
+  },
+  "zone_coverage": {
+    "distribution": {
+      "A": 0.2229299363057325,
+      "B": 0.07643312101910828,
+      "C": 0.25477707006369427,
+      "D": 0.25477707006369427,
+      "E": 0.1910828025477707
+    },
+    "status": {
+      "A": true,
+      "B": true,
+      "C": true,
+      "D": true,
+      "E": true
+    },
+    "all_pass": true
+  },
+  "heatmap": {
+    "heatmap": {
+      "A": {
+        "0": 0.7932571428571429,
+        "1": 0.0,
+        "2": 0.20674285714285714,
+        "3": 0.0,
+        "4": 0.0
+      },
+      "B": {
+        "0": 0.0,
+        "1": 0.786,
+        "2": 0.214,
+        "3": 0.0,
+        "4": 0.0
+      },
+      "C": {
+        "0": 0.0,
+        "1": 0.0,
+        "2": 1.0,
+        "3": 0.0,
+        "4": 0.0
+      },
+      "D": {
+        "0": 0.0,
+        "1": 0.0,
+        "2": 0.0,
+        "3": 1.0,
+        "4": 0.0
+      },
+      "E": {
+        "0": 0.0,
+        "1": 0.0,
+        "2": 0.0,
+        "3": 0.0,
+        "4": 1.0
+      }
+    },
+    "drift_detected": {
+      "A": false,
+      "B": false,
+      "C": false,
+      "D": false,
+      "E": false
+    },
+    "all_correct": true
+  },
+  "all_pass": true
+}

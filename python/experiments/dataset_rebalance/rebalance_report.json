@@ -1,0 +1,107 @@
+{
+  "timestamp": "2026-05-30",
+  "original_stats": {
+    "total": 13922,
+    "distribution": {
+      "shrink2": {
+        "count": 0,
+        "ratio": 0.0
+      },
+      "shrink1": {
+        "count": 3,
+        "ratio": 0.000215486280706795
+      },
+      "noop": {
+        "count": 8041,
+        "ratio": 0.5775750610544462
+      },
+      "expand1": {
+        "count": 5878,
+        "ratio": 0.422209452664847
+      },
+      "expand2": {
+        "count": 0,
+        "ratio": 0.0
+      }
+    },
+    "noop_ratio": 0.5775750610544462,
+    "action_entropy": 0.98523324710406
+  },
+  "balanced_stats": {
+    "total": 9083,
+    "distribution": {
+      "shrink2": {
+        "count": 0,
+        "ratio": 0.0
+      },
+      "shrink1": {
+        "count": 3,
+        "ratio": 0.0003302873499944952
+      },
+      "noop": {
+        "count": 3202,
+        "ratio": 0.3525266982274579
+      },
+      "expand1": {
+        "count": 5878,
+        "ratio": 0.6471430144225476
+      },
+      "expand2": {
+        "count": 0,
+        "ratio": 0.0
+      }
+    },
+    "noop_ratio": 0.3525266982274579,
+    "action_entropy": 0.9403930872882873
+  },
+  "noop_reduction": "57.76% → 35.25%",
+  "policy_entropy": {
+    "random_obs": 0.8858435203390305,
+    "real_env": 0.907043373994471
+  },
+  "shadow_eval": {
+    "collapse_rate": 0.8,
+    "results": [
+      {
+        "config": "baseline",
+        "avg_queue": 4348.898,
+        "max_queue": 8324,
+        "avg_workers": 4.0,
+        "worker_std": 0.0,
+        "survived": false
+      },
+      {
+        "config": "high_load",
+        "avg_queue": 4509.866,
+        "max_queue": 12264,
+        "avg_workers": 65.296,
+        "worker_std": 34.315541435332186,
+        "survived": false
+      },
+      {
+        "config": "chaotic_spike",
+        "avg_queue": 4909.578,
+        "max_queue": 14244,
+        "avg_workers": 79.542,
+        "worker_std": 44.306571025074824,
+        "survived": false
+      },
+      {
+        "config": "worker_failure",
+        "avg_queue": 6939.118,
+        "max_queue": 10666,
+        "avg_workers": 26.238,
+        "worker_std": 18.123282153075916,
+        "survived": false
+      },
+      {
+        "config": "long_idle",
+        "avg_queue": 1881.85,
+        "max_queue": 3631,
+        "avg_workers": 4.0,
+        "worker_std": 0.0,
+        "survived": true
+      }
+    ]
+  }
+}

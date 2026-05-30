@@ -36,7 +36,7 @@ class VectorSearch:
 
     def __init__(
         self,
-        db: lancedb.LanceDB,
+        db: lancedb.LanceDBConnection,
         embedder: Optional[TFIDFEmbedder] = None,
         vector_dim: int = 128,
     ):
@@ -52,6 +52,7 @@ class VectorSearch:
         self.embedder = embedder or get_embedder(vector_dim)
         self.vector_dim = vector_dim
         self._table = None
+        self._index_created = False
 
     @property
     def table(self):
@@ -86,15 +87,37 @@ class VectorSearch:
             self.db.create_table(self.TABLE_NAME, schema=schema)
             self._table = self.db.open_table(self.TABLE_NAME)
 
-            # 创建向量索引
-            self._table.create_index(
-                vector_column_name="vector",
-                index_type="IVF",
-                num_partitions=256,
-                num_sub_vectors=16,
-            )
-
             logger.info(f"Created new table: {self.TABLE_NAME}")
+
+    def _create_index_if_needed(self) -> None:
+        """延迟创建索引（需要在有数据后才能创建）"""
+        if self._table is None or self._index_created:
+            return
+
+        try:
+            # 检查是否已有索引
+            try:
+                indices = self._table.list_indices()
+                has_vector_index = any(idx.get("columns") == ["vector"] for idx in indices)
+            except Exception:
+                has_vector_index = False
+
+            if not has_vector_index:
+                # 尝试不同的索引 API
+                try:
+                    # LanceDB 0.8+ API with IvfFlat
+                    from lancedb.index import IvfFlat
+                    self._table.create_index(
+                        "vector",
+                        IvfFlat(distance_type="cosine")
+                    )
+                except (ImportError, TypeError) as e:
+                    logger.debug(f"Index creation skipped: {e}")
+                self._index_created = True
+                logger.info("Vector index creation attempted")
+        except Exception as e:
+            logger.warning(f"Failed to create index: {e}")
+            # 不阻塞，搜索仍可使用暴力匹配
 
     def add(
         self,
@@ -126,11 +149,9 @@ class VectorSearch:
             outcome: 结果
             created_at: 创建时间戳
         """
-        import pyarrow as pa
-
         if created_at is None:
             import time
-            created_at = int(time.time())
+            created_at = int(time.time() * 1000)  # 毫秒
 
         data = [{
             "id": id,
@@ -149,6 +170,9 @@ class VectorSearch:
         self.table.add(data)
         logger.debug(f"Added vector record: {id}")
 
+        # 添加数据后尝试创建索引（延迟创建）
+        self._create_index_if_needed()
+
     def search(
         self,
         query: str,
@@ -163,10 +187,10 @@ class VectorSearch:
             query: 查询文本
             top_k: 返回数量
             severity_filter: 严重度过滤
-            since: 时间过滤（时间戳）
+            since: 时间过滤（毫秒时间戳）
 
         Returns:
-            匹配的记录列表
+            匹配的记录列表，包含 _distance 字段
         """
         # 生成查询向量
         query_vector = self.embedder.embed(query).tolist()
@@ -174,27 +198,124 @@ class VectorSearch:
         # 构建过滤条件
         filters = []
         if severity_filter:
-            severity_str = " OR ".join([f'severity = "{s}"' for s in severity_filter])
+            severity_str = " OR ".join([f'severity = "{self._escape_str(s)}"' for s in severity_filter])
             filters.append(f"({severity_str})")
         if since:
             filters.append(f"created_at >= {since}")
 
         filter_expr = " AND ".join(filters) if filters else None
 
-        # 执行搜索
-        results = self.table.search(query_vector) \
-            .limit(top_k)
+        try:
+            # 执行搜索
+            try:
+                # 新版本 API
+                search_query = self.table.search(query_vector, vector_column_name="vector")
+            except TypeError:
+                # 旧版本 API
+                search_query = self.table.search(query_vector)
 
-        if filter_expr:
-            results = results.where(filter_expr)
+            if filter_expr:
+                search_query = search_query.where(filter_expr)
 
-        return results.to_list()
+            results = search_query.limit(top_k).to_list()
+
+            # 确保返回包含 _distance 字段（兼容不同版本）
+            for r in results:
+                if "_distance" not in r:
+                    r["_distance"] = r.get("distance", 0.0)
+
+            return results
+
+        except Exception as e:
+            logger.error(f"Search failed: {e}")
+            # 回退到暴力匹配
+            return self._brute_force_search(query, top_k, severity_filter, since)
+
+    def _brute_force_search(
+        self,
+        query: str,
+        top_k: int = 5,
+        severity_filter: Optional[List[str]] = None,
+        since: Optional[int] = None,
+    ) -> List[dict]:
+        """暴力匹配搜索（索引不可用时的回退）"""
+        import numpy as np
+
+        query_vector = self.embedder.embed(query)
+
+        # 获取所有数据
+        try:
+            all_data = self.table.to_lance().to_table().to_pydict()
+        except Exception:
+            logger.warning("Cannot retrieve data for brute force search")
+            return []
+
+        if not all_data.get("id"):
+            return []
+
+        # 过滤
+        indices = list(range(len(all_data["id"])))
+
+        if severity_filter:
+            indices = [i for i in indices if all_data["severity"][i] in severity_filter]
+
+        if since:
+            indices = [i for i in indices if all_data["created_at"][i] >= since]
+
+        # 计算距离
+        results = []
+        for i in indices:
+            vector = np.array(all_data["vector"][i])
+            distance = float(np.linalg.norm(query_vector - vector))
+
+            results.append({
+                "id": all_data["id"][i],
+                "event": all_data["event"][i],
+                "impact": all_data["impact"][i],
+                "severity": all_data["severity"][i],
+                "participants": all_data["participants"][i],
+                "lessons": all_data["lessons"][i],
+                "task_id": all_data["task_id"][i],
+                "domain": all_data["domain"][i],
+                "outcome": all_data["outcome"][i],
+                "created_at": all_data["created_at"][i],
+                "_distance": distance,
+            })
+
+        # 按距离排序
+        results.sort(key=lambda x: x["_distance"])
+
+        return results[:top_k]
+
+    def _escape_str(self, s: str) -> str:
+        """转义字符串防止 SQL 注入"""
+        return s.replace('"', '\\"').replace("'", "\\'")
 
     def delete(self, id: str) -> None:
         """删除记录"""
-        self.table.delete(f"id = '{id}'")
+        self.table.delete(f"id = '{self._escape_str(id)}'")
         logger.debug(f"Deleted vector record: {id}")
 
     def count(self) -> int:
         """获取记录数量"""
-        return len(self.table.to_lance().to_table())
+        try:
+            return len(self.table.to_lance().to_table())
+        except Exception:
+            return 0
+
+    def get_stats(self) -> dict:
+        """获取统计信息"""
+        stats = {
+            "table_name": self.TABLE_NAME,
+            "record_count": self.count(),
+            "vector_dim": self.vector_dim,
+            "index_created": self._index_created,
+        }
+
+        try:
+            indices = self.table.list_indices()
+            stats["indices"] = indices
+        except Exception:
+            stats["indices"] = []
+
+        return stats

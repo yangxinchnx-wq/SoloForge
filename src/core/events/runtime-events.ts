@@ -38,7 +38,10 @@ export enum RuntimeEvent {
   SpanRecorded = 'span.recorded',
 
   // 🔒 跨域信誉中继器事件
-  ReputationIncrementRequested = 'governor.reputation.increment.requested'
+  ReputationIncrementRequested = 'governor.reputation.increment.requested',
+
+  // 🔒 AI 社会角色演化事件
+  AgentRoleEvolved = 'society.agent.role.evolved'
 }
 
 export default RuntimeEvent;

@@ -1,0 +1,13 @@
+{
+  "lifecycle": {
+    "stress_cycles": 22,
+    "recovery_cycles": 9,
+    "partial_stress": 96,
+    "partial_recovery": 86,
+    "stable": 33,
+    "chaotic": 41
+  },
+  "total_full_cycles": 31,
+  "min_required": 10,
+  "meets_threshold": true
+}

@@ -42,20 +42,45 @@ SoloForge AI Society - AI 社会核心模块
 __version__ = "1.0.0"
 __python_version__ = ">=3.12"
 
+from .config import AISocietyConfig, get_config, set_config
 from .database.manager import DatabaseManager
+from .database.health import HealthChecker, HealthStatus, BackupManager, BackupInfo
+from .database.pool import ConnectionPool
+from .database.migration import run_migrations, get_migration_status
 from .services.memory_service import MemoryService
 from .services.reputation_service import ReputationService
 from .services.governance_service import GovernanceService
 from .services.economy_service import EconomyService
 from .services.law_service import LawService
 from .services.coalition_service import CoalitionService
+from .services.reputation_sync_receiver import ReputationSyncReceiver
+from .vector.embedder import TFIDFEmbedder, get_embedder
+from .vector.search import VectorSearch
 
 __all__ = [
+    # Config
+    "AISocietyConfig",
+    "get_config",
+    "set_config",
+    # Database
     "DatabaseManager",
+    "ConnectionPool",
+    "HealthChecker",
+    "HealthStatus",
+    "BackupManager",
+    "BackupInfo",
+    "run_migrations",
+    "get_migration_status",
+    # Services
     "MemoryService",
     "ReputationService",
     "GovernanceService",
     "EconomyService",
     "LawService",
     "CoalitionService",
+    "ReputationSyncReceiver",
+    # Vector
+    "TFIDFEmbedder",
+    "get_embedder",
+    "VectorSearch",
 ]

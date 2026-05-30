@@ -69,7 +69,7 @@ class DatabaseManager:
     def __init__(self, config: Optional[AISocietyConfig] = None):
         self.config = config or get_config()
         self._pool: Optional[ConnectionPool] = None
-        self._lancedb: Optional[lancedb.LanceDB] = None
+        self._lancedb: Optional[lancedb.LanceDBConnection] = None
 
     # =========================================================================
     # 连接池管理
@@ -340,7 +340,7 @@ class DatabaseManager:
     # LanceDB 管理
     # =========================================================================
 
-    def get_lancedb(self) -> lancedb.LanceDB:
+    def get_lancedb(self) -> lancedb.LanceDBConnection:
         """获取 LanceDB 实例"""
         if self._lancedb is None:
             self._init_lancedb()

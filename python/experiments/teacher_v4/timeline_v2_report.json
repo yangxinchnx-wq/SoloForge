@@ -1,0 +1,69 @@
+{
+  "timestamp": "2026-05-30",
+  "stats": {
+    "total_entries": 42216,
+    "overall_distribution": {
+      "shrink2": {
+        "count": 98,
+        "ratio": 0.0023213947318552206
+      },
+      "shrink1": {
+        "count": 1,
+        "ratio": 2.3687701345461435e-05
+      },
+      "noop": {
+        "count": 918,
+        "ratio": 0.0217453098351336
+      },
+      "expand1": {
+        "count": 41183,
+        "ratio": 0.9755306045101383
+      },
+      "expand2": {
+        "count": 16,
+        "ratio": 0.00037900322152738296
+      }
+    }
+  },
+  "heatmap_data": {
+    "0-20": {
+      "shrink2": 0.09486931268151017,
+      "shrink1": 0.000968054211035818,
+      "noop": 0.8664085188770572,
+      "expand1": 0.031945788964181994,
+      "expand2": 0.005808325266214908
+    },
+    "20-100": {
+      "shrink2": 0.0,
+      "shrink1": 0.0,
+      "noop": 0.11282051282051282,
+      "expand1": 0.882051282051282,
+      "expand2": 0.005128205128205128
+    },
+    "100-500": {
+      "shrink2": 0.0,
+      "shrink1": 0.0,
+      "noop": 0.002,
+      "expand1": 0.98,
+      "expand2": 0.018
+    },
+    "500-2000": {
+      "shrink2": 0.0,
+      "shrink1": 0.0,
+      "noop": 0.0,
+      "expand1": 1.0,
+      "expand2": 0.0
+    },
+    "2000+": {
+      "shrink2": 0.0,
+      "shrink1": 0.0,
+      "noop": 0.0,
+      "expand1": 1.0,
+      "expand2": 0.0
+    }
+  },
+  "validation": {
+    "all_actions_present": true,
+    "distribution_in_range": false
+  }
+}
