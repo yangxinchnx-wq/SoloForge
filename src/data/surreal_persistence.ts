@@ -62,6 +62,27 @@ export interface GeminiPersistenceManager {
   commitDecision(payload: DecisionPayload): Promise<void>;
   updateDecisionWithOptimisticLock(id: string, expectedVersion: number, updates: Partial<UpdatePayload>): Promise<void>;
   queryTrace(traceId: string): Promise<TraceCaseFile>;
+  commitShadowDecision?(payload: ShadowDecisionPayload): Promise<void>;
+  queryShadowDecisions?(traceId: string): Promise<ShadowDecisionPayload[]>;
+}
+
+/**
+ * 影子决策载荷（符合文档要求的事务 + 乐观锁）
+ */
+export interface ShadowDecisionPayload {
+  id: string;
+  traceId: string;
+  telemetrySnapshot?: any;
+  ruleAction: number;
+  ruleActionName: string;
+  ppoAction: number;
+  ppoActionName: string;
+  ppoProb: number;
+  ppoValue?: number;
+  winner: 'rule' | 'ppo' | 'tie';
+  confidence: number;
+  version: number;
+  timestamp: number;
 }
 
 // ============================================================
@@ -105,6 +126,25 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
    */
   async healthCheck(): Promise<boolean> {
     return true;
+  }
+
+  /**
+   * 检查数据库是否已准备好
+   * 解决文档中提到的 isReady 方法缺失问题
+   */
+  public isReady(): boolean {
+    return this.dbDriver !== null;
+  }
+
+  /**
+   * 异步等待数据库就绪
+   */
+  public async waitUntilReady(timeoutMs: number = 5000): Promise<boolean> {
+    const start = Date.now();
+    while (!this.isReady() && Date.now() - start < timeoutMs) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return this.isReady();
   }
 
   /**
@@ -246,6 +286,96 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
       marlEpisodes: [],
       events: []
     };
+  }
+
+  // ============================================================
+  // 影子决策持久化（符合"事务 + 乐观锁"原则）
+  // ============================================================
+
+  /**
+   * 提交影子决策记录
+   * 实现幂等：使用 ID 作为唯一键
+   */
+  async commitShadowDecision(payload: ShadowDecisionPayload): Promise<void> {
+    if (this.dbDriver) {
+      // 使用真实驱动（事务 + 乐观锁）
+      const sql = `CREATE type::thing('governor_shadow_decision', $id) CONTENT {
+        id: $id,
+        traceId: $traceId,
+        ruleAction: $ruleAction,
+        ruleActionName: $ruleActionName,
+        ppoAction: $ppoAction,
+        ppoActionName: $ppoActionName,
+        ppoProb: $ppoProb,
+        ppoValue: $ppoValue,
+        winner: $winner,
+        confidence: $confidence,
+        telemetrySnapshot: $telemetrySnapshot,
+        version: $version,
+        timestamp: $timestamp
+      }`;
+
+      await this.dbDriver.query(sql, {
+        id: payload.id,
+        traceId: payload.traceId,
+        ruleAction: payload.ruleAction,
+        ruleActionName: payload.ruleActionName,
+        ppoAction: payload.ppoAction,
+        ppoActionName: payload.ppoActionName,
+        ppoProb: payload.ppoProb,
+        ppoValue: payload.ppoValue,
+        winner: payload.winner,
+        confidence: payload.confidence,
+        telemetrySnapshot: JSON.stringify(payload.telemetrySnapshot || {}),
+        version: payload.version,
+        timestamp: payload.timestamp
+      });
+    } else {
+      // 使用内存存储
+      this.tableStore.set(payload.id, {
+        ...payload,
+        version: payload.version
+      });
+    }
+  }
+
+  /**
+   * 查询影子决策记录
+   */
+  async queryShadowDecisions(traceId: string): Promise<ShadowDecisionPayload[]> {
+    console.log(`[SurrealPersistence] Querying shadow decisions: ${traceId}`);
+
+    if (this.dbDriver) {
+      const result = await this.dbDriver.query(
+        'SELECT * FROM governor_shadow_decision WHERE traceId = $traceId ORDER BY timestamp ASC',
+        { traceId }
+      );
+
+      return (result[0] || []).map((row: any) => ({
+        id: row.id,
+        traceId: row.traceId,
+        ruleAction: row.ruleAction,
+        ruleActionName: row.ruleActionName,
+        ppoAction: row.ppoAction,
+        ppoActionName: row.ppoActionName,
+        ppoProb: row.ppoProb,
+        ppoValue: row.ppoValue,
+        winner: row.winner,
+        confidence: row.confidence,
+        telemetrySnapshot: row.telemetrySnapshot,
+        version: row.version,
+        timestamp: row.timestamp
+      }));
+    }
+
+    // 内存存储：过滤匹配的记录
+    const results: ShadowDecisionPayload[] = [];
+    for (const record of this.tableStore.values()) {
+      if (record.traceId === traceId && record.id?.startsWith('shadow_')) {
+        results.push(record as ShadowDecisionPayload);
+      }
+    }
+    return results.sort((a, b) => a.timestamp - b.timestamp);
   }
 }
 

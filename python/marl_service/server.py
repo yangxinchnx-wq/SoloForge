@@ -1,20 +1,30 @@
 # -*- coding: utf-8 -*-
 # ─────────────────────────────────────────────────────────────────
-# SoloForge MARL Service: MAPPO 资源调度服务
+# SoloForge MARL Service: MAPPO 资源调度服务 (UDS + MessagePack)
 # Path: python/marl_service/server.py
 #
-# 统一协议：兼容两种请求格式
-#   格式A (mappo-client.ts): {id, globalState, localObs}
-#   格式B (独立调用): {_id, state, obs, episode_count}
+# 通信协议:
+#   - Unix Domain Socket (Linux/Mac) / TCP (Windows)
+#   - MessagePack 二进制序列化
+#   - 长度前缀协议 [4字节长度][msgpack数据]
 # ─────────────────────────────────────────────────────────────────
 
 import sys
-import json
 import os
+import logging
+import socket
 
 # 设置 UTF-8 输出
 sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='[MAPPO] %(asctime)s %(message)s',
+    datefmt='%H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 # 添加父目录到路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -22,7 +32,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # 导入 MAPPO 网络
 from marl_service.mappo_net import MAPPOPolicy, create_default_policy
 
-print("[MAPPO] SoloForge MARL 服务启动中...")
+# 导入 IPC 层
+from marl_service.ipc import IPCServer, IPCConnection
+
+print("[MAPPO] SoloForge MARL 服务启动中 (UDS + MessagePack)...")
 
 
 class MARLGovernorService:
@@ -177,26 +190,23 @@ def parse_packet(packet: dict) -> tuple:
     return packet_id, global_state, local_obs, episode_count
 
 
-def main():
-    """主循环"""
-    # 强制将标准输出切换为无缓冲流
-    sys.stdout.reconfigure(line_buffering=True)
+def handle_client(conn: IPCConnection, service: MARLGovernorService) -> bool:
+    """
+    处理单个客户端连接
 
-    print("[MAPPO] ✓ 服务就绪，等待请求...")
+    Returns:
+        True 表示继续运行，False 表示应退出
+    """
+    while True:
+        # 接收请求
+        request = conn.recv()
+        if request is None:
+            # 连接关闭
+            return True
 
-    service = MARLGovernorService()
-
-    # 锁定标准输入流进行行阻塞轮询
-    for line in sys.stdin:
         try:
-            line = line.strip()
-            if not line:
-                continue
-
-            packet = json.loads(line)
-
-            # 统一解析
-            packet_id, global_state, local_obs, episode_count = parse_packet(packet)
+            # 解析请求
+            packet_id, global_state, local_obs, episode_count = parse_packet(request)
 
             # 判断使用哪种模式
             use_neural = service.should_use_neural()
@@ -209,24 +219,53 @@ def main():
             result['id'] = packet_id
 
             # 发送响应
-            sys.stdout.write(json.dumps(result) + '\n')
-            sys.stdout.flush()
-
-        except json.JSONDecodeError as e:
-            error = {
-                'error': 'JSON_PARSE_ERROR',
-                'message': str(e)
-            }
-            sys.stderr.write(json.dumps(error) + '\n')
-            sys.stderr.flush()
+            conn.send(result)
 
         except Exception as e:
-            error = {
+            logger.error(f"[MAPPO] 处理请求失败: {e}")
+            error_response = {
                 'error': 'RUNTIME_ERROR',
                 'message': str(e)
             }
-            sys.stderr.write(json.dumps(error) + '\n')
-            sys.stderr.flush()
+            conn.send(error_response)
+            return True  # 继续运行
+
+
+def main():
+    """主循环"""
+    print("[MAPPO] ✓ 服务就绪，等待请求...")
+
+    service = MARLGovernorService()
+    server = IPCServer()
+
+    try:
+        server.start()
+        print(f"[MAPPO] 🚀 IPC 服务已启动")
+
+        running = True
+        while running:
+            # 接受连接
+            result = server.accept()
+
+            if result is None:
+                # 超时，继续等待
+                continue
+
+            client_sock, _ = result
+            conn = IPCConnection(client_sock)
+            print("[MAPPO] 📥 客户端连接")
+
+            try:
+                handle_client(conn, service)
+            finally:
+                conn.close()
+                print("[MAPPO] 📤 客户端断开")
+
+    except KeyboardInterrupt:
+        print("\n[MAPPO] 收到终止信号")
+    finally:
+        server.close()
+        print("[MAPPO] 服务已关闭")
 
 
 if __name__ == '__main__':

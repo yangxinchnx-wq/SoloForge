@@ -14,6 +14,7 @@ import json
 import socket
 import threading
 import argparse
+import signal
 from typing import Optional, Dict, Any
 
 # 设置 UTF-8 输出
@@ -203,6 +204,9 @@ class ShadowGovernorServer:
 
     def start(self):
         """启动服务"""
+        # 设置信号处理器（支持热重载）
+        self._setup_signal_handlers()
+
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.bind((self.host, self.port))
@@ -231,6 +235,26 @@ class ShadowGovernorServer:
     def stop(self):
         """停止服务"""
         self.running = False
+
+    def reload_model(self):
+        """热重载模型（无需重启服务）"""
+        print("[Shadow Server] 收到重载信号，重新加载模型...")
+        self._load_model()
+        print("[Shadow Server] 模型重载完成")
+
+    def _setup_signal_handlers(self):
+        """设置信号处理器（支持热重载）"""
+        def handle_sighup(signum, frame):
+            print(f"[Shadow Server] 收到 SIGHUP 信号")
+            self.reload_model()
+
+        def handle_sigterm(signum, frame):
+            print(f"[Shadow Server] 收到 SIGTERM 信号")
+            self.stop()
+
+        if hasattr(signal, 'SIGHUP'):
+            signal.signal(signal.SIGHUP, handle_sighup)
+        signal.signal(signal.SIGTERM, handle_sigterm)
 
 
 def main():

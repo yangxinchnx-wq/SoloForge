@@ -8,6 +8,19 @@ rust_core/target/
 __pycache__/
 *.pyc
 *.pyo
+python/datasets/
+python/checkpoints/
+python/shadow_data/
+python/logs/
+
+# Build outputs
+dist-electron/
+apps/*/dist/
+apps/*/dist-electron/
+
+# Binaries
+bin/garnet/
+bin/scheduler.exe
 
 # IDE
 .idea/

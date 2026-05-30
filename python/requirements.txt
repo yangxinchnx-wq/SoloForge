@@ -12,6 +12,13 @@ torch>=2.0.0
 # Numerical Computing
 numpy>=1.26.0,<2.0.0
 
+# IPC Serialization - MessagePack (IPC 通信协议)
+msgpack>=1.0.0
+
+# High-Performance Computing - Numba (可选，JIT 加速)
+# 自动降级：无 numba 时使用纯 NumPy 计算
+numba>=0.59.0
+
 # Vector Database - LanceDB (AI 社会专用向量存储)
 # Social Memory 语义检索，与主项目 SurrealDB 完全隔离
 lancedb>=0.12.0

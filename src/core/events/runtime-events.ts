@@ -35,7 +35,10 @@ export enum RuntimeEvent {
 
   // 🛡️ 扩展静态追踪与高维审计数据大底座契约，清除硬编码
   AuditRecorded = 'audit.recorded',
-  SpanRecorded = 'span.recorded'
+  SpanRecorded = 'span.recorded',
+
+  // 🔒 跨域信誉中继器事件
+  ReputationIncrementRequested = 'governor.reputation.increment.requested'
 }
 
 export default RuntimeEvent;
