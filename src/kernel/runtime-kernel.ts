@@ -5,6 +5,7 @@
 // ─────────────────────────────────────────────────────────────────
 
 import { RuntimeComponent } from './runtime-component';
+import { LifecycleManager } from '../runtime/lifecycle';
 
 export enum RuntimeState {
   BOOTING = 'BOOTING',
@@ -135,6 +136,7 @@ export class RuntimeKernel {
   public projectionManager: any = null;
   public snapshotManager: any = null;
   public scheduler: any = null;
+  public lifecycleManager: LifecycleManager | null = null;
   public readonly id = 'kernel_sovereign_core';
   public readonly startedAt = Date.now();
   public version = 0;
@@ -166,6 +168,9 @@ export class RuntimeKernel {
 
     // 资源总调度域：可访问 governor_* 前缀的状态
     this.stateOwnership.register('Governor', 'governor*');
+
+    // Shadow Governor 域：可访问 governor_shadow_* 前缀的状态
+    this.stateOwnership.register('ShadowGovernor', 'governor_shadow*');
 
     // 决策引擎域：可访问 decision_* 前缀的状态
     this.stateOwnership.register('DecisionEngine', 'decision*');
@@ -320,6 +325,21 @@ export class RuntimeKernel {
    */
   public getEventBus(): EventBusInterface {
     return this.eventBus;
+  }
+
+  /**
+   * 获取生命周期管理器
+   */
+  public getLifecycleManager(): LifecycleManager | null {
+    return this.lifecycleManager;
+  }
+
+  /**
+   * 设置生命周期管理器
+   */
+  public setLifecycleManager(manager: LifecycleManager): void {
+    this.lifecycleManager = manager;
+    console.log('[RuntimeKernel] LifecycleManager 已设置');
   }
 
   // ────────────── 状态所有权验证 ──────────────

@@ -62,34 +62,8 @@ class MemoryService:
         self._init_memory_table()
 
     def _init_memory_table(self) -> None:
-        """初始化 SQLite Memory 表"""
-        conn = self.db_manager.get_sqlite_connection()
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS social_memory (
-                id TEXT PRIMARY KEY,
-                event TEXT NOT NULL,
-                impact TEXT NOT NULL,
-                severity TEXT NOT NULL,
-                participants TEXT NOT NULL,
-                lessons TEXT NOT NULL,
-                task_id TEXT,
-                domain TEXT,
-                outcome TEXT,
-                created_at TEXT NOT NULL
-            )
-        """)
-
-        # 创建索引
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_memory_severity ON social_memory(severity)
-        """)
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_memory_impact ON social_memory(impact)
-        """)
-
-        conn.commit()
+        """初始化表 - 表已由 DatabaseManager 统一创建"""
+        pass
 
     def create(
         self,

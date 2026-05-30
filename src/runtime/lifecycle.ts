@@ -20,33 +20,35 @@ export interface HealthReport {
 }
 
 export interface RuntimeComponent {
-  readonly id: string;
-  phase: RuntimePhase;
+  readonly id?: string;
+  readonly name: string;
+  phase?: RuntimePhase;
 
   start(): Promise<void>;
   stop(): Promise<void>;
-  health(): Promise<HealthReport>;
-  shutdown(signal?: string): Promise<void>;
+  healthCheck(): Promise<boolean>;
+  shutdown?(signal?: string): Promise<void>;
 }
 
 export class LifecycleManager {
   private components: Map<string, RuntimeComponent> = new Map();
 
   register(component: RuntimeComponent): void {
-    this.components.set(component.id, component);
-    console.log(`[Lifecycle] 注册组件: ${component.id}`);
+    const id = component.id || component.name;
+    this.components.set(id, component);
+    console.log(`[Lifecycle] 注册组件: ${id}`);
   }
 
   async startAll(): Promise<void> {
     console.log('[Lifecycle] 开始启动所有组件...');
     for (const [id, comp] of this.components) {
       try {
-        comp.phase = RuntimePhase.STARTING;
+        if (comp.phase !== undefined) comp.phase = RuntimePhase.STARTING;
         await comp.start();
-        comp.phase = RuntimePhase.RUNNING;
+        if (comp.phase !== undefined) comp.phase = RuntimePhase.RUNNING;
         console.log(`[Lifecycle] ✓ ${id} 启动成功`);
       } catch (error) {
-        comp.phase = RuntimePhase.FAILED;
+        if (comp.phase !== undefined) comp.phase = RuntimePhase.FAILED;
         console.error(`[Lifecycle] ✗ ${id} 启动失败`, error);
         throw error;
       }
@@ -60,12 +62,20 @@ export class LifecycleManager {
     for (const id of ids) {
       const comp = this.components.get(id)!;
       try {
-        comp.phase = RuntimePhase.STOPPING;
+        if (comp.phase !== undefined) comp.phase = RuntimePhase.STOPPING;
         await comp.stop();
-        comp.phase = RuntimePhase.STOPPED;
+        if (comp.phase !== undefined) comp.phase = RuntimePhase.STOPPED;
       } catch (error) {
         console.warn(`[Lifecycle] ${id} 关闭异常`, error);
       }
     }
+  }
+
+  getComponent(id: string): RuntimeComponent | undefined {
+    return this.components.get(id);
+  }
+
+  getAllComponents(): RuntimeComponent[] {
+    return Array.from(this.components.values());
   }
 }

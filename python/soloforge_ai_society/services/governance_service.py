@@ -28,47 +28,8 @@ class GovernanceService:
         self._init_table()
 
     def _init_table(self) -> None:
-        """初始化表"""
-        conn = self.db_manager.get_sqlite_connection()
-        cursor = conn.cursor()
-
-        # Governance 表
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS governance (
-                id TEXT PRIMARY KEY,
-                institution_id TEXT NOT NULL,
-                owner TEXT NOT NULL,
-                effectiveness REAL DEFAULT 1.0,
-                violations INTEGER DEFAULT 0,
-                last_review TEXT NOT NULL,
-                description TEXT,
-                notes TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                FOREIGN KEY (institution_id) REFERENCES institution(id)
-            )
-        """)
-
-        # Governance Record 表
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS governance_record (
-                id TEXT PRIMARY KEY,
-                governance_id TEXT NOT NULL,
-                agent_id TEXT NOT NULL,
-                compliant INTEGER NOT NULL,
-                action_taken TEXT,
-                notes TEXT,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (governance_id) REFERENCES governance(id)
-            )
-        """)
-
-        # 创建索引
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_governance_institution ON governance(institution_id)
-        """)
-
-        conn.commit()
+        """初始化表 - 表已由 DatabaseManager 统一创建"""
+        pass
 
     def create(
         self,

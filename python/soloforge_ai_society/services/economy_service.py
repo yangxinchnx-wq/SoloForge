@@ -29,57 +29,8 @@ class EconomyService:
         self._init_table()
 
     def _init_table(self) -> None:
-        """初始化表"""
-        conn = self.db_manager.get_sqlite_connection()
-        cursor = conn.cursor()
-
-        # Economy 表
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS economy (
-                id TEXT PRIMARY KEY,
-                agent_id TEXT NOT NULL UNIQUE,
-                credits REAL DEFAULT 1000.0,
-                balance REAL DEFAULT 0.0,
-                spending TEXT NOT NULL,
-                income TEXT NOT NULL,
-                name TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-        """)
-
-        # Transaction 表
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS credit_transaction (
-                id TEXT PRIMARY KEY,
-                economy_id TEXT NOT NULL,
-                amount REAL NOT NULL,
-                transaction_type TEXT NOT NULL,
-                category TEXT NOT NULL,
-                description TEXT,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (economy_id) REFERENCES economy(id)
-            )
-        """)
-
-        # Economy Record 表
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS economy_record (
-                id TEXT PRIMARY KEY,
-                agent_id TEXT NOT NULL,
-                event TEXT NOT NULL,
-                credits_change REAL NOT NULL,
-                reason TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-        """)
-
-        # 创建索引
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_economy_agent ON economy(agent_id)
-        """)
-
-        conn.commit()
+        """初始化表 - 表已由 DatabaseManager 统一创建"""
+        pass
 
     def create_account(self, agent_id: str, name: Optional[str] = None) -> Economy:
         """创建经济账户"""

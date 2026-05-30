@@ -27,45 +27,8 @@ class ReputationService:
         self._init_table()
 
     def _init_table(self) -> None:
-        """初始化表"""
-        conn = self.db_manager.get_sqlite_connection()
-        cursor = conn.cursor()
-
-        # Reputation 表
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS reputation (
-                id TEXT PRIMARY KEY,
-                entity_id TEXT NOT NULL,
-                entity_type TEXT NOT NULL,
-                score REAL DEFAULT 1.0,
-                evidence TEXT NOT NULL,
-                history TEXT NOT NULL,
-                name TEXT,
-                description TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-        """)
-
-        # Reputation Record 表
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS reputation_record (
-                id TEXT PRIMARY KEY,
-                reputation_id TEXT NOT NULL,
-                delta REAL NOT NULL,
-                reason TEXT NOT NULL,
-                source TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (reputation_id) REFERENCES reputation(id)
-            )
-        """)
-
-        # 创建索引
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_reputation_entity ON reputation(entity_id, entity_type)
-        """)
-
-        conn.commit()
+        """初始化表 - 表已由 DatabaseManager 统一创建"""
+        pass
 
     def create(
         self,
