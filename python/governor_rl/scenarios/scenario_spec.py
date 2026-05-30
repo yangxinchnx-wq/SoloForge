@@ -123,11 +123,132 @@ class ScenarioSpec:
         return tags
 
 
-# 预定义场景
+# ═══════════════════════════════════════════════════════════════════
+# SPRINT 2E: ZONE-COVERAGE SCENARIOS
+# Designed for initial worker_count=50, capacity=100 tasks/tick
+# Target: Balanced Zone Distribution (15-20% per Zone A-E)
+# ═══════════════════════════════════════════════════════════════════
+
 PRESET_SCENARIOS = {
+    # ─────────────────────────────────────────────────────────────────
+    # Zone A Scenarios (queue <= 20, load < 0.1)
+    # ─────────────────────────────────────────────────────────────────
+    "zone_a_under_utilized": ScenarioSpec(
+        name="zone_a_under_utilized",
+        description="Zone A: 极度低负载 - 目标: 强制收缩",
+        base_arrival_rate=3.0,
+        arrival_pattern="steady",
+        idle_probability=0.3,
+        idle_rate=0.5,
+        target_regime="shrink",
+    ),
+
+    "zone_a_light": ScenarioSpec(
+        name="zone_a_light",
+        description="Zone A: 轻度低负载 - 目标: 收缩",
+        base_arrival_rate=5.0,
+        arrival_pattern="steady",
+        idle_probability=0.2,
+        idle_rate=1.0,
+        target_regime="shrink",
+    ),
+
+    # ─────────────────────────────────────────────────────────────────
+    # Zone B Scenarios (20 < queue <= 100, load 0.1-0.3)
+    # ─────────────────────────────────────────────────────────────────
+    "zone_b_light": ScenarioSpec(
+        name="zone_b_light",
+        description="Zone B: 轻度负载 - 目标: 轻微收缩",
+        base_arrival_rate=15.0,
+        arrival_pattern="steady",
+        target_regime="balanced",
+    ),
+
+    "zone_b_oscillating": ScenarioSpec(
+        name="zone_b_oscillating",
+        description="Zone B: 振荡负载 - 目标: 平衡",
+        base_arrival_rate=20.0,
+        arrival_pattern="chaos",
+        burst_probability=0.15,
+        burst_multiplier=2.0,
+        cpu_spike_probability=0.1,
+        cpu_spike_duration=20,
+        cpu_spike_multiplier=1.5,
+        target_regime="oscillating",
+    ),
+
+    # ─────────────────────────────────────────────────────────────────
+    # Zone C Scenarios (100 < queue <= 500, load 0.3-0.5)
+    # ─────────────────────────────────────────────────────────────────
+    "zone_c_balanced": ScenarioSpec(
+        name="zone_c_balanced",
+        description="Zone C: 平衡负载 - 目标: 保持平衡",
+        base_arrival_rate=35.0,
+        arrival_pattern="steady",
+        target_regime="balanced",
+    ),
+
+    "zone_c_stressed": ScenarioSpec(
+        name="zone_c_stressed",
+        description="Zone C: 压力负载 - 目标: 扩张倾向",
+        base_arrival_rate=45.0,
+        arrival_pattern="steady",
+        burst_probability=0.1,
+        burst_multiplier=1.5,
+        target_regime="expand",
+    ),
+
+    # ─────────────────────────────────────────────────────────────────
+    # Zone D Scenarios (500 < queue <= 2000, load 0.5-0.8)
+    # ─────────────────────────────────────────────────────────────────
+    "zone_d_heavy": ScenarioSpec(
+        name="zone_d_heavy",
+        description="Zone D: 重负载 - 目标: 扩张",
+        base_arrival_rate=60.0,
+        arrival_pattern="steady",
+        target_regime="expand",
+    ),
+
+    "zone_d_burst": ScenarioSpec(
+        name="zone_d_burst",
+        description="Zone D: 突发重载 - 目标: 快速响应",
+        base_arrival_rate=50.0,
+        arrival_pattern="burst",
+        burst_probability=0.2,
+        burst_multiplier=2.0,
+        target_regime="recovery",
+    ),
+
+    # ─────────────────────────────────────────────────────────────────
+    # Zone E Scenarios (queue > 2000, load > 0.8)
+    # ─────────────────────────────────────────────────────────────────
+    "zone_e_crisis": ScenarioSpec(
+        name="zone_e_crisis",
+        description="Zone E: 危机负载 - 目标: 极限扩张",
+        base_arrival_rate=85.0,
+        arrival_pattern="steady",
+        target_regime="critical",
+    ),
+
+    "zone_e_saturation": ScenarioSpec(
+        name="zone_e_saturation",
+        description="Zone E: 饱和攻击 - 目标: 防止崩溃",
+        base_arrival_rate=75.0,
+        arrival_pattern="burst",
+        burst_probability=0.3,
+        burst_multiplier=3.0,
+        queue_flood_probability=0.02,
+        queue_flood_amount=500,
+        target_regime="critical",
+        chaos_params={"max_workers_limit": 40},
+    ),
+
+    # ─────────────────────────────────────────────────────────────────
+    # Legacy Scenarios (for backward compatibility)
+    # ─────────────────────────────────────────────────────────────────
     "steady_low": ScenarioSpec(
         name="steady_low",
-        description="低负载稳态 - 目标: 收缩",
+        description="低负载稳态 - 目标: 收缩 (Legacy)",
         base_arrival_rate=5.0,
         arrival_pattern="steady",
         target_regime="shrink",
@@ -135,7 +256,7 @@ PRESET_SCENARIOS = {
 
     "steady_medium": ScenarioSpec(
         name="steady_medium",
-        description="中等负载稳态 - 目标: 平衡",
+        description="中等负载稳态 - 目标: 平衡 (Legacy)",
         base_arrival_rate=15.0,
         arrival_pattern="steady",
         target_regime="balanced",
@@ -143,7 +264,7 @@ PRESET_SCENARIOS = {
 
     "steady_high": ScenarioSpec(
         name="steady_high",
-        description="高负载稳态 - 目标: 扩张",
+        description="高负载稳态 - 目标: 扩张 (Legacy)",
         base_arrival_rate=30.0,
         arrival_pattern="steady",
         target_regime="expand",
@@ -151,20 +272,20 @@ PRESET_SCENARIOS = {
 
     "burst_traffic": ScenarioSpec(
         name="burst_traffic",
-        description="突发流量 - 目标: 快速恢复",
-        base_arrival_rate=15.0,
+        description="突发流量 - 目标: 快速恢复 (Legacy)",
+        base_arrival_rate=25.0,
         arrival_pattern="burst",
-        burst_probability=0.1,
-        burst_multiplier=5.0,
+        burst_probability=0.15,
+        burst_multiplier=3.0,
         target_regime="recovery",
     ),
 
     "long_idle": ScenarioSpec(
         name="long_idle",
-        description="长空闲期 - 目标: 收缩 worker",
-        base_arrival_rate=15.0,
+        description="长空闲期 - 目标: 收缩 worker (Legacy)",
+        base_arrival_rate=8.0,
         arrival_pattern="steady",
-        idle_probability=0.7,
+        idle_probability=0.5,
         idle_rate=1.0,
         target_regime="shrink",
     ),

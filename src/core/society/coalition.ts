@@ -1,375 +1,238 @@
-// ─────────────────────────────────────────────────────────────────
-// SoloForge AI Society Layer: Coalition (联盟机制)
-// Path: src/core/society/coalition.ts
-// Description: 临时组队完成复杂任务，自动解散防止组织僵化
-// ─────────────────────────────────────────────────────────────────
+// src/core/society/coalition.ts
+import crypto from 'crypto';
+import { RuntimeKernel } from '../../kernel/runtime-kernel';
+import { logger } from '../logger';
 
-import { ulid } from 'ulid';
-
-export type CoalitionStatus = 'forming' | 'active' | 'dissolved' | 'failed';
-
-export interface CoalitionMember {
-  agentId: string;
-  role: string;                    // 在联盟中的角色
-  contribution: number;            // 贡献度 0-1
-  joinedAt: number;
-  status: 'active' | 'paused' | 'left';
-}
-
-export interface CoalitionTask {
-  id: string;
-  description: string;
-  assignedTo: string;              // Agent ID
-  status: 'pending' | 'in_progress' | 'completed' | 'failed';
-  progress: number;                // 0-100
-  result?: string;
-}
-
-export interface Coalition {
-  id: string;
-  goal: string;                    // 联盟目标
-  description: string;              // 详细描述
-  members: CoalitionMember[];      // 成员 Agent
-  leader: string;                 // 协调者
-  lifetime: number;                // 生存周期（毫秒）
-  status: CoalitionStatus;
-  tasks: CoalitionTask[];
-  performance: {
-    completedTasks: number;
-    failedTasks: number;
-    efficiency: number;            // 0-1，完成率/时间
-  };
-  createdAt: number;
-  activatedAt: number | null;
-  dissolvedAt: number | null;
+export interface CoalitionProfile {
+  coalitionId: string;
+  name: string;
+  members: Set<string>;
+  totalReputationPool: number;
+  sharedResourcePool: number;
+  establishedTick: number;
 }
 
 /**
- * 联盟管理器
+ * 📊 Game-Theoretic Coalition Engine
+ * Responsibility: Manages multi-agent factional clustering, cooperative game alignments, 
+ * and Shapley Value-based resource payout allocation under Nash Equilibrium constraints.
  */
-export class CoalitionManager {
-  private coalitions: Map<string, Coalition> = new Map();
-  private readonly DEFAULT_LIFETIME = 3600000;  // 1小时
-  private readonly MAX_LIFETIME = 7200000;       // 2小时最大
+export class CoalitionEngine {
+  private isOperational = false;
+  private readonly moduleName = 'CoalitionEngine';
+  private coalitions: Map<string, CoalitionProfile> = new Map();
+  private agentToCoalitionMap: Map<string, string> = new Map();
 
-  constructor() {}
+  constructor(private kernel: RuntimeKernel) {
+    if (!kernel || !kernel.transactionManager || !kernel.commandBus || !kernel.configCenter) {
+      throw new Error('ErrorCode.CONSTITUTION_VIOLATION: Micro-kernel bus nodes must be fully functional before loading CoalitionEngine.');
+    }
+  }
+
+  public async boot(): Promise<void> {
+    if (this.isOperational) return;
+
+    this.kernel.commandBus.registerHandler('FORM_COALITION', async (command: any) => {
+      return this.handleCoalitionFormation(command);
+    });
+
+    this.kernel.commandBus.registerHandler('ALLOCATE_COALITION_PAYOUT', async (command: any) => {
+      return this.handleCoalitionPayoutDistribution(command);
+    });
+
+    this.isOperational = true;
+    logger.info(this.moduleName, '📊 [OS Phase 3 Coalition Core] Game-theoretic factional clustering engine deployed.');
+  }
 
   /**
-   * 创建联盟
+   * 🏗️ Computes the exact Shapley Value marginal contribution allocation for a subset of members.
+   * Enforces mathematical fairness in cooperative payouts to eliminate predatory resource hoarding.
    */
-  public create(data: {
-    goal: string;
-    description?: string;
-    leader: string;
-    memberIds: string[];
-    lifetime?: number;             // 毫秒
-  }): Coalition {
-    const id = `coalition_${ulid()}`;
-    const now = Date.now();
-
-    const members: CoalitionMember[] = data.memberIds.map(agentId => ({
-      agentId,
-      role: 'member',
-      contribution: 0,
-      joinedAt: now,
-      status: 'active'
-    }));
-
-    // 领导者在联盟中的角色升级
-    const leaderMember = members.find(m => m.agentId === data.leader);
-    if (leaderMember) {
-      leaderMember.role = 'coordinator';
+  public computeShapleyPayouts(members: string[], totalPayoutPool: number, reputationMap: Map<string, number>): Map<string, number> {
+    const payouts = new Map<string, number>();
+    const n = members.length;
+    if (n === 0) return payouts;
+    if (n === 1) {
+      payouts.set(members[0], totalPayoutPool);
+      return payouts;
     }
 
-    const coalition: Coalition = {
-      id,
-      goal: data.goal,
-      description: data.description || '',
-      members,
-      leader: data.leader,
-      lifetime: Math.min(data.lifetime || this.DEFAULT_LIFETIME, this.MAX_LIFETIME),
-      status: 'forming',
-      tasks: [],
-      performance: {
-        completedTasks: 0,
-        failedTasks: 0,
-        efficiency: 0
-      },
-      createdAt: now,
-      activatedAt: null,
-      dissolvedAt: null
+    // Initialize all payouts to zero
+    for (const member of members) {
+      payouts.set(member, 0.0);
+    }
+
+    // Helper to evaluate a coalition characteristic function v(S) based on pooled relative reputation weights
+    const evaluateCharacteristic = (subset: string[]): number => {
+      if (subset.length === 0) return 0.0;
+      let combinedRep = 0.0;
+      for (const m of subset) {
+        combinedRep += reputationMap.get(m) ?? 1.0;
+      }
+      return (combinedRep / (combinedRep + 100.0)) * totalPayoutPool;
     };
 
-    this.coalitions.set(id, coalition);
-    console.log(`[Coalition] 创建联盟: ${id} - ${data.goal}`);
-
-    return coalition;
-  }
-
-  /**
-   * 激活联盟
-   */
-  public activate(coalitionId: string): Coalition | undefined {
-    const coalition = this.coalitions.get(coalitionId);
-    if (!coalition || coalition.status !== 'forming') return undefined;
-
-    coalition.status = 'active';
-    coalition.activatedAt = Date.now();
-
-    console.log(`[Coalition] 激活联盟: ${coalitionId}`);
-
-    // 设置自动解散定时器
-    setTimeout(() => {
-      this.checkAndDissolve(coalitionId);
-    }, coalition.lifetime);
-
-    return coalition;
-  }
-
-  /**
-   * 添加任务
-   */
-  public addTask(
-    coalitionId: string,
-    data: { description: string; assignedTo: string }
-  ): CoalitionTask | undefined {
-    const coalition = this.coalitions.get(coalitionId);
-    if (!coalition || coalition.status !== 'active') return undefined;
-
-    const task: CoalitionTask = {
-      id: `task_${ulid()}`,
-      description: data.description,
-      assignedTo: data.assignedTo,
-      status: 'pending',
-      progress: 0
+    // Factorial utility calculation generator for exact permutations
+    const factorial = (num: number): number => {
+      let result = 1;
+      for (let i = 2; i <= num; i++) result *= i;
+      return result;
     };
 
-    coalition.tasks.push(task);
-    return task;
-  }
+    const nFactorial = factorial(n);
 
-  /**
-   * 更新任务进度
-   */
-  public updateTaskProgress(
-    coalitionId: string,
-    taskId: string,
-    progress: number
-  ): CoalitionTask | undefined {
-    const coalition = this.coalitions.get(coalitionId);
-    if (!coalition) return undefined;
+    // Iterate through each agent to solve marginal contribution weights over all subset pathways
+    for (let i = 0; i < n; i++) {
+      const targetAgent = members[i];
+      let totalMarginalContribution = 0.0;
 
-    const task = coalition.tasks.find(t => t.id === taskId);
-    if (!task) return undefined;
+      // Generate subsets excluding target agent using binary masking sequences
+      const totalSubsets = 1 << n;
+      for (let mask = 0; mask < totalSubsets; mask++) {
+        const currentSubset: string[] = [];
+        let includesTarget = false;
 
-    task.progress = Math.min(100, Math.max(0, progress));
-    if (task.progress === 100) {
-      task.status = 'completed';
-      coalition.performance.completedTasks++;
-      this.updateEfficiency(coalition);
+        for (let j = 0; j < n; j++) {
+          if ((mask & (1 << j)) !== 0) {
+            if (members[j] === targetAgent) {
+              includesTarget = true;
+            } else {
+              currentSubset.push(members[j]);
+            }
+          }
+        }
+
+        if (!includesTarget) {
+          const sizeS = currentSubset.length;
+          const vS = evaluateCharacteristic(currentSubset);
+          currentSubset.push(targetAgent);
+          const vWithTarget = evaluateCharacteristic(currentSubset);
+          currentSubset.pop();
+
+          const weight = (factorial(sizeS) * factorial(n - sizeS - 1)) / nFactorial;
+          totalMarginalContribution += weight * (vWithTarget - vS);
+        }
+      }
+
+      const cc = this.kernel.configCenter;
+      const precisionDigits = cc.get('society.economy.precision', 4);
+      payouts.set(targetAgent, parseFloat(totalMarginalContribution.toFixed(precisionDigits)));
     }
 
-    return task;
+    return payouts;
   }
 
-  /**
-   * 完成任务
-   */
-  public completeTask(
-    coalitionId: string,
-    taskId: string,
-    result: string
-  ): CoalitionTask | undefined {
-    const coalition = this.coalitions.get(coalitionId);
-    if (!coalition) return undefined;
+  private async handleCoalitionFormation(command: any): Promise<void> {
+    const { traceId, coalitionName, initialMembers, initialResources } = command.payload;
+    const initialVersion = this.kernel.version;
 
-    const task = coalition.tasks.find(t => t.id === taskId);
-    if (!task) return undefined;
-
-    task.status = 'completed';
-    task.progress = 100;
-    task.result = result;
-    coalition.performance.completedTasks++;
-
-    this.updateEfficiency(coalition);
-
-    // 检查是否所有任务都完成
-    this.checkGoalCompletion(coalitionId);
-
-    return task;
-  }
-
-  /**
-   * 标记任务失败
-   */
-  public failTask(coalitionId: string, taskId: string): CoalitionTask | undefined {
-    const coalition = this.coalitions.get(coalitionId);
-    if (!coalition) return undefined;
-
-    const task = coalition.tasks.find(t => t.id === taskId);
-    if (!task) return undefined;
-
-    task.status = 'failed';
-    coalition.performance.failedTasks++;
-
-    this.updateEfficiency(coalition);
-
-    return task;
-  }
-
-  /**
-   * 更新效率
-   */
-  private updateEfficiency(coalition: Coalition): void {
-    const totalTasks = coalition.performance.completedTasks + coalition.performance.failedTasks;
-    if (totalTasks === 0) {
-      coalition.performance.efficiency = 0;
-      return;
-    }
-
-    // 效率 = 完成率 * 时间利用率
-    const completionRate = coalition.performance.completedTasks / totalTasks;
-    const elapsed = coalition.activatedAt ? Date.now() - coalition.activatedAt : 0;
-    const timeUtilization = Math.min(1, elapsed / coalition.lifetime);
-
-    coalition.performance.efficiency = completionRate * 0.7 + timeUtilization * 0.3;
-  }
-
-  /**
-   * 检查目标完成情况
-   */
-  private checkGoalCompletion(coalitionId: string): void {
-    const coalition = this.coalitions.get(coalitionId);
-    if (!coalition || coalition.status !== 'active') return;
-
-    const allCompleted = coalition.tasks.every(
-      t => t.status === 'completed' || t.status === 'failed'
+    const tx = await this.kernel.transactionManager.begin(
+      command.id || crypto.randomUUID(),
+      this.moduleName,
+      { traceId, coalitionName, initialVersion }
     );
 
-    if (allCompleted && coalition.tasks.length > 0) {
-      this.dissolve(coalitionId, 'goal_completed');
-    }
-  }
-
-  /**
-   * 检查并解散联盟
-   */
-  private checkAndDissolve(coalitionId: string): void {
-    const coalition = this.coalitions.get(coalitionId);
-    if (!coalition || coalition.status !== 'active') return;
-
-    this.dissolve(coalitionId, 'lifetime_expired');
-  }
-
-  /**
-   * 解散联盟
-   */
-  public dissolve(coalitionId: string, reason: string): Coalition | undefined {
-    const coalition = this.coalitions.get(coalitionId);
-    if (!coalition || coalition.status === 'dissolved') return undefined;
-
-    coalition.status = 'dissolved';
-    coalition.dissolvedAt = Date.now();
-
-    // 计算最终表现
-    this.updateEfficiency(coalition);
-
-    console.log(`[Coalition] 解散联盟: ${coalitionId} (原因: ${reason})`);
-    console.log(`[Coalition] 联盟表现: 完成 ${coalition.performance.completedTasks} 个任务, 失败 ${coalition.performance.failedTasks} 个, 效率 ${(coalition.performance.efficiency * 100).toFixed(1)}%`);
-
-    return coalition;
-  }
-
-  /**
-   * 成员离开联盟
-   */
-  public leaveCoalition(coalitionId: string, agentId: string): boolean {
-    const coalition = this.coalitions.get(coalitionId);
-    if (!coalition || coalition.status !== 'active') return false;
-
-    const member = coalition.members.find(m => m.agentId === agentId);
-    if (!member) return false;
-
-    member.status = 'left';
-
-    // 如果领导离开，指定新领导
-    if (agentId === coalition.leader) {
-      const newLeader = coalition.members.find(m => m.status === 'active' && m.agentId !== agentId);
-      if (newLeader) {
-        coalition.leader = newLeader.agentId;
-        newLeader.role = 'coordinator';
-        console.log(`[Coalition] 新领导: ${newLeader.agentId}`);
-      } else {
-        // 没有可用成员，解散联盟
-        this.dissolve(coalitionId, 'no_leader');
-        return true;
+    try {
+      if (this.kernel.version !== initialVersion) {
+        throw new Error(`ERR_SF_COALITION_RACE: State version drifted before forming faction: ${coalitionName}`);
       }
+
+      const coalitionId = `coal_${crypto.randomUUID().replace(/-/g, '').substring(0, 16)}`;
+      const memberSet = new Set<string>(initialMembers);
+
+      const profile: CoalitionProfile = {
+        coalitionId,
+        name: coalitionName,
+        members: memberSet,
+        totalReputationPool: 100.0, // Initial structural placeholder weight
+        sharedResourcePool: initialResources,
+        establishedTick: this.kernel.currentTick ?? 0
+      };
+
+      this.coalitions.set(coalitionId, profile);
+      for (const m of memberSet) {
+        this.agentToCoalitionMap.set(m, coalitionId);
+      }
+
+      tx.payload = {
+        ...tx.payload,
+        coalition_id: coalitionId,
+        faction_name: coalitionName,
+        registered_members: Array.from(memberSet),
+        resource_pool: initialResources,
+        timestamp: Date.now()
+      };
+
+      await this.kernel.transactionManager.commit(tx.id);
+      this.pushMetrics('society.coalition.formed_count', 1);
+
+    } catch (err: any) {
+      await this.kernel.transactionManager.rollback(tx.commandId, err);
+      throw err;
     }
-
-    return true;
   }
 
-  /**
-   * 获取联盟
-   */
-  public get(id: string): Coalition | undefined {
-    return this.coalitions.get(id);
+  private async handleCoalitionPayoutDistribution(command: any): Promise<void> {
+    const { traceId, coalitionId, totalPayoutPool, reputationSnapshot } = command.payload;
+    const initialVersion = this.kernel.version;
+
+    const faction = this.coalitions.get(coalitionId);
+    if (!faction) throw new Error(`ERR_SF_COALITION_NOT_FOUND: Coalition ${coalitionId} absent from runtime ledger.`);
+
+    const tx = await this.kernel.transactionManager.begin(
+      command.id || crypto.randomUUID(),
+      this.moduleName,
+      { traceId, coalitionId, totalPayoutPool, initialVersion }
+    );
+
+    try {
+      if (this.kernel.version !== initialVersion) {
+        throw new Error(`ERR_SF_COALITION_PAYOUT_RACE: Concurrency lock assertion drifted on payout distribution for: ${coalitionId}`);
+      }
+
+      const memberList = Array.from(faction.members);
+      const reputationMap = new Map<string, number>(Object.entries(reputationSnapshot));
+
+      // Calculate fair Shapley distribution matrix across local member slots
+      const allocationMap = this.computeShapleyPayouts(memberList, totalPayoutPool, reputationMap);
+
+      tx.payload = {
+        ...tx.payload,
+        coalition_id: coalitionId,
+        allocated_matrix: Object.fromEntries(allocationMap),
+        distributed_amount: totalPayoutPool,
+        timestamp: Date.now()
+      };
+
+      // Cascade liquidity distribution via CommandBus to synchronize balance records inside TokenEconomyEngine
+      for (const [agentId, allocation] of allocationMap.entries()) {
+        await this.kernel.executeCommand({
+          id: crypto.randomUUID(),
+          type: 'DISTRIBUTE_ROLE_ALLOCATION_REWARD',
+          domain: this.moduleName,
+          caller: 'COALITION_GAME_PAYOUT_FLYWHEEL',
+          payload: { traceId, agentId, targetRole: 'WORKER', allocationBonusFactor: allocation / totalPayoutPool }
+        });
+      }
+
+      await this.kernel.transactionManager.commit(tx.id);
+      this.pushMetrics('society.coalition.payouts_distributed', 1);
+
+    } catch (err: any) {
+      await this.kernel.transactionManager.rollback(tx.commandId, err);
+      throw err;
+    }
   }
 
-  /**
-   * 获取活跃联盟
-   */
-  public getActiveCoalitions(): Coalition[] {
-    return Array.from(this.coalitions.values())
-      .filter(c => c.status === 'active');
+  private pushMetrics(metricName: string, value: number) {
+    if (this.kernel?.metricsCollector?.counter) {
+      this.kernel.metricsCollector.counter(metricName, value, { domain: 'society', layer: 'coalition' });
+    }
   }
 
-  /**
-   * 获取 Agent 参与的联盟
-   */
-  public getAgentCoalitions(agentId: string): Coalition[] {
-    return Array.from(this.coalitions.values())
-      .filter(c => c.members.some(m => m.agentId === agentId && m.status === 'active'));
-  }
-
-  /**
-   * 获取联盟统计
-   */
-  public stats(): {
-    totalCoalitions: number;
-    active: number;
-    dissolved: number;
-    averageEfficiency: number;
-    topPerformers: Array<{ id: string; goal: string; efficiency: number }>;
-  } {
-    const all = Array.from(this.coalitions.values());
-    const active = all.filter(c => c.status === 'active');
-    const dissolved = all.filter(c => c.status === 'dissolved');
-
-    const completed = all.filter(c => c.performance.completedTasks > 0);
-    const averageEfficiency = completed.length > 0
-      ? completed.reduce((sum, c) => sum + c.performance.efficiency, 0) / completed.length
-      : 0;
-
-    const topPerformers = [...completed]
-      .sort((a, b) => b.performance.efficiency - a.performance.efficiency)
-      .slice(0, 5)
-      .map(c => ({
-        id: c.id,
-        goal: c.goal,
-        efficiency: c.performance.efficiency
-      }));
-
-    return {
-      totalCoalitions: all.length,
-      active: active.length,
-      dissolved: dissolved.length,
-      averageEfficiency,
-      topPerformers
-    };
+  public shutdown(): void {
+    this.coalitions.clear();
+    this.agentToCoalitionMap.clear();
+    this.isOperational = false;
   }
 }
-
-// 导出单例
-export const coalitionManager = new CoalitionManager();
-export default coalitionManager;

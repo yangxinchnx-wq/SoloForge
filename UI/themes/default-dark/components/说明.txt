@@ -1,0 +1,13 @@
+文件夹用途：主题组件
+存放内容：该主题对应的 React 组件代码
+包含组件：
+  - theme-context.tsx   主题上下文 Provider
+  - file-icon.tsx       文件类型图标
+  - navigation-icon.tsx 导航图标
+  - status-icon.tsx    状态图标
+  - action-icon.tsx    操作图标
+  - emoji-icon.tsx     表情图标
+  - icon-components.tsx 统一导出
+
+替换说明：组件通过 useTheme hook 获取当前主题路径，实现图标的热替换
+使用方式：import { FileIcon, StatusIcon } from './icon-components';

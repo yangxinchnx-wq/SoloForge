@@ -27,7 +27,10 @@ class RuntimeState:
     cpu_usage: float = 0.0
     token_pressure: float = 0.0
     reflection_load: float = 0.0
-    worker_count: int = 4
+    # Sprint 3.5: Increased from 100 to 200 for Zone E coverage
+    # With base_rate=2, initial capacity = 400 tasks/tick
+    # This allows queue to grow into Zone D/E with high arrival_rate
+    worker_count: int = 200
     active_agents: int = 0
 
     # 历史记录（用于检测振荡）

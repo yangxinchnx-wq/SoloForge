@@ -1,0 +1,105 @@
+{
+  "timeline_path": "datasets/timeline_v3_1.jsonl",
+  "total_entries": 157000,
+  "checks": {
+    "Action Distribution (max < 40%)": true,
+    "Transition Diversity (>= 10)": true,
+    "Recovery Coverage (> 10%)": true,
+    "Crisis Coverage (> 5%)": true,
+    "Worker Distribution (each > 5%)": true
+  },
+  "action_distribution": {
+    "distribution": {
+      "shrink2": 0.17684076433121018,
+      "shrink1": 0.06007643312101911,
+      "noop": 0.31722292993630574,
+      "expand1": 0.25477707006369427,
+      "expand2": 0.1910828025477707
+    },
+    "status": {
+      "shrink2": true,
+      "shrink1": true,
+      "noop": true,
+      "expand1": true,
+      "expand2": true
+    },
+    "max_ratio": 0.31722292993630574,
+    "threshold": 0.4,
+    "all_pass": true
+  },
+  "transition_diversity": {
+    "transition_count": 25,
+    "transitions": {
+      "D->D": 10270,
+      "D->A": 8995,
+      "A->D": 9023,
+      "A->C": 8997,
+      "C->A": 8914,
+      "A->E": 6633,
+      "E->E": 5692,
+      "E->A": 6695,
+      "A->A": 7668,
+      "A->B": 2678,
+      "B->D": 3016,
+      "D->C": 9950,
+      "C->D": 10070,
+      "C->B": 3138,
+      "B->B": 890,
+      "B->A": 2728,
+      "E->D": 7620,
+      "D->E": 7750,
+      "E->C": 7734,
+      "C->C": 10246,
+      "C->E": 7632,
+      "D->B": 3035,
+      "B->C": 3073,
+      "E->B": 2259,
+      "B->E": 2293
+    },
+    "recovery_ratio": 0.14927483614545314,
+    "crisis_ratio": 0.15482901164975574,
+    "threshold": 10,
+    "all_pass": true
+  },
+  "recovery_coverage": {
+    "recovery_ratio": 0.14927483614545314,
+    "recovery_detail": {
+      "E->D": 0.04853534098943305,
+      "D->C": 0.06337619984840667,
+      "C->B": 0.019987388454703534,
+      "B->A": 0.017375906852909892
+    },
+    "threshold": 0.1,
+    "all_pass": true
+  },
+  "crisis_coverage": {
+    "crisis_ratio": 0.15482901164975574,
+    "crisis_detail": {
+      "D->E": 0.04936337174122128,
+      "C->E": 0.04861177459729043,
+      "B->E": 0.014605188568080052,
+      "A->E": 0.04224867674316397
+    },
+    "threshold": 0.05,
+    "all_pass": true
+  },
+  "worker_distribution": {
+    "distribution": {
+      "1-20": 0.17947133757961783,
+      "20-50": 0.17331210191082802,
+      "50-100": 0.35086624203821654,
+      "100-200": 0.07428025477707006,
+      "200+": 0.22207006369426752
+    },
+    "status": {
+      "1-20": true,
+      "20-50": true,
+      "50-100": true,
+      "100-200": true,
+      "200+": true
+    },
+    "threshold": 0.05,
+    "all_pass": true
+  },
+  "all_pass": true
+}

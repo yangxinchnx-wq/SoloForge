@@ -51,7 +51,7 @@ def db_manager(config):
 @pytest.fixture
 def embedder():
     """嵌入器"""
-    # 训练嵌入器
+    # 训练嵌入器（使用 128 维，与 schema 一致）
     sample_texts = [
         "Browser 插件故障导致文件被误删",
         "代码审查发现严重安全问题",
@@ -59,7 +59,7 @@ def embedder():
         "成功完成代码重构",
         "数据库连接池耗尽",
     ]
-    emb = TFIDFEmbedder(dim=64)
+    emb = TFIDFEmbedder(dim=128)
     emb.fit(sample_texts)
     return emb
 
@@ -300,7 +300,7 @@ class TestVectorEmbedder:
         """测试向量生成"""
         vector = embedder.embed("这是一个测试文本")
 
-        assert len(vector) == 64
+        assert len(vector) == 128
         assert -1.0 <= vector[0] <= 1.0  # 归一化后的值
 
     def test_embedder_batch(self, embedder):
@@ -308,4 +308,4 @@ class TestVectorEmbedder:
         texts = ["文本1", "文本2", "文本3"]
         vectors = embedder.embed_batch(texts)
 
-        assert vectors.shape == (3, 64)
+        assert vectors.shape == (3, 128)

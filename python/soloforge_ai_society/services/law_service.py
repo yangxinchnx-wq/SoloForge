@@ -172,34 +172,47 @@ class LawService:
             是否触发
         """
         try:
-            # 简单的表达式评估
-            # 支持: key == value, key > value, key < value, key != value
-            # 例如: action == "delete" AND confirmation == false
+            # 预处理：把布尔字面量转为 Python 格式
+            expr = re.sub(r'\bfalse\b', 'False', condition, flags=re.IGNORECASE)
+            expr = re.sub(r'\btrue\b', 'True', expr, flags=re.IGNORECASE)
 
-            # 替换变量
-            expr = condition
+            # 转换 AND/OR 为 Python 关键字 and/or
+            expr = re.sub(r'\bAND\b', 'and', expr, flags=re.IGNORECASE)
+            expr = re.sub(r'\bOR\b', 'or', expr, flags=re.IGNORECASE)
 
-            # 处理字符串字面量
-            for match in re.finditer(r'"([^"]*)"', condition):
-                value = match.group(1)
-                context[f'__literal_{match.start()}'] = value
+            # 构建 eval 上下文
+            eval_context = {"__builtins__": {}}
 
-            # 评估表达式
-            # 这里使用简单的字符串替换
+            # 处理点号访问（如 component.status -> 获取值）
+            def replace_dot_access(match):
+                obj, attr = match.group(1), match.group(2)
+                obj_val = context.get(obj, {})
+                if isinstance(obj_val, dict):
+                    attr_val = obj_val.get(attr, None)
+                    var_name = f"__dot_{obj}_{attr}"
+                    eval_context[var_name] = attr_val
+                    return var_name
+                return match.group(0)
+
+            expr = re.sub(r'(\w+)\.(\w+)', replace_dot_access, expr)
+
+            # 将所有上下文变量添加到 eval 上下文
             for key, value in context.items():
-                if isinstance(value, str):
-                    expr = expr.replace(key, f'"{value}"')
-                elif isinstance(value, bool):
-                    expr = expr.replace(key, str(value).lower())
-                else:
-                    expr = expr.replace(key, str(value))
+                if '.' not in key:
+                    eval_context[key] = value
 
-            # 使用 eval（安全范围内）
-            # 只允许比较运算符和逻辑运算符
-            allowed_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_=<>!ANDORandornot (){}[]")
-            safe_expr = "".join(c for c in expr if c in allowed_chars)
+            # 处理乘法表达式（如 budget * 1.2 -> 预先计算）
+            for match in re.finditer(r'(\w+)\s*\*\s*([\d.]+)', expr):
+                var = match.group(1)
+                mult = float(match.group(2))
+                val = context.get(var, 0)
+                expr = expr.replace(match.group(0), str(val * mult))
 
-            return eval(safe_expr, {"__builtins__": {}})
+            # 安全化表达式：保留引号
+            safe_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_=<>!andornot (){}[].\"'+- ")
+            safe_expr = "".join(c for c in expr if c in safe_chars)
+
+            return eval(safe_expr, eval_context)
 
         except Exception as e:
             logger.error(f"Failed to evaluate condition: {condition} - {e}")
