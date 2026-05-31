@@ -1,0 +1,413 @@
+{
+  "ppo_source": "bc_warm_start",
+  "test_cases": [
+    {
+      "queue": 100,
+      "workers": 50,
+      "load_ratio": 1.0,
+      "zone": 4,
+      "zone_name": "E",
+      "teacher_action": 4,
+      "teacher_action_name": "expand2",
+      "bc": {
+        "logits": [
+          -615.5872192382812,
+          -613.9570922851562,
+          -567.0693969726562,
+          -512.0137939453125,
+          -492.34564208984375
+        ],
+        "probs": [
+          0.0,
+          0.0,
+          3.530901441858016e-33,
+          2.8723023959287275e-09,
+          1.0
+        ],
+        "action": 4,
+        "action_name": "expand2",
+        "confidence": 1.0
+      },
+      "ppo": {
+        "logits": [
+          -615.5872192382812,
+          -613.9570922851562,
+          -567.0693969726562,
+          -512.0137939453125,
+          -492.34564208984375
+        ],
+        "probs": [
+          0.0,
+          0.0,
+          3.530901441858016e-33,
+          2.8723023959287275e-09,
+          1.0
+        ],
+        "action": 4,
+        "action_name": "expand2",
+        "confidence": 1.0
+      },
+      "disagree": false,
+      "bc_matches_teacher": true,
+      "ppo_matches_teacher": true
+    },
+    {
+      "queue": 500,
+      "workers": 50,
+      "load_ratio": 5.0,
+      "zone": 4,
+      "zone_name": "E",
+      "teacher_action": 4,
+      "teacher_action_name": "expand2",
+      "bc": {
+        "logits": [
+          -649.6763916015625,
+          -664.1968383789062,
+          -611.0735473632812,
+          -519.84814453125,
+          -438.3369445800781
+        ],
+        "probs": [
+          0.0,
+          0.0,
+          0.0,
+          3.9823153535627824e-36,
+          1.0
+        ],
+        "action": 4,
+        "action_name": "expand2",
+        "confidence": 1.0
+      },
+      "ppo": {
+        "logits": [
+          -649.6763916015625,
+          -664.1968383789062,
+          -611.0735473632812,
+          -519.84814453125,
+          -438.3369445800781
+        ],
+        "probs": [
+          0.0,
+          0.0,
+          0.0,
+          3.9823153535627824e-36,
+          1.0
+        ],
+        "action": 4,
+        "action_name": "expand2",
+        "confidence": 1.0
+      },
+      "disagree": false,
+      "bc_matches_teacher": true,
+      "ppo_matches_teacher": true
+    },
+    {
+      "queue": 1000,
+      "workers": 50,
+      "load_ratio": 10.0,
+      "zone": 4,
+      "zone_name": "E",
+      "teacher_action": 4,
+      "teacher_action_name": "expand2",
+      "bc": {
+        "logits": [
+          -673.3941650390625,
+          -704.1537475585938,
+          -649.3302001953125,
+          -526.142578125,
+          -387.47039794921875
+        ],
+        "probs": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "action": 4,
+        "action_name": "expand2",
+        "confidence": 1.0
+      },
+      "ppo": {
+        "logits": [
+          -673.3941650390625,
+          -704.1537475585938,
+          -649.3302001953125,
+          -526.142578125,
+          -387.47039794921875
+        ],
+        "probs": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "action": 4,
+        "action_name": "expand2",
+        "confidence": 1.0
+      },
+      "disagree": false,
+      "bc_matches_teacher": true,
+      "ppo_matches_teacher": true
+    },
+    {
+      "queue": 5000,
+      "workers": 50,
+      "load_ratio": 50.0,
+      "zone": 4,
+      "zone_name": "E",
+      "teacher_action": 4,
+      "teacher_action_name": "expand2",
+      "bc": {
+        "logits": [
+          -897.344482421875,
+          -995.0347290039062,
+          -930.4247436523438,
+          -674.5541381835938,
+          -297.6356201171875
+        ],
+        "probs": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "action": 4,
+        "action_name": "expand2",
+        "confidence": 1.0
+      },
+      "ppo": {
+        "logits": [
+          -897.344482421875,
+          -995.0347290039062,
+          -930.4247436523438,
+          -674.5541381835938,
+          -297.6356201171875
+        ],
+        "probs": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "action": 4,
+        "action_name": "expand2",
+        "confidence": 1.0
+      },
+      "disagree": false,
+      "bc_matches_teacher": true,
+      "ppo_matches_teacher": true
+    },
+    {
+      "queue": 10000,
+      "workers": 50,
+      "load_ratio": 100.0,
+      "zone": 4,
+      "zone_name": "E",
+      "teacher_action": 4,
+      "teacher_action_name": "expand2",
+      "bc": {
+        "logits": [
+          -1215.7725830078125,
+          -1374.1375732421875,
+          -1296.7679443359375,
+          -914.8211059570312,
+          -319.36053466796875
+        ],
+        "probs": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "action": 4,
+        "action_name": "expand2",
+        "confidence": 1.0
+      },
+      "ppo": {
+        "logits": [
+          -1215.7725830078125,
+          -1374.1375732421875,
+          -1296.7679443359375,
+          -914.8211059570312,
+          -319.36053466796875
+        ],
+        "probs": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "action": 4,
+        "action_name": "expand2",
+        "confidence": 1.0
+      },
+      "disagree": false,
+      "bc_matches_teacher": true,
+      "ppo_matches_teacher": true
+    },
+    {
+      "queue": 20000,
+      "workers": 50,
+      "load_ratio": 200.0,
+      "zone": 4,
+      "zone_name": "E",
+      "teacher_action": 4,
+      "teacher_action_name": "expand2",
+      "bc": {
+        "logits": [
+          -1845.0711669921875,
+          -2117.458984375,
+          -2014.1201171875,
+          -1396.6112060546875,
+          -387.2384033203125
+        ],
+        "probs": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "action": 4,
+        "action_name": "expand2",
+        "confidence": 1.0
+      },
+      "ppo": {
+        "logits": [
+          -1845.0711669921875,
+          -2117.458984375,
+          -2014.1201171875,
+          -1396.6112060546875,
+          -387.2384033203125
+        ],
+        "probs": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "action": 4,
+        "action_name": "expand2",
+        "confidence": 1.0
+      },
+      "disagree": false,
+      "bc_matches_teacher": true,
+      "ppo_matches_teacher": true
+    },
+    {
+      "queue": 50000,
+      "workers": 20,
+      "load_ratio": 1250.0,
+      "zone": 4,
+      "zone_name": "E",
+      "teacher_action": 4,
+      "teacher_action_name": "expand2",
+      "bc": {
+        "logits": [
+          -3750.38330078125,
+          -4356.54345703125,
+          -4174.74072265625,
+          -2862.967041015625,
+          -632.4910888671875
+        ],
+        "probs": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "action": 4,
+        "action_name": "expand2",
+        "confidence": 1.0
+      },
+      "ppo": {
+        "logits": [
+          -3750.38330078125,
+          -4356.54345703125,
+          -4174.74072265625,
+          -2862.967041015625,
+          -632.4910888671875
+        ],
+        "probs": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "action": 4,
+        "action_name": "expand2",
+        "confidence": 1.0
+      },
+      "disagree": false,
+      "bc_matches_teacher": true,
+      "ppo_matches_teacher": true
+    },
+    {
+      "queue": 100000,
+      "workers": 20,
+      "load_ratio": 2500.0,
+      "zone": 4,
+      "zone_name": "E",
+      "teacher_action": 4,
+      "teacher_action_name": "expand2",
+      "bc": {
+        "logits": [
+          -6899.9169921875,
+          -8048.14013671875,
+          -7735.1083984375,
+          -5287.384765625,
+          -1067.490478515625
+        ],
+        "probs": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "action": 4,
+        "action_name": "expand2",
+        "confidence": 1.0
+      },
+      "ppo": {
+        "logits": [
+          -6899.9169921875,
+          -8048.14013671875,
+          -7735.1083984375,
+          -5287.384765625,
+          -1067.490478515625
+        ],
+        "probs": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "action": 4,
+        "action_name": "expand2",
+        "confidence": 1.0
+      },
+      "disagree": false,
+      "bc_matches_teacher": true,
+      "ppo_matches_teacher": true
+    }
+  ],
+  "summary": {
+    "bc_conf_degraded": false,
+    "ppo_conf_degraded": false,
+    "disagreements": 0,
+    "bc_mismatches": 0,
+    "ppo_mismatches": 0,
+    "verdict": "Both robust"
+  }
+}

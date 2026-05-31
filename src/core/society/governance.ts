@@ -1,25 +1,20 @@
-// ─────────────────────────────────────────────────────────────────
-// SoloForge AI Society Layer: Governance System (治理层)
-// Path: src/core/society/governance.ts
-// Description: 制度的执行与评估，持续监督 Agent 行为
-// ─────────────────────────────────────────────────────────────────
-
+// src/core/society/governance.ts
+import crypto from 'crypto';
 import { ulid } from 'ulid';
+import { RuntimeKernel } from '../../kernel/runtime-kernel';
+import { logger } from '../logger';
 
 export type GovernorMode = 'performance' | 'balanced' | 'economy' | 'emergency';
 export type GovernanceStatus = 'active' | 'warning' | 'critical' | 'suspended';
 
-/**
- * 治理策略
- */
 export interface GovernancePolicy {
   id: string;
-  policyId: string;                // 关联的制度 ID
-  owner: string;                   // 治理者 (Agent/User/System)
+  policyId: string;
+  owner: string;
   targetMetrics: {
-    effectiveness: number;         // 目标效果 (0-1)
-    maxViolations: number;        // 最大违规次数
-    reviewIntervalMs: number;     // 审查间隔
+    effectiveness: number;
+    maxViolations: number;
+    reviewIntervalTicks: number; // 🔒 Locked directly onto deterministic logical clock tick intervals
   };
   actions: GovernanceAction[];
   createdAt: number;
@@ -27,276 +22,312 @@ export interface GovernancePolicy {
 }
 
 /**
- * 治理动作
+ * 🏛️ Government Intervention Parameters
+ * Used for social equilibrium enforcement against privileged agents
  */
-export interface GovernanceAction {
-  type: 'warn' | 'penalize' | 'isolate' | 'escalate' | 'suspend';
-  trigger: string;                // 触发条件
-  severity: 'minor' | 'moderate' | 'severe';
-  cooldownMs: number;            // 冷却时间
-  lastTriggered: number | null;
+export interface InterventionParams {
+  targetAgentId: string;
+  taxEquilibriumCoefficient: number;  // 税收均衡系数 (0.0-1.0)
+  reputationDecayOperator: number;     // 声望衰减算子 (0.0-1.0)
+  isolationLevel: 'none' | 'partial' | 'full';
+  interventionStartTick: number;
+  interventionReason: string;
 }
 
-/**
- * 治理评估记录
- */
+export interface GovernanceAction {
+  type: 'warn' | 'penalize' | 'isolate' | 'escalate' | 'suspend';
+  trigger: string;
+  severity: 'minor' | 'moderate' | 'severe';
+  cooldownTicks: number;       // 🔒 Clock tick boundary defense replacing volatile epoch milliseconds
+  lastTriggeredTick: number | null;
+}
+
 export interface GovernanceAssessment {
   id: string;
   policyId: string;
-  targetId: string;               // 被评估的目标 (Agent/Plugin/Tool)
+  targetId: string;
   targetType: 'agent' | 'plugin' | 'tool' | 'mcp';
-  effectiveness: number;           // 0-1，效果评分
-  violations: number;             // 违规次数
-  lastReview: number;
+  effectiveness: number;
+  violations: number;
+  lastReviewTick: number;
   status: GovernanceStatus;
   notes: string;
   createdAt: number;
 }
 
 /**
- * 治理引擎
+ * 🧱 Hardened Operational Governance Policy Engine
+ * Responsibility: Oversees active runtime telemetry alignments and triggers policy sanctions via tick synchronization.
  */
-export class GovernanceEngine {
+export class GovernancePolicyEngine {
+  private isOperational = false;
+  private readonly moduleName = 'GovernancePolicy';
+
   private policies: Map<string, GovernancePolicy> = new Map();
   private assessments: Map<string, GovernanceAssessment> = new Map();
-  private globalEffectiveness = 1.0;
-  private currentMode: GovernorMode = 'performance';
+  private globalSystemEffectiveness = 1.0;
+  private currentMode: GovernorMode = 'balanced';
 
-  constructor() {
-    this.initializeDefaultPolicies();
+  // 🏛️ Government Intervention Registry - Social equilibrium enforcement
+  private activeInterventions: Map<string, InterventionParams> = new Map();
+  private readonly PRIVILEGED_AGENT_THRESHOLD = 20; // Bypass attempts threshold
+
+  // Default intervention coefficients from ConfigCenter
+  private readonly DEFAULT_TAX_COEFFICIENT = 0.15;
+  private readonly DEFAULT_REPUTATION_DECAY = 0.05;
+
+  constructor(private kernel: RuntimeKernel) {
+    if (!kernel || !kernel.transactionManager || !kernel.commandBus || !kernel.configCenter) {
+      throw new Error('CRITICAL_SF_CONSTITUTION: Core transaction controllers are absent from governance pool initialization.');
+    }
   }
 
-  /**
-   * 初始化默认治理策略
-   */
-  private initializeDefaultPolicies(): void {
-    // 成本控制策略
-    this.createPolicy({
-      policyId: 'cost_control',
-      owner: 'GovernorAgent',
-      targetMetrics: {
-        effectiveness: 0.9,
-        maxViolations: 10,
-        reviewIntervalMs: 3600000  // 1小时
-      },
-      actions: [
-        {
-          type: 'escalate',
-          trigger: 'token_usage > 0.8',
-          severity: 'moderate',
-          cooldownMs: 300000,
-          lastTriggered: null
-        },
-        {
-          type: 'isolate',
-          trigger: 'token_usage > 0.95',
-          severity: 'severe',
-          cooldownMs: 600000,
-          lastTriggered: null
-        }
-      ]
+  public async bootGovernanceEngine(): Promise<void> {
+    if (this.isOperational) return;
+
+    this.initializeDefaultSystemPolicies();
+
+    // Register runtime orchestration handlers to CommandBus
+    this.kernel.commandBus.registerHandler('ASSESS_GOVERNANCE_TARGET', async (command: any) => {
+      return this.handleAssessmentTransaction(command);
     });
 
-    // 质量控制策略
-    this.createPolicy({
-      policyId: 'quality_control',
-      owner: 'QualityAssuranceAgent',
-      targetMetrics: {
-        effectiveness: 0.85,
-        maxViolations: 5,
-        reviewIntervalMs: 1800000  // 30分钟
-      },
-      actions: [
-        {
-          type: 'warn',
-          trigger: 'error_rate > 0.1',
-          severity: 'minor',
-          cooldownMs: 60000,
-          lastTriggered: null
-        },
-        {
-          type: 'penalize',
-          trigger: 'error_rate > 0.2',
-          severity: 'moderate',
-          cooldownMs: 300000,
-          lastTriggered: null
-        }
-      ]
+    this.kernel.commandBus.registerHandler('TRIGGER_GOVERNANCE_ACTION', async (command: any) => {
+      return this.handleTriggerActionTransaction(command);
     });
 
-    // 安全治理策略
-    this.createPolicy({
-      policyId: 'security_control',
-      owner: 'SecurityPatchAgent',
-      targetMetrics: {
-        effectiveness: 0.95,
-        maxViolations: 0,
-        reviewIntervalMs: 300000  // 5分钟
-      },
-      actions: [
-        {
-          type: 'suspend',
-          trigger: 'security_violation_detected',
-          severity: 'severe',
-          cooldownMs: 0,
-          lastTriggered: null
-        },
-        {
-          type: 'escalate',
-          trigger: 'anomaly_detected',
-          severity: 'moderate',
-          cooldownMs: 60000,
-          lastTriggered: null
-        }
-      ]
+    this.isOperational = true;
+    logger.info(this.moduleName, '⚙️ [OS Phase 3 Governance Core] Hardened chronological policy monitor online.');
+  }
+
+  private initializeDefaultSystemPolicies(): void {
+    this.policies.set('policy_sec_control', {
+      id: 'policy_sec_control', policyId: 'security_control', owner: 'SecurityPatchAgent',
+      targetMetrics: { effectiveness: 0.95, maxViolations: 0, reviewIntervalTicks: 100 },
+      actions: [{
+        type: 'suspend', trigger: 'security_violation_detected', severity: 'severe',
+        cooldownTicks: 0, lastTriggeredTick: null
+      }]
     });
   }
 
   /**
-   * 创建治理策略
+   * 🏗️ Command Handler: Two-Phase Version Locked Target Assessment Runner
    */
-  public createPolicy(data: Omit<GovernancePolicy, 'id' | 'createdAt' | 'updatedAt'>): GovernancePolicy {
-    const id = `gov_policy_${ulid()}`;
-    const now = Date.now();
+  private async handleAssessmentTransaction(command: any): Promise<GovernanceAssessment> {
+    const { traceId, targetId, targetType, effectiveness, violations, notes } = command.payload;
+    const initialVersion = this.kernel.version;
 
-    const policy: GovernancePolicy = {
-      id,
-      ...data,
-      createdAt: now,
-      updatedAt: now
-    };
+    const tx = await this.kernel.transactionManager.begin(
+      command.id || crypto.randomUUID(),
+      this.moduleName,
+      { traceId, targetId, readVersionStamp: initialVersion }
+    );
 
-    this.policies.set(id, policy);
-    console.log(`[Governance] 创建策略: ${policy.policyId} (${id})`);
+    try {
+      if (this.kernel.version !== initialVersion) {
+        throw new Error(`ERR_SF_GOVERNANCE_RACE: Macro state modified during assessment loop processing.`);
+      }
 
-    return policy;
+      let status: GovernanceStatus = 'active';
+      if (Number(effectiveness) < 0.5 || Number(violations) > 5) {
+        status = 'critical';
+      } else if (Number(effectiveness) < 0.7) {
+        status = 'warning';
+      }
+
+      const currentTick = this.kernel.currentTick ?? 0;
+      const assessmentId = `gov_assess_${ulid()}`;
+
+      const assessmentBlock: GovernanceAssessment = {
+        id: assessmentId, policyId: 'auto_assessment', targetId, targetType,
+        effectiveness: Number(effectiveness), violations: Number(violations),
+        lastReviewTick: currentTick, status, notes: notes || '', createdAt: Date.now()
+      };
+
+      this.assessments.set(`${targetType}:${targetId}`, assessmentBlock);
+      this.recalculateGlobalSystemEffectiveness();
+
+      tx.payload = {
+        ...tx.payload,
+        assessment_id: assessmentId,
+        target_node: targetId,
+        target_type_tag: targetType,
+        calculated_efficiency: assessmentBlock.effectiveness,
+        violation_tps_count: assessmentBlock.violations,
+        status_seal: status,
+        current_tick_stamp: currentTick
+      };
+
+      await this.kernel.transactionManager.commit(tx.id);
+
+      if (this.kernel.metricsCollector?.gauge) {
+        this.kernel.metricsCollector.gauge('society.governance.global_effectiveness', this.globalSystemEffectiveness);
+      }
+
+      return assessmentBlock;
+
+    } catch (panic: any) {
+      await this.kernel.transactionManager.rollback(tx.commandId, panic);
+      throw panic;
+    }
   }
 
   /**
-   * 评估目标
+   * 🏗️ Command Handler: Clock Tick Guarded Anti-Drift Action Trigger
    */
-  public assess(
-    targetId: string,
-    targetType: 'agent' | 'plugin' | 'tool' | 'mcp',
-    metrics: { effectiveness: number; violations: number; notes?: string }
-  ): GovernanceAssessment {
-    const id = `gov_assess_${ulid()}`;
-    const now = Date.now();
+  private async handleTriggerActionTransaction(command: any): Promise<boolean> {
+    const { traceId, policyId, triggerType, targetId } = command.payload;
 
-    let status: GovernanceStatus = 'active';
-    if (metrics.effectiveness < 0.5) status = 'critical';
-    else if (metrics.effectiveness < 0.7) status = 'warning';
-    if (metrics.violations > 5) status = 'critical';
+    const policy = this.policies.get(policyId);
+    if (!policy) return false;
 
-    const assessment: GovernanceAssessment = {
-      id,
-      policyId: 'auto_assessment',
-      targetId,
-      targetType,
-      effectiveness: metrics.effectiveness,
-      violations: metrics.violations,
-      lastReview: now,
-      status,
-      notes: metrics.notes || '',
-      createdAt: now
-    };
-
-    this.assessments.set(`${targetType}:${targetId}`, assessment);
-
-    // 更新全局有效性
-    this.updateGlobalEffectiveness();
-
-    return assessment;
-  }
-
-  /**
-   * 触发治理动作
-   */
-  public async triggerAction(
-    policyId: string,
-    targetId: string,
-    triggerType: string
-  ): Promise<{ action: string; executed: boolean } | null> {
-    const policy = Array.from(this.policies.values()).find(p => p.policyId === policyId);
-    if (!policy) return null;
+    const currentTick = this.kernel.currentTick ?? 0;
 
     for (const action of policy.actions) {
       if (action.trigger === triggerType) {
-        // 检查冷却
-        if (action.lastTriggered && Date.now() - action.lastTriggered < action.cooldownMs) {
-          console.log(`[Governance] 动作 ${action.type} 处于冷却中`);
-          return null;
+        // 🔒 Precise Cooldown Checking: Enforces absolute tick space restrictions eliminating clock drift holes
+        if (action.lastTriggeredTick !== null && (currentTick - action.lastTriggeredTick) < action.cooldownTicks) {
+          return false;
         }
 
-        action.lastTriggered = Date.now();
-        console.log(`[Governance] 执行动作: ${action.type} -> ${targetId} (原因: ${triggerType})`);
+        const initialVersion = this.kernel.version;
+        const tx = await this.kernel.transactionManager.begin(
+          command.id || crypto.randomUUID(),
+          this.moduleName,
+          { traceId, policyId, triggerActionType: action.type, readVersionStamp: initialVersion }
+        );
 
-        return {
-          action: action.type,
-          executed: true
-        };
+        try {
+          if (this.kernel.version !== initialVersion) {
+            throw new Error(`ERR_SF_GOVERNANCE_ACTION_RACE: Atomic context drifted during cooldown check intervals.`);
+          }
+
+          action.lastTriggeredTick = currentTick;
+
+          tx.payload = {
+            ...tx.payload,
+            policy_id: policyId,
+            triggered_action: action.type,
+            target_entity_node: targetId,
+            executed_at_tick: currentTick,
+            timestamp: Date.now()
+          };
+
+          await this.kernel.transactionManager.commit(tx.id);
+
+          if (this.kernel.metricsCollector?.counter) {
+            this.kernel.metricsCollector.counter(`society.governance.action_triggered.${action.type}`, 1, { domain: 'governance' });
+          }
+          return true;
+
+        } catch (panic: any) {
+          await this.kernel.transactionManager.rollback(tx.commandId, panic);
+          throw panic;
+        }
       }
     }
-
-    return null;
+    return false;
   }
 
-  /**
-   * 更新全局有效性
-   */
-  private updateGlobalEffectiveness(): void {
-    const assessments = Array.from(this.assessments.values());
-    if (assessments.length === 0) {
-      this.globalEffectiveness = 1.0;
+  private recalculateGlobalSystemEffectiveness(): void {
+    const list = Array.from(this.assessments.values());
+    if (list.length === 0) {
+      this.globalSystemEffectiveness = 1.0;
       return;
     }
-
-    const total = assessments.reduce((sum, a) => sum + a.effectiveness, 0);
-    this.globalEffectiveness = total / assessments.length;
+    const sum = list.reduce((acc, current) => acc + current.effectiveness, 0.0);
+    this.globalSystemEffectiveness = sum / list.length;
   }
 
-  /**
-   * 获取治理状态
-   */
-  public getGovernanceStatus(): {
-    globalEffectiveness: number;
-    mode: GovernorMode;
-    activePolicies: number;
-    criticalTargets: number;
-  } {
-    const critical = Array.from(this.assessments.values()).filter(a => a.status === 'critical').length;
-
-    return {
-      globalEffectiveness: this.globalEffectiveness,
-      mode: this.currentMode,
-      activePolicies: this.policies.size,
-      criticalTargets: critical
-    };
-  }
-
-  /**
-   * 设置治理模式
-   */
-  public setMode(mode: GovernorMode): void {
+  public setSystemGovernanceMode(mode: GovernorMode): void {
     this.currentMode = mode;
-    console.log(`[Governance] 模式切换: ${mode}`);
+    logger.warn(this.moduleName, `⚖️ System macro operational mode altered via tuning registry to: ${mode}`);
   }
 
   /**
-   * 获取目标评估
+   * 🏛️ Government Intervention: Apply social equilibrium enforcement on privileged agent
+   * @param targetAgentId Agent to intervene
+   * @param taxCoeff Tax equilibrium coefficient (0.0-1.0)
+   * @param decayOperator Reputation decay operator (0.0-1.0)
    */
-  public getAssessment(targetType: string, targetId: string): GovernanceAssessment | undefined {
-    return this.assessments.get(`${targetType}:${targetId}`);
+  public applySocialIntervention(
+    targetAgentId: string,
+    taxCoeff: number = this.DEFAULT_TAX_COEFFICIENT,
+    decayOperator: number = this.DEFAULT_REPUTATION_DECAY
+  ): InterventionParams {
+    const cc = this.kernel.configCenter;
+    const effectiveTax = taxCoeff ?? cc.get('society.governance.tax_equilibrium_coefficient', this.DEFAULT_TAX_COEFFICIENT);
+    const effectiveDecay = decayOperator ?? cc.get('society.governance.reputation_decay_operator', this.DEFAULT_REPUTATION_DECAY);
+
+    const intervention: InterventionParams = {
+      targetAgentId,
+      taxEquilibriumCoefficient: effectiveTax,
+      reputationDecayOperator: effectiveDecay,
+      isolationLevel: effectiveTax > 0.3 ? 'partial' : 'none',
+      interventionStartTick: this.kernel.currentTick ?? 0,
+      interventionReason: 'Privilege bypass attempts detected'
+    };
+
+    this.activeInterventions.set(targetAgentId, intervention);
+
+    logger.warn(this.moduleName,
+      `🏛️ [GOVERNMENT INTERVENTION] Agent ${targetAgentId} subject to social equilibrium enforcement:` +
+      ` Tax Coeff=${effectiveTax.toFixed(4)}, Rep Decay=${effectiveDecay.toFixed(4)}`
+    );
+
+    // Emit intervention event for telemetry tracking
+    this.kernel.eventBus.emit('governance.intervention.applied', intervention);
+
+    return intervention;
   }
 
   /**
-   * 获取所有评估
+   * 🏛️ Get active intervention parameters for an agent
    */
-  public getAllAssessments(): GovernanceAssessment[] {
-    return Array.from(this.assessments.values());
+  public getActiveIntervention(targetAgentId: string): InterventionParams | undefined {
+    return this.activeInterventions.get(targetAgentId);
+  }
+
+  /**
+   * 🏛️ Remove intervention for an agent (reform successful)
+   */
+  public revokeIntervention(targetAgentId: string): boolean {
+    const removed = this.activeInterventions.delete(targetAgentId);
+    if (removed) {
+      logger.info(this.moduleName, `🏛️ [INTERVENTION REVOKED] Agent ${targetAgentId} reformed successfully.`);
+    }
+    return removed;
+  }
+
+  /**
+   * 🏛️ Auto-detect and intervene on privileged agents
+   */
+  public autoInterveneOnPrivilegedAgents(suspiciousAgents: Array<{ id: string; attempts: number }>): void {
+    for (const agent of suspiciousAgents) {
+      if (agent.attempts >= this.PRIVILEGED_AGENT_THRESHOLD) {
+        // Escalating intervention based on attempt count
+        const taxCoeff = Math.min(0.5, 0.1 + (agent.attempts - this.PRIVILEGED_AGENT_THRESHOLD) * 0.01);
+        const decayOp = Math.min(0.2, 0.02 + (agent.attempts - this.PRIVILEGED_AGENT_THRESHOLD) * 0.005);
+
+        this.applySocialIntervention(agent.id, taxCoeff, decayOp);
+      }
+    }
+  }
+
+  /**
+   * 🏛️ Calculate effective metrics after intervention
+   */
+  public calculateInterventionEffectiveness(baseEffectiveness: number, intervention: InterventionParams): number {
+    const taxPenalty = baseEffectiveness * intervention.taxEquilibriumCoefficient;
+    const decayPenalty = baseEffectiveness * intervention.reputationDecayOperator;
+    return Math.max(0.1, baseEffectiveness - taxPenalty - decayPenalty);
+  }
+
+  public shutdownEngineRegistry(): void {
+    this.policies.clear();
+    this.assessments.clear();
+    this.activeInterventions.clear();
+    this.isOperational = false;
   }
 }
-
-// 导出单例
-export const governanceEngine = new GovernanceEngine();
-export default governanceEngine;

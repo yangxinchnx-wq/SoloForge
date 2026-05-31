@@ -1,30 +1,29 @@
-// ─────────────────────────────────────────────────────────────────
-// SoloForge AI Society Layer: Social Reputation (社会信誉)
-// Path: src/core/society/reputation.ts
-// Description: 群体信任体系，驱动资源分配和权限管理
-// ─────────────────────────────────────────────────────────────────
-
+// src/core/society/reputation.ts
+import crypto from 'crypto';
 import { ulid } from 'ulid';
+import { RuntimeKernel } from '../../kernel/runtime-kernel';
+import { logger } from '../logger';
 
 export type EntityType = 'agent' | 'plugin' | 'mcp' | 'tool';
+export type ReputationTier = 'excellent' | 'good' | 'average' | 'poor' | 'isolated';
 
 export interface ReputationScore {
-  taskCompletion: number;    // 任务完成率 (0-1)
-  errorRate: number;         // 错误率 (0-1，越低越好)
-  collaboration: number;      // 协作反馈 (0-1)
-  reliability: number;        // 可靠性历史 (0-1)
+  taskCompletion: number;
+  errorRate: number;
+  collaboration: number;
+  reliability: number;
 }
 
 export interface SocialReputation {
   id: string;
-  entityId: string;                // Agent/Plugin/Tool/MCP ID
+  entityId: string;
   entityType: EntityType;
-  score: number;                   // 0-1，信誉总分
-  components: ReputationScore;     // 各项评分
-  evidence: string[];              // 评分依据
-  history: number[];               // 历史评分序列
-  badges: ReputationBadge[];      // 获得的徽章
-  penalties: ReputationPenalty[];  // 处罚记录
+  score: number;
+  components: ReputationScore;
+  evidence: string[];
+  history: number[];
+  badges: ReputationBadge[];
+  penalties: ReputationPenalty[];
   createdAt: number;
   updatedAt: number;
 }
@@ -43,249 +42,272 @@ export interface ReputationPenalty {
   expiresAt: number;
 }
 
-export type ReputationTier = 'excellent' | 'good' | 'average' | 'poor' | 'isolated';
-
 /**
- * 社会信誉管理器
+ * 🧱 Hardened Constitutional Social Reputation Engine
+ * Responsibility: Manages system-wide multi-agent trust matrix allocation under version locked constraints.
+ * Design Spec: Eradicates raw un-versioned mutable mutation routines to prevent cross-replay corruption.
  */
-export class SocialReputationManager {
+export class SocialReputationEngine {
+  private isOperational = false;
+  private readonly moduleName = 'SocialReputation';
+
+  // Continuous thread-safe shadow registry matrix cache for microsecond read evaluation loops
   private reputations: Map<string, SocialReputation> = new Map();
-  private readonly SCORE_WEIGHTS = {
-    taskCompletion: 0.4,
-    errorRate: 0.3,
-    collaboration: 0.2,
-    reliability: 0.1
-  };
 
-  constructor() {}
-
-  /**
-   * 注册实体
-   */
-  public register(entityId: string, entityType: EntityType): SocialReputation {
-    const existing = this.reputations.get(`${entityType}:${entityId}`);
-    if (existing) return existing;
-
-    const id = `rep_${ulid()}`;
-    const now = Date.now();
-
-    const reputation: SocialReputation = {
-      id,
-      entityId,
-      entityType,
-      score: 0.7,  // 默认中等信誉
-      components: {
-        taskCompletion: 0.7,
-        errorRate: 0.3,  // 越低越好，所以初始化为低错误率
-        collaboration: 0.7,
-        reliability: 0.7
-      },
-      evidence: [],
-      history: [0.7],
-      badges: [],
-      penalties: [],
-      createdAt: now,
-      updatedAt: now
-    };
-
-    this.reputations.set(`${entityType}:${entityId}`, reputation);
-    console.log(`[Reputation] 注册实体: ${entityType}/${entityId} (初始信誉: 0.7)`);
-
-    return reputation;
-  }
-
-  /**
-   * 更新信誉评分
-   */
-  public updateScore(
-    entityId: string,
-    entityType: EntityType,
-    components: Partial<ReputationScore>,
-    evidence?: string
-  ): SocialReputation | undefined {
-    const key = `${entityType}:${entityId}`;
-    let rep = this.reputations.get(key);
-
-    if (!rep) {
-      rep = this.register(entityId, entityType);
-    }
-
-    // 更新组件
-    if (components.taskCompletion !== undefined) {
-      rep.components.taskCompletion = components.taskCompletion;
-    }
-    if (components.errorRate !== undefined) {
-      rep.components.errorRate = components.errorRate;
-    }
-    if (components.collaboration !== undefined) {
-      rep.components.collaboration = components.collaboration;
-    }
-    if (components.reliability !== undefined) {
-      rep.components.reliability = components.reliability;
-    }
-
-    // 计算总分
-    const newScore = this.calculateScore(rep.components);
-    rep.score = newScore;
-    rep.history.push(newScore);
-    if (rep.history.length > 100) {
-      rep.history = rep.history.slice(-100);
-    }
-
-    if (evidence) {
-      rep.evidence.push(evidence);
-      if (rep.evidence.length > 50) {
-        rep.evidence = rep.evidence.slice(-50);
-      }
-    }
-
-    rep.updatedAt = Date.now();
-
-    // 检查是否获得徽章
-    this.checkAndAwardBadges(rep);
-
-    // 检查处罚是否过期
-    this.cleanExpiredPenalties(rep);
-
-    return rep;
-  }
-
-  /**
-   * 计算信誉总分
-   */
-  private calculateScore(components: ReputationScore): number {
-    // errorRate 越低越好，需要反转
-    const errorScore = 1 - components.errorRate;
-
-    return (
-      components.taskCompletion * this.SCORE_WEIGHTS.taskCompletion +
-      errorScore * this.SCORE_WEIGHTS.errorRate +
-      components.collaboration * this.SCORE_WEIGHTS.collaboration +
-      components.reliability * this.SCORE_WEIGHTS.reliability
-    );
-  }
-
-  /**
-   * 检查并授予徽章
-   */
-  private checkAndAwardBadges(rep: SocialReputation): void {
-    // 质量大师：任务完成率连续 10 次 > 0.9
-    if (rep.components.taskCompletion > 0.9 && !rep.badges.find(b => b.type === 'quality_master')) {
-      const recentHigh = rep.history.slice(-10).filter(s => s > 0.9).length;
-      if (recentHigh >= 10) {
-        rep.badges.push({
-          type: 'quality_master',
-          earnedAt: Date.now(),
-          reason: '连续10次任务完成率超过90%'
-        });
-        console.log(`[Reputation] ${rep.entityId} 获得徽章: quality_master`);
-      }
-    }
-
-    // 协作冠军：高协作评分
-    if (rep.components.collaboration > 0.95 && !rep.badges.find(b => b.type === 'collaboration_champion')) {
-      rep.badges.push({
-        type: 'collaboration_champion',
-        earnedAt: Date.now(),
-        reason: '协作评分超过95%'
-      });
-    }
-
-    // 可靠性英雄：历史评分稳定
-    if (rep.history.length >= 20) {
-      const recentHistory = rep.history.slice(-20);
-      const avg = recentHistory.reduce((a, b) => a + b, 0) / recentHistory.length;
-      const variance = recentHistory.reduce((sum, s) => sum + Math.pow(s - avg, 2), 0) / recentHistory.length;
-      if (avg > 0.85 && variance < 0.01 && !rep.badges.find(b => b.type === 'reliability_hero')) {
-        rep.badges.push({
-          type: 'reliability_hero',
-          earnedAt: Date.now(),
-          reason: '信誉评分长期稳定在85%以上'
-        });
-      }
+  constructor(private kernel: RuntimeKernel) {
+    if (!kernel || !kernel.transactionManager || !kernel.commandBus || !kernel.configCenter) {
+      throw new Error('CRITICAL_SF_CONSTITUTION: Reputation subsystem dependencies missing from core bootstrapper.');
     }
   }
 
   /**
-   * 清理过期处罚
+   * 🔌 Component Lifecycle Bootstrapper
    */
-  private cleanExpiredPenalties(rep: SocialReputation): void {
-    const now = Date.now();
-    rep.penalties = rep.penalties.filter(p => p.expiresAt > now);
-  }
+  public async boot(): Promise<void> {
+    if (this.isOperational) return;
 
-  /**
-   * 应用处罚
-   */
-  public applyPenalty(entityId: string, entityType: EntityType, penalty: Omit<ReputationPenalty, 'appliedAt'>): void {
-    const key = `${entityType}:${entityId}`;
-    const rep = this.reputations.get(key);
-    if (!rep) return;
-
-    rep.penalties.push({
-      ...penalty,
-      appliedAt: Date.now()
+    // Register primary trust allocation and penalty routines onto central CommandBus
+    this.kernel.commandBus.registerHandler('REGISTER_REPUTATION_ENTITY', async (command: any) => {
+      return this.handleRegisterTransaction(command);
     });
 
-    // 实际扣减信誉
-    rep.score = Math.max(0, rep.score - penalty.deduction);
-    rep.updatedAt = Date.now();
+    this.kernel.commandBus.registerHandler('UPDATE_REPUTATION_SCORE', async (command: any) => {
+      return this.handleUpdateScoreTransaction(command);
+    });
+
+    this.kernel.commandBus.registerHandler('APPLY_REPUTATION_PENALTY', async (command: any) => {
+      return this.handleApplyPenaltyTransaction(command);
+    });
+
+    this.isOperational = true;
+    logger.info(this.moduleName, '🧱 [OS Phase 3 Reputation Rim] Hardened constitutional trust ledger engine live.');
+  }
+
+  private getRegistryKey(entityId: string, entityType: EntityType): string {
+    return `${entityType}:${entityId}`;
+  }
+
+  private calculateScoreFormula(components: ReputationScore): number {
+    const cc = this.kernel.configCenter;
+    const wTask = cc.get('society.reputation.weight_task', 0.4);
+    const wError = cc.get('society.reputation.weight_error', 0.3);
+    const wCollab = cc.get('society.reputation.weight_collaboration', 0.2);
+    const wRel = cc.get('society.reputation.weight_reliability', 0.1);
+
+    const invertedErrorScore = 1.0 - components.errorRate;
+    const finalCalculatedScore =
+      (components.taskCompletion * wTask) +
+      (invertedErrorScore * wError) +
+      (components.collaboration * wCollab) +
+      (components.reliability * wRel);
+
+    const precision = cc.get('society.economy.precision', 4);
+    return parseFloat(finalCalculatedScore.toFixed(precision));
   }
 
   /**
-   * 获取信誉等级
+   * 🏗️ Command Handler: Two-Phase Locked Trust Profile Initializer
    */
+  private async handleRegisterTransaction(command: any): Promise<SocialReputation> {
+    const { traceId, entityId, entityType } = command.payload;
+    const key = this.getRegistryKey(entityId, entityType);
+
+    const existingProfile = this.reputations.get(key);
+    if (existingProfile) return existingProfile;
+
+    const initialVersion = this.kernel.version;
+    const tx = await this.kernel.transactionManager.begin(
+      command.id || crypto.randomUUID(),
+      this.moduleName,
+      { traceId, entityId, entityType, readVersionStamp: initialVersion }
+    );
+
+    try {
+      if (this.kernel.version !== initialVersion) {
+        throw new Error(`ERR_SF_REPUTATION_RACE: Version drift during cold entity profile initialization.`);
+      }
+
+      const id = `rep_${ulid()}`;
+      const now = Date.now();
+
+      const reputationBlock: SocialReputation = {
+        id, entityId, entityType, score: 0.7,
+        components: { taskCompletion: 0.7, errorRate: 0.3, collaboration: 0.7, reliability: 0.7 },
+        evidence: [], history: [0.7], badges: [], penalties: [], createdAt: now, updatedAt: now
+      };
+
+      this.reputations.set(key, reputationBlock);
+
+      tx.payload = {
+        ...tx.payload,
+        reputation_block_id: id,
+        target_entity: entityId,
+        target_type: entityType,
+        initial_score: reputationBlock.score,
+        finalized_at: now
+      };
+
+      await this.kernel.transactionManager.commit(tx.id);
+      this.pushMetrics('society.reputation.entities_registered', 1);
+      return reputationBlock;
+
+    } catch (panic: any) {
+      await this.kernel.transactionManager.rollback(tx.commandId, panic);
+      throw panic;
+    }
+  }
+
+  /**
+   * 🏗️ Command Handler: Two-Phase Asserted Adaptive Score Recalibrator
+   */
+  private async handleUpdateScoreTransaction(command: any): Promise<SocialReputation> {
+    const { traceId, entityId, entityType, components, evidence } = command.payload;
+    const key = this.getRegistryKey(entityId, entityType);
+
+    let rep = this.reputations.get(key);
+    if (!rep) {
+      // Automatic cascade fallback if target pointer absent from local cache registry
+      const registerResult = await this.kernel.executeCommand({
+        id: crypto.randomUUID(), type: 'REGISTER_REPUTATION_ENTITY', domain: this.moduleName,
+        caller: 'SCORE_UPDATE_FALLBACK_BACKSTOP', payload: { traceId, entityId, entityType }
+      });
+      rep = (registerResult as SocialReputation) || this.reputations.get(key);
+    }
+
+    if (!rep) {
+      throw new Error(`ERR_SF_REPUTATION_ABSENT: Cannot update score for uninitialized entity: ${key}`);
+    }
+
+    const initialVersion = this.kernel.version;
+    const tx = await this.kernel.transactionManager.begin(
+      command.id || crypto.randomUUID(),
+      this.moduleName,
+      { traceId, entityId, readVersionStamp: initialVersion }
+    );
+
+    try {
+      if (this.kernel.version !== initialVersion) {
+        throw new Error(`ERR_SF_REPUTATION_CONFLICT: Optimistic validation drift intercepted on credit score calculation.`);
+      }
+
+      // Input type cast guardian barrier mapping updates into primitives safely
+      if (components?.taskCompletion !== undefined) rep.components.taskCompletion = Number(components.taskCompletion);
+      if (components?.errorRate !== undefined) rep.components.errorRate = Number(components.errorRate);
+      if (components?.collaboration !== undefined) rep.components.collaboration = Number(components.collaboration);
+      if (components?.reliability !== undefined) rep.components.reliability = Number(components.reliability);
+
+      const computedNewScore = this.calculateScoreFormula(rep.components);
+      rep.score = computedNewScore;
+      rep.history.push(computedNewScore);
+
+      const cc = this.kernel.configCenter;
+      const historyLimit = cc.get('society.reputation.max_history_window', 100);
+      if (rep.history.length > historyLimit) rep.history = rep.history.slice(-historyLimit);
+
+      if (evidence) {
+        rep.evidence.push(evidence);
+        const evidenceLimit = cc.get('society.reputation.max_evidence_window', 50);
+        if (rep.evidence.length > evidenceLimit) rep.evidence = rep.evidence.slice(-evidenceLimit);
+      }
+
+      rep.updatedAt = Date.now();
+
+      // Dynamic downstream heuristic validations executed over stack isolated context frames
+      this.evaluateBadgeEligibility(rep);
+      rep.penalties = rep.penalties.filter(p => p.expiresAt > Date.now());
+
+      tx.payload = {
+        ...tx.payload,
+        reputation_block_id: rep.id,
+        target_entity: entityId,
+        recalibrated_score: rep.score,
+        components_snapshot: { ...rep.components },
+        badges_earned_count: rep.badges.length,
+        finalized_at: rep.updatedAt
+      };
+
+      await this.kernel.transactionManager.commit(tx.id);
+      this.pushMetrics('society.reputation.scores_updated', 1);
+      return rep;
+
+    } catch (panic: any) {
+      await this.kernel.transactionManager.rollback(tx.commandId, panic);
+      this.pushMetrics('society.reputation.failures_count', 1);
+      throw panic;
+    }
+  }
+
+  /**
+   * 🏗️ Command Handler: Two-Phase Locked Fine/Penalty Execution Matrix
+   */
+  private async handleApplyPenaltyTransaction(command: any): Promise<void> {
+    const { traceId, entityId, entityType, penalty } = command.payload;
+    const key = this.getRegistryKey(entityId, entityType);
+    const rep = this.reputations.get(key);
+    if (!rep) throw new Error(`ERR_SF_REPUTATION_ABSENT: Cannot levy fine on untrusted entity: ${key}`);
+
+    const initialVersion = this.kernel.version;
+    const tx = await this.kernel.transactionManager.begin(
+      command.id || crypto.randomUUID(),
+      this.moduleName,
+      { traceId, entityId, deductionValue: penalty.deduction, readVersionStamp: initialVersion }
+    );
+
+    try {
+      if (this.kernel.version !== initialVersion) {
+        throw new Error(`ERR_SF_REPUTATION_PENALTY_RACE: Version lock drift during account enforcement mapping.`);
+      }
+
+      rep.penalties.push({ ...penalty, appliedAt: Date.now() });
+      rep.score = Math.max(0.0, rep.score - Number(penalty.deduction));
+      rep.updatedAt = Date.now();
+
+      tx.payload = {
+        ...tx.payload,
+        reputation_block_id: rep.id,
+        target_entity: entityId,
+        sanction_type: penalty.type,
+        points_deducted: penalty.deduction,
+        recalibrated_score_snapshot: rep.score,
+        finalized_at: rep.updatedAt
+      };
+
+      await this.kernel.transactionManager.commit(tx.id);
+      this.pushMetrics('society.reputation.penalties_levied', 1);
+
+    } catch (panic: any) {
+      await this.kernel.transactionManager.rollback(tx.commandId, panic);
+      throw panic;
+    }
+  }
+
+  private evaluateBadgeEligibility(rep: SocialReputation): void {
+    const cc = this.kernel.configCenter;
+    const masterBar = cc.get('society.reputation.badge_master_bar', 0.9);
+    const windowSize = cc.get('society.reputation.badge_window_size', 10);
+
+    if (rep.components.taskCompletion > masterBar && !rep.badges.some(b => b.type === 'quality_master')) {
+      const consecutiveHits = rep.history.slice(-windowSize).filter(s => s > masterBar).length;
+      if (consecutiveHits >= windowSize) {
+        rep.badges.push({ type: 'quality_master', earnedAt: Date.now(), reason: 'Task execution rate sustained over 90% across window frames.' });
+      }
+    }
+  }
+
   public getTier(score: number): ReputationTier {
     if (score >= 0.85) return 'excellent';
-    if (score >= 0.7) return 'good';
-    if (score >= 0.5) return 'average';
-    if (score >= 0.3) return 'poor';
+    if (score >= 0.70) return 'good';
+    if (score >= 0.50) return 'average';
+    if (score >= 0.30) return 'poor';
     return 'isolated';
   }
 
-  /**
-   * 获取信誉
-   */
-  public get(entityId: string, entityType: EntityType): SocialReputation | undefined {
-    return this.reputations.get(`${entityType}:${entityId}`);
-  }
-
-  /**
-   * 获取信誉排名
-   */
-  public getRanking(entityType?: EntityType): SocialReputation[] {
-    let reps = Array.from(this.reputations.values());
-
-    if (entityType) {
-      reps = reps.filter(r => r.entityType === entityType);
-    }
-
-    return reps
-      .sort((a, b) => b.score - a.score)
-      .map((r, index) => ({ ...r, rank: index + 1 } as SocialReputation & { rank: number }));
-  }
-
-  /**
-   * 获取实体权限等级
-   */
-  public getPermissions(entityId: string, entityType: EntityType): {
-    canHandleComplexTasks: boolean;
-    canPerformHighRiskOps: boolean;
-    resourcePriority: number;
-    requiresConfirmation: boolean;
-  } {
-    const rep = this.get(entityId, entityType);
+  public getPermissions(entityId: string, entityType: EntityType) {
+    const rep = this.reputations.get(this.getRegistryKey(entityId, entityType));
     if (!rep) {
-      return {
-        canHandleComplexTasks: false,
-        canPerformHighRiskOps: false,
-        resourcePriority: 0,
-        requiresConfirmation: true
-      };
+      return { canHandleComplexTasks: false, canPerformHighRiskOps: false, resourcePriority: 0.0, requiresConfirmation: true };
     }
-
     const tier = this.getTier(rep.score);
-
     return {
       canHandleComplexTasks: tier !== 'isolated' && tier !== 'poor',
       canPerformHighRiskOps: tier === 'excellent' || tier === 'good',
@@ -294,46 +316,14 @@ export class SocialReputationManager {
     };
   }
 
-  /**
-   * 获取统计
-   */
-  public stats(): {
-    totalEntities: number;
-    byTier: Record<string, number>;
-    averageScore: number;
-    topEntity: { id: string; score: number } | null;
-  } {
-    const all = Array.from(this.reputations.values());
-    const byTier: Record<string, number> = {
-      excellent: 0,
-      good: 0,
-      average: 0,
-      poor: 0,
-      isolated: 0
-    };
-
-    let totalScore = 0;
-    let topEntity: { id: string; score: number } | null = null;
-
-    for (const rep of all) {
-      const tier = this.getTier(rep.score);
-      byTier[tier]++;
-      totalScore += rep.score;
-
-      if (!topEntity || rep.score > topEntity.score) {
-        topEntity = { id: `${rep.entityType}/${rep.entityId}`, score: rep.score };
-      }
+  private pushMetrics(metricName: string, value: number) {
+    if (this.kernel?.metricsCollector?.counter) {
+      this.kernel.metricsCollector.counter(metricName, value, { domain: 'society', layer: 'reputation' });
     }
+  }
 
-    return {
-      totalEntities: all.length,
-      byTier,
-      averageScore: all.length > 0 ? totalScore / all.length : 0,
-      topEntity
-    };
+  public evictEngineLedger(): void {
+    this.reputations.clear();
+    this.isOperational = false;
   }
 }
-
-// 导出单例
-export const socialReputationManager = new SocialReputationManager();
-export default socialReputationManager;

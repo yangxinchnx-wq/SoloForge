@@ -6,6 +6,7 @@
 
 import { RuntimeComponent } from './runtime-component';
 import { LifecycleManager } from '../runtime/lifecycle';
+import { ConfigCenter, globalConfigCenter, MetricsCollectorInterface, globalMetricsCollector } from './config-center';
 
 export enum RuntimeState {
   BOOTING = 'BOOTING',
@@ -140,6 +141,11 @@ export class RuntimeKernel {
   public readonly id = 'kernel_sovereign_core';
   public readonly startedAt = Date.now();
   public version = 0;
+
+  // 🛰️ Phase 5 Observability Infrastructure
+  public readonly configCenter: ConfigCenter = globalConfigCenter;
+  public readonly metricsCollector: MetricsCollectorInterface = globalMetricsCollector;
+  public currentTick: number = 0;
 
   public static getInstance(): RuntimeKernel {
     if (!RuntimeKernel.instance) {

@@ -1,0 +1,26 @@
+{
+  "config": {
+    "duration": 1000,
+    "arrival_rate": 15.0,
+    "burst_prob": 0.15
+  },
+  "n_episodes": 1000,
+  "max_ticks": 1000,
+  "survival_rate": 1.0,
+  "collapse_count": 0,
+  "avg_total_reward": -796.0717049999998,
+  "std_total_reward": 88.49284386360269,
+  "avg_episode_reward": -0.7960717049999999,
+  "avg_queue": 67.60378,
+  "avg_teacher_match": 1.0,
+  "p95_queue": 307.7499999999993,
+  "p99_queue": 477.18499999999983,
+  "max_queue_avg": 562.351,
+  "zone_distribution": {
+    "A": 428.913,
+    "B": 50.202,
+    "C": 80.892,
+    "D": 137.31,
+    "E": 302.683
+  }
+}

@@ -8,19 +8,21 @@ import { Dashboard } from './components/Dashboard';
 import { DatabasePanel } from './components/DatabasePanel';
 import { SchedulerPanel } from './components/SchedulerPanel';
 import { EventsPanel } from './components/EventsPanel';
+import { ObservationPanel } from './components/ObservationPanel';
 import { NavigationIcon } from '../../components/navigation-icon';
 
 interface AppProps {
   hasElectron: boolean;
 }
 
-type View = 'dashboard' | 'database' | 'scheduler' | 'events';
+type View = 'dashboard' | 'database' | 'scheduler' | 'events' | 'observation';
 
 const NAV_ITEMS: { key: View; label: string; icon: string }[] = [
   { key: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
   { key: 'database', label: 'Database', icon: 'database' },
   { key: 'scheduler', label: 'Scheduler', icon: 'scheduler' },
   { key: 'events', label: 'Events', icon: 'events' },
+  { key: 'observation', label: 'Observation', icon: 'observation' },
 ];
 
 export function App({ hasElectron }: AppProps) {
@@ -36,6 +38,8 @@ export function App({ hasElectron }: AppProps) {
         return <SchedulerPanel />;
       case 'events':
         return <EventsPanel />;
+      case 'observation':
+        return <ObservationPanel />;
       default:
         return <Dashboard />;
     }

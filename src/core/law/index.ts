@@ -5,7 +5,6 @@
 
 export {
   LawEngine,
-  lawEngine,
   Law,
   Violation,
   Appeal,

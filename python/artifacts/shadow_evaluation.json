@@ -1,0 +1,10 @@
+{
+  "episodes": 1000,
+  "survival_rate": 100.0,
+  "collapse_count": 0,
+  "bc_avg_reward": -105.79121640084938,
+  "ppo_avg_reward": -105.79121640084938,
+  "bc_avg_match": 100.0,
+  "ppo_avg_match": 100.0,
+  "passed": true
+}

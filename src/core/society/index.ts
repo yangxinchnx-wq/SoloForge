@@ -5,8 +5,7 @@
 
 // Institution - 制度系统
 export {
-  InstitutionManager,
-  institutionManager,
+  InstitutionEngine,
   Institution,
   InstitutionScope,
   EnforcementType
@@ -14,8 +13,7 @@ export {
 
 // Governance - 治理层
 export {
-  GovernanceEngine,
-  governanceEngine,
+  GovernancePolicyEngine,
   GovernancePolicy,
   GovernanceAssessment,
   GovernanceStatus,
@@ -25,8 +23,7 @@ export {
 
 // Social Memory - 社会记忆
 export {
-  SocialMemoryManager,
-  socialMemoryManager,
+  SocialMemoryEngine,
   SocialMemory,
   MemorySeverity,
   MemoryImpact
@@ -43,8 +40,7 @@ export {
 
 // Reputation - 社会信誉
 export {
-  SocialReputationManager,
-  socialReputationManager,
+  SocialReputationEngine,
   SocialReputation,
   ReputationScore,
   ReputationBadge,

@@ -1,0 +1,19 @@
+{
+  "status": "PASS",
+  "total_score": 240,
+  "variance_improvement": 5958.686171093542,
+  "gates": {
+    "gate1": {
+      "passed": true,
+      "score": 70
+    },
+    "gate2": {
+      "passed": true,
+      "score": 70
+    },
+    "gate3": {
+      "passed": true,
+      "score": 100
+    }
+  }
+}

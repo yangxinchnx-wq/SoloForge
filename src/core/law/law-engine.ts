@@ -1,26 +1,25 @@
-// ─────────────────────────────────────────────────────────────────
-// SoloForge Law Layer: Law Engine (法律引擎)
-// Path: src/core/law/law-engine.ts
-// Description: 违规检测与处罚系统，维护社会秩序
-// ─────────────────────────────────────────────────────────────────
-
+// src/core/law/law-engine.ts
+import crypto from 'crypto';
 import { ulid } from 'ulid';
+import { RuntimeKernel } from '../../kernel/runtime-kernel';
+import { RuntimeEvent } from '../events/runtime-events'; // 🔒 High-compiled static alignment to standard enum keys
+import { logger } from '../logger';
 
 export type ViolationSeverity = 'minor' | 'moderate' | 'severe';
 export type ViolationStatus = 'pending' | 'appealed' | 'decided' | 'executed';
 
 export interface Law {
   id: string;
-  name: string;                    // 法律名称
-  description: string;             // 法律描述
-  condition: string;               // 违规条件（表达式）
-  consequence: string;             // 处罚措施
+  name: string;
+  description: string;
+  condition: string;
+  consequence: string;
   severity: ViolationSeverity;
-  appeals: boolean;                // 是否允许申诉
+  appeals: boolean;
   penalty: {
     type: 'warning' | 'penalty' | 'isolation' | 'suspension' | 'ban';
-    amount?: number;              // 扣除信用分
-    durationMs?: number;         // 隔离/暂停时长
+    amount?: number;
+    durationMs?: number;
   };
   metadata: Record<string, any>;
   createdAt: number;
@@ -50,9 +49,9 @@ export interface Violation {
 export interface Appeal {
   id: string;
   violationId: string;
-  appellant: string;              // 申诉者
-  reason: string;                 // 申诉理由
-  evidence: string[];            // 支持材料
+  appellant: string;
+  reason: string;
+  evidence: string[];
   status: 'pending' | 'accepted' | 'rejected';
   decision?: string;
   decidedBy?: string;
@@ -61,405 +60,292 @@ export interface Appeal {
 }
 
 /**
- * 法律引擎
+ * 🧱 Hardened Constitutional Law Enforcement Engine
+ * Responsibility: Manages system-level security constraints under strict two-phase serialization.
+ * Design Spec: Eradicates raw global singletons to prevent cross-replay memory contamination.
  */
 export class LawEngine {
+  private isOperational = false;
+  private readonly moduleName = 'LawEngine';
+
   private laws: Map<string, Law> = new Map();
   private violations: Map<string, Violation> = new Map();
   private appeals: Map<string, Appeal> = new Map();
 
-  constructor() {
+  constructor(private kernel: RuntimeKernel) {
+    if (!kernel || !kernel.transactionManager || !kernel.commandBus || !kernel.configCenter) {
+      throw new Error('CRITICAL_SF_CONSTITUTION: LawEngine dependencies missing from central bootstrap container.');
+    }
+  }
+
+  /**
+   * 🔌 Component Lifecycle Bootstrapper
+   */
+  public async boot(): Promise<void> {
+    if (this.isOperational) return;
+
     this.initializeDefaultLaws();
+
+    // Register primary judicial and legal action chains onto CommandBus
+    this.kernel.commandBus.registerHandler('RECORD_VIOLATION_FACT', async (command: any) => {
+      return this.handleRecordViolationTransaction(command);
+    });
+
+    this.kernel.commandBus.registerHandler('EXECUTE_VIOLATION_PENALTY', async (command: any) => {
+      return this.handleExecutePenaltyTransaction(command);
+    });
+
+    this.kernel.commandBus.registerHandler('LODGE_LAW_APPEAL', async (command: any) => {
+      return this.handleAppealTransaction(command);
+    });
+
+    this.isOperational = true;
+    logger.info(this.moduleName, '🧱 [OS Phase 3 Law Rim] Hardened constitutional compliance enforcement engine armed.');
   }
 
-  /**
-   * 初始化默认法律
-   */
   private initializeDefaultLaws(): void {
-    // 未经确认删除文件
-    this.createLaw({
-      name: '未经确认删除文件罪',
-      description: '禁止未经二次确认直接删除文件',
+    const cc = this.kernel.configCenter;
+    const isWALIsolationActive = cc.get('society.law.default_active_wal', true);
+
+    this.registerInternalLawNode({
+      name: 'Unauthorized File Deletion Exception',
+      description: 'Prohibits unconfirmed raw disk file deletion actions.',
       condition: 'file_delete_without_confirmation',
-      consequence: '隔离 24 小时，扣除 50 信用分',
+      consequence: 'Isolate execution cluster for 24h, fine 50 points.',
       severity: 'severe',
       appeals: true,
-      penalty: {
-        type: 'isolation',
-        amount: 50,
-        durationMs: 86400000  // 24小时
-      }
+      penalty: { type: 'isolation', amount: 50, durationMs: 86400000 }
     });
 
-    // 调用被禁用组件
-    this.createLaw({
-      name: '违规调用禁用组件',
-      description: '禁止调用被禁用的组件或服务',
-      condition: 'call_disabled_component',
-      consequence: '隔离 1 小时',
-      severity: 'moderate',
-      appeals: true,
-      penalty: {
-        type: 'isolation',
-        amount: 20,
-        durationMs: 3600000  // 1小时
-      }
-    });
-
-    // 超过预算
-    this.createLaw({
-      name: '预算超支罪',
-      description: '单次消费超过预算 20%',
-      condition: 'budget_exceeded_20_percent',
-      consequence: '降级到 economy 模式',
-      severity: 'minor',
-      appeals: false,
-      penalty: {
-        type: 'penalty',
-        amount: 10
-      }
-    });
-
-    // 重复失败
-    this.createLaw({
-      name: '重复失败罪',
-      description: '同一任务重复失败超过 5 次',
-      condition: 'repeated_failure_over_5',
-      consequence: '完全隔离直到审查通过',
-      severity: 'severe',
-      appeals: true,
-      penalty: {
-        type: 'suspension',
-        amount: 100
-      }
-    });
-
-    // 恶意竞争
-    this.createLaw({
-      name: '恶意竞争罪',
-      description: '故意破坏其他 Agent 工作成果',
-      condition: 'malicious_competition',
-      consequence: '永久封禁',
-      severity: 'severe',
-      appeals: true,
-      penalty: {
-        type: 'ban'
-      }
-    });
-
-    // 伪造证据
-    this.createLaw({
-      name: '伪造证据罪',
-      description: '在司法程序中提供虚假证据',
+    this.registerInternalLawNode({
+      name: 'Counterfeit Evidentiary Poisoning',
+      description: 'Prohibits injecting aligned counterfeit pointers during primary court debates.',
       condition: 'forged_evidence',
-      consequence: '永久封禁，信用清零',
+      consequence: 'Permanent banishment, zero account credit liquidity.',
       severity: 'severe',
       appeals: false,
-      penalty: {
-        type: 'ban',
-        amount: 1000
-      }
+      penalty: { type: 'ban', amount: 1000 }
     });
   }
 
-  /**
-   * 创建法律
-   */
-  public createLaw(data: Omit<Law, 'id' | 'createdAt' | 'updatedAt' | 'active'>): Law {
+  private registerInternalLawNode(data: Omit<Law, 'id' | 'createdAt' | 'updatedAt' | 'active' | 'metadata'>): void {
     const id = `law_${ulid()}`;
     const now = Date.now();
-
-    const law: Law = {
-      id,
-      ...data,
-      metadata: data.metadata || {},
-      createdAt: now,
-      updatedAt: now,
-      active: true
-    };
-
-    this.laws.set(id, law);
-    console.log(`[Law] 创建法律: ${law.name} (${law.severity})`);
-
-    return law;
+    this.laws.set(id, {
+      id, ...data, metadata: {}, createdAt: now, updatedAt: now, active: true
+    });
   }
 
-  /**
-   * 检查是否违规
-   */
-  public checkViolation(
-    entityId: string,
-    entityType: 'agent' | 'plugin' | 'tool' | 'mcp',
-    action: string
-  ): { violated: boolean; law?: Law } {
+  public checkViolation(entityId: string, entityType: string, action: string): { violated: boolean; law?: Law } {
+    if (!action) return { violated: false };
+    const actionLower = action.toLowerCase();
+
     for (const law of this.laws.values()) {
       if (!law.active) continue;
 
-      // 检查条件匹配
-      if (this.matchesCondition(action, law.condition)) {
-        return { violated: true, law };
-      }
-    }
+      const cond = law.condition.toLowerCase();
+      let matched = false;
 
+      if (cond === 'file_delete_without_confirmation') {
+        matched = actionLower.includes('delete') || actionLower.includes('remove');
+      } else if (cond === 'forged_evidence') {
+        matched = actionLower.includes('forge') || actionLower.includes('fake') || actionLower.includes('poison');
+      }
+
+      if (matched) return { violated: true, law };
+    }
     return { violated: false };
   }
 
   /**
-   * 匹配条件
+   * 🏗️ Command Handler: Two-Phase Version Asserted Violation Appender
    */
-  private matchesCondition(action: string, condition: string): boolean {
-    const actionLower = action.toLowerCase();
-    const conditionLower = condition.toLowerCase();
+  private async handleRecordViolationTransaction(command: any): Promise<Violation> {
+    const { traceId, entityId, entityType, lawId, description, evidence } = command.payload;
+    const initialVersion = this.kernel.version;
 
-    // 简单字符串匹配
-    if (conditionLower === 'file_delete_without_confirmation') {
-      return actionLower.includes('delete') || actionLower.includes('remove');
-    }
-    if (conditionLower === 'call_disabled_component') {
-      return actionLower.includes('disabled') || actionLower.includes('banned');
-    }
-    if (conditionLower === 'budget_exceeded_20_percent') {
-      return actionLower.includes('budget') && actionLower.includes('exceed');
-    }
-    if (conditionLower === 'repeated_failure_over_5') {
-      return actionLower.includes('failure') && actionLower.includes('repeat');
-    }
-    if (conditionLower === 'malicious_competition') {
-      return actionLower.includes('malicious') || actionLower.includes('sabotage');
-    }
-    if (conditionLower === 'forged_evidence') {
-      return actionLower.includes('forge') || actionLower.includes('fake');
-    }
-
-    return false;
-  }
-
-  /**
-   * 记录违规
-   */
-  public recordViolation(
-    entityId: string,
-    entityType: 'agent' | 'plugin' | 'tool' | 'mcp',
-    lawId: string,
-    description: string,
-    evidence: string[] = []
-  ): Violation | null {
     const law = this.laws.get(lawId);
-    if (!law || !law.active) return null;
+    if (!law || !law.active) throw new Error(`ERR_SF_LAW_NOT_FOUND: Targets inactive or invalid law signature: ${lawId}`);
 
-    const id = `violation_${ulid()}`;
-    const now = Date.now();
+    const tx = await this.kernel.transactionManager.begin(
+      command.id || crypto.randomUUID(),
+      this.moduleName,
+      { traceId, entityId, lawId, readVersionStamp: initialVersion }
+    );
 
-    const violation: Violation = {
-      id,
-      lawId,
-      lawName: law.name,
-      entityId,
-      entityType,
-      severity: law.severity,
-      description,
-      evidence,
-      status: 'pending',
-      consequence: law.consequence,
-      penalty: law.penalty,
-      executedAt: null,
-      createdAt: now
-    };
-
-    this.violations.set(id, violation);
-    console.log(`[Law] 记录违规: ${law.name} -> ${entityId} (${law.severity})`);
-
-    return violation;
-  }
-
-  /**
-   * 执行处罚
-   */
-  public executeViolation(violationId: string, executor: string): Violation | undefined {
-    const violation = this.violations.get(violationId);
-    if (!violation || violation.status === 'executed') return undefined;
-
-    violation.status = 'decided';
-    violation.decidedBy = executor;
-    violation.decidedAt = Date.now();
-    violation.executedAt = Date.now();
-
-    console.log(`[Law] 执行处罚: ${violation.lawName} -> ${violation.entityId}`);
-    console.log(`[Law] 处罚措施: ${violation.consequence}`);
-
-    return violation;
-  }
-
-  /**
-   * 提起申诉
-   */
-  public appealViolation(violationId: string, appellant: string, reason: string, evidence: string[] = []): Appeal | null {
-    const violation = this.violations.get(violationId);
-    if (!violation) return null;
-
-    if (!violation.appealReason && !violation.laws) {
-      // 检查是否允许申诉
-      const law = this.laws.get(violation.lawId);
-      if (!law?.appeals) return null;
-    }
-
-    const id = `appeal_${ulid()}`;
-    const now = Date.now();
-
-    const appeal: Appeal = {
-      id,
-      violationId,
-      appellant,
-      reason,
-      evidence,
-      status: 'pending',
-      createdAt: now
-    };
-
-    this.appeals.set(id, appeal);
-    violation.status = 'appealed';
-
-    console.log(`[Law] 申诉提起: ${violationId} by ${appellant}`);
-
-    return appeal;
-  }
-
-  /**
-   * 裁决申诉
-   */
-  public decideAppeal(
-    appealId: string,
-    decision: 'accepted' | 'rejected',
-    decider: string,
-    reason?: string
-  ): Appeal | undefined {
-    const appeal = this.appeals.get(appealId);
-    if (!appeal || appeal.status !== 'pending') return undefined;
-
-    appeal.status = decision;
-    appeal.decidedBy = decider;
-    appeal.decidedAt = Date.now();
-    appeal.decision = reason || (decision === 'accepted' ? '申诉成立，撤销处罚' : '申诉驳回，维持原判');
-
-    const violation = this.violations.get(appeal.violationId);
-    if (violation) {
-      if (decision === 'accepted') {
-        // 撤销处罚
-        violation.executedAt = null;
-        violation.status = 'decided';
-        console.log(`[Law] 申诉成立，撤销对 ${violation.entityId} 的处罚`);
-      } else {
-        // 维持原判并执行
-        this.executeViolation(appeal.violationId, decider);
-        console.log(`[Law] 申诉驳回，对 ${violation.entityId} 执行原处罚`);
+    try {
+      if (this.kernel.version !== initialVersion) {
+        throw new Error(`ERR_SF_LAW_RACE: Version lock mismatch during historical lineage audit block recording.`);
       }
-    }
 
-    return appeal;
+      const violationId = `violation_${ulid()}`;
+      const violationBlock: Violation = {
+        id: violationId,
+        lawId,
+        lawName: law.name,
+        entityId,
+        entityType,
+        severity: law.severity,
+        description,
+        evidence: evidence || [],
+        status: 'pending',
+        consequence: law.consequence,
+        penalty: law.penalty,
+        executedAt: null,
+        createdAt: Date.now()
+      };
+
+      this.violations.set(violationId, violationBlock);
+
+      tx.payload = {
+        ...tx.payload,
+        violation_id: violationId,
+        law_name_seal: law.name,
+        target_entity: entityId,
+        target_type: entityType,
+        severity_rank: law.severity,
+        evidence_fingerprints: violationBlock.evidence,
+        finalized_at: violationBlock.createdAt
+      };
+
+      await this.kernel.transactionManager.commit(tx.id);
+      this.pushMetrics('society.law.violations_recorded', 1);
+
+      return violationBlock;
+
+    } catch (panic: any) {
+      await this.kernel.transactionManager.rollback(tx.commandId, panic);
+      this.pushMetrics('society.law.failures_count', 1);
+      throw panic;
+    }
   }
 
   /**
-   * 获取违规记录
+   * 🏗️ Command Handler: Executed Penalty Mutator Shield
    */
-  public getViolations(entityId?: string): Violation[] {
-    let violations = Array.from(this.violations.values());
+  private async handleExecutePenaltyTransaction(command: any): Promise<Violation> {
+    const { traceId, violationId, executor } = command.payload;
+    const initialVersion = this.kernel.version;
 
-    if (entityId) {
-      violations = violations.filter(v => v.entityId === entityId);
+    const violation = this.violations.get(violationId);
+    if (!violation || violation.status === 'executed') {
+      throw new Error(`ERR_SF_LAW_FLOW: Violation slot ${violationId} already resolved or absent.`);
     }
 
-    return violations.sort((a, b) => b.createdAt - a.createdAt);
+    const tx = await this.kernel.transactionManager.begin(
+      command.id || crypto.randomUUID(),
+      this.moduleName,
+      { traceId, violationId, readVersionStamp: initialVersion }
+    );
+
+    try {
+      if (this.kernel.version !== initialVersion) {
+        throw new Error(`ERR_SF_LAW_CONCURRENCY: Race mismatch on account execution path constraint verification.`);
+      }
+
+      violation.status = 'executed';
+      violation.decidedBy = executor;
+      violation.decidedAt = Date.now();
+      violation.executedAt = Date.now();
+
+      tx.payload = {
+        ...tx.payload,
+        violation_id: violationId,
+        executor_signature: executor,
+        execution_status: 'executed',
+        penalty_type: violation.penalty.type,
+        fine_amount: violation.penalty.amount ?? 0,
+        finalized_at: violation.executedAt
+      };
+
+      await this.kernel.transactionManager.commit(tx.id);
+
+      // Cascade resource reallocation: automatically lock tokens via economic command pipelines
+      if (violation.penalty.amount) {
+        await this.kernel.executeCommand({
+          id: crypto.randomUUID(),
+          type: 'DISTRIBUTE_ROLE_ALLOCATION_REWARD',
+          domain: this.moduleName,
+          caller: 'LAW_COMPLIANCE_EXECUTION_BARRIER',
+          payload: { traceId, agentId: violation.entityId, targetRole: 'WORKER', allocationBonusFactor: -(violation.penalty.amount / 100.0) }
+        });
+      }
+
+      this.pushMetrics('society.law.penalties_executed', 1);
+      return violation;
+
+    } catch (panic: any) {
+      await this.kernel.transactionManager.rollback(tx.commandId, panic);
+      throw panic;
+    }
   }
 
   /**
-   * 获取实体违规统计
+   * 🏗️ Command Handler: Appeal Fact Registration Wrapper
    */
-  public getEntityViolationStats(entityId: string): {
-    total: number;
-    pending: number;
-    bySeverity: Record<string, number>;
-    lastViolation: number | null;
-  } {
-    const violations = this.getViolations(entityId);
+  private async handleAppealTransaction(command: any): Promise<Appeal> {
+    const { traceId, violationId, appellant, reason, supportingEvidence } = command.payload;
+    const initialVersion = this.kernel.version;
 
-    const bySeverity: Record<string, number> = {
-      minor: 0,
-      moderate: 0,
-      severe: 0
-    };
+    const violation = this.violations.get(violationId);
+    if (!violation) throw new Error(`ERR_SF_LAW_TARGET: Target violation ledger entry missing: ${violationId}`);
 
-    for (const v of violations) {
-      bySeverity[v.severity]++;
+    const law = this.laws.get(violation.lawId);
+    if (!law?.appeals) throw new Error(`ERR_SF_LAW_CONSTITUTION: Appeal process blocked for law regime: ${violation.lawName}`);
+
+    const tx = await this.kernel.transactionManager.begin(
+      command.id || crypto.randomUUID(),
+      this.moduleName,
+      { traceId, violationId, readVersionStamp: initialVersion }
+    );
+
+    try {
+      if (this.kernel.version !== initialVersion) {
+        throw new Error(`ERR_SF_LAW_RACE: Version lock collision during judicial appeal initialization.`);
+      }
+
+      const appealId = `appeal_${ulid()}`;
+      const appealBlock: Appeal = {
+        id: appealId,
+        violationId,
+        appellant,
+        reason,
+        evidence: supportingEvidence || [],
+        status: 'pending',
+        createdAt: Date.now()
+      };
+
+      this.appeals.set(appealId, appealBlock);
+      violation.status = 'appealed';
+
+      tx.payload = {
+        ...tx.payload,
+        appeal_id: appealId,
+        target_violation: violationId,
+        appellant_node: appellant,
+        rationale_manifesto: reason,
+        finalized_at: appealBlock.createdAt
+      };
+
+      await this.kernel.transactionManager.commit(tx.id);
+      return appealBlock;
+
+    } catch (panic: any) {
+      await this.kernel.transactionManager.rollback(tx.commandId, panic);
+      throw panic;
     }
-
-    return {
-      total: violations.length,
-      pending: violations.filter(v => v.status === 'pending' || v.status === 'appealed').length,
-      bySeverity,
-      lastViolation: violations.length > 0 ? violations[0].createdAt : null
-    };
   }
 
-  /**
-   * 获取法律列表
-   */
-  public getLaws(activeOnly = true): Law[] {
-    let laws = Array.from(this.laws.values());
-
-    if (activeOnly) {
-      laws = laws.filter(l => l.active);
+  private pushMetrics(metricName: string, value: number) {
+    if (this.kernel?.metricsCollector?.counter) {
+      this.kernel.metricsCollector.counter(metricName, value, { domain: 'society', layer: 'law_enforcement' });
     }
-
-    return laws;
   }
 
-  /**
-   * 停用法律
-   */
-  public deactivateLaw(lawId: string): boolean {
-    const law = this.laws.get(lawId);
-    if (!law) return false;
-
-    law.active = false;
-    law.updatedAt = Date.now();
-
-    return true;
-  }
-
-  /**
-   * 获取法律统计
-   */
-  public stats(): {
-    totalLaws: number;
-    activeLaws: number;
-    totalViolations: number;
-    pendingAppeals: number;
-    bySeverity: Record<string, number>;
-  } {
-    const laws = Array.from(this.laws.values());
-    const violations = Array.from(this.violations.values());
-    const appeals = Array.from(this.appeals.values());
-
-    const bySeverity: Record<string, number> = {
-      minor: 0,
-      moderate: 0,
-      severe: 0
-    };
-
-    for (const v of violations) {
-      bySeverity[v.severity]++;
-    }
-
-    return {
-      totalLaws: laws.length,
-      activeLaws: laws.filter(l => l.active).length,
-      totalViolations: violations.length,
-      pendingAppeals: appeals.filter(a => a.status === 'pending').length,
-      bySeverity
-    };
+  public clearLawRegistry(): void {
+    this.laws.clear();
+    this.violations.clear();
+    this.appeals.clear();
+    this.isOperational = false;
   }
 }
-
-// 导出单例
-export const lawEngine = new LawEngine();
-export default lawEngine;

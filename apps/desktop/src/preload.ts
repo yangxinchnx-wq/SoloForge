@@ -36,7 +36,12 @@ const electronAPI = {
   events: {
     subscribe: (eventName: string) => ipcRenderer.invoke('event:subscribe', eventName),
     unsubscribe: (eventName: string) => ipcRenderer.invoke('event:unsubscribe', eventName),
-    list: () => ipcRenderer.invoke('event:list')
+    list: () => ipcRenderer.invoke('event:list'),
+    onEvent: (callback: (event: unknown) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data);
+      ipcRenderer.on('kernel:event', handler);
+      return () => ipcRenderer.removeListener('kernel:event', handler);
+    }
   },
 
   // 监听内核事件

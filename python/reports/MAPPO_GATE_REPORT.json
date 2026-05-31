@@ -1,0 +1,55 @@
+{
+  "date": "2026-05-31",
+  "status": "FAIL",
+  "total_score": 250,
+  "max_score": 300,
+  "gates": {
+    "gate1": {
+      "passed": false,
+      "score": 50,
+      "evidence": {
+        "value_divergence": 1.488883903777599,
+        "value_variance": 6.039311832088859e-06,
+        "value_trend": 0.00035016973018653363,
+        "actor_isolated": true,
+        "critic_centralized": true,
+        "mean_global_value": 0.2984087933182717,
+        "mean_local_estimate": 1.7872926970958707,
+        "n_agents": 3,
+        "n_episodes": 50
+      },
+      "summary": "价值差异=1.4889, 趋势=+0.0004, 方差=0.000006"
+    },
+    "gate2": {
+      "passed": true,
+      "score": 100,
+      "evidence": {
+        "reward_drop_pct": -0.09222139901616291,
+        "entropy_delta": 3.316900730143679e-05,
+        "collapse_delta": 0.0,
+        "clean_reward": 71.71068915653234,
+        "noisy_reward": 71.77682175731663,
+        "clean_entropy": 1.7877015761137007,
+        "noisy_entropy": 1.7877347451210022,
+        "noise_ratio": 0.1
+      },
+      "summary": "奖励下降=-0.1%, 熵增=0.0000, 崩溃率增=0.0%"
+    },
+    "gate3": {
+      "passed": true,
+      "score": 100,
+      "evidence": {
+        "loss_trend": -0.4082417330018066,
+        "max_value": 7.114940404891968,
+        "reward_trend": -0.03726773788535425,
+        "mean_entropy": 1.7720468976348638,
+        "mean_reward": 24.461416841030122,
+        "std_reward": 1.8233583624355865,
+        "early_loss": 32.04608268737793,
+        "late_loss": 18.963534355163574,
+        "n_episodes": 50
+      },
+      "summary": "loss趋势=-0.41%, 奖励趋势=-3.7%, max_value=7.11"
+    }
+  }
+}

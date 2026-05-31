@@ -1,0 +1,111 @@
+{
+  "n_episodes": 10,
+  "max_ticks": 10000,
+  "collapse_count": 0,
+  "survival_rate": 1.0,
+  "avg_total_reward": -8570.38000000011,
+  "avg_max_queue": 720.5,
+  "avg_teacher_match": 1.0,
+  "episodes": [
+    {
+      "episode": 0,
+      "survival": true,
+      "total_reward": -8682.205000000107,
+      "max_queue": 785,
+      "max_workers": 200,
+      "min_workers": 3,
+      "duration": 10000,
+      "teacher_match_rate": 1.0
+    },
+    {
+      "episode": 1,
+      "survival": true,
+      "total_reward": -8771.835000000125,
+      "max_queue": 683,
+      "max_workers": 200,
+      "min_workers": 3,
+      "duration": 10000,
+      "teacher_match_rate": 1.0
+    },
+    {
+      "episode": 2,
+      "survival": true,
+      "total_reward": -9026.615000000133,
+      "max_queue": 631,
+      "max_workers": 200,
+      "min_workers": 2,
+      "duration": 10000,
+      "teacher_match_rate": 1.0
+    },
+    {
+      "episode": 3,
+      "survival": true,
+      "total_reward": -8695.62500000014,
+      "max_queue": 761,
+      "max_workers": 200,
+      "min_workers": 3,
+      "duration": 10000,
+      "teacher_match_rate": 1.0
+    },
+    {
+      "episode": 4,
+      "survival": true,
+      "total_reward": -8396.920000000133,
+      "max_queue": 726,
+      "max_workers": 200,
+      "min_workers": 3,
+      "duration": 10000,
+      "teacher_match_rate": 1.0
+    },
+    {
+      "episode": 5,
+      "survival": true,
+      "total_reward": -9016.17500000009,
+      "max_queue": 801,
+      "max_workers": 200,
+      "min_workers": 2,
+      "duration": 10000,
+      "teacher_match_rate": 1.0
+    },
+    {
+      "episode": 6,
+      "survival": true,
+      "total_reward": -8276.380000000103,
+      "max_queue": 753,
+      "max_workers": 200,
+      "min_workers": 2,
+      "duration": 10000,
+      "teacher_match_rate": 1.0
+    },
+    {
+      "episode": 7,
+      "survival": true,
+      "total_reward": -8555.990000000058,
+      "max_queue": 647,
+      "max_workers": 200,
+      "min_workers": 3,
+      "duration": 10000,
+      "teacher_match_rate": 1.0
+    },
+    {
+      "episode": 8,
+      "survival": true,
+      "total_reward": -8090.720000000096,
+      "max_queue": 685,
+      "max_workers": 200,
+      "min_workers": 2,
+      "duration": 10000,
+      "teacher_match_rate": 1.0
+    },
+    {
+      "episode": 9,
+      "survival": true,
+      "total_reward": -8191.335000000121,
+      "max_queue": 733,
+      "max_workers": 200,
+      "min_workers": 1,
+      "duration": 10000,
+      "teacher_match_rate": 1.0
+    }
+  ]
+}
