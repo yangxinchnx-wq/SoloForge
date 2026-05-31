@@ -9,6 +9,8 @@ import { logger } from './core/logger';
 import { ShadowGovernorClient, DEFAULT_SHADOW_CONFIG } from './kernel/shadow-governor-client';
 import { GovernorShadowOrchestrator } from './kernel/governor-shadow-orchestrator';
 import { SurrealPersistence } from './data/surreal_persistence';
+import { connect as garnetConnect, disconnect as garnetDisconnect } from './data/garnet/index';
+import { getClient as getGarnetClient } from './data/garnet/client';
 import { LifecycleManager } from './runtime/lifecycle';
 import { SocialMemoryEngine } from './core/society/social-memory';
 import { initializeSocialMemoryConsumer } from './data/consumers/social-memory-consumer';
@@ -58,6 +60,18 @@ export async function bootstrapSystemNetwork(
     replayEvent: async () => {} 
   };
   let scheduler: any = { drain: async () => {} };
+
+  // 🔥 Garnet 热数据层初始化（优先于所有领域模块，确保热缓存在组件启动前就位）
+  try {
+    logger.info('Bootstrap', '🔥 [Garnet Hot Layer] Initializing TTL-backed in-memory caches...');
+    await garnetConnect();
+    kernel.setGarnetClient(getGarnetClient());
+    logger.info('Bootstrap', '🔥 [Garnet Hot Layer] ✓ Session/Task/Counter/EventStream caches online.');
+  } catch (garnetErr: any) {
+    logger.warn('Bootstrap', '⚠️ [Garnet Hot Layer] Connection failed - proceeding with direct SurrealDB writes', {
+      error: garnetErr.message
+    });
+  }
 
   // 2. 渐进式加载物理组件（弹性防御）
   try {
@@ -290,6 +304,20 @@ export async function bootstrapSystemNetwork(
     logger.info('Bootstrap', '🧱 [Phase 7 Multi-Node Replicated live] Hardened Raft consensus engine interlocked successfully.');
   } catch (e) {
     logger.warn('Bootstrap', '⚠️ Raft Consensus Node 暂未就位');
+  }
+
+  // 🔥 Garnet EventBus 桥接（监听内核关键事件 → 写入 Garnet Streams）
+  try {
+    const { GarnetEventBridge } = await import('./data/garnet/garnet-bridge');
+    const garnetBridge = new GarnetEventBridge({
+      eventBus: kernel.eventBus,
+      getGarnetClient: () => kernel.getGarnetClient(),
+    });
+    await garnetBridge.start();
+    lifecycleManager.register(garnetBridge);
+    logger.info('Bootstrap', '🔥 [Garnet Bridge] ↔ EventBus ↔ Garnet Streams interlocked.');
+  } catch (bridgeErr: any) {
+    logger.warn('Bootstrap', '⚠️ Garnet Bridge 未就位，事件仍走 SurrealDB 直写', { error: bridgeErr.message });
   }
 
   logger.info('Bootstrap', '🏆 总装厂纯净交付完成 - 架构零污染闭合');

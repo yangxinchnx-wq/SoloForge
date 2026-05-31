@@ -7,6 +7,7 @@
 import { RuntimeComponent } from './runtime-component';
 import { LifecycleManager } from '../runtime/lifecycle';
 import { ConfigCenter, globalConfigCenter, MetricsCollectorInterface, globalMetricsCollector } from './config-center';
+import type Redis from 'ioredis';
 
 export enum RuntimeState {
   BOOTING = 'BOOTING',
@@ -141,6 +142,10 @@ export class RuntimeKernel {
   public readonly id = 'kernel_sovereign_core';
   public readonly startedAt = Date.now();
   public version = 0;
+
+  // 🔥 热数据层：Garnet 热缓存客户端（运行态，无持久化）
+  private _garnetClient: Redis | null = null;
+  private _garnetConnected: boolean = false;
 
   // 🛰️ Phase 5 Observability Infrastructure
   public readonly configCenter: ConfigCenter = globalConfigCenter;
@@ -392,6 +397,49 @@ export class RuntimeKernel {
 
   public getMode(): RuntimeMode {
     return this.mode;
+  }
+
+  // ────── 🔥 Garnet 热数据层管理 ──────
+
+  /**
+   * 注入 Garnet 热数据层客户端（ioredis 实例）
+   * 必须在冷启动阶段调用
+   */
+  public setGarnetClient(client: Redis): void {
+    this._garnetClient = client;
+    this._garnetConnected = true;
+    console.log('[RuntimeKernel] 🔥 Garnet 热数据层客户端已注入');
+  }
+
+  /**
+   * 获取 Garnet 热数据层客户端
+   * 返回 null 表示热数据层未就绪（应降级到直写 SurrealDB 模式）
+   */
+  public getGarnetClient(): Redis | null {
+    return this._garnetClient;
+  }
+
+  /**
+   * Garnet 热数据层是否就绪
+   */
+  public isGarnetReady(): boolean {
+    return this._garnetConnected && this._garnetClient !== null;
+  }
+
+  /**
+   * 断开 Garnet 连接（优雅关闭时调用）
+   */
+  public async disconnectGarnet(): Promise<void> {
+    if (this._garnetClient) {
+      try {
+        await this._garnetClient.quit();
+        this._garnetClient = null;
+        this._garnetConnected = false;
+        console.log('[RuntimeKernel] 🔥 Garnet 热数据层连接已断开');
+      } catch (err) {
+        console.error('[RuntimeKernel] Garnet 断开失败:', (err as Error).message);
+      }
+    }
   }
 
   public registerDomain(): void {}

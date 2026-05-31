@@ -1810,3 +1810,42 @@ data/
 *融合文档版本：v1.0*
 *原始文档合并自：《AI-Society-Storage-Summary》&《AI社会体系和模型调度解析》*
 *生成时间：2026-05-24*
+
+---
+
+## 第十八章：实际实现与设计文档的差异修正（2026-05-31）
+
+> ⚠️ 本章节基于 SoloForge 源码实际分析，修正第二部分中与实际实现不符的技术选型描述。
+
+### 关键修正项
+
+| 设计文档描述 | 实际实现 | 原因 |
+|---|---|---|
+| **Dexie.js (浏览器 IndexedDB ORM)** | **SurrealDB 嵌入式模式** | Dexie.js 仅能运行在浏览器/Electron 渲染进程；项目同时需要 Node.js 服务端运行模式（Python IPC），SurrealDB 嵌入式 RocksDB 引擎更合适：10-50x 性能、原生图查询、事务支持 |
+| **LanceDB WASM** | **Python LanceDB** | AI 社会模块运行在 Python 进程中，通过 MessagePack TCP IPC (端口 18765) 与 Node.js 通信；WASM 版本无 Python 运行时支持 |
+| **IndexManager (独立索引表)** | **SurrealDB 原生 `DEFINE INDEX`** | SurrealDB 内核层维护索引一致性；在应用层再加索引器是冗余双重写入，增加写入开销和一致性风险 |
+| **软删除回收站 (mockTrashDb, Map)** | **SurrealDB `trash` 表持久化** | 2026-05-31 已实现，见 `src/data/delete_protection.ts` + `migrations/20240101050000__v6_persistent_trash.surql` |
+| **Market 市场表 (supply/demand, pricing)** | **未实现，仅有 TokenEconomyEngine** | `economy.ts` 只实现了按角色分配 token 奖励的逻辑；`index.ts` 预留了 `MarketResource` 导出但无对应实现。Market 的供需定价/资源竞争机制需要单独开发 |
+
+### 实际技术栈总结
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  主项目 (Node.js + TypeScript)                           │
+│  ├── SurrealDB 嵌入式 (rocksdb://data/soloforge_db)    │
+│  │   → 制度/治理/信誉/文化/经济/法律/联盟/记忆         │
+│  ├── Garnet 热缓存 (:6379, Redis 协议兼容)             │
+│  │   → Session/Task/Queue/实时状态                      │
+│  └── JSONL 归档 (data/jsonl/)                           │
+│      → 事件审计                                         │
+├─────────────────────────────────────────────────────────┤
+│  AI 社会 (Python, 完全隔离)                              │
+│  ├── SQLite (python/data/ai_society/ai_society.db)     │
+│  │   → 结构化业务数据 (7 个表)                          │
+│  └── LanceDB (python/data/ai_society/social_memory)    │
+│      → 社会记忆向量检索                                  │
+├─────────────────────────────────────────────────────────┤
+│  通信: MessagePack TCP IPC, 端口 18765                   │
+│  （Node.js ←→ Python MARL Service）                     │
+└─────────────────────────────────────────────────────────┘
+```
