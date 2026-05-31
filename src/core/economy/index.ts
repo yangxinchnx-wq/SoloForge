@@ -3,10 +3,5 @@
 // Path: src/core/economy/index.ts
 // ─────────────────────────────────────────────────────────────────
 
-export {
-  EconomyManager,
-  economyManager,
-  AgentEconomy,
-  CreditTransaction,
-  MarketResource
-} from './economy';
+export { TokenEconomyEngine } from './economy';
+export type { EconomicLedgerEntry } from './economy';

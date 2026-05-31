@@ -4,6 +4,7 @@ import { Supervisor } from './supervisor';
 
 export class RuntimeKernel implements RuntimeComponent {
   public readonly id = 'RuntimeKernel';
+  public readonly name = 'RuntimeKernel';
   public phase: RuntimePhase = RuntimePhase.INIT;
 
   private lifecycle = new LifecycleManager();
@@ -64,6 +65,11 @@ export class RuntimeKernel implements RuntimeComponent {
       details: { components: reports, phase: this.phase },
       timestamp: Date.now()
     };
+  }
+
+  async healthCheck(): Promise<boolean> {
+    const report = await this.health();
+    return report.status !== 'failed';
   }
 
   async shutdown(signal = 'SIGTERM'): Promise<void> {

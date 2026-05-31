@@ -69,6 +69,7 @@ class SoloForgeLogger {
   }
 
   public error(module: string, message: string, meta?: LogMeta) { return this.log(LogLevel.ERROR, module, message, meta); }
+  public critical(module: string, message: string, meta?: LogMeta) { return this.log(LogLevel.ERROR, module, `[CRITICAL] ${message}`, meta); }
   public warn(module: string, message: string, meta?: LogMeta) { return this.log(LogLevel.WARN, module, message, meta); }
   public info(module: string, message: string, meta?: LogMeta) { return this.log(LogLevel.INFO, module, message, meta); }
   public debug(module: string, message: string, meta?: LogMeta) { return this.log(LogLevel.DEBUG, module, message, meta); }

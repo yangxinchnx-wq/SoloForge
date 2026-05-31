@@ -129,6 +129,18 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
   }
 
   /**
+   * 通用 SurrealQL 查询方法（消费者和组件共用）
+   * 文档要求：Repository 层提供统一查询入口
+   */
+  async query(sqlStatement: string, bindings: Record<string, any> = {}): Promise<any[][]> {
+    if (this.dbDriver) {
+      return await this.dbDriver.query(sqlStatement, bindings);
+    }
+    console.log(`[SurrealPersistence] query (memory mode): ${sqlStatement.substring(0, 80)}...`);
+    return [[]];
+  }
+
+  /**
    * 检查数据库是否已准备好
    * 解决文档中提到的 isReady 方法缺失问题
    */
@@ -287,10 +299,6 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
       events: []
     };
   }
-
-  // ============================================================
-  // 影子决策持久化（符合"事务 + 乐观锁"原则）
-  // ============================================================
 
   /**
    * 提交影子决策记录

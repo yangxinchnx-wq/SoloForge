@@ -211,7 +211,7 @@ export class GovernanceWhitepaperExporter {
       currentTick: this.kernel.currentTick ?? 0,
       bootTimestamp: new Date().toISOString(),
       consensusRole: 'LEADER',
-      uptimeSeconds: Math.floor((Date.now() - (this.kernel as any).bootTime ?? Date.now()) / 1000),
+      uptimeSeconds: Math.floor((Date.now() - ((this.kernel as any).bootTime ?? Date.now())) / 1000),
       nodeId: configCenter.get('governor.cluster.local_node_id', 'node_alpha_master'),
       clusterPeers: configCenter.get('governor.cluster.peers_nodes', []),
     };

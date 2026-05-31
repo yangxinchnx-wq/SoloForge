@@ -21,7 +21,7 @@ import { RaftConsensusNode } from './kernel/consensus/raft-consensus-node';
 import { SurrealPersistence } from './data/surreal_persistence';
 
 // 🔥 热数据层：Garnet 连接管理
-import { connect as garnetConnect, disconnect as garnetDisconnect, getSessionCache, getTaskCache, getCounter, getEventStream } from './data/garnet/index';
+import { connect as garnetConnect, disconnect as garnetDisconnect, sessionCache, taskCache, counter, eventStream } from './data/garnet/index';
 
 // Asynchronously hooked infrastructure ingestion consumers
 import { initializeSocietyEvolutionConsumer } from './data/consumers/society-evolution-consumer';
