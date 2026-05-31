@@ -142,8 +142,13 @@ export class RuntimeKernel {
   public readonly id = 'kernel_sovereign_core';
   public readonly startedAt = Date.now();
   public version = 0;
+  public readonly bootTime = Date.now();
 
-  // 🔥 热数据层：Garnet 热缓存客户端（运行态，无持久化）
+  // 存根：占位属性（领域模块在挂载前访问时不会崩溃）
+  public featureFlagManager: any = null;
+  public recoveryPlanManager: any = null;
+
+  // 🔥 热数据层：Garnet 热缓存客户端（运行态，无持久化，进程结束即销毁）
   private _garnetClient: Redis | null = null;
   private _garnetConnected: boolean = false;
 
@@ -371,6 +376,7 @@ export class RuntimeKernel {
 
   // ────────────── 命令总线 ──────────────
   public executeCommand(cmd: {
+    id?: string;
     type: string;
     domain: string;
     caller: string;

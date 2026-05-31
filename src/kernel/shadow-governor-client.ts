@@ -29,8 +29,22 @@ export interface ShadowResponse {
   action_name: string;
   prob: number;
   value?: number;
+  confidence?: number;
   timestamp?: string;
 }
+
+/**
+ * 默认配置（非内核场景回退用）
+ */
+export const DEFAULT_SHADOW_CONFIG: Partial<ShadowConfig> = {
+  host: '127.0.0.1',
+  port: 8765,
+  timeout: 5000,
+  fallbackEnabled: true,
+  maxLineBytes: 8192,
+  maxLinesPerTick: 50,
+  bufferPoolSize: 65536
+};
 
 export interface TelemetryVector {
   cpu_usage: number;
@@ -309,7 +323,7 @@ export class ShadowGovernorClient {
     });
   }
 
-  public async getShadowAction(telemetry: TelemetryVector, txMeta: any): Promise<ShadowResponse> {
+  public async getShadowAction(telemetry: TelemetryVector, txMeta?: any): Promise<ShadowResponse> {
     const queueDenom = this.kernelRef.configCenter.get('governor.scale.queue_depth', 300.0);
     const agentDenom = this.kernelRef.configCenter.get('governor.scale.agent_count', 50.0);
     const starveDenom = this.kernelRef.configCenter.get('governor.scale.starvation_penalty', 15.0);
@@ -327,7 +341,7 @@ export class ShadowGovernorClient {
       telemetry.starvation_penalty / starveDenom,
       (telemetry.queue_depth * telemetry.cpu_usage) / pressureDenom
     ];
-    return this.sendRequest(obs, txMeta);
+    return this.sendRequest(obs, txMeta || {});
   }
 
   private pushMetricsToMonitorBus(metricName: string, value: number) {

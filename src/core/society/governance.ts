@@ -107,7 +107,9 @@ export class GovernancePolicyEngine {
       actions: [{
         type: 'suspend', trigger: 'security_violation_detected', severity: 'severe',
         cooldownTicks: 0, lastTriggeredTick: null
-      }]
+      }],
+      createdAt: Date.now(),
+      updatedAt: Date.now()
     });
   }
 

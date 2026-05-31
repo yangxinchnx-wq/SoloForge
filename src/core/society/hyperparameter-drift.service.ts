@@ -129,7 +129,7 @@ export class HyperparameterDriftService {
     });
 
     const result: DriftResult = {
-      tick: pythonResult?.tick || this.kernel.currentTick ?? 0,
+      tick: (pythonResult?.tick) ?? (this.kernel.currentTick ?? 0),
       hyperparams: pythonResult?.hyperparams || {},
       performance,
       delta_performance: pythonResult?.delta_performance || 0,

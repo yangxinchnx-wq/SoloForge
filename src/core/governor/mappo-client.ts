@@ -328,7 +328,7 @@ export class GeminiMappoResourceGovernorClient {
     }
 
     // 优化 2: 加入批量队列
-    return new Promise((resolve, reject) => {
+    return new Promise<number>((resolve, reject) => {
       this.batchQueue.push({
         globalState,
         localObs,
@@ -346,7 +346,7 @@ export class GeminiMappoResourceGovernorClient {
         clearTimeout(this.batchTimer!);
         this.processBatch();
       }
-    }).then(action => {
+    }).then((action: number) => {
       this.setCache(cacheKey, action);
       return action;
     });

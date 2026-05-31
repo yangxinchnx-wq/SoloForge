@@ -179,9 +179,11 @@ function createWindow(): void {
   const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173');
+    // Vite root 指向 UI/，端口 5188（见 vite.config.ts）
+    mainWindow.loadURL('http://localhost:5188');
     mainWindow.webContents.openDevTools();
   } else {
+    // 生产模式加载打包后的 UI
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 

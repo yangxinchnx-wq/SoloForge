@@ -27,6 +27,7 @@ export interface RuntimeComponent {
   start(): Promise<void>;
   stop(): Promise<void>;
   healthCheck(): Promise<boolean>;
+  health?(): Promise<HealthReport>;
   shutdown?(signal?: string): Promise<void>;
 }
 
