@@ -1,0 +1,27 @@
+// ─────────────────────────────────────────────────────────────────
+// 文件: 需要手动补入 bootstrap.ts（第 2 步后插入）
+// ─────────────────────────────────────────────────────────────────
+//
+// ⚙️ 冷启动 Garnet 热数据层 初始化
+//
+// 插入位置: "let scheduler = { drain: async () => {} };" 之后
+//          "// 2. 渐进式加载物理组件" 之前
+// ─────────────────────────────────────────────────────────────────
+
+// ...在已有 scheduler 定义之后插入...
+
+  // 🔥 Garnet 热数据层初始化（优先于所有领域模块，确保热缓存在组件启动前就位）
+  try {
+    logger.info('Bootstrap', '🔥 [Garnet Hot Layer] Initializing TTL-backed in-memory caches...');
+    await garnetConnect();
+    kernel.setGarnetClient(getGarnetClient());
+    logger.info('Bootstrap', '🔥 [Garnet Hot Layer] ✓ Session/Task/Counter/EventStream caches online.');
+  } catch (garnetErr: any) {
+    logger.warn('Bootstrap', '⚠️ [Garnet Hot Layer] Connection failed - proceeding with direct SurrealDB writes', {
+      error: garnetErr.message
+    });
+  }
+
+  // 2. 渐进式加载物理组件（弹性防御）
+  try {
+    // ...现有代码...

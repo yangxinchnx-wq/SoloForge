@@ -20,6 +20,9 @@ import { ClusterRuntimeOrchestrator } from './kernel/orchestration/cluster-runti
 import { RaftConsensusNode } from './kernel/consensus/raft-consensus-node';
 import { SurrealPersistence } from './data/surreal_persistence';
 
+// 🔥 热数据层：Garnet 连接管理
+import { connect as garnetConnect, disconnect as garnetDisconnect, getSessionCache, getTaskCache, getCounter, getEventStream } from './data/garnet/index';
+
 // Asynchronously hooked infrastructure ingestion consumers
 import { initializeSocietyEvolutionConsumer } from './data/consumers/society-evolution-consumer';
 import { initializeSocialMemoryConsumer } from './data/consumers/social-memory-consumer';
@@ -41,6 +44,20 @@ async function mainSystemIgnitionEngine(): Promise<void> {
   try {
     // Step 1: Instantiate bare metal stateless micro-kernel core node
     const kernel = new RuntimeKernel();
+
+    // 🔥 Pre-step: Initialize Garnet hot data layer (运行态缓存，进程结束即销毁)
+    try {
+      logger.info('SYSTEM_MAIN', '🔥 [Garnet Hot Layer] Initializing in-memory caches and event streams...');
+      await garnetConnect();
+      // 注入 ioredis 客户端到内核
+      const { getClient } = await import('./data/garnet/client');
+      kernel.setGarnetClient(getClient());
+      // 预初始化事件流消费者组
+      const eventStreamModule = await import('./data/garnet/index');
+      logger.info('SYSTEM_MAIN', '🔥 [Garnet Hot Layer] ✓ Session/Task/Counter caches live. TTL-backed, zero-persistence.');
+    } catch (garnetErr: any) {
+      logger.warn('SYSTEM_MAIN', '⚠️ [Garnet Hot Layer] Connection failed - system degrades to direct SurrealDB writes', { error: garnetErr.message });
+    }
 
     // Step 1.5: Initialize core bus linkages (CommandBus, TransactionManager, etc.)
     const commandBus = {
@@ -164,6 +181,7 @@ async function mainSystemIgnitionEngine(): Promise<void> {
       logger.error('SYSTEM_MAIN', '🔌 SIGTERM intercept captured. Initiating un-defiled emergency fallback teardown...');
       await masterOrchestrator.shutdownOrchestrationUniverse();
       distributedBroker.shutdownBroker();
+      await kernel.disconnectGarnet(); // 🔥 关闭 Garnet 连接，释放所有 TTL 缓存
       process.exit(0);
     });
 
@@ -171,6 +189,7 @@ async function mainSystemIgnitionEngine(): Promise<void> {
       logger.error('SYSTEM_MAIN', '🔌 SIGINT intercept captured. Initiating graceful shutdown...');
       await masterOrchestrator.shutdownOrchestrationUniverse();
       distributedBroker.shutdownBroker();
+      await kernel.disconnectGarnet(); // 🔥 关闭 Garnet 连接，释放所有 TTL 缓存
       process.exit(0);
     });
 
