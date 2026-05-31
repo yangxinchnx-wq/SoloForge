@@ -1,0 +1,26 @@
+{
+  "case1_queue_up_reward_down": {
+    "pass": true,
+    "violations": 0,
+    "total": 10000,
+    "violation_rate": 0.0
+  },
+  "case2_workers_up_reward_down": {
+    "pass": true,
+    "violations": 0,
+    "total": 10000,
+    "violation_rate": 0.0
+  },
+  "case3_recovery_reward_up": {
+    "pass": true,
+    "violations": 0,
+    "total": 10000,
+    "violation_rate": 0.0
+  },
+  "case4_collapse_reward_neg": {
+    "pass": true,
+    "violations": 0,
+    "total": 10000,
+    "violation_rate": 0.0
+  }
+}

@@ -1,0 +1,115 @@
+{
+  "ood_stress": [
+    {
+      "scenario": "normal",
+      "bc_avg_queue": 39.927,
+      "ppo_avg_queue": 40.104,
+      "bc_survival": 0.0,
+      "ppo_survival": 0.0,
+      "bc_teacher_match": 100.0,
+      "ppo_teacher_match": 100.0,
+      "queue_winner": "BC"
+    },
+    {
+      "scenario": "high_load",
+      "bc_avg_queue": 41.68,
+      "ppo_avg_queue": 38.080000000000005,
+      "bc_survival": 0.0,
+      "ppo_survival": 0.0,
+      "bc_teacher_match": 100.0,
+      "ppo_teacher_match": 100.0,
+      "queue_winner": "PPO"
+    },
+    {
+      "scenario": "very_high",
+      "bc_avg_queue": 45.609,
+      "ppo_avg_queue": 58.699,
+      "bc_survival": 0.0,
+      "ppo_survival": 0.0,
+      "bc_teacher_match": 100.0,
+      "ppo_teacher_match": 100.0,
+      "queue_winner": "BC"
+    },
+    {
+      "scenario": "extreme",
+      "bc_avg_queue": 71.83000000000001,
+      "ppo_avg_queue": 62.81699999999999,
+      "bc_survival": 0.0,
+      "ppo_survival": 0.0,
+      "bc_teacher_match": 100.0,
+      "ppo_teacher_match": 100.0,
+      "queue_winner": "PPO"
+    }
+  ],
+  "recovery": [
+    {
+      "case": "E1",
+      "init_queue": 5000,
+      "init_workers": 20,
+      "init_lr": 125.0,
+      "bc_lr_reduction": 100.0,
+      "ppo_lr_reduction": 99.4608695652174,
+      "bc_recovered": true,
+      "ppo_recovered": false,
+      "bc_final_lr": 0.0,
+      "ppo_final_lr": 0.6739130434782609,
+      "winner": "BC"
+    },
+    {
+      "case": "E2",
+      "init_queue": 10000,
+      "init_workers": 20,
+      "init_lr": 250.0,
+      "bc_lr_reduction": 98.72432432432431,
+      "ppo_lr_reduction": 100.0,
+      "bc_recovered": false,
+      "ppo_recovered": true,
+      "bc_final_lr": 3.189189189189189,
+      "ppo_final_lr": 0.0,
+      "winner": "PPO"
+    },
+    {
+      "case": "E3",
+      "init_queue": 20000,
+      "init_workers": 20,
+      "init_lr": 500.0,
+      "bc_lr_reduction": 99.72857142857143,
+      "ppo_lr_reduction": 98.41818181818182,
+      "bc_recovered": false,
+      "ppo_recovered": false,
+      "bc_final_lr": 1.3571428571428572,
+      "ppo_final_lr": 7.909090909090909,
+      "winner": "BC"
+    },
+    {
+      "case": "E4",
+      "init_queue": 30000,
+      "init_workers": 20,
+      "init_lr": 750.0,
+      "bc_lr_reduction": 99.93846153846154,
+      "ppo_lr_reduction": 100.0,
+      "bc_recovered": true,
+      "ppo_recovered": true,
+      "bc_final_lr": 0.46153846153846156,
+      "ppo_final_lr": 0.0,
+      "winner": "PPO"
+    },
+    {
+      "case": "E5",
+      "init_queue": 50000,
+      "init_workers": 20,
+      "init_lr": 1250.0,
+      "bc_lr_reduction": 8.98181818181818,
+      "ppo_lr_reduction": 100.0,
+      "bc_recovered": false,
+      "ppo_recovered": true,
+      "bc_final_lr": 1137.7272727272727,
+      "ppo_final_lr": 0.0,
+      "winner": "PPO"
+    }
+  ],
+  "ood_ppo_wins": 2,
+  "rec_ppo_wins": 3,
+  "bc_ood_survival": 0.0,
+  "ppo_ood_survival": 0.0
+}

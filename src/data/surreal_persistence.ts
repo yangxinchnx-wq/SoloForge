@@ -387,3 +387,8 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
  * @deprecated 使用 SurrealPersistence 代替
  */
 export const GeminiPersistenceManager = SurrealPersistence;
+
+/**
+ * Global singleton instance for consumers that need persistence
+ */
+export const surrealPersistence = new SurrealPersistence();

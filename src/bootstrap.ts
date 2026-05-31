@@ -10,6 +10,25 @@ import { ShadowGovernorClient, DEFAULT_SHADOW_CONFIG } from './kernel/shadow-gov
 import { GovernorShadowOrchestrator } from './kernel/governor-shadow-orchestrator';
 import { SurrealPersistence } from './data/surreal_persistence';
 import { LifecycleManager } from './runtime/lifecycle';
+import { SocialMemoryEngine } from './core/society/social-memory';
+import { initializeSocialMemoryConsumer } from './data/consumers/social-memory-consumer';
+import { ConsensAgentCourtRoom } from './core/court/consensagent';
+import { LlmEscalationRoom } from './core/court/llm_escalation';
+import { initializeCourtAdjudicationConsumer } from './data/consumers/court-adjudication-consumer';
+import { LawEngine } from './core/law/law-engine';
+import { initializeLawComplianceConsumer } from './data/consumers/law-compliance-consumer';
+import { SocialReputationEngine } from './core/society/reputation';
+import { initializeReputationAnalyticsConsumer } from './data/consumers/reputation-analytics-consumer';
+import { InstitutionEngine } from './core/society/institution';
+import { GovernancePolicyEngine } from './core/society/governance';
+import { initializeSocietyGovernanceConsumer } from './data/consumers/society-governance-consumer';
+import { DistributedProtocolBroker } from './kernel/orchestration/distributed-broker';
+import { SandboxMigrationEngine } from './kernel/sandbox/isolation-slot';
+import { initializeMigrationAuditConsumer } from './data/consumers/migration-audit-consumer';
+import { TelemetryMetricExporter } from './kernel/observability/telemetry-exporter';
+import { initializeTelemetryAggregationConsumer } from './data/consumers/telemetry-aggregation-consumer';
+import { RaftConsensusNode } from './kernel/consensus/raft-consensus-node';
+import { initializeConsensusAuditConsumer } from './data/consumers/consensus-audit-consumer';
 
 /**
  * SoloForge 纯净总装工厂
@@ -121,6 +140,156 @@ export async function bootstrapSystemNetwork(
 
   } catch (e) {
     logger.warn('Bootstrap', '⚠️ Shadow Governor Orchestrator 暂未就位，不影响主流程');
+  }
+
+  // 8. Social Memory Consumer 初始化（异步持久化冷沉淀消费者）
+  try {
+    initializeSocialMemoryConsumer(kernel);
+    logger.info('Bootstrap', '🧬 [Phase 3 Complete] Social Memory Consumer 已挂载到数据沉淀管道');
+  } catch (e) {
+    logger.warn('Bootstrap', '⚠️ Social Memory Consumer 暂未就位');
+  }
+
+  // 9. Social Memory Engine 热插拔挂载
+  try {
+    const socialMemoryEngine = new SocialMemoryEngine(kernel);
+    await socialMemoryEngine.boot();
+    logger.info('Bootstrap', '🧬 [Phase 3 Complete] Collective Social Memory Engine dynamically interlocked.');
+  } catch (e) {
+    logger.warn('Bootstrap', '⚠️ Social Memory Engine 暂未就位');
+  }
+
+  // 10. Court Adjudication Consumer 初始化（异步持久化冷沉淀消费者）
+  try {
+    initializeCourtAdjudicationConsumer(kernel);
+    logger.info('Bootstrap', '🏛️ [Phase 3 Court Complete] Court Adjudication Consumer 已挂载到数据沉淀管道');
+  } catch (e) {
+    logger.warn('Bootstrap', '⚠️ Court Adjudication Consumer 暂未就位');
+  }
+
+  // 11. Primary Court Room + Supreme LLM Escalation Tribunal 热插拔挂载
+  try {
+    const surrealPersistence = new SurrealPersistence();
+    const primaryCourt = new ConsensAgentCourtRoom(kernel);
+    const supremeCourt = new LlmEscalationRoom(kernel, surrealPersistence);
+
+    await primaryCourt.bootCourtRoom();
+    await supremeCourt.initializeSupremeTribunal();
+    logger.info('Bootstrap', '🏛️ [Phase 3 Absolute Complete] Judicial Assembly Courtroom Framework frozen into release line safely.');
+  } catch (e) {
+    logger.warn('Bootstrap', '⚠️ Court Engines 暂未就位');
+  }
+
+  // 12. Law Compliance Consumer 初始化（异步持久化冷沉淀消费者）
+  try {
+    initializeLawComplianceConsumer(kernel);
+    logger.info('Bootstrap', '🧱 [Phase 3 Law Complete] Law Compliance Consumer 已挂载到数据沉淀管道');
+  } catch (e) {
+    logger.warn('Bootstrap', '⚠️ Law Compliance Consumer 暂未就位');
+  }
+
+  // 13. Constitutional Law Engine 热插拔挂载
+  try {
+    const lawEngine = new LawEngine(kernel);
+    await lawEngine.boot();
+    logger.info('Bootstrap', '🧱 [Phase 3 Law Layer Mounted] Constitutional Law Engine frozen into release track safely.');
+  } catch (e) {
+    logger.warn('Bootstrap', '⚠️ Law Engine 暂未就位');
+  }
+
+  // 14. Reputation Analytics Consumer 初始化（异步持久化冷沉淀消费者）
+  try {
+    initializeReputationAnalyticsConsumer(kernel);
+    logger.info('Bootstrap', '🧱 [Phase 3 Reputation Complete] Reputation Analytics Consumer 已挂载到数据沉淀管道');
+  } catch (e) {
+    logger.warn('Bootstrap', '⚠️ Reputation Analytics Consumer 暂未就位');
+  }
+
+  // 15. Social Reputation Engine 热插拔挂载
+  try {
+    const socialReputationEngine = new SocialReputationEngine(kernel);
+    await socialReputationEngine.boot();
+    logger.info('Bootstrap', '🧱 [Phase 3 Trust Base Mounted] Constitutional Social Reputation Engine frozen successfully.');
+  } catch (e) {
+    logger.warn('Bootstrap', '⚠️ Social Reputation Engine 暂未就位');
+  }
+
+  // 16. Society Governance Consumer 初始化（异步持久化冷沉淀消费者）
+  try {
+    initializeSocietyGovernanceConsumer(kernel);
+    logger.info('Bootstrap', '🏆 [Phase 3 Social Regime Complete] Society Governance Consumer 已挂载到数据沉淀管道');
+  } catch (e) {
+    logger.warn('Bootstrap', '⚠️ Society Governance Consumer 暂未就位');
+  }
+
+  // 17. Institution Engine + Governance Policy Engine 热插拔挂载
+  try {
+    const institutionEngine = new InstitutionEngine(kernel);
+    const governancePolicyEngine = new GovernancePolicyEngine(kernel);
+
+    await institutionEngine.boot();
+    await governancePolicyEngine.bootGovernanceEngine();
+    logger.info('Bootstrap', '🏆 [Phase 3 Social Regime Assembly Finalized] Institution and Governance Engines successfully locked.');
+  } catch (e) {
+    logger.warn('Bootstrap', '⚠️ Institution/Goverance Engines 暂未就位');
+  }
+
+  // 18. Distributed Protocol Broker 热插拔挂载（Phase 4 跨语言IPC网络通信代理）
+  try {
+    const distributedBroker = new DistributedProtocolBroker(kernel);
+    await distributedBroker.connectMarlServiceGateway();
+    (kernel as any).distributedBrokerProxy = distributedBroker;
+    logger.info('Bootstrap', '🛰️ [Phase 4 Ignition Base] Cross-language distributed IPC fast broker client linked and live.');
+  } catch (e) {
+    logger.warn('Bootstrap', '⚠️ Distributed Protocol Broker 暂未就位');
+  }
+
+  // 19. Migration Audit Consumer 初始化（沙箱迁移历史冷沉淀消费者）
+  try {
+    initializeMigrationAuditConsumer(kernel);
+    logger.info('Bootstrap', '🛡️ [Phase 5 Sandbox] Migration Audit Consumer 已挂载到数据沉淀管道');
+  } catch (e) {
+    logger.warn('Bootstrap', '⚠️ Migration Audit Consumer 暂未就位');
+  }
+
+  // 20. Sandbox Migration Engine 热插拔挂载（零宕机热迁移引擎）
+  try {
+    const sandboxMigrationEngine = new SandboxMigrationEngine(kernel);
+    await sandboxMigrationEngine.bootSandboxRegistry();
+    (kernel as any).sandboxMigrationEngineProxy = sandboxMigrationEngine;
+    logger.info('Bootstrap', '🛡️ [Phase 5 Complete] Hardened V8 Isolate sandboxing and live memory migration engine locked into release line safely.');
+  } catch (e) {
+    logger.warn('Bootstrap', '⚠️ Sandbox Migration Engine 暂未就位');
+  }
+
+  // 21. Telemetry Metric Exporter + Aggregation Consumer 初始化（Prometheus 时序指标汇聚网关）
+  try {
+    const telemetryExporter = new TelemetryMetricExporter(kernel);
+    initializeTelemetryAggregationConsumer(kernel, telemetryExporter);
+    await telemetryExporter.initializeExporterNode();
+    (kernel as any).globalTelemetryExporterProxy = telemetryExporter;
+    logger.info('Bootstrap', '🛰️ [Phase 5 Observability Complete] Prometheus Exporter Gateway frozen cleanly.');
+  } catch (e) {
+    logger.warn('Bootstrap', '⚠️ Telemetry Exporter 暂未就位');
+  }
+
+  // 22. Consensus Audit Consumer 初始化（分布式强共识审计沉淀消费者）
+  try {
+    initializeConsensusAuditConsumer(kernel);
+    logger.info('Bootstrap', '🧱 [Phase 7 Consensus] Distributed Consensus Audit Consumer 已挂载到数据沉淀管道');
+  } catch (e) {
+    logger.warn('Bootstrap', '⚠️ Consensus Audit Consumer 暂未就位');
+  }
+
+  // 23. Raft Consensus Node 热插拔挂载（分布式强共识状态机）
+  try {
+    const localClusterNodeId = kernel.configCenter.get('governor.cluster.local_node_id', 'node_alpha_master');
+    const raftConsensusNode = new RaftConsensusNode(kernel, localClusterNodeId);
+    await raftConsensusNode.bootConsensusRegistry();
+    (kernel as any).raftConsensusEngineProxy = raftConsensusNode;
+    logger.info('Bootstrap', '🧱 [Phase 7 Multi-Node Replicated live] Hardened Raft consensus engine interlocked successfully.');
+  } catch (e) {
+    logger.warn('Bootstrap', '⚠️ Raft Consensus Node 暂未就位');
   }
 
   logger.info('Bootstrap', '🏆 总装厂纯净交付完成 - 架构零污染闭合');

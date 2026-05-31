@@ -14,6 +14,21 @@ export class DeleteProtection {
 
   private mockTrashDb = new Map();
 
+  /**
+   * Check if a resource can be deleted based on protection rules
+   */
+  public canDelete(contentType: string, targetId: string): { allowed: boolean; reason?: string } {
+    for (const prefix of this.immutablePrefixes) {
+      if (targetId.startsWith(prefix)) {
+        return {
+          allowed: false,
+          reason: `Resource ${targetId} is protected by immutable prefix ${prefix}`
+        };
+      }
+    }
+    return { allowed: true };
+  }
+
   public interceptAndExecute(command: DeleteCommand, currentContent: any) {
     console.log("[AUDIT_LOG] 接收到来自 Agent [" + command.requestedBy + "] 针对实体 [" + command.targetId + "] 的删除请求...");
 

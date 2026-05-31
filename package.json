@@ -8,7 +8,10 @@
     "test": "vitest run",
     "db:migrate": "tsx scripts/db-migrate.ts",
     "db:status": "tsx scripts/db-status.ts",
-    "db:rollback": "tsx scripts/db-rollback.ts"
+    "db:rollback": "tsx scripts/db-rollback.ts",
+    "start:observe": "tsx scripts/long-term-observation.ts",
+    "export:audit": "echo '导出审计报告 - 请先启动系统'",
+    "check:governance": "echo '治理检查 - 请先启动系统'"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

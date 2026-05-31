@@ -19,6 +19,7 @@ const NAV_ICON_MAP: Record<string, string> = {
   'database': 'database.svg',
   'scheduler': 'scheduler.svg',
   'events': 'events.svg',
+  'observation': 'observation.svg',  // 文明观测占位
   'settings': 'settings.svg',
   'home': 'home.svg',
   'user': 'user.svg',

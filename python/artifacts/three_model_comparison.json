@@ -1,0 +1,25 @@
+{
+  "models": {
+    "A: BC": {
+      "avg_reward": -106.62735087745928,
+      "avg_queue": 42.04035,
+      "avg_max_queue": 342.555,
+      "avg_oscillation": 15.365
+    },
+    "B: PPO-0step": {
+      "avg_reward": -103.68636808321337,
+      "avg_queue": 40.61085,
+      "avg_max_queue": 326.965,
+      "avg_oscillation": 16.015
+    }
+  },
+  "ood_rewards": {
+    "A: BC": -88.18031454098261,
+    "B: PPO-0step": -106.84187607503414
+  },
+  "recovery_lr_pct": {
+    "A: BC": 100.0,
+    "B: PPO-0step": 100.0
+  },
+  "architecture_delta_queue": -1.4294999999999973
+}

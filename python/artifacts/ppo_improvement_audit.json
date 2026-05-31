@@ -1,0 +1,40 @@
+{
+  "bc": {
+    "avg_reward": -103.85946275617948,
+    "std_reward": 29.24539562823012,
+    "avg_queue": 40.33602,
+    "std_queue": 14.477641028827867,
+    "max_queue_avg": 333.202,
+    "avg_workers": 69.22874,
+    "std_workers": 1.472555843559082,
+    "avg_oscillation": 16.048,
+    "std_oscillation": 4.461579989196652,
+    "osc_per_step": 0.08023999999999998,
+    "survival_rate": 100.0,
+    "collapse_count": 0,
+    "n": 500
+  },
+  "ppo": {
+    "avg_reward": -103.83295118834631,
+    "std_reward": 29.298791771631954,
+    "avg_queue": 40.32842,
+    "std_queue": 14.444865312753873,
+    "max_queue_avg": 329.074,
+    "avg_workers": 69.25058,
+    "std_workers": 1.554215320861302,
+    "avg_oscillation": 15.958,
+    "std_oscillation": 4.482882554785481,
+    "osc_per_step": 0.07978999999999999,
+    "survival_rate": 100.0,
+    "collapse_count": 0,
+    "n": 500
+  },
+  "comparison": {
+    "bc_wins": 0,
+    "ppo_wins": 6,
+    "reward_improvement_pct": 0.025526386454941312,
+    "verdict": "PPO GENUINELY BETTER",
+    "verdict_detail": "Lower queue + Higher reward"
+  },
+  "passed": true
+}

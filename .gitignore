@@ -19,8 +19,7 @@ apps/*/dist/
 apps/*/dist-electron/
 
 # Binaries
-bin/garnet/
-bin/scheduler.exe
+bin/
 
 # IDE
 .idea/

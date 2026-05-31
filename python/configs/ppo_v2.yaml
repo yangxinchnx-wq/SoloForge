@@ -1,0 +1,83 @@
+# ─────────────────────────────────────────────────────────────────
+# SoloForge Governor RL: PPO V2 Config
+# Path: configs/ppo_v2.yaml
+#
+# Sprint 5: PPO V2 配置
+# BC Warm Start + PPO Fine-tuning
+# ─────────────────────────────────────────────────────────────────
+
+# ============================================================
+# BC Warm Start
+# ============================================================
+load_bc_checkpoint: true
+bc_checkpoint: checkpoints/bc_policy_v3_1_clean.pt
+
+# ============================================================
+# PPO Hyperparameters
+# ============================================================
+ppo:
+  # Discount factor
+  gamma: 0.99
+
+  # GAE parameter
+  gae_lambda: 0.95
+
+  # PPO clipping range
+  clip_range: 0.2
+
+  # Entropy bonus (encourages exploration)
+  entropy_coef: 0.01
+
+  # Value function coefficient
+  value_coef: 0.5
+
+  # Learning rate
+  learning_rate: 3.0e-4
+
+  # Batch size
+  batch_size: 2048
+
+  # Epochs per update
+  epochs: 10
+
+  # Max gradient norm (gradient clipping)
+  max_grad_norm: 0.5
+
+  # Number of parallel environments (for vectorized envs)
+  num_envs: 8
+
+  # Total steps per iteration
+  steps_per_iter: 16384  # num_envs * steps_per_env
+
+  # Early stopping
+  target_kl: 0.015
+  min_kl: 0.0001
+
+# ============================================================
+# Environment
+# ============================================================
+env:
+  name: RuntimeEnv
+  duration: 500
+  arrival_rate: 15.0
+  burst_prob: 0.15
+
+# ============================================================
+# Training
+# ============================================================
+training:
+  total_iterations: 1000
+  eval_interval: 10
+  save_interval: 50
+  checkpoint_dir: checkpoints/ppo_v2
+  log_dir: logs/ppo_v2
+
+# ============================================================
+# Reward (Frozen)
+# ────────────────────────────────────────────────────────────
+# reward = queue_penalty + oscillation_penalty + control_cost
+# queue_penalty = -queue_depth * 0.01
+# oscillation_penalty = -oscillation_score * 0.1
+# control_cost = -abs(action_delta) * 0.02
+# ────────────────────────────────────────────────────────────
+reward_frozen: true
