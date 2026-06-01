@@ -1,5 +1,0 @@
-文件夹用途：状态图标
-存放内容：表示系统状态、运行状态、健康状态的图标
-图标示例：success.svg, error.svg, warning.svg, loading.svg, offline.svg 等
-替换说明：只需替换此文件夹内的 SVG 文件，组件会自动加载
-使用场景：Dashboard 状态卡片、事件流显示、系统监控等

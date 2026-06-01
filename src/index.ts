@@ -33,6 +33,7 @@ import { initializeTelemetryAggregationConsumer } from './data/consumers/telemet
 import { initializeConsensusAuditConsumer } from './data/consumers/consensus-audit-consumer';
 
 import { logger } from './core/logger';
+import { SoloForgeApiServer } from './api-server';
 
 /**
  * 🪐 SoloForge Distributed MARL Agent Governance OS - Production Entry Point
@@ -123,6 +124,7 @@ async function mainSystemIgnitionEngine(): Promise<void> {
 
     // Create SurrealPersistence instance for LlmEscalationRoom
     const surrealPersistence = new SurrealPersistence();
+    await surrealPersistence.start(); // 启动 SurrealDB 连接
     const supremeCourt = new LlmEscalationRoom(kernel, surrealPersistence);
 
     const distributedBroker = new DistributedProtocolBroker(kernel);
@@ -195,6 +197,31 @@ async function mainSystemIgnitionEngine(): Promise<void> {
 
     // 🪐 MONOTONIC CORE FIRED LIVE!
     await masterOrchestrator.igniteSystemOrchestrationUniverse();
+
+    // Step 7: Start API Server for frontend connectivity
+    const apiServer = new SoloForgeApiServer(kernel, telemetryExporter, surrealPersistence);
+    try {
+      await apiServer.start();
+      logger.warn('SYSTEM_MAIN', `🌐 API Server live at http://localhost:${apiServer.getPort()}`);
+
+      // Hook event bus to broadcast via SSE
+      const originalEmit = kernel.eventBus.emit.bind(kernel.eventBus);
+      (kernel.eventBus as any).emit = function(event: string, payload: any) {
+        originalEmit(event, payload);
+        apiServer.broadcastEvent(event, payload);
+      };
+
+      // Register API server for graceful shutdown
+      process.on('SIGTERM', async () => {
+        await apiServer.stop();
+      });
+      process.on('SIGINT', async () => {
+        await apiServer.stop();
+      });
+    } catch (apiErr: any) {
+      logger.warn('SYSTEM_MAIN', `⚠️ API Server failed to start: ${apiErr.message}`);
+    }
+
     logger.warn('SYSTEM_MAIN', '🏆 🏆 🏆 SoloForge Full-Universe Operating System is officially launched production live!');
 
   } catch (fatalLinkageBreakdown: any) {

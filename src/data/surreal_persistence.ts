@@ -6,6 +6,9 @@
 // ─────────────────────────────────────────────────────────────────
 
 import { RuntimeComponent } from '../kernel/runtime-component';
+import { Surreal } from 'surrealdb';
+import { createNodeEngines } from '@surrealdb/node';
+import path from 'path';
 
 // ============================================================
 // 类型定义
@@ -95,6 +98,8 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
   // 内部存储（用于测试）
   private tableStore: Map<string, any> = new Map();
   private dbDriver: SurrealDbDriverInterface | null = null;
+  private surreal: Surreal | null = null;
+  private connected = false;
 
   constructor(driver?: SurrealDbDriverInterface) {
     this.dbDriver = driver || null;
@@ -108,16 +113,63 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
   }
 
   /**
-   * 启动组件
+   * 启动组件 - 连接 SurrealDB
    */
   async start(): Promise<void> {
-    console.log('[SurrealPersistence] Started');
+    try {
+      console.log('[SurrealPersistence] Connecting to SurrealDB...');
+
+      this.surreal = new Surreal({
+        engines: createNodeEngines(),
+      });
+
+      // 使用 rocksdb 协议（嵌入式持久化）
+      const dbPath = path.join(process.cwd(), 'data', 'soloforge_db').replace(/\\/g, '/');
+      await this.surreal.connect(`rocksdb://${dbPath}`);
+
+      // 选择命名空间和数据库
+      await this.surreal.use({ namespace: 'soloforge_core', database: 'autonomous_network' });
+
+      this.connected = true;
+      this.dbDriver = this; // 使用自身作为驱动
+      console.log('[SurrealPersistence] Connected successfully');
+
+      // 初始化表结构
+      await this.initSchema();
+    } catch (err: any) {
+      console.error('[SurrealPersistence] Connection failed:', err.message);
+      this.connected = false;
+    }
+  }
+
+  /**
+   * 初始化数据库表结构
+   */
+  private async initSchema(): Promise<void> {
+    if (!this.surreal) return;
+
+    try {
+      // 创建表（如果不存在）
+      const tables = ['conversation', 'message', 'decision', 'courtSubmission', 'courtVerdict', 'eventLog'];
+      for (const table of tables) {
+        await this.surreal.query(`DEFINE TABLE IF NOT EXISTS ${table} SCHEMAFULL;`, {});
+      }
+      console.log('[SurrealPersistence] Schema initialized');
+    } catch (err: any) {
+      console.error('[SurrealPersistence] Schema init failed:', err.message);
+    }
   }
 
   /**
    * 停止组件
    */
   async stop(): Promise<void> {
+    if (this.surreal) {
+      await this.surreal.close();
+      this.surreal = null;
+      this.connected = false;
+      console.log('[SurrealPersistence] Disconnected');
+    }
     console.log('[SurrealPersistence] Stopped');
   }
 
@@ -125,7 +177,14 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
    * 健康检查
    */
   async healthCheck(): Promise<boolean> {
-    return true;
+    return this.connected;
+  }
+
+  /**
+   * 检查数据库是否已准备好
+   */
+  public isReady(): boolean {
+    return this.connected && this.surreal !== null;
   }
 
   /**
@@ -133,9 +192,16 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
    * 文档要求：Repository 层提供统一查询入口
    */
   async query(sqlStatement: string, bindings: Record<string, any> = {}): Promise<any[][]> {
-    if (this.dbDriver) {
-      return await this.dbDriver.query(sqlStatement, bindings);
+    if (this.surreal) {
+      try {
+        const result = await this.surreal.query(sqlStatement, bindings);
+        return Array.isArray(result) ? [result] : [[result]];
+      } catch (err: any) {
+        console.error('[SurrealPersistence] Query error:', err.message);
+        return [[]];
+      }
     }
+    // Fallback to memory store
     console.log(`[SurrealPersistence] query (memory mode): ${sqlStatement.substring(0, 80)}...`);
     return [[]];
   }
@@ -145,7 +211,7 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
    * 解决文档中提到的 isReady 方法缺失问题
    */
   public isReady(): boolean {
-    return this.dbDriver !== null;
+    return this.connected && this.surreal !== null;
   }
 
   /**
