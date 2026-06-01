@@ -1,9 +1,0 @@
-主题名称：默认深色主题 (default-dark)
-主题说明：这是 SoloForge 的默认深色主题，采用 GitHub 风格配色
-包含内容：
-  - icons/ 图标资源
-  - emojis/ 表情资源
-  - decorations/ 装饰资源
-  - components/ 组件代码
-
-替换方式：只需替换 themes 目录下的主题文件夹即可切换整个界面风格
