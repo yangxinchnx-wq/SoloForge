@@ -1,24 +1,53 @@
-# 候选删除 overlay 清单 (P1-12)
+# 候选删除 overlay 清单 (P1-12 / D 完成)
 
-> 状态:**仅标记,未实际删除**。等用户明确点头后再清理。
-> 标准:功能价值低 / 与其他组件 80%+ 重叠 / 仅占位无逻辑
+> 状态:第一轮 D 已完成,删 2 个 (ScreenShare, DataIO)。
+> 剩余 6 个有外部依赖(ProjectIO/ThemeMarket/SkillsMarket/RecentActivity/CollabCursors/Splash),代价高于收益,**暂保留**。
 
-## 🔴 高优先 (建议删,收益大)
+## ✅ 已删除 (D 第一轮)
 
-| 文件 | 大小 | 理由 | 替代 |
-|---|---|---|---|
-| `ScreenShare.tsx` | 16.7K | 纯占位 UI,无任何功能 | 未来用 WebRTC 真做 |
-| `CollabCursors.tsx` | 22.1K | "模拟"协同,标注自己是 mock | 真正协同在 `SharedCollab.tsx` |
-| `SharedCollab.tsx` | 22.1K | 与 `CollabCursors` 80% 重叠 | 留 `SharedCollab`,删 `CollabCursors` |
-| `ThemeMarket.tsx` | 18.7K | 列了几个预设主题,无网络获取 | 主题直接改 `themes.ts` 即可 |
-| `SkillsMarket.tsx` | 10.7K | 静态列表,假"已安装"提示 | 真实市场需要后端支持 |
-| `ProjectIO.tsx` | 12.2K | 与 `DataIO.tsx` 重复 | 留 `DataIO` |
-| `DataIO.tsx` | (在 19+) | 与 `chatExport.ts` 重叠 | 合并入 `chatExport` |
-| `Splash.tsx` | 2.8K | 启动画面,几乎无内容 | 可保留(用户第一印象) |
-| `RoleSelector.tsx` | 5.3K | 角色选择,无后端 | 等多角色系统落地 |
-| `ErrorDetailModal.tsx` | ? | 与 `ErrorState` 重叠 | 改用 `ErrorState` |
-| `Notifications.tsx` | 10.9K | 与 `NotifierRules.tsx` 重复 | 留 `NotifierRules` |
-| `RecentActivity.tsx` | 22.5K | 静态列表 | 数据接入前可删 |
+| 文件 | 大小 | 节省 |
+|---|---|---|
+| `ScreenShare.tsx` | 16.7K | 1681→1664 KB |
+| `DataIO.tsx` | 16.5K | 1664→1647 KB |
+| **合计** | 33.2K | **34KB / 9KB gzip** |
+
+## ❌ 暂留 (外部依赖)
+
+| 文件 | 暂留原因 |
+|---|---|
+| `ProjectIO.tsx` | TopBar `onOpenProjectIO` 引用 + chat/resources 联动 |
+| `ThemeMarket.tsx` | `onApply` 主题应用 + Toast 副作用 |
+| `SkillsMarket.tsx` | palette → `skill` 快捷键 + 5 处状态 |
+| `RecentActivity.tsx` | 同上 5 处 |
+| `CollabCursors.tsx` | `collab` 快捷键 + 5 处 |
+| `Splash.tsx` | 启动屏,1.2s 动画,删了 Splash import 也得回滚 |
+
+## 🟡 中优先 (有功能但单薄)
+
+| 文件 | 理由 |
+|---|---|
+| `QrGenerator.tsx` | 真有功能但用户极少用 |
+| `BookmarkManager.tsx` | 浏览器原生收藏夹足够 |
+| `ColorPalette.tsx` | 设计师工具,目标用户窄 |
+| `IconBrowser.tsx` | 内部使用,IDE 自带图标选择器 |
+| `WorkflowPipeline.tsx` | 与 `TaskScheduler` 重叠 |
+| `DependencyGraph.tsx` | 与 `CodeMap` 重叠 |
+
+## 📊 总数据 (更新后)
+
+- 原始 overlay 数: **108**
+- D 第一轮删除: 2 (-2%)
+- 主 chunk 节省: 1681KB → 1647KB (-34KB, -2%)
+- 剩余候选: 6 (高优先暂留) + 6 (中优先) = 12
+
+## ⚠️ 关键经验 (Fact)
+
+删除 overlay 之前,**必须**检查 App.tsx 之外的引用:
+- `TopBar.tsx` / `Sidebar.tsx` 等布局组件的 props
+- 其他 overlay 的 import (例如 `Notifications` 包含核心 API)
+- palette 快捷键里映射的 ID (skill / activity / collab)
+
+直接 grep `import.*<Name>` 和 `<Name>` 在全 src/ 才能确认。
 
 **估计节省 bundle 体积: ~150-200KB (未 gzip)**
 

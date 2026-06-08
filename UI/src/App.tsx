@@ -25,18 +25,18 @@ import { Splash } from './components/overlays/Splash';
 import { CommandPalette } from './components/overlays/CommandPalette';
 import { GlobalSearch } from './components/overlays/GlobalSearch';
 import { QuickJump } from './components/overlays/QuickJump';
-import { SkillsMarket } from './components/overlays/SkillsMarket';
-import { RecentActivity } from './components/overlays/RecentActivity';
 import { FeatureTour } from './components/overlays/FeatureTour';
 import { DeployWizard } from './components/overlays/DeployWizard';
 import { HotkeyCheatsheet } from './components/overlays/HotkeyCheatsheet';
-import { ProjectIO } from './components/overlays/ProjectIO';
 import { ChatHistorySearch } from './components/overlays/ChatHistorySearch';
 import { SplitCompare } from './components/overlays/SplitCompare';
 import { ABTest } from './components/overlays/ABTest';
 import { DetachSelector, openDetachedWindow, broadcastState, closeAllDetached } from './components/overlays/DetachedWindow';
 import { CodeReview } from './components/overlays/CodeReview';
 import { TaskScheduler } from './components/overlays/TaskScheduler';
+import { ProjectIO } from './components/overlays/ProjectIO';
+import { SkillsMarket } from './components/overlays/SkillsMarket';
+import { RecentActivity } from './components/overlays/RecentActivity';
 import { CollabCursors } from './components/overlays/CollabCursors';
 import { BreakpointDebugger } from './components/overlays/BreakpointDebugger';
 import { PluginRegistry } from './components/overlays/PluginRegistry';
@@ -60,11 +60,8 @@ import { SharedCollab } from './components/overlays/SharedCollab';
 import { EventBrowser } from './components/overlays/EventBrowser';
 import { AgentTheater } from './components/overlays/AgentTheater';
 import { VoiceChat } from './components/overlays/VoiceChat';
-import { ScreenShare } from './components/overlays/ScreenShare';
 import { AdvancedSearch } from './components/overlays/AdvancedSearch';
-import { DataIO } from './components/overlays/DataIO';
 import { DocCollab } from './components/overlays/DocCollab';
-import { ThemeMarket } from './components/overlays/ThemeMarket';
 import { LogStream } from './components/overlays/LogStream';
 import { MindMap } from './components/overlays/MindMap';
 import { ApiTester } from './components/overlays/ApiTester';
@@ -208,11 +205,8 @@ export function App() {
   const [eventBrowserOpen, setEventBrowserOpen] = useState(false);
   const [agentTheaterOpen, setAgentTheaterOpen] = useState(false);
   const [voiceChatOpen, setVoiceChatOpen] = useState(false);
-  const [screenShareOpen, setScreenShareOpen] = useState(false);
   const [advSearchOpen, setAdvSearchOpen] = useState(false);
-  const [dataIOOpen, setDataIOOpen] = useState(false);
   const [docCollabOpen, setDocCollabOpen] = useState(false);
-  const [themeMarketOpen, setThemeMarketOpen] = useState(false);
   const [logStreamOpen, setLogStreamOpen] = useState(false);
   const [mindMapOpen, setMindMapOpen] = useState(false);
   const [apiTesterOpen, setApiTesterOpen] = useState(false);
@@ -367,11 +361,8 @@ export function App() {
     eventBrowser:  () => setEventBrowserOpen(true),
     agentTheater:  () => setAgentTheaterOpen(true),
     voiceChat:     () => setVoiceChatOpen(true),
-    screenShare:   () => setScreenShareOpen(true),
     advSearch:     () => setAdvSearchOpen(true),
-    dataIO:        () => setDataIOOpen(true),
     docCollab:     () => setDocCollabOpen(true),
-    themeMarket:   () => setThemeMarketOpen(true),
     logStream:     () => setLogStreamOpen(true),
     mindMap:       () => setMindMapOpen(true),
     apiTester:     () => setApiTesterOpen(true),
@@ -489,11 +480,8 @@ export function App() {
     if (eventBrowserOpen) stack.push({ id: 'eventBrowser', close: () => setEventBrowserOpen(false) });
     if (agentTheaterOpen)  stack.push({ id: 'agentTheater', close: () => setAgentTheaterOpen(false) });
     if (voiceChatOpen)     stack.push({ id: 'voiceChat', close: () => setVoiceChatOpen(false) });
-    if (screenShareOpen)   stack.push({ id: 'screenShare', close: () => setScreenShareOpen(false) });
     if (advSearchOpen)     stack.push({ id: 'advSearch', close: () => setAdvSearchOpen(false) });
-    if (dataIOOpen)        stack.push({ id: 'dataIO', close: () => setDataIOOpen(false) });
     if (docCollabOpen)     stack.push({ id: 'docCollab', close: () => setDocCollabOpen(false) });
-    if (themeMarketOpen)   stack.push({ id: 'themeMarket', close: () => setThemeMarketOpen(false) });
     if (logStreamOpen)     stack.push({ id: 'logStream', close: () => setLogStreamOpen(false) });
     if (mindMapOpen)       stack.push({ id: 'mindMap', close: () => setMindMapOpen(false) });
     if (apiTesterOpen)     stack.push({ id: 'apiTester', close: () => setApiTesterOpen(false) });
@@ -581,7 +569,7 @@ export function App() {
   }, [
     paletteOpen, searchOpen, quickJumpOpen, skillsOpen, activityFeedOpen,
     tourOpen, deployOpen, hotkeyOpen, themeEditorOpen, projectIOOpen,
-    historySearchOpen, splitOpen, abTestOpen, detachOpen, codeReviewOpen, taskSchedulerOpen, collabOpen, debuggerOpen, pluginOpen, snippetsOpen, surrealOpen, gitTimeOpen, workflowOpen, mermaidOpen, themeGenOpen, codeMapOpen, pomodoroOpen, regexOpen, stickyOpen, dashboardOpen, promptsOpen, cmdHistoryOpen, perfMonOpen, timelineOpen, translatorOpen, collabOpen2, eventBrowserOpen, agentTheaterOpen, voiceChatOpen, screenShareOpen, advSearchOpen, dataIOOpen, docCollabOpen, themeMarketOpen, logStreamOpen, mindMapOpen, apiTesterOpen, dbDesignerOpen, umlToolsOpen, taskBoardOpen, snapshotOpen, notifierOpen, fullTextOpen, jsonOpen, cronOpen, changelogOpen, envMgrOpen, bookmarkOpen, colorOpen, iconOpen, diffOpen, webPreviewOpen, notesOpen, netMonOpen, assetOpen, buildOpen, webhookOpen, scriptOpen, qrOpen, dbSeederOpen, k8sOpen, depGraphOpen, licenseOpen, costOpen, testCovOpen, dbBrowserOpen, apiMonOpen, secretOpen, privacyOpen, vulnOpen, accessOpen, incidentOpen, complianceOpen, dataMaskOpen, threatOpen, promptLabOpen, tokenOpen, agentOrchOpen, embedOpen, cacheOpen, deployPipelineOpen, experimentOpen, modelRegOpen, queueOpen, worktreeOpen, prOpen, kanbanOpen, loadTestOpen, docGenOpen, kbOpen, teamOpen, releaseOpen, settingsOpen,
+    historySearchOpen, splitOpen, abTestOpen, detachOpen, codeReviewOpen, taskSchedulerOpen, collabOpen, debuggerOpen, pluginOpen, snippetsOpen, surrealOpen, gitTimeOpen, workflowOpen, mermaidOpen, themeGenOpen, codeMapOpen, pomodoroOpen, regexOpen, stickyOpen, dashboardOpen, promptsOpen, cmdHistoryOpen, perfMonOpen, timelineOpen, translatorOpen, collabOpen2, eventBrowserOpen, agentTheaterOpen, voiceChatOpen, advSearchOpen, docCollabOpen, logStreamOpen, mindMapOpen, apiTesterOpen, dbDesignerOpen, umlToolsOpen, taskBoardOpen, snapshotOpen, notifierOpen, fullTextOpen, jsonOpen, cronOpen, changelogOpen, envMgrOpen, bookmarkOpen, colorOpen, iconOpen, diffOpen, webPreviewOpen, notesOpen, netMonOpen, assetOpen, buildOpen, webhookOpen, scriptOpen, qrOpen, dbSeederOpen, k8sOpen, depGraphOpen, licenseOpen, costOpen, testCovOpen, dbBrowserOpen, apiMonOpen, secretOpen, privacyOpen, vulnOpen, accessOpen, incidentOpen, complianceOpen, dataMaskOpen, threatOpen, promptLabOpen, tokenOpen, agentOrchOpen, embedOpen, cacheOpen, deployPipelineOpen, experimentOpen, modelRegOpen, queueOpen, worktreeOpen, prOpen, kanbanOpen, loadTestOpen, docGenOpen, kbOpen, teamOpen, releaseOpen, settingsOpen,
   ]);
 
   const closePalette = useCallback(() => setPaletteOpen(false), []);
@@ -991,11 +979,6 @@ export function App() {
         onClose={() => setVoiceChatOpen(false)}
       />
 
-      <ScreenShare
-        open={screenShareOpen}
-        onClose={() => setScreenShareOpen(false)}
-      />
-
       <AdvancedSearch
         open={advSearchOpen}
         onClose={() => setAdvSearchOpen(false)}
@@ -1009,22 +992,10 @@ export function App() {
         }}
       />
 
-      <DataIO
-        open={dataIOOpen}
-        onClose={() => setDataIOOpen(false)}
-      />
-
       <DocCollab
         open={docCollabOpen}
         onClose={() => setDocCollabOpen(false)}
         userName={localStorage.getItem('soloforge.user.name') || 'me'}
-      />
-
-      <ThemeMarket
-        open={themeMarketOpen}
-        onClose={() => setThemeMarketOpen(false)}
-        currentTheme={theme.id}
-        onApply={(id) => { setTheme({ id } as any); pushToast({ level: 'success', title: '主题已应用', message: id, duration: 1500 }); }}
       />
 
       <LogStream
