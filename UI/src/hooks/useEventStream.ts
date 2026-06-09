@@ -57,6 +57,11 @@ export function useEventStream(enabled = true): EventStreamState {
     const offMsg = ws.on('*', (evt: any) => {
       if (cancelled) return;
       if (evt.type === 'connected') {
+        // 🔧 WS 一旦连上,关闭 SSE fallback 避免双通道重复
+        if (unsubSse) {
+          unsubSse();
+          unsubSse = null;
+        }
         wsReady = true;
         setConnected(true);
         setChannel('ws');
