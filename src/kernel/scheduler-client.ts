@@ -102,33 +102,46 @@ export class GeminiRustSchedulerClient {
 
     console.log(`[RUST_IPC_INFO] 🦀 发现 Rust 二进制: ${rustBinaryPath}`);
 
-    this.process = spawn(rustBinaryPath, []);
-
-    // 解析 Rust daemon 文本响应
-    // 响应格式: <request_id>|<response_line>
-    if (this.process.stdout) {
-      this.rl = readline.createInterface({ input: this.process.stdout });
-      this.rl.on('line', (line) => {
-        this.handleDaemonResponse(line);
+    try {
+      this.process = spawn(rustBinaryPath, [], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
       });
-    }
 
-    this.process.stderr?.on('data', (data) => {
-      // 日志行以 [INFO/WARN/ERROR] 开头，忽略即可
-      const text = data.toString().trim();
-      if (!text.startsWith('[20')) {
-        console.error(`[RUST_CORE_STDERR] 🦀 ${text}`);
+      console.log(`[RUST_IPC_INFO] 🦀 Rust 子进程已 spawn, pid=${this.process.pid}`);
+
+      // 解析 Rust daemon 文本响应
+      // 响应格式: <request_id>|<response_line>
+      if (this.process.stdout) {
+        this.rl = readline.createInterface({ input: this.process.stdout });
+        this.rl.on('line', (line) => {
+          this.handleDaemonResponse(line);
+        });
+      } else {
+        console.error(`[RUST_IPC_ERROR] 💥 Rust 子进程无 stdout pipe`);
       }
-    });
 
-    this.process.on('error', (err) => {
-      console.error(`[RUST_IPC_ERROR] 💥 Rust 进程启动失败: ${err.message}`);
-    });
+      this.process.stderr?.on('data', (data) => {
+        // 日志行以 [INFO/WARN/ERROR] 开头，忽略即可
+        const text = data.toString().trim();
+        if (!text.startsWith('[20')) {
+          console.error(`[RUST_CORE_STDERR] 🦀 ${text}`);
+        }
+      });
 
-    this.process.on('exit', (code) => {
-      console.warn(`[RUST_IPC_WARN] ⚠️  Rust 进程意外退出，code=${code}`);
+      this.process.on('error', (err) => {
+        console.error(`[RUST_IPC_ERROR] 💥 Rust 进程启动失败: ${err.message}`);
+        this.process = null;
+      });
+
+      this.process.on('exit', (code, signal) => {
+        console.warn(`[RUST_IPC_WARN] ⚠️  Rust 进程退出, code=${code} signal=${signal}`);
+        this.process = null;
+      });
+    } catch (e: any) {
+      console.error(`[RUST_IPC_ERROR] 💥 spawn 异常: ${e.message}`);
       this.process = null;
-    });
+    }
   }
 
   /**

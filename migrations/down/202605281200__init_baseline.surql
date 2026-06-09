@@ -5,4 +5,3 @@ REMOVE TABLE eventLog;
 REMOVE TABLE marlEpisode;
 REMOVE TABLE courtSubmission;
 REMOVE TABLE decision;
-REMOVE TABLE schema_migrations;
