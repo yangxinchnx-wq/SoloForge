@@ -45,6 +45,7 @@ async function mainSystemIgnitionEngine(): Promise<void> {
   try {
     // Step 1: Instantiate bare metal stateless micro-kernel core node
     const kernel = new RuntimeKernel();
+    await kernel.start(); // 推 state: BOOTING → INITIALIZING → READY
 
     // 🔥 Pre-step: Initialize Garnet hot data layer (运行态缓存，进程结束即销毁)
     try {
@@ -94,7 +95,25 @@ async function mainSystemIgnitionEngine(): Promise<void> {
       recover: async () => {},
       replayEvent: async () => {}
     };
-    const scheduler = { drain: async () => {} };
+
+    // 🦀 Rust 物理调度器客户端: 优先 spawn bin/scheduler.exe,失败则用仿真桩
+    let scheduler: any;
+    try {
+      const { GeminiRustSchedulerClient } = await import('./kernel/scheduler-client');
+      const realScheduler = new GeminiRustSchedulerClient();
+      realScheduler.initialize();
+      scheduler = realScheduler;
+      (kernel as any).schedulerClient = realScheduler;
+      logger.info('SYSTEM_MAIN', '🦀 [Rust Scheduler] spawn 完成,降级/直连已就位');
+    } catch (schedulerErr: any) {
+      logger.warn('SYSTEM_MAIN', '⚠️ [Rust Scheduler] spawn 失败,使用纯内存仿真桩', { error: schedulerErr.message });
+      scheduler = {
+        drain: async () => {},
+        pushTask: async () => true,
+        popTask: async () => null,
+        getStats: async () => ({ queueSize: 0, totalPush: 0, totalPop: 0 }),
+      };
+    }
 
     kernel.bootstrapCoreLinkages({
       commandBus,

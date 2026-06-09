@@ -32,9 +32,9 @@ async function executeMigration(db: Awaited<ReturnType<typeof connectDb>>, migra
 
   const startTime = Date.now();
 
-  // 开启事务
-  await db.query('BEGIN TRANSACTION');
-
+  // 注意: 在嵌入式 rocksdb:// 模式下,SurrealDB 的 BEGIN/COMMIT 事务行为与 WebSocket RPC 模式不同
+  // 单独 query 自动原子提交,不能嵌套 CANCEL TRANSACTION
+  // 改用单条 statement 内原子提交 + 整体串行执行
   try {
     for (const statement of statements) {
       if (statement.trim()) {
@@ -42,12 +42,10 @@ async function executeMigration(db: Awaited<ReturnType<typeof connectDb>>, migra
       }
     }
 
-    await db.query('COMMIT');
     const duration = Date.now() - startTime;
     console.log(`[Migration] ✅ 迁移成功: ${migration.version} (${duration}ms)`);
 
   } catch (error: any) {
-    await db.query('CANCEL TRANSACTION');
     console.error(`[Migration] ❌ 迁移失败: ${migration.version}`);
     console.error(`[Migration] 错误: ${error.message}`);
     throw error;
