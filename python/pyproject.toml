@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # ─────────────────────────────────────────────────────────────────
 # SoloForge AI Society - Python Module Configuration
-# Python: 3.12.10 (python-build-standalone)
+# Python: 3.13.9 (3.12 兼容至 2026-Q4, python-build-standalone)
 # ─────────────────────────────────────────────────────────────────
 
 [project]
@@ -27,7 +27,7 @@ build-backend = "hatchling.build"
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "DTZ", "T10", "ISC"]
