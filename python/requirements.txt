@@ -1,5 +1,5 @@
 # SoloForge AI Society 服务依赖
-# Python: 3.12.10
+# Python: 3.13.9(3.12 兼容至 2026-Q4)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 职责：AI 社会数据存储与 MARL 强化学习
 # ⚠️  AI 社会专用数据库 ⚠️  与主项目完全隔离
@@ -7,24 +7,29 @@
 
 # Deep Learning - PyTorch MAPPO (强化学习资源调度)
 # CPU 版本安装: pip install torch --index-url https://download.pytorch.org/whl/cpu
-torch>=2.0.0
+# 3.13 兼容: 2.6.0+ 官方 cp313 wheel
+torch>=2.6.0,<3.0.0
 
 # Numerical Computing
-numpy>=1.26.0,<2.0.0
+# 3.13 兼容: numpy 2.0+
+numpy>=2.0.0,<3.0.0
 
 # IPC Serialization - MessagePack (IPC 通信协议)
 msgpack>=1.0.0
 
 # High-Performance Computing - Numba (可选，JIT 加速)
 # 自动降级：无 numba 时使用纯 NumPy 计算
-numba>=0.59.0
+# 3.13 兼容: 0.61.0+ (llvmlite 0.44+)
+numba>=0.61.0
 
 # Vector Database - LanceDB (AI 社会专用向量存储)
 # Social Memory 语义检索，与主项目 SurrealDB 完全隔离
-lancedb>=0.12.0
+# 3.13 兼容: 0.20.0+ (依赖 pyarrow 17+)
+lancedb>=0.20.0,<1.0.0
 
 # PyArrow - LanceDB 依赖
-pyarrow>=14.0.0
+# 3.13 兼容: 17.0.0+ 官方 cp313 wheel
+pyarrow>=17.0.0,<20.0.0
 
 # Development Dependencies
 pytest>=8.0.0

@@ -40,7 +40,7 @@ SoloForge AI Society - AI 社会核心模块
 """
 
 __version__ = "1.0.0"
-__python_version__ = ">=3.12"
+__python_version__ = ">=3.13"
 
 from .config import AISocietyConfig, get_config, set_config
 from .database.manager import DatabaseManager
