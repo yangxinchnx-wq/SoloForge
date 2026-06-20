@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # ─────────────────────────────────────────────────────────────────
 # SoloForge AI Society - Python Module Configuration
-# Python: 3.13.9 (3.12 兼容至 2026-Q4, python-build-standalone)
+# Python: 3.13.14 (3.12 兼容至 2026-Q4, python-build-standalone)
 # ─────────────────────────────────────────────────────────────────
 
 [project]
