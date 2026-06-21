@@ -25,14 +25,14 @@ describe('SoloForge Layer 3 数据治理阻断与原子内核事务自愈集成�
     const mockLiveExtractedData = { version: 3, content: "Sovereign Rules" };
 
     // 执行真实的拦截方法
-    const result = interceptor.interceptAndExecute(command, mockLiveExtractedData);
+    const result = await interceptor.interceptAndExecute(command, mockLiveExtractedData);
 
     // 断言：系统必须阻断物理删除，返回 success = false 且 action = 'BLOCKED'
     expect(result.success).toBe(false);
     expect(result.action).toBe('BLOCKED');
     
     // 断言：硬拦截请求绝不能漏进软删除冷备回收站中
-    expect(interceptor.getTrashManifest().length).toBe(0);
+    expect((await interceptor.getTrashManifest()).length).toBe(0);
   });
 
   it('验收点 2：[可降级软删除归档] 当删除非核心普通文档资产时，系统必须允许通过，但必须剥离出活跃矩阵并路由至 30天 TTL 冷备区', async () => {
@@ -47,14 +47,14 @@ describe('SoloForge Layer 3 数据治理阻断与原子内核事务自愈集成�
     const mockData = { size: "12MB", payload: "stale text data" };
 
     // 执行真实的软删除归档方法
-    const result = interceptor.interceptAndExecute(command, mockData);
+    const result = await interceptor.interceptAndExecute(command, mockData);
 
     // 断言：普通资产允许下线软删除，返回 success = true 且 action = 'SOFT_DELETED'
     expect(result.success).toBe(true);
     expect(result.action).toBe('SOFT_DELETED');
 
     // 断言：回收站冷备区（mockTrashDb）中必须能精准追溯到这一条被抹平数据的历史物理快照
-    const trash = interceptor.getTrashManifest();
+    const trash = await interceptor.getTrashManifest();
     expect(trash.length).toBe(1);
     expect(trash[0].deletedBy).toBe('agent_beta');
     expect(trash[0].payload.size).toBe('12MB');

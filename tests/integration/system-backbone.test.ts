@@ -93,7 +93,7 @@ describe('SoloForge Layer 6 全链路跨语言总装主生命周期流验收测�
     };
 
     const currentLiveNodeContent = { active: true };
-    const shieldResult = shield.interceptAndExecute(rogueCommand, currentLiveNodeContent);
+    const shieldResult = await shield.interceptAndExecute(rogueCommand, currentLiveNodeContent);
 
     // 断言：全链路总装状态下，底座护盾依然冷酷，成功切断删库企图
     expect(shieldResult.success).toBe(false);
