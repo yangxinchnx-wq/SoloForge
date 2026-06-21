@@ -251,6 +251,7 @@ export class DeleteProtection {
   ]);
 
   private trashDb: TrashDatabase | null = null;
+  private memoryTrash: any[] = [];
   private autoPurgeTimer: NodeJS.Timeout | null = null;
 
   constructor(driver?: SurrealDbDriverInterface) {
@@ -362,6 +363,7 @@ export class DeleteProtection {
       restored: false,
     };
 
+    this.memoryTrash.push(trashPayload);
     console.warn(`[AUDIT_LOG] 🍃 软删除应用完成（内存模式）. 原始文件 [${command.targetId}] 已暂存。`);
     return { success: true, action: 'SOFT_DELETED' };
   }
@@ -402,8 +404,7 @@ export class DeleteProtection {
     limit?: number;
   }): Promise<TrashRecord[]> {
     if (!this.trashDb) {
-      console.warn('[Trash] 回收站未初始化');
-      return [];
+      return this.memoryTrash as TrashRecord[];
     }
 
     return this.trashDb.list({

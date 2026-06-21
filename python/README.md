@@ -67,8 +67,8 @@ python/
 ## 安装
 
 ```bash
-# 创建虚拟环境（Python 3.12.10）
-python3.12 -m venv venv
+# 创建虚拟环境（Python 3.13.14）
+python3.13 -m venv venv
 source venv/bin/activate  # Linux/Mac
 # 或
 .\venv\Scripts\activate  # Windows
