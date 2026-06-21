@@ -1,47 +1,24 @@
-import { defineConfig } from 'vite';
+import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import path from 'path';
+import {defineConfig} from 'vite';
 
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    port: 5173,
-    host: true,
-    proxy: {
-      // 将 /api 与 /ui 与 /metrics 反代到后端
-      '/api': {
-        target: 'http://localhost:3001',
-        changeOrigin: true,
-      },
-      '/metrics': {
-        target: 'http://localhost:3001',
-        changeOrigin: true,
-      },
-      '/ui': {
-        target: 'http://localhost:3001',
-        changeOrigin: true,
-      },
-      // WebSocket 通道(Vite 5 自动透传 Upgrade/Connection 头)
-      '/ws': {
-        target: 'ws://localhost:3001',
-        ws: true,
-        changeOrigin: true,
+export default defineConfig(() => {
+  return {
+    plugins: [react(), tailwindcss()],
+    resolve: {
+      alias: {
+        '@': path.resolve(__dirname, '.'),
       },
     },
-  },
-  build: {
-    // P0-7: 拆包 — 解决单 chunk 1.8MB 警告,首屏更快,缓存粒度更细
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (!id.includes('node_modules')) return;
-          if (id.includes('react') || id.includes('scheduler')) {
-            return 'vendor-react';
-          }
-          // 其他三方库集中到 vendor-misc
-          return 'vendor-misc';
-        },
+    server: {
+      // HMR is disabled in AI Studio via DISABLE_HMR env var.
+      // Do not modifyâ€"file watching is disabled to prevent flickering during agent edits.
+      hmr: process.env.DISABLE_HMR !== 'true',
+      // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
+      watch: process.env.DISABLE_HMR === 'true' ? null : {
+        ignored: ['**/active_resources_db.json', '**/providers_db.json', '**/metadata.json', '**/*.surql'],
       },
     },
-    chunkSizeWarningLimit: 600,
-  },
+  };
 });

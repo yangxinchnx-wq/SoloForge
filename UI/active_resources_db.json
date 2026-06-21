@@ -1,0 +1,37 @@
+{
+  "tools": [
+    "obscura"
+  ],
+  "knowledge": [],
+  "skills": [],
+  "customGroups": {
+    "tools": [
+      "浏览器",
+      "Windows"
+    ],
+    "knowledge": [
+      "未分组"
+    ],
+    "skills": [
+      "未分组"
+    ]
+  },
+  "groupAssignments": {
+    "obscura": "浏览器",
+    "windows-mcp": "Windows",
+    "browser_devtools": "浏览器",
+    "browser_console": "浏览器",
+    "browser_network": "浏览器",
+    "browser_dom_inspect": "浏览器",
+    "browser_screenshot": "浏览器",
+    "browser_perf_trace": "浏览器",
+    "browser_cookies": "浏览器",
+    "win_reg_read": "Windows",
+    "win_service_ctrl": "Windows",
+    "win_task_scheduler": "Windows",
+    "win_event_log": "Windows",
+    "win_powershell": "Windows",
+    "win_firewall": "Windows",
+    "win_perfmon": "Windows"
+  }
+}

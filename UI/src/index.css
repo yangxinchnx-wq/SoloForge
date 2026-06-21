@@ -1,0 +1,194 @@
+@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@600;700&family=Inter:wght@400;600&family=JetBrains+Mono:wght@400;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", sans-serif;
+  --font-display: "Hanken Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  /* Obsidian Gold Palette */
+  --color-bg: #050505;
+  --color-surface: #121414;
+  --color-surface-bright: #383939;
+  --color-primary: #ffde82;
+  --color-on-surface: #e3e2e2;
+  --color-outline: #99907d;
+}
+
+/* Targeted fast transitions on core page containers and elements instead of universal (*) which throttles the CPU */
+html,
+body,
+#root,
+.bg-bg,
+.bg-surface,
+.bg-surface-bright,
+.text-on-surface,
+.text-primary,
+.border-outline,
+.border-primary,
+.border-t,
+.border-r,
+.border-b,
+.border-l,
+.transition-colors {
+  transition: background-color 160ms cubic-bezier(0.22, 1, 0.36, 1), 
+              border-color 160ms cubic-bezier(0.22, 1, 0.36, 1), 
+              color 160ms cubic-bezier(0.22, 1, 0.36, 1),
+              box-shadow 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Hide all scrollbars globally across all elements but preserve mouse scroll wheel behavior */
+::-webkit-scrollbar, *::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+* {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+
+/* Force standard mouse pointer/arrow instead of hand finger cursor */
+*, button, select, a, [role="button"], label, input[type="checkbox"], input[type="radio"] {
+  cursor: default !important;
+}
+input[type="text"], input[type="password"], input[type="email"], input[type="number"], input[type="search"], textarea {
+  cursor: text !important;
+}
+
+/* ==========================================================================
+   Settings Modal Dynamic Adaptive Theme Styling (Anti-Glare & Eye-Care)
+   ========================================================================== */
+.settings-modal-card {
+  background-color: var(--color-surface) !important;
+  color: var(--color-on-surface) !important;
+}
+
+/* Background mappings for dynamic adaptive depth container overlays */
+.settings-modal-card [class*="bg-[#0b0c0d]"], 
+.settings-modal-card [class*="bg-[#0e1011]"], 
+.settings-modal-card [class*="bg-[#0a0b0c]"],
+.settings-modal-card [class*="bg-[#050607]"],
+.settings-modal-card [class*="bg-[#0c0d0f]"],
+.settings-modal-card [class*="bg-[#0c0e11]"],
+.settings-modal-card [class*="bg-[#0a0b0d]"],
+.settings-modal-card [class*="bg-[#101214]"] {
+  background-color: var(--color-bg) !important;
+}
+
+.settings-modal-card [class*="bg-[#121415]"],
+.settings-modal-card [class*="bg-[#111214]"],
+.settings-modal-card [class*="bg-[#121315]"],
+.settings-modal-card [class*="bg-[#131416]"],
+.settings-modal-card [class*="bg-[#141618]"],
+.settings-modal-card [class*="bg-[#131517]"],
+.settings-modal-card [class*="bg-[#1a1c1e]"],
+.settings-modal-card [class*="bg-[#1b1c1e]"],
+.settings-modal-card [class*="bg-[#1c1d20]"],
+.settings-modal-card [class*="bg-[#181a1c]"] {
+  background-color: var(--color-surface-bright) !important;
+}
+
+/* Tooltips bg */
+.settings-modal-card [class*="bg-[#16191d]"] {
+  background-color: var(--color-surface) !important;
+  color: var(--color-on-surface) !important;
+  border-color: rgba(var(--color-primary-rgb), 0.3) !important;
+}
+
+/* Background opacity mappings to theme colors */
+.settings-modal-card [class*="bg-black/"],
+.settings-modal-card [class*="bg-black/10"],
+.settings-modal-card [class*="bg-black/20"],
+.settings-modal-card [class*="bg-black/30"],
+.settings-modal-card [class*="bg-black/40"],
+.settings-modal-card [class*="bg-black/80"] {
+  background-color: rgba(var(--color-primary-rgb), 0.08) !important;
+}
+
+/* Border adjustments */
+.settings-modal-card [class*="border-[#222426]"],
+.settings-modal-card [class*="border-white/5"],
+.settings-modal-card [class*="border-white/10"],
+.settings-modal-card [class*="border-white/12"],
+.settings-modal-card [class*="border-[#2a2d30]"] {
+  border-color: rgba(var(--color-primary-rgb), 0.25) !important;
+}
+
+/* Dynamic Text adjustments */
+.settings-modal-card [class*="text-white"],
+.settings-modal-card h3,
+.settings-modal-card h4,
+.settings-modal-card .text-white {
+  color: var(--color-on-surface) !important;
+}
+
+/* Prevent bright colors or white on hover under light mode */
+.settings-modal-card [class*="hover:text-white"]:hover {
+  color: var(--color-on-surface) !important;
+}
+
+.settings-modal-card [class*="hover:bg-white/5"]:hover {
+  background-color: var(--color-surface-bright) !important;
+}
+
+.settings-modal-card [class*="text-on-surface/50"],
+.settings-modal-card [class*="text-on-surface/40"],
+.settings-modal-card [class*="text-white/80"] {
+  color: var(--color-on-surface) !important;
+  opacity: 0.65 !important;
+}
+
+/* Anti-Glare Form Input Adaptations */
+.settings-modal-card input[type="text"],
+.settings-modal-card input[type="password"],
+.settings-modal-card textarea,
+.settings-modal-card select {
+  background-color: var(--color-bg) !important;
+  color: var(--color-on-surface) !important;
+  border: 1px solid rgba(var(--color-primary-rgb), 0.3) !important;
+  padding: 0.75rem 1rem !important;
+  border-radius: 0.75rem !important;
+  outline: none !important;
+  transition: all 0.2s ease-in-out !important;
+}
+
+.settings-modal-card input[type="text"]:focus,
+.settings-modal-card input[type="password"]:focus,
+.settings-modal-card textarea:focus,
+.settings-modal-card select:focus {
+  border-color: var(--color-primary) !important;
+  box-shadow: 0 0 0 3px rgba(var(--color-primary-rgb), 0.25) !important;
+}
+
+/* Adaptive Button Styling */
+.settings-modal-card button[class*="bg-[#ffde82]"] {
+  background-color: var(--color-primary) !important;
+  color: var(--color-surface) !important;
+  border-color: var(--color-primary) !important;
+  box-shadow: 0 2px 6px rgba(var(--color-primary-rgb), 0.15) !important;
+}
+
+.settings-modal-card button[class*="bg-[#ffde82]"]:hover {
+  filter: brightness(1.1) !important;
+}
+
+.settings-modal-card button[class*="bg-primary/20"] {
+  background-color: rgba(var(--color-primary-rgb), 0.15) !important;
+  border-color: var(--color-primary) !important;
+  color: var(--color-primary) !important;
+}
+
+/* Status Labels & Badges Adaptation */
+.settings-modal-card [class*="bg-[#ffde82]/10"] {
+  background-color: rgba(var(--color-primary-rgb), 0.12) !important;
+  border-color: rgba(var(--color-primary-rgb), 0.3) !important;
+  color: var(--color-primary) !important;
+}
+
+.settings-modal-card [class*="text-[#ffde82]"] {
+  color: var(--color-primary) !important;
+}
+
+
+
