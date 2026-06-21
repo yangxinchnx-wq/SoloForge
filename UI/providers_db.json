@@ -1,0 +1,138 @@
+[
+  {
+    "id": "xiaomi",
+    "name": "XIAOMIMIMO",
+    "desc": "小米自研多模态与端侧通用智能模型系列",
+    "enabled": false,
+    "apiKey": "",
+    "baseUrl": "https://api.milm.xiaomi.com/v1",
+    "defaultUrl": "https://api.milm.xiaomi.com/v1",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#ff6700"
+  },
+  {
+    "id": "openai",
+    "name": "OpenAI",
+    "desc": "GPT 系列大语言模型官方服务商",
+    "enabled": true,
+    "apiKey": "",
+    "baseUrl": "https://api.openai.com/v1",
+    "defaultUrl": "https://api.openai.com/v1",
+    "models": [
+      {
+        "id": "gpt-4o",
+        "name": "GPT-4o",
+        "enabled": true
+      },
+      {
+        "id": "gpt-4o-mini",
+        "name": "GPT-4o Mini",
+        "enabled": true
+      },
+      {
+        "id": "gpt-4-turbo",
+        "name": "GPT-4 Turbo",
+        "enabled": true
+      },
+      {
+        "id": "gpt-3.5-turbo",
+        "name": "GPT-3.5 Turbo",
+        "enabled": true
+      },
+      {
+        "id": "o1-preview",
+        "name": "O1 Preview",
+        "enabled": true
+      },
+      {
+        "id": "o1-mini",
+        "name": "O1 Mini",
+        "enabled": true
+      }
+    ],
+    "customModels": [],
+    "scanned": true,
+    "status": "idle",
+    "color": "#10a37f"
+  },
+  {
+    "id": "deepseek",
+    "name": "DeepSeek",
+    "desc": "深度求索：超高性价比与硬核推理模型商",
+    "enabled": true,
+    "apiKey": "",
+    "baseUrl": "https://api.deepseek.com/v1",
+    "defaultUrl": "https://api.deepseek.com/v1",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#0d6efd"
+  },
+  {
+    "id": "anthropic",
+    "name": "Anthropic Claude",
+    "desc": "Claude 顶尖逻辑和多模态理解专家",
+    "enabled": false,
+    "apiKey": "",
+    "baseUrl": "https://api.anthropic.com/v1",
+    "defaultUrl": "https://api.anthropic.com/v1",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#d97706"
+  },
+  {
+    "id": "gemini",
+    "name": "Google Gemini",
+    "desc": "Google 顶尖多模态智能体基础模型系列",
+    "enabled": true,
+    "apiKey": "",
+    "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+    "defaultUrl": "https://generativelanguage.googleapis.com/v1beta",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#1a73e8"
+  },
+  {
+    "id": "siliconflow",
+    "name": "硅基流动 SiliconFlow",
+    "desc": "千亿参数模型一键加速接入平台",
+    "enabled": false,
+    "apiKey": "",
+    "baseUrl": "https://api.siliconflow.cn/v1",
+    "defaultUrl": "https://api.siliconflow.cn/v1",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#a855f7"
+  },
+  {
+    "id": "moonshot",
+    "name": "月之暗面 Kimi",
+    "desc": "支持超长无损上下文特性的高品质智能服务",
+    "enabled": false,
+    "apiKey": "",
+    "baseUrl": "https://api.moonshot.cn/v1",
+    "defaultUrl": "https://api.moonshot.cn/v1",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#f43f5e"
+  },
+  {
+    "id": "custom",
+    "name": "自定义提供商",
+    "desc": "自定义/中转等兼容 OpenAI 接口标准的第三方服务商",
+    "enabled": false,
+    "apiKey": "",
+    "baseUrl": "",
+    "defaultUrl": "http://localhost:3001/v1",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#64748b"
+  }
+]

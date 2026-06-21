@@ -1,0 +1,6 @@
+{
+  "name": "SoloForge IDE",
+  "description": "An integrated development environment interface for the SoloForge AI society system.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_IDE_TOOLING", "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

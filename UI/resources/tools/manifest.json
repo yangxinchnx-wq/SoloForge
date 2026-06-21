@@ -1,0 +1,32 @@
+[
+  {
+    "id": "obscura",
+    "name": "Obscura",
+    "description": "无头浏览器引擎，支持网页抓取、CDP协议、MCP工具调用",
+    "group": "浏览器",
+    "children": [
+      { "id": "browser_devtools", "name": "DevTools 调试器", "description": "Chrome 开发者工具集成" },
+      { "id": "browser_console", "name": "Console 日志捕获", "description": "实时捕获浏览器控制台" },
+      { "id": "browser_network", "name": "Network 网络监控", "description": "拦截与分析网络请求" },
+      { "id": "browser_dom_inspect", "name": "DOM 元素检查器", "description": "页面 DOM 树实时浏览" },
+      { "id": "browser_screenshot", "name": "页面截图工具", "description": "对页面进行高清截图" },
+      { "id": "browser_perf_trace", "name": "Performance 性能追踪", "description": "页面加载与渲染性能分析" },
+      { "id": "browser_cookies", "name": "Cookie 管理器", "description": "读写浏览器 Cookie 存储" }
+    ]
+  },
+  {
+    "id": "windows-mcp",
+    "name": "Windows-MCP",
+    "description": "Windows系统自动化MCP服务器，支持UI交互、应用控制、文件导航",
+    "group": "Windows",
+    "children": [
+      { "id": "win_reg_read", "name": "注册表读取器", "description": "读取 Windows 注册表键值" },
+      { "id": "win_service_ctrl", "name": "服务控制器", "description": "管理 Windows 系统服务启停" },
+      { "id": "win_task_scheduler", "name": "任务计划程序", "description": "创建与管理系统定时任务" },
+      { "id": "win_event_log", "name": "事件日志查看器", "description": "读取 Windows 事件日志" },
+      { "id": "win_powershell", "name": "PowerShell 执行器", "description": "执行 PowerShell 脚本命令" },
+      { "id": "win_firewall", "name": "防火墙规则管理", "description": "查看与修改防火墙规则" },
+      { "id": "win_perfmon", "name": "性能监视器", "description": "CPU、内存、磁盘实时监控" }
+    ]
+  }
+]
