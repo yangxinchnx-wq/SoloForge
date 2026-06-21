@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, Globe, PlusCircle, Laptop, Cpu, Code2, GitBranch, 
   ShieldCheck, Brain, Download, Navigation, Database, Share2, Save,
@@ -523,6 +523,9 @@ export default function SettingsModal({
   const reorderProviders = (reordered: ModelProvider[]) => {
     setProviders(reordered);
   };
+
+  const providerListRef = useRef<HTMLUListElement>(null);
+  const modelListRef = useRef<HTMLUListElement>(null);
 
   const addCustomModel = (providerId: string) => {
     if (!customModelVal.trim()) return;
@@ -1179,108 +1182,117 @@ export default function SettingsModal({
                   <div className="flex-1 flex min-h-0 bg-[var(--color-bg)]/60 border border-[var(--color-outline)]/20 rounded-2xl shadow-xl overflow-visible">
                     
                     {/* Left Sidebar: Provider Cards Selection */}
-                    <div className="w-[200px] border-r border-[var(--color-outline)]/15 bg-[var(--color-bg)]/80 flex flex-col p-3 shrink-0 gap-1.5 overflow-y-auto">
-                      <div className="px-2 pb-2 text-[10px] text-on-surface/40 font-bold tracking-wider border-b border-[var(--color-outline)]/10 mb-1">
+                    <div className="w-[200px] border-r border-[var(--color-outline)]/15 bg-[var(--color-bg)]/80 flex flex-col shrink-0">
+                      {/* Fixed: Title */}
+                      <div className="px-5 py-3 text-[10px] text-on-surface/40 font-bold tracking-wider border-b border-[var(--color-outline)]/10 shrink-0">
                         模型服务商列表
                       </div>
                       
-                      <Reorder.Group
-                        axis="y"
-                        values={providers}
-                        onReorder={reorderProviders}
-                        className="space-y-1"
-                      >
-                        {providers.map((p) => {
-                          const isSelected = activeProvider.id === p.id;
-                          return (
-                            <Reorder.Item
-                              key={p.id}
-                              value={p}
-                              dragListener={true}
-                              dragElastic={0}
-                              whileDrag={{
-                                scale: 1.03,
-                                zIndex: 50,
-                                opacity: 1,
-                                boxShadow: '0 12px 35px -8px rgba(0,0,0,0.35)',
-                              }}
-                              transition={{
-                                type: 'spring',
-                                stiffness: 500,
-                                damping: 40,
-                              }}
-                              className="list-none select-none touch-none"
-                            >
-                              <div
-                                onClick={() => {
-                                  setActiveProviderId(p.id);
-                                  setCustomModelVal('');
+                      {/* Scrollable: Provider list only */}
+                      <div className="flex-1 min-h-0 overflow-y-auto p-2.5">
+                        <Reorder.Group
+                          ref={providerListRef}
+                          axis="y"
+                          values={providers}
+                          onReorder={reorderProviders}
+                          className="space-y-1"
+                        >
+                          {providers.map((p) => {
+                            const isSelected = activeProvider.id === p.id;
+                            return (
+                              <Reorder.Item
+                                key={p.id}
+                                value={p}
+                                dragListener={true}
+                                dragElastic={0}
+                                whileDrag={{
+                                  zIndex: 50,
+                                  opacity: 1,
                                 }}
-                                className={`w-full flex items-center justify-between text-left px-3 py-3 rounded-xl text-xs font-semibold cursor-grab active:cursor-grabbing border transition-all duration-200 ${
-                                  isSelected
-                                    ? p.enabled
-                                      ? 'bg-[var(--color-primary)]/10 border-[var(--color-primary)]/40 text-[var(--color-primary)] font-black shadow-md opacity-100'
-                                      : 'bg-on-surface/5 border-on-surface/15 text-on-surface/40 font-black opacity-45 shadow-none'
-                                    : p.enabled
-                                      ? 'border-transparent text-[var(--color-on-surface)]/75 hover:bg-[var(--color-surface-bright)]/40 hover:text-[var(--color-on-surface)] opacity-100'
-                                      : 'border-transparent text-[var(--color-on-surface)]/35 hover:text-[var(--color-on-surface)]/50 opacity-40'
-                                }`}
+                                layout
+                                transition={{
+                                  layout: {
+                                    type: 'spring',
+                                    stiffness: 600,
+                                    damping: 35,
+                                    mass: 0.3,
+                                  },
+                                }}
+                                className="list-none select-none touch-none"
                               >
-                                <div className="flex items-center gap-2.5 truncate pointer-events-none">
-                                  {p.id === 'custom' ? (
-                                    <Plus className="w-5 h-5 shrink-0 opacity-65" style={{ width: 22, height: 22 }} />
-                                  ) : (
-                                    <ModelIcon modelName={p.id} size={22} className="shrink-0" />
-                                  )}
-                                  <span className="truncate">{p.name}</span>
+                                <div
+                                  onClick={() => {
+                                    setActiveProviderId(p.id);
+                                    setCustomModelVal('');
+                                  }}
+                                  className={`w-full flex items-center justify-between text-left px-3 py-3 rounded-xl text-xs font-semibold cursor-grab active:cursor-grabbing border transition-all duration-200 ${
+                                    isSelected
+                                      ? p.enabled
+                                        ? 'bg-[var(--color-primary)]/10 border-[var(--color-primary)]/40 text-[var(--color-primary)] font-black shadow-md opacity-100'
+                                        : 'bg-on-surface/5 border-on-surface/15 text-on-surface/40 font-black opacity-45 shadow-none'
+                                      : p.enabled
+                                        ? 'border-transparent text-[var(--color-on-surface)]/75 hover:bg-[var(--color-surface-bright)]/40 hover:text-[var(--color-on-surface)] opacity-100'
+                                        : 'border-transparent text-[var(--color-on-surface)]/35 hover:text-[var(--color-on-surface)]/50 opacity-40'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2.5 truncate pointer-events-none">
+                                    {p.id === 'custom' ? (
+                                      <Plus className="w-5 h-5 shrink-0 opacity-65" style={{ width: 22, height: 22 }} />
+                                    ) : (
+                                      <ModelIcon modelName={p.id} size={22} className="shrink-0" />
+                                    )}
+                                    <span className="truncate">{p.name}</span>
+                                  </div>
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    {p.enabled && p.status === 'success' && p.delay && (
+                                      <span className="text-[10px] bg-emerald-500/10 text-emerald-400 font-mono px-1 rounded-sm scale-90 shrink-0">
+                                        {p.delay}毫秒
+                                      </span>
+                                    )}
+                                    {p.id.startsWith('custom_') && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setProviders(prev => prev.filter(prov => prov.id !== p.id));
+                                          if (activeProviderId === p.id) {
+                                            setActiveProviderId('custom');
+                                          }
+                                        }}
+                                        className="p-1 hover:bg-rose-500/20 rounded-md text-on-surface/40 hover:text-rose-400 transition-colors cursor-pointer"
+                                        title="删除此自定义通道"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                  {p.enabled && p.status === 'success' && p.delay && (
-                                    <span className="text-[10px] bg-emerald-500/10 text-emerald-400 font-mono px-1 rounded-sm scale-90 shrink-0">
-                                      {p.delay}毫秒
-                                    </span>
-                                  )}
-                                  {p.id.startsWith('custom_') && (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setProviders(prev => prev.filter(prov => prov.id !== p.id));
-                                        if (activeProviderId === p.id) {
-                                          setActiveProviderId('custom');
-                                        }
-                                      }}
-                                      className="p-1 hover:bg-rose-500/20 rounded-md text-on-surface/40 hover:text-rose-400 transition-colors cursor-pointer"
-                                      title="删除此自定义通道"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            </Reorder.Item>
-                          );
-                        })}
-                      </Reorder.Group>
+                              </Reorder.Item>
+                            );
+                          })}
+                        </Reorder.Group>
+                      </div>
 
-                      {/* Plus button to add dynamic custom provider */}
-                      <motion.button
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.1 }}
-                        whileHover={{ scale: 1.02 }}
-                        whileTap={{ scale: 0.98 }}
-                        onClick={createNewCustomProvider}
-                        className="w-full mt-2 py-2.5 rounded-xl border border-dashed border-[var(--color-outline)]/20 hover:border-[var(--color-primary)] bg-[var(--color-primary)]/5 hover:bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center gap-1.5 text-xs font-bold transition-all cursor-pointer shadow-sm"
-                        title="添加新的自定义模型通道"
-                      >
-                        <Plus className="w-4 h-4" />
-                        <span>添加自定义端点</span>
-                      </motion.button>
+                      {/* Fixed: Plus button */}
+                      <div className="p-2.5 pt-0 shrink-0">
+                        <motion.button
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: 0.1 }}
+                          whileHover={{ scale: 1.02 }}
+                          whileTap={{ scale: 0.98 }}
+                          onClick={createNewCustomProvider}
+                          className="w-full py-2.5 rounded-xl border border-dashed border-[var(--color-outline)]/20 hover:border-[var(--color-primary)] bg-[var(--color-primary)]/5 hover:bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center gap-1.5 text-xs font-bold transition-all cursor-pointer shadow-sm"
+                          title="添加新的自定义模型通道"
+                        >
+                          <Plus className="w-4 h-4" />
+                          <span>添加自定义端点</span>
+                        </motion.button>
+                      </div>
                     </div>
 
                     {/* Right Workspace: Details Setup Dynamic Form */}
-                    <div className="flex-1 flex flex-col min-h-0 bg-[var(--color-surface)]/30 overflow-y-auto">
+                    <div className="flex-1 flex flex-col min-h-0 bg-[var(--color-surface)]/30 overflow-hidden">
                       <AnimatePresence mode="wait">
                         <motion.div
                           key={activeProvider.id}
@@ -1501,6 +1513,7 @@ export default function SettingsModal({
                                 )}
                                 {activeProvider.enabled && dragModels.length > 0 && (
                                   <Reorder.Group
+                                    ref={modelListRef}
                                     axis="y"
                                     values={dragModels}
                                     onReorder={(reordered) => reorderModels(activeProvider.id, reordered)}
@@ -1514,16 +1527,17 @@ export default function SettingsModal({
                                           dragListener={true}
                                           dragElastic={0}
                                           whileDrag={{
-                                            scale: 1.03,
                                             zIndex: 50,
                                             opacity: 1,
-                                            boxShadow: '0 12px 35px -8px rgba(0,0,0,0.35)',
-                                            backgroundColor: 'var(--color-surface-bright)',
                                           }}
+                                          layout
                                           transition={{
-                                            type: 'spring',
-                                            stiffness: 500,
-                                            damping: 40,
+                                            layout: {
+                                              type: 'spring',
+                                              stiffness: 600,
+                                              damping: 35,
+                                              mass: 0.3,
+                                            },
                                           }}
                                           className="flex items-center justify-between p-2.5 rounded-xl border text-xs cursor-grab active:cursor-grabbing select-none touch-none bg-[var(--color-primary)]/10 border-[var(--color-primary)]/45 text-[var(--color-on-surface)] font-bold shadow-sm"
                                         >

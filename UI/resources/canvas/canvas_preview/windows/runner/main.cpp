@@ -54,29 +54,29 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   Win32Window::Point origin(0, 0);
   Win32Window::Size size(canvasWidth, canvasHeight);
 
-  DWORD style = WS_POPUP;
-  if (parentHwnd) {
-    style = WS_CHILD | WS_VISIBLE;
-  } else {
-    style = WS_POPUP | WS_VISIBLE;
-  }
-
-  if (!window.CreateWithStyle(L"canvas_preview", style, 0, origin, size)) {
+  if (!window.Create(L"canvas_preview", origin, size)) {
     return EXIT_FAILURE;
   }
 
   window.SetQuitOnClose(true);
 
-  if (parentHwnd) {
-    HWND flutterHwnd = window.GetHandle();
-    if (flutterHwnd) {
-      ::SetWindowLongPtr(flutterHwnd, GWL_STYLE,
-                         WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS);
-      ::SetParent(flutterHwnd, parentHwnd);
-      ::SetWindowPos(flutterHwnd, nullptr, 0, 0, canvasWidth, canvasHeight,
-                     SWP_NOZORDER | SWP_NOACTIVATE);
-      ::ShowWindow(flutterHwnd, SW_SHOW);
-    }
+  HWND flutterHwnd = window.GetHandle();
+
+  if (parentHwnd && flutterHwnd) {
+    LONG old_style = GetWindowLong(flutterHwnd, GWL_STYLE);
+    LONG new_style = old_style & ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU);
+    new_style |= WS_CHILD | WS_VISIBLE;
+    SetWindowLong(flutterHwnd, GWL_STYLE, new_style);
+    SetParent(flutterHwnd, parentHwnd);
+    SetWindowPos(flutterHwnd, nullptr, 0, 0, canvasWidth, canvasHeight,
+                 SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    ShowWindow(flutterHwnd, SW_SHOW);
+  } else if (flutterHwnd) {
+    LONG old_style = GetWindowLong(flutterHwnd, GWL_STYLE);
+    LONG new_style = old_style & ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU);
+    SetWindowLong(flutterHwnd, GWL_STYLE, new_style);
+    SetWindowPos(flutterHwnd, nullptr, 0, 0, canvasWidth, canvasHeight,
+                 SWP_NOZORDER | SWP_FRAMECHANGED);
   }
 
   ::MSG msg;

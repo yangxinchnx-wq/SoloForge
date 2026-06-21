@@ -13,8 +13,6 @@ class FlutterWindow : public Win32Window {
   explicit FlutterWindow(const flutter::DartProject& project, HWND parent_hwnd = nullptr);
   virtual ~FlutterWindow();
 
-  HWND GetHandle() const { return hwnd(); }
-
  protected:
   bool OnCreate() override;
   void OnDestroy() override;

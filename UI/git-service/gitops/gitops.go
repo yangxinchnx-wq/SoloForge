@@ -164,12 +164,19 @@ func GetStatus(repoPath string) (*types.StatusResponse, error) {
 			statusStr = "modified"
 		}
 
+		// Get file modification time
+		mtime := ""
+		if fi, err := os.Stat(filepath.Join(repoPath, path)); err == nil {
+			mtime = fi.ModTime().Format("01-02 15:04")
+		}
+
 		rawType := string(x) + string(y)
 		files = append(files, types.GitFile{
 			Name:    path,
 			Status:  statusStr,
 			Staged:  staged,
 			RawType: rawType,
+			Mtime:   mtime,
 		})
 	}
 

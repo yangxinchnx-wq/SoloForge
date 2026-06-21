@@ -155,12 +155,30 @@ class _CanvasAppState extends State<CanvasApp> {
               }
             }, onError: (_) {}, cancelOnError: false);
           } catch (_) {}
+        } else if (request.method == 'POST' && request.uri.path == '/render') {
+          await _handleHttpRender(request);
         } else {
           request.response.statusCode = 404;
           await request.response.close();
         }
       }
     } catch (_) {}
+  }
+
+  Future<void> _handleHttpRender(HttpRequest request) async {
+    try {
+      final body = await utf8.decoder.bind(request).join();
+      _handleMessage(body);
+      request.response.statusCode = 200;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode({ 'ok': true }));
+    } catch (e) {
+      request.response.statusCode = 400;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode({ 'ok': false, 'error': e.toString() }));
+    } finally {
+      await request.response.close();
+    }
   }
 
   void _handleMessage(String message) {

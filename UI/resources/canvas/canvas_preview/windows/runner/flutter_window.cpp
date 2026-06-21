@@ -34,7 +34,7 @@ bool FlutterWindow::OnCreate() {
 
   flutter_controller_->ForceRedraw();
 
-  HWND current_hwnd = hwnd();
+  HWND current_hwnd = GetHandle();
   if (current_hwnd) {
     BOOL dark = TRUE;
     DwmSetWindowAttribute(current_hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE,
@@ -78,7 +78,7 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
           int new_w = parent_rect.right - parent_rect.left;
           int new_h = parent_rect.bottom - parent_rect.top;
           if (new_w > 0 && new_h > 0) {
-            SetWindowPos(hwnd, nullptr, 0, 0, new_w, new_h,
+            SetWindowPos(GetHandle(), nullptr, 0, 0, new_w, new_h,
                          SWP_NOZORDER | SWP_NOACTIVATE);
           }
         }
