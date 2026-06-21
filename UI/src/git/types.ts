@@ -3,6 +3,7 @@ export interface GitFile {
   status: 'modified' | 'untracked' | 'added' | 'deleted' | 'renamed';
   staged: boolean;
   rawType: string;
+  mtime: string;
 }
 
 export interface CommitLog {

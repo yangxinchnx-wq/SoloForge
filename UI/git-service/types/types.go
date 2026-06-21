@@ -2,10 +2,11 @@ package types
 
 // GitFile represents a single file change in the working tree.
 type GitFile struct {
-	Name     string `json:"name"`
-	Status   string `json:"status"`   // modified | untracked | added | deleted | renamed
-	Staged   bool   `json:"staged"`
-	RawType  string `json:"rawType"`
+	Name    string `json:"name"`
+	Status  string `json:"status"`  // modified | untracked | added | deleted | renamed
+	Staged  bool   `json:"staged"`
+	RawType string `json:"rawType"`
+	Mtime   string `json:"mtime"`   // file modification time, formatted as "01-02 15:04"
 }
 
 // CommitLog represents a single commit entry.

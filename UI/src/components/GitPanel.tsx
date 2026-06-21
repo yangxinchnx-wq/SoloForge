@@ -1,24 +1,23 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   GitBranch,
   RefreshCw,
   ArrowUp,
   Check,
-  Settings,
-  Lock,
   Plus,
   AlertCircle,
-  Globe,
-  User,
-  FileText,
-  CheckCircle2,
   X,
   ChevronDown,
+  ChevronRight,
   Clock,
+  Lock,
+  Settings,
+  History,
+  GitCommitHorizontal,
 } from 'lucide-react';
 import { useGit } from '../git/useGit';
 
-// ── Diff renderer ─────────────────────────────────────────────
+// ── Diff Renderer ────────────────────────────────────────────────
 function DiffView({ content, hasConflict = false }: { content: string | null; hasConflict?: boolean }) {
   if (!content) return <div className="text-on-surface/40 italic p-4 text-xs">没有差异内容</div>;
   const lines = content.split('\n');
@@ -32,7 +31,6 @@ function DiffView({ content, hasConflict = false }: { content: string | null; ha
           else if (line.startsWith('-') && !line.startsWith('---')) cls = 'text-rose-400 bg-rose-950/25 px-1 py-0.5 rounded-sm block w-full border-l-2 border-rose-500';
           else if (line.startsWith('@@')) cls = 'text-blue-400 font-semibold block w-full bg-blue-950/10 py-0.5';
           else if (line.startsWith('diff --git') || line.startsWith('index ')) cls = 'text-amber-400 block w-full font-bold pt-1.5 border-t border-outline/10';
-          else if (line.startsWith('commit ') || line.startsWith('Author:') || line.startsWith('Date:')) cls = 'text-purple-400 block w-full font-semibold';
           return <code key={i} className={cls}>{line || '\n'}</code>;
         })}
       </pre>
@@ -67,7 +65,7 @@ function DiffView({ content, hasConflict = false }: { content: string | null; ha
   );
 }
 
-// ── Branch Selector ───────────────────────────────────────────
+// ── Branch Selector ─────────────────────────────────────────────
 function BranchSelector({
   branches,
   currentBranch,
@@ -128,7 +126,166 @@ function BranchSelector({
   );
 }
 
-// ── Main Panel ────────────────────────────────────────────────
+// ── File Item Component ─────────────────────────────────────────
+function FileItem({
+  file,
+  isStaged,
+  onToggleStage,
+  onShowDiff,
+}: {
+  file: { name: string; status: string; mtime?: string };
+  isStaged: boolean;
+  onToggleStage: () => void;
+  onShowDiff: () => void;
+}) {
+  const statusColors: Record<string, string> = {
+    untracked: 'text-emerald-500 bg-emerald-500/10',
+    modified: 'text-amber-500 bg-amber-500/10',
+    deleted: 'text-rose-500 bg-rose-500/10',
+  };
+  const statusLabel: Record<string, string> = {
+    untracked: 'U',
+    modified: 'M',
+    deleted: 'D',
+  };
+
+  return (
+    <div className="flex items-center gap-1.5 py-1 px-2 hover:bg-on-surface/5 rounded-lg group transition-colors">
+      <span className={`text-[9.5px] shrink-0 font-extrabold px-1 rounded font-mono ${statusColors[file.status] || 'text-on-surface/60 bg-on-surface/5'}`}>
+        {statusLabel[file.status] || '?'}
+      </span>
+      <div onClick={onShowDiff} className="flex-1 min-w-0 cursor-pointer flex items-center gap-2">
+        <span className="font-mono text-[11px] truncate text-on-surface/80 group-hover:text-primary transition-colors">{file.name}</span>
+        {file.mtime && <span className="text-[8.5px] text-on-surface/35 font-mono shrink-0">{file.mtime}</span>}
+      </div>
+      <button
+        onClick={onToggleStage}
+        className={`opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded cursor-pointer ${
+          isStaged
+            ? 'bg-rose-500/10 text-rose-400 hover:bg-rose-500 hover:text-white'
+            : 'bg-primary/10 text-primary hover:bg-primary hover:text-white'
+        }`}
+        title={isStaged ? '取消暂存' : '暂存'}
+      >
+        {isStaged ? <X className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+      </button>
+    </div>
+  );
+}
+
+// ── History Item Component ──────────────────────────────────────
+function HistoryItem({
+  commit,
+  onShowDiff,
+}: {
+  commit: { hash: string; message: string; author: string; relativeTime: string };
+  onShowDiff: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onShowDiff}
+      className="w-full p-2.5 bg-surface-bright/40 border border-outline/15 rounded-xl hover:border-primary/40 hover:bg-on-surface/5 transition-all text-left flex flex-col gap-1 cursor-pointer group"
+    >
+      <div className="flex justify-between items-center w-full">
+        <span className="font-mono text-[9.5px] text-primary bg-primary/10 px-1.5 py-0.5 rounded font-bold group-hover:underline">{commit.hash}</span>
+        <span className="text-[9.5px] text-on-surface/40 font-mono">{commit.relativeTime}</span>
+      </div>
+      <p className="text-[11px] font-bold text-on-surface leading-snug group-hover:text-primary">{commit.message}</p>
+      <div className="flex justify-between items-center w-full mt-1.5 text-[9px] text-on-surface/40 border-t border-outline/10 pt-1">
+        <span className="font-mono">提交者: {commit.author}</span>
+        <span className="text-primary font-bold group-hover:translate-x-0.5 transition-transform">查看 Diff {'\u2192'}</span>
+      </div>
+    </button>
+  );
+}
+
+// ── Settings Panel (inline overlay) ─────────────────────────────
+function SettingsPanel({
+  git,
+  onClose,
+}: {
+  git: ReturnType<typeof useGit>;
+  onClose: () => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-50 flex flex-col bg-surface animate-fade-in">
+      {/* Settings Header */}
+      <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-outline/30 bg-surface-bright shrink-0">
+        <div className="flex items-center gap-2">
+          <Settings className="w-4 h-4 text-primary" />
+          <span className="text-xs font-bold text-on-surface">设置</span>
+        </div>
+        <button type="button" onClick={onClose} className="p-1.5 hover:bg-on-surface/10 rounded-md text-on-surface/60 hover:text-on-surface transition-colors cursor-pointer" title="返回">
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-3 space-y-4 text-left">
+        {/* User Config */}
+        <div className="bg-surface-bright/50 border border-outline/20 p-3 rounded-2xl space-y-3">
+          <div className="flex items-center gap-1.5 pb-1 border-b border-outline/10">
+            <span className="text-[11px] font-extrabold text-on-surface">提交人配置</span>
+          </div>
+          <div className="space-y-2.5">
+            <div className="space-y-1">
+              <label className="text-[9.5px] text-on-surface/50 font-bold">用户名</label>
+              <input type="text" value={git.userName} onChange={(e) => git.setUserName(e.target.value)} placeholder="github_username" className="w-full text-[10.5px] px-2.5 py-1.5 bg-surface text-on-surface border border-outline/25 rounded-lg outline-none focus:border-primary" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[9.5px] text-on-surface/50 font-bold">邮箱</label>
+              <input type="email" value={git.userEmail} onChange={(e) => git.setUserEmail(e.target.value)} placeholder="user@domain.com" className="w-full text-[10.5px] px-2.5 py-1.5 bg-surface text-on-surface border border-outline/25 rounded-lg outline-none focus:border-primary" />
+            </div>
+          </div>
+        </div>
+
+        {/* Remote Config */}
+        <div className="bg-surface-bright/50 border border-outline/20 p-3 rounded-2xl space-y-3">
+          <div className="flex items-center gap-1.5 pb-1 border-b border-outline/10">
+            <span className="text-[11px] font-extrabold text-on-surface">远程仓库</span>
+          </div>
+          <div className="space-y-2.5">
+            <div className="space-y-1">
+              <label className="text-[9.5px] text-on-surface/50 font-bold">HTTPS 链接</label>
+              <input type="text" value={git.remoteUrl} onChange={(e) => git.setRemoteUrl(e.target.value)} placeholder="https://github.com/user/repo.git" className="w-full text-[10.5px] px-2.5 py-1.5 bg-surface text-on-surface border border-outline/25 rounded-lg outline-none focus:border-primary font-mono" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[9.5px] text-on-surface/50 font-bold flex items-center gap-1"><Lock className="w-2.5 h-2.5 shrink-0" /><span>访问密钥</span></label>
+              <input type="password" value={git.accessToken} onChange={(e) => git.setAccessToken(e.target.value)} placeholder="ghp_***" className="w-full text-[10.5px] px-2.5 py-1.5 bg-surface text-on-surface border border-outline/25 rounded-lg outline-none focus:border-primary font-mono" />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[9.5px] text-on-surface/50 font-bold">目标分支</label>
+              <input type="text" value={git.targetBranch} onChange={(e) => git.setTargetBranch(e.target.value)} placeholder="main" className="w-full text-[10.5px] px-2.5 py-1.5 bg-surface text-on-surface border border-outline/25 rounded-lg outline-none focus:border-primary font-mono" />
+            </div>
+          </div>
+        </div>
+
+        <button onClick={() => { git.handleSaveConfig(); onClose(); }} disabled={git.loading} className="w-full py-2 bg-primary hover:bg-primary-hover text-bg rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1">
+          <Check className="w-3.5 h-3.5" /><span>保存配置</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Push Progress Bar ───────────────────────────────────────────
+function PushProgress({ progress, success }: { progress: number; success: boolean }) {
+  return (
+    <div className="flex items-center gap-2.5 px-3 py-1.5">
+      <div className="flex-1 h-1.5 bg-surface-bright border border-outline/10 rounded-full overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all duration-300 ease-out ${success ? 'bg-emerald-500' : 'bg-primary'}`}
+          style={{ width: `${Math.min(progress, 100)}%` }}
+        />
+      </div>
+      <span className={`text-[9.5px] font-mono font-bold shrink-0 ${success ? 'text-emerald-400' : 'text-primary'}`}>
+        {success ? '100%' : `${progress}%`}
+      </span>
+    </div>
+  );
+}
+
+// ── Main GitPanel Component ─────────────────────────────────────
 interface GitPanelProps {
   onClose: () => void;
 }
@@ -136,16 +293,42 @@ interface GitPanelProps {
 export default function GitPanel({ onClose }: GitPanelProps) {
   const git = useGit();
   const [showBranchSelector, setShowBranchSelector] = useState(false);
+  const [viewMode, setViewMode] = useState<'changes' | 'history'>('changes');
+  const [expandedStaged, setExpandedStaged] = useState(true);
+  const [expandedUnstaged, setExpandedUnstaged] = useState(true);
+  const [showSettings, setShowSettings] = useState(false);
+  const commitInputRef = useRef<HTMLInputElement>(null);
 
   const currentBranch = git.targetBranch || git.statusData?.branch || 'main';
+
+  // Auto-expand sections based on content
+  useEffect(() => {
+    if (git.stagedFiles.length > 0) setExpandedStaged(true);
+    if (git.unstagedFiles.length > 0) setExpandedUnstaged(true);
+  }, [git.stagedFiles.length, git.unstagedFiles.length]);
+
+  // Focus commit input on mount
+  useEffect(() => {
+    const timer = setTimeout(() => commitInputRef.current?.focus(), 300);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const handleCommitKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      git.handleCommit();
+    }
+  };
+
+  const isPushing = git.pushProgress !== null;
 
   return (
     <div className="flex-1 flex flex-col h-full bg-surface relative select-none">
       {/* ─── Header ─── */}
-      <div className="flex items-center justify-between px-3.5 py-3 border-b border-outline/30 bg-surface-bright shrink-0">
+      <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-outline/30 bg-surface-bright shrink-0">
         <div className="flex items-center gap-2">
-          <GitBranch className="w-4 h-4 text-primary animate-pulse" />
-          <span className="text-xs font-bold tracking-wider text-on-surface">源代码管理</span>
+          <GitBranch className="w-4 h-4 text-primary" />
+          <span className="text-xs font-bold tracking-wider text-on-surface">Git</span>
           {git.statusData?.initialized && (
             <div className="relative">
               <button
@@ -172,6 +355,9 @@ export default function GitPanel({ onClose }: GitPanelProps) {
           <button type="button" onClick={() => git.fetchGitStatus()} disabled={git.loading} className="p-1.5 hover:bg-on-surface/10 rounded-md text-on-surface/60 hover:text-on-surface transition-colors cursor-pointer disabled:opacity-30" title="刷新">
             <RefreshCw className={`w-3.5 h-3.5 ${git.loading ? 'animate-spin' : ''}`} />
           </button>
+          <button type="button" onClick={() => { setShowSettings(true); setViewMode('changes'); }} className="p-1.5 hover:bg-on-surface/10 rounded-md text-on-surface/60 hover:text-primary transition-colors cursor-pointer" title="设置">
+            <Settings className="w-3.5 h-3.5" />
+          </button>
           <button type="button" onClick={onClose} className="p-1.5 hover:bg-on-surface/10 rounded-md text-on-surface/60 hover:text-on-surface transition-colors cursor-pointer" title="关闭">
             <X className="w-3.5 h-3.5" />
           </button>
@@ -187,8 +373,10 @@ export default function GitPanel({ onClose }: GitPanelProps) {
         </div>
       )}
 
-      {/* ─── Content ─── */}
-      {!git.statusData ? (
+      {/* ─── Loading / Uninitialized / Settings Overlay ─── */}
+      {showSettings ? (
+        <SettingsPanel git={git} onClose={() => setShowSettings(false)} />
+      ) : !git.statusData ? (
         /* Loading */
         <div className="flex-1 flex flex-col items-center justify-center p-6 text-center space-y-3">
           <RefreshCw className="w-6 h-6 text-on-surface/30 animate-spin" />
@@ -211,241 +399,193 @@ export default function GitPanel({ onClose }: GitPanelProps) {
           <div className="text-[10px] text-on-surface/30 leading-snug border-t border-outline/10 pt-3">* 初始化后会自动生成 .gitignore 文件。</div>
         </div>
       ) : (
-        /* Initialized */
+        /* Initialized - Main View */
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-          {/* Tabs */}
-          <div className="flex border-b border-outline/30 bg-surface-bright/50 px-2 pt-1 shrink-0">
-            {([['changes', `变更 (${git.statusData.files.length})`], ['history', '提交历史'], ['settings', '认证与配置']] as const).map(([key, label]) => (
-              <button key={key} onClick={() => git.setActiveSubTab(key)} className={`flex-1 py-2 text-[11px] font-bold border-b-2 transition-all ${git.activeSubTab === key ? 'border-primary text-primary' : 'border-transparent text-on-surface/55 hover:text-on-surface/90'}`}>
-                {label}
-              </button>
-            ))}
+          {/* ─── View Toggle (no settings tab) ─── */}
+          <div className="flex border-b border-outline/30 bg-surface-bright/50 shrink-0">
+            <button
+              onClick={() => setViewMode('changes')}
+              className={`flex-1 py-2 text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 ${
+                viewMode === 'changes'
+                  ? 'text-primary border-b-2 border-primary bg-primary/5'
+                  : 'text-on-surface/55 hover:text-on-surface/90 border-b-2 border-transparent'
+              }`}
+            >
+              <GitCommitHorizontal className="w-3.5 h-3.5" />
+              <span>变更 {git.statusData.files.length > 0 && `(${git.statusData.files.length})`}</span>
+            </button>
+            <button
+              onClick={() => setViewMode('history')}
+              className={`flex-1 py-2 text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 ${
+                viewMode === 'history'
+                  ? 'text-primary border-b-2 border-primary bg-primary/5'
+                  : 'text-on-surface/55 hover:text-on-surface/90 border-b-2 border-transparent'
+              }`}
+            >
+              <History className="w-3.5 h-3.5" />
+              <span>历史</span>
+            </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-3.5 space-y-4">
-
-            {/* ═══ CHANGES TAB ═══ */}
-            {git.activeSubTab === 'changes' && (
-              <div className="space-y-4">
-                {/* Commit form */}
-                <div className="bg-surface-bright/50 border border-outline/25 p-3 rounded-2xl space-y-3 text-left">
-                  <span className="text-[10px] text-on-surface/50 font-bold block">提交消息</span>
-                  <input type="text" value={git.commitMessage} onChange={(e) => git.setCommitMessage(e.target.value)} placeholder="输入提交备忘记录..." className="w-full text-[11px] p-2 bg-surface text-on-surface border border-outline/25 rounded-lg focus:border-primary outline-none" />
-
-                  <div className="border-t border-outline/10 pt-2.5 space-y-2.5">
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="space-y-1">
-                        <span className="text-[9px] text-on-surface/40 font-bold block">作者用户名</span>
-                        <input type="text" value={git.userName} onChange={(e) => git.setUserName(e.target.value)} placeholder="git-username" className="w-full text-[10px] px-2 py-1 bg-surface text-on-surface border border-outline/20 rounded outline-none focus:border-primary" />
-                      </div>
-                      <div className="space-y-1">
-                        <span className="text-[9px] text-on-surface/40 font-bold block">邮箱</span>
-                        <input type="text" value={git.userEmail} onChange={(e) => git.setUserEmail(e.target.value)} placeholder="email@example.com" className="w-full text-[10px] px-2 py-1 bg-surface text-on-surface border border-outline/20 rounded outline-none focus:border-primary font-mono" />
-                      </div>
+          <div className="flex-1 overflow-y-auto">
+            {/* ═══ CHANGES VIEW ═══ */}
+            {viewMode === 'changes' && (
+              <div className="flex flex-col h-full">
+                {/* File Changes Section */}
+                <div className="flex-1 overflow-y-auto">
+                  {/* ── Compact Sync Bar ── */}
+                  <div className="flex items-center justify-between px-3 py-2 border-b border-outline/10 bg-surface-bright/30 shrink-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <ArrowUp className="w-3 h-3 text-on-surface/40 shrink-0" />
+                      {git.remoteUrl ? (
+                        <span className="text-[9.5px] text-on-surface/60 font-mono truncate">
+                          {git.remoteUrl.replace(/https:\/\/|[a-zA-Z0-9_-]+@/g, '').replace(/\.git$/, '')}
+                        </span>
+                      ) : (
+                        <span className="text-[9.5px] text-on-surface/40">未配置远程仓库</span>
+                      )}
                     </div>
-                  </div>
-
-                  <div className="flex gap-2 pt-1 border-t border-outline/5">
-                    <button onClick={git.handleCommit} disabled={git.loading || git.statusData.files.length === 0} className="flex-1 py-1.5 bg-primary/10 hover:bg-primary/20 hover:text-white border border-primary/30 text-primary rounded-lg text-[10.5px] font-bold cursor-pointer transition-colors flex items-center justify-center gap-1 disabled:opacity-35 disabled:pointer-events-none">
-                      <Check className="w-3.5 h-3.5" /><span>仅提交</span>
-                    </button>
-                    <button onClick={async () => { await git.handleCommit(); await git.handlePush(); }} disabled={git.loading || (git.statusData.files.length === 0 && !git.remoteUrl)} className="flex-1 py-1.5 bg-primary hover:bg-primary-hover text-bg rounded-lg text-[10.5px] font-extrabold cursor-pointer transition-all flex items-center justify-center gap-1 shadow-sm disabled:opacity-35 disabled:pointer-events-none">
-                      <ArrowUp className="w-3.5 h-3.5" /><span>提交并推送</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Staged files */}
-                {git.stagedFiles.length > 0 && (
-                  <div className="space-y-1.5 text-left">
-                    <span className="text-[10.5px] font-extrabold text-emerald-400 px-1">已暂存 ({git.stagedFiles.length})</span>
-                    <div className="space-y-1 border-l border-emerald-500/20 pl-2">
-                      {git.stagedFiles.map((f, i) => (
-                        <div key={i} onClick={() => git.handleViewFileDiff(f.name)} className="flex justify-between items-center py-1 text-[11px] hover:bg-on-surface/5 px-2 rounded-md group cursor-pointer" title="查看差异">
-                          <div className="flex items-center gap-1.5 truncate">
-                            <FileText className="w-3.5 h-3.5 text-on-surface/40 group-hover:text-primary" />
-                            <span className="font-mono truncate text-on-surface/80 group-hover:text-primary transition-colors">{f.name}</span>
-                          </div>
-                          <span className="text-[10px] shrink-0 font-extrabold px-1 text-emerald-400 font-mono">{f.status === 'untracked' ? '新加' : '已更改'}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Unstaged files */}
-                <div className="space-y-1.5 text-left">
-                  <div className="flex items-center justify-between px-1">
-                    <span className="text-[10.5px] font-extrabold text-on-surface/70">待暂存 ({git.unstagedFiles.length})</span>
-                    {git.unstagedFiles.length > 0 && (
-                      <button onClick={() => git.stageFile()} disabled={git.loading} className="text-[9.5px] text-primary hover:underline cursor-pointer font-bold flex items-center gap-0.5">
-                        <Plus className="w-2.5 h-2.5" /> 暂存全部
+                    {git.remoteUrl ? (
+                      <button
+                        onClick={git.handlePush}
+                        disabled={git.loading || isPushing}
+                        className="shrink-0 text-[9.5px] px-2.5 py-1 bg-primary hover:bg-primary-hover active:scale-95 text-bg font-extrabold rounded-lg transition-all flex items-center gap-1 disabled:opacity-40"
+                      >
+                        {isPushing ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : <ArrowUp className="w-2.5 h-2.5" />}
+                        <span>{isPushing ? '推送中' : '推送'}</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => setShowSettings(true)}
+                        className="shrink-0 text-[9.5px] px-2.5 py-1 bg-primary/10 hover:bg-primary/20 text-primary font-extrabold rounded-lg transition-all flex items-center gap-1"
+                      >
+                        <Settings className="w-2.5 h-2.5" />
+                        <span>配置</span>
                       </button>
                     )}
                   </div>
-                  {git.unstagedFiles.length === 0 ? (
-                    <p className="text-[11px] text-on-surface/35 py-3 text-center bg-on-surface/5 border border-dashed border-outline/10 rounded-xl">未检测到文件变动</p>
-                  ) : (
-                    <div className="space-y-1">
-                      {git.unstagedFiles.map((f, i) => (
-                        <div key={i} className="flex justify-between items-center py-1.5 text-[11px] hover:bg-on-surface/5 px-2 rounded-md group">
-                          <div onClick={() => git.handleViewFileDiff(f.name)} className="flex items-center gap-1.5 truncate flex-1 cursor-pointer" title="查看差异">
-                            <FileText className="w-3.5 h-3.5 text-on-surface/40 group-hover:text-primary" />
-                            <span className="font-mono truncate text-on-surface group-hover:text-primary transition-colors">{f.name}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className={`text-[9.5px] shrink-0 font-extrabold px-1 rounded font-mono ${f.status === 'untracked' ? 'text-emerald-500 bg-emerald-500/10' : f.status === 'deleted' ? 'text-rose-500 bg-rose-500/10' : 'text-amber-500 bg-amber-500/10'}`}>
-                              {f.status === 'untracked' ? 'U' : f.status === 'deleted' ? 'D' : 'M'}
-                            </span>
-                            <button onClick={() => git.stageFile(f.name)} className="hidden group-hover:flex p-0.5 bg-primary/10 text-primary border border-primary/20 hover:bg-primary hover:text-bg rounded cursor-pointer" title="暂存">
-                              <Plus className="w-2.5 h-2.5" />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+
+                  {/* ── Push Progress (thin bar) ── */}
+                  {isPushing && (
+                    <PushProgress progress={git.pushProgress} success={git.pushSuccessState} />
                   )}
-                </div>
 
-                {/* Remote sync */}
-                <div className="bg-surface-bright/50 border border-outline/25 p-3 rounded-2xl space-y-3 text-left">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <Globe className="w-3.5 h-3.5 text-primary" />
-                      <span className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider">远程仓库同步</span>
-                    </div>
-                    {git.remoteUrl && <span className="text-[9px] bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded font-bold">已连接</span>}
-                  </div>
-
-                  {git.remoteUrl ? (
-                    <div className="space-y-2.5">
-                      <div className="bg-surface/60 rounded-xl p-2.5 border border-outline/10 space-y-1.5">
-                        <div className="flex justify-between items-center text-[10.5px]">
-                          <span className="text-on-surface/40">目标仓库</span>
-                          <span className="font-mono text-on-surface/85 truncate max-w-[170px] font-semibold">{git.remoteUrl.replace(/https:\/\/|[a-zA-Z0-9_-]+@/g, '').replace(/\.git$/, '')}</span>
-                        </div>
-                        <div className="flex justify-between items-center text-[10.5px]">
-                          <span className="text-on-surface/40">分支</span>
-                          <span className="font-mono text-primary bg-primary/10 px-1.5 py-0.5 rounded text-[10px] font-bold">{currentBranch}</span>
-                        </div>
-                        <div className="flex justify-between items-center text-[10.5px]">
-                          <span className="text-on-surface/40">认证</span>
-                          <span className={`font-mono text-[10px] font-bold flex items-center gap-1 ${git.accessToken ? 'text-emerald-400' : 'text-amber-500'}`}>
-                            <Lock className="w-2.5 h-2.5" />{git.accessToken ? '已配置' : '未配置'}
-                          </span>
-                        </div>
-                      </div>
-
-                      {git.pushProgress !== null ? (
-                        <div className="w-full py-4 flex flex-col items-center justify-center bg-surface-bright border border-primary/20 rounded-xl space-y-2.5 animate-pulse">
-                          <div className="relative flex items-center justify-center w-12 h-12">
-                            {git.pushSuccessState ? (
-                              <div className="flex items-center justify-center w-9 h-9 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"><Check className="w-4.5 h-4.5 stroke-[3]" /></div>
-                            ) : (
-                              <>
-                                <svg className="w-12 h-12 transform -rotate-90">
-                                  <circle className="text-on-surface/5" strokeWidth="3.5" stroke="currentColor" fill="transparent" r="20" cx="24" cy="24" />
-                                  <circle className="text-primary transition-all duration-150" strokeWidth="4" strokeDasharray={2 * Math.PI * 20} strokeDashoffset={2 * Math.PI * 20 - (git.pushProgress / 100) * (2 * Math.PI * 20)} strokeLinecap="round" stroke="currentColor" fill="transparent" r="20" cx="24" cy="24" />
-                                </svg>
-                                <span className="absolute text-[10px] font-black text-on-surface/90 font-mono">{git.pushProgress}%</span>
-                              </>
-                            )}
-                          </div>
-                          <p className="text-[10.5px] font-extrabold text-on-surface">
-                            {git.pushSuccessState ? <span className="text-emerald-400">推送已完成！</span> : <span className="text-primary">正在推送到远程...</span>}
-                          </p>
-                        </div>
-                      ) : (
-                        <button onClick={git.handlePush} disabled={git.loading} className="w-full py-2 bg-primary hover:bg-primary-hover active:scale-[0.98] text-[11px] text-bg font-extrabold rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-md shadow-primary/5 disabled:opacity-45">
-                          <ArrowUp className="w-3.5 h-3.5" /><span>立即推送至远程仓库</span>
+                  {/* ── Files ── */}
+                  <div className="p-3 space-y-4">
+                    {/* Staged Files */}
+                    {git.stagedFiles.length > 0 && (
+                      <div className="space-y-1.5 text-left">
+                        <button onClick={() => setExpandedStaged(!expandedStaged)} className="flex items-center gap-1.5 w-full px-1">
+                          {expandedStaged ? <ChevronDown className="w-3 h-3 text-on-surface/40" /> : <ChevronRight className="w-3 h-3 text-on-surface/40" />}
+                          <span className="text-[10.5px] font-extrabold text-emerald-400">已暂存 ({git.stagedFiles.length})</span>
                         </button>
+                        {expandedStaged && (
+                          <div className="space-y-0.5 border-l-2 border-emerald-500/20 pl-2 ml-1">
+                            {git.stagedFiles.map((f, i) => (
+                              <FileItem
+                                key={i}
+                                file={f}
+                                isStaged={true}
+                                onToggleStage={() => git.stageFile(f.name)}
+                                onShowDiff={() => git.handleViewFileDiff(f.name)}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Unstaged Files */}
+                    <div className="space-y-1.5 text-left">
+                      <div className="flex items-center justify-between px-1">
+                        <button onClick={() => setExpandedUnstaged(!expandedUnstaged)} className="flex items-center gap-1.5">
+                          {expandedUnstaged ? <ChevronDown className="w-3 h-3 text-on-surface/40" /> : <ChevronRight className="w-3 h-3 text-on-surface/40" />}
+                          <span className="text-[10.5px] font-extrabold text-on-surface/70">变更 ({git.unstagedFiles.length})</span>
+                        </button>
+                        {git.unstagedFiles.length > 0 && (
+                          <button onClick={() => git.stageFile()} disabled={git.loading} className="text-[9.5px] text-primary hover:underline cursor-pointer font-bold flex items-center gap-0.5" title="将所有未暂存的文件一次性添加到暂存区">
+                            <Plus className="w-2.5 h-2.5" /> 全部暂存
+                          </button>
+                        )}
+                      </div>
+                      {expandedUnstaged && (
+                        <>
+                          {git.unstagedFiles.length === 0 ? (
+                            <p className="text-[11px] text-on-surface/35 py-3 text-center bg-on-surface/5 border border-dashed border-outline/10 rounded-xl">没有未暂存的更改</p>
+                          ) : (
+                            <div className="space-y-0.5">
+                              {git.unstagedFiles.map((f, i) => (
+                                <FileItem
+                                  key={i}
+                                  file={f}
+                                  isStaged={false}
+                                  onToggleStage={() => git.stageFile(f.name)}
+                                  onShowDiff={() => git.handleViewFileDiff(f.name)}
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
-                  ) : (
-                    <div className="bg-surface/40 border border-dashed border-outline/20 rounded-xl p-3 text-center space-y-2.5">
-                      <p className="text-[10.5px] text-on-surface/50 leading-relaxed">尚未配置远程仓库链接。</p>
-                      <button type="button" onClick={() => git.setActiveSubTab('settings')} className="inline-flex items-center gap-1.5 px-3 py-1 bg-primary/10 hover:bg-primary/20 border border-primary/20 text-primary text-[10px] font-black rounded-lg cursor-pointer transition-all">
-                        <Settings className="w-3 h-3" /><span>前往配置 {'\u2192'}</span>
-                      </button>
-                    </div>
+                  </div>
+                </div>
+
+                {/* ── Commit Bar (fixed bottom) ── */}
+                <div className="border-t border-outline/30 bg-surface-bright p-3 space-y-2 shrink-0">
+                  <div className="flex gap-2">
+                    <input
+                      ref={commitInputRef}
+                      type="text"
+                      value={git.commitMessage}
+                      onChange={(e) => git.setCommitMessage(e.target.value)}
+                      onKeyDown={handleCommitKeyDown}
+                      placeholder="提交备注 (Enter 提交)"
+                      className="flex-1 text-[11px] p-2 bg-surface text-on-surface border border-outline/25 rounded-lg focus:border-primary outline-none"
+                    />
+                    <button
+                      onClick={git.handleCommit}
+                      disabled={git.loading || git.stagedFiles.length === 0}
+                      className="px-3 bg-primary hover:bg-primary-hover text-bg rounded-lg text-[10.5px] font-bold cursor-pointer transition-colors flex items-center justify-center gap-1 disabled:opacity-35 disabled:pointer-events-none"
+                    >
+                      <span>提交</span>
+                    </button>
+                  </div>
+                  {git.stagedFiles.length > 0 && (
+                    <button
+                      onClick={async () => { await git.handleCommit(); await git.handlePush(); }}
+                      disabled={git.loading || !git.remoteUrl}
+                      className="w-full py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 rounded-lg text-[10px] font-bold cursor-pointer transition-colors flex items-center justify-center gap-1 disabled:opacity-35 disabled:pointer-events-none"
+                    >
+                      <ArrowUp className="w-3 h-3" /><span>提交并推送</span>
+                    </button>
                   )}
                 </div>
               </div>
             )}
 
-            {/* ═══ HISTORY TAB ═══ */}
-            {git.activeSubTab === 'history' && (
-              <div className="space-y-3 text-left">
-                <span className="text-[10px] text-on-surface/50 font-bold flex items-center gap-1.5"><Clock className="w-3 h-3" />提交历史 ({git.statusData.commits.length})</span>
-                {git.statusData.commits.length === 0 ? (
-                  <p className="text-[11px] text-on-surface/35 py-6 text-center border border-dashed border-outline/10 rounded-xl">暂无提交记录</p>
-                ) : (
-                  <div className="space-y-2 select-text">
-                    {git.statusData.commits.map((log, i) => (
-                      <button key={i} type="button" onClick={() => git.handleViewCommitDiff(log.hash)} className="w-full p-2.5 bg-surface-bright/40 border border-outline/15 rounded-xl hover:border-primary/40 hover:bg-on-surface/5 transition-all text-left flex flex-col gap-1 cursor-pointer group">
-                        <div className="flex justify-between items-center w-full">
-                          <span className="font-mono text-[9.5px] text-primary bg-primary/10 px-1.5 py-0.5 rounded font-bold group-hover:underline">{log.hash}</span>
-                          <span className="text-[9.5px] text-on-surface/40 font-mono">{log.relativeTime}</span>
-                        </div>
-                        <p className="text-[11px] font-bold text-on-surface leading-snug group-hover:text-primary">{log.message}</p>
-                        <div className="flex justify-between items-center w-full mt-1.5 text-[9px] text-on-surface/40 border-t border-outline/10 pt-1">
-                          <span className="font-mono">提交者: {log.author}</span>
-                          <span className="text-primary font-bold group-hover:translate-x-0.5 transition-transform">查看 Diff {'\u2192'}</span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
+            {/* ═══ HISTORY VIEW ═══ */}
+            {viewMode === 'history' && (
+              <div className="p-3 space-y-3 text-left">
+                {git.statusData.commits.length > 0 && (
+                  <>
+                    <div className="flex items-center gap-1.5 px-1">
+                      <Clock className="w-3 h-3 text-on-surface/40" />
+                      <span className="text-[10px] text-on-surface/50 font-bold">提交历史 ({git.statusData.commits.length})</span>
+                    </div>
+                    <div className="space-y-2 select-text">
+                      {git.statusData.commits.map((log, i) => (
+                        <HistoryItem
+                          key={i}
+                          commit={log}
+                          onShowDiff={() => git.handleViewCommitDiff(log.hash)}
+                        />
+                      ))}
+                    </div>
+                  </>
                 )}
               </div>
             )}
-
-            {/* ═══ SETTINGS TAB ═══ */}
-            {git.activeSubTab === 'settings' && (
-              <div className="space-y-4 text-left">
-                <div className="bg-surface-bright/50 border border-outline/20 p-3 rounded-2xl space-y-3">
-                  <div className="flex items-center gap-1.5 pb-1 border-b border-outline/10">
-                    <User className="w-3.5 h-3.5 text-primary" />
-                    <span className="text-[11px] font-extrabold text-on-surface">提交人签名配置</span>
-                  </div>
-                  <div className="space-y-2.5">
-                    <div className="space-y-1">
-                      <label className="text-[9.5px] text-on-surface/50 font-bold">用户名</label>
-                      <input type="text" value={git.userName} onChange={(e) => git.setUserName(e.target.value)} placeholder="例如: github_username" className="w-full text-[10.5px] px-2.5 py-1.5 bg-surface text-on-surface border border-outline/25 rounded-lg outline-none focus:border-primary" />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[9.5px] text-on-surface/50 font-bold">注册邮箱</label>
-                      <input type="email" value={git.userEmail} onChange={(e) => git.setUserEmail(e.target.value)} placeholder="user@domain.com" className="w-full text-[10.5px] px-2.5 py-1.5 bg-surface text-on-surface border border-outline/25 rounded-lg outline-none focus:border-primary" />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-surface-bright/50 border border-outline/20 p-3 rounded-2xl space-y-3">
-                  <div className="flex items-center gap-1.5 pb-1 border-b border-outline/10">
-                    <Globe className="w-3.5 h-3.5 text-primary" />
-                    <span className="text-[11px] font-extrabold text-on-surface">远程仓库连接配置</span>
-                  </div>
-                  <div className="space-y-2.5">
-                    <div className="space-y-1">
-                      <label className="text-[9.5px] text-on-surface/50 font-bold">仓库 HTTPS 链接</label>
-                      <input type="text" value={git.remoteUrl} onChange={(e) => git.setRemoteUrl(e.target.value)} placeholder="https://github.com/username/repo.git" className="w-full text-[10.5px] px-2.5 py-1.5 bg-surface text-on-surface border border-outline/25 rounded-lg outline-none focus:border-primary font-mono" />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[9.5px] text-on-surface/50 font-bold flex items-center gap-1"><Lock className="w-2.5 h-2.5 shrink-0" /><span>个人访问密钥</span></label>
-                      <input type="password" value={git.accessToken} onChange={(e) => git.setAccessToken(e.target.value)} placeholder="ghp_***" className="w-full text-[10.5px] px-2.5 py-1.5 bg-surface text-on-surface border border-outline/25 rounded-lg outline-none focus:border-primary font-mono" title="只保存在本地浏览器" />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[9.5px] text-on-surface/50 font-bold">目标推送分支</label>
-                      <input type="text" value={git.targetBranch} onChange={(e) => git.setTargetBranch(e.target.value)} placeholder="main" className="w-full text-[10.5px] px-2.5 py-1.5 bg-surface text-on-surface border border-outline/25 rounded-lg outline-none focus:border-primary font-mono" />
-                    </div>
-                  </div>
-                </div>
-
-                <button onClick={git.handleSaveConfig} disabled={git.loading} className="w-full py-2 bg-primary hover:bg-primary-hover text-bg rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" /><span>保存并应用配置</span>
-                </button>
-              </div>
-            )}
-
           </div>
         </div>
       )}
@@ -456,7 +596,7 @@ export default function GitPanel({ onClose }: GitPanelProps) {
           <div className="bg-surface border-b border-outline/30 px-3.5 py-3 flex items-center justify-between shrink-0">
             <div className="flex items-center gap-2">
               <span className={`text-[9.5px] font-mono px-2 py-0.5 rounded-full font-black shadow-sm ${git.diffHasConflict ? 'bg-amber-500/15 text-amber-500 border border-amber-500/20' : 'bg-primary/10 text-primary border border-primary/20'}`}>
-                {git.diffHasConflict ? '检测到合并冲突' : git.diffTitle}
+                {git.diffHasConflict ? '合并冲突' : git.diffTitle}
               </span>
               {git.diffFileName && <span className="text-[11px] font-black font-mono text-on-surface truncate max-w-[120px]">{git.diffFileName}</span>}
             </div>

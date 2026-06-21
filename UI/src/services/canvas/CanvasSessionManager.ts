@@ -1,4 +1,6 @@
-import type { ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { PortManager } from './PortManager';
 
 export interface CanvasSession {
@@ -13,6 +15,15 @@ export class CanvasSessionManager {
   private sessions: Map<string, CanvasSession> = new Map();
   private accessOrder: string[] = [];
   private readonly maxSessions = 3;
+
+  static getCanvasExePath(): string {
+    const isDev = !process.resourcesPath;
+    if (isDev) {
+      const dir = path.dirname(fileURLToPath(import.meta.url));
+      return path.resolve(dir, '../../../resources/canvas/canvas-dist/canvas_preview.exe');
+    }
+    return path.join(process.resourcesPath, 'canvas', 'canvas_preview.exe');
+  }
 
   createSession(projectId: string): CanvasSession {
     const existing = this.sessions.get(projectId);

@@ -22,7 +22,7 @@ export function useGit() {
   const [targetBranch, setTargetBranch] = useState('main');
   const [userName, setUserName] = useState('');
   const [userEmail, setUserEmail] = useState('');
-  const [commitMessage, setCommitMessage] = useState('feat: updates');
+  const [commitMessage, setCommitMessage] = useState('');
 
   // Push state
   const [pushProgress, setPushProgress] = useState<number | null>(null);
@@ -124,7 +124,7 @@ export function useGit() {
       const data = await gitApi.commit(commitMessage, userName, userEmail);
       if (data.success) {
         showFeedback('success', data.message || '提交成功！');
-        setCommitMessage('feat: updates');
+        setCommitMessage('');
         await fetchGitStatus();
       } else {
         showFeedback('error', data.error || '提交失败');

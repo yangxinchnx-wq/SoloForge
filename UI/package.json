@@ -1,21 +1,69 @@
 {
-  "name": "react-example",
+  "name": "soloforge",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "SoloForge - AI-powered code generation and preview platform",
+  "author": "SoloForge",
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "node start.mjs",
     "dev:server": "tsx server.ts",
+    "dev:electron": "node electron/launch.cjs .",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "package": "npm run build && electron-builder build --win --x64 --config.electronDist=node_modules/electron/dist",
+    "package:dir": "npm run build && electron-builder build --win --x64 --dir --config.electronDist=node_modules/electron/dist"
+  },
+  "build": {
+    "appId": "com.soloforge.app",
+    "productName": "SoloForge",
+    "copyright": "Copyright 2026 SoloForge",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/canvas/canvas-dist",
+        "to": "canvas",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": null
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "SoloForge",
+      "installerSidebar": null
+    }
   },
   "dependencies": {
     "@google/genai": "^2.8.0",
     "@lobehub/icons": "^1.97.2",
+    "@rollup/rollup-win32-x64-msvc": "^4.62.2",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
+    "antd": "^6.4.4",
     "detect-port": "^2.1.0",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
@@ -31,7 +79,10 @@
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
+    "electron": "^42.4.1",
+    "electron-builder": "^26.15.3",
     "esbuild": "^0.25.0",
+    "react-is": "^18.3.1",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",

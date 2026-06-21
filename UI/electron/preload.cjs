@@ -4,7 +4,7 @@
 // 渲染层可通过 window.soloforge 访问
 // ─────────────────────────────────────────────────────────────────
 
-const { contextBridge } = require('electron');
+const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('soloforge', {
   platform: process.platform,
@@ -13,8 +13,14 @@ contextBridge.exposeInMainWorld('soloforge', {
     chrome: process.versions.chrome,
     node: process.versions.node,
   },
-  // 后续可在此挂载：
-  //   - 通过 ipcRenderer.invoke('xxx') 调用后端（读文件、保存配置等）
-  //   - 通过 ipcRenderer.on('event', ...) 订阅主进程推送
-  // 现阶段只暴露环境元信息，避免暴露面过大
+  // 画布相关 IPC（受 contextBridge 沙箱约束，只暴露 invoke 包装）
+  canvas: {
+    start: (sessionId, width, height) =>
+      ipcRenderer.invoke('canvas:start', { sessionId, width, height }),
+    resize: (sessionId, width, height) =>
+      ipcRenderer.invoke('canvas:resize', { sessionId, width, height }),
+    stop: (sessionId) => ipcRenderer.invoke('canvas:stop', { sessionId }),
+    push: (sessionId, dsl) => ipcRenderer.invoke('canvas:push', { sessionId, dsl }),
+    status: (sessionId) => ipcRenderer.invoke('canvas:status', { sessionId }),
+  },
 });
