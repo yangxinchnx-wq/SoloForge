@@ -6,33 +6,39 @@ import 'package:flutter/material.dart';
 import 'ui_parser.dart';
 import 'platform_renderer.dart';
 
-final DynamicLibrary _user32 = DynamicLibrary.open('user32.dll');
+// Lazy load user32 符号 — 在 release AOT 中顶层 DynamicLibrary.open 可能触发
+// native stack guard。延迟到第一次 WindowConfig.init() 调用。
+DynamicLibrary? _user32Lib;
+int Function(int, int)? _getWindowLongPtrW;
+int Function(int, int, int)? _setWindowLongPtrW;
+int Function(int, int)? _setParent;
+int Function(int, int, int, int, int, int, int)? _setWindowPos;
+int Function()? _getActiveWindow;
 
-final int Function(int, int) _getWindowLongPtrW = _user32.lookupFunction<
-    IntPtr Function(IntPtr, Int32),
-    int Function(int, int)
-  >('GetWindowLongPtrW');
-
-final int Function(int, int, int) _setWindowLongPtrW = _user32.lookupFunction<
-    IntPtr Function(IntPtr, Int32, IntPtr),
-    int Function(int, int, int)
-  >('SetWindowLongPtrW');
-
-final int Function(int, int) _setParent = _user32.lookupFunction<
-    IntPtr Function(IntPtr, IntPtr),
-    int Function(int, int)
-  >('SetParent');
-
-final int Function(int, int, int, int, int, int, int) _setWindowPos =
-    _user32.lookupFunction<
-        Int32 Function(IntPtr, IntPtr, Int32, Int32, Int32, Int32, Int32),
-        int Function(int, int, int, int, int, int, int)
-      >('SetWindowPos');
-
-final int Function() _getActiveWindow = _user32.lookupFunction<
-    IntPtr Function(),
-    int Function()
-  >('GetActiveWindow');
+void _ensureUser32() {
+  if (_user32Lib != null) return;
+  _user32Lib = DynamicLibrary.open('user32.dll');
+  _getWindowLongPtrW = _user32Lib!.lookupFunction<
+      IntPtr Function(IntPtr, Int32),
+      int Function(int, int)
+    >('GetWindowLongPtrW');
+  _setWindowLongPtrW = _user32Lib!.lookupFunction<
+      IntPtr Function(IntPtr, Int32, IntPtr),
+      int Function(int, int, int)
+    >('SetWindowLongPtrW');
+  _setParent = _user32Lib!.lookupFunction<
+      IntPtr Function(IntPtr, IntPtr),
+      int Function(int, int)
+    >('SetParent');
+  _setWindowPos = _user32Lib!.lookupFunction<
+      Int32 Function(IntPtr, IntPtr, Int32, Int32, Int32, Int32, Int32),
+      int Function(int, int, int, int, int, int, int)
+    >('SetWindowPos');
+  _getActiveWindow = _user32Lib!.lookupFunction<
+      IntPtr Function(),
+      int Function()
+    >('GetActiveWindow');
+}
 
 const int _gwlStyle = -16;
 const int _wsChild = 0x40000000;
