@@ -1,11 +1,9 @@
 import React from 'react';
-import { ModelIcon as LobeModelIcon } from '@lobehub/icons';
-// @ts-ignore
-import xiaomiLogoImg from '../assets/xiaomi.webp';
-// @ts-ignore
-import claudeLogoImg from '../assets/claude.webp';
-// @ts-ignore
-import siliconflowLogoImg from '../assets/siliconflow.svg';
+import {
+  ModelIcon as LobeModelIcon,
+  XiaomiMiMo,
+  SiliconCloud,
+} from '@lobehub/icons';
 
 interface ModelIconProps {
   modelName: string;
@@ -13,69 +11,24 @@ interface ModelIconProps {
   size?: number;
 }
 
-const isSiliconFlow = (name: string): boolean => {
-  const lower = (name || '').trim().toLowerCase();
-  return (
-    lower === 'siliconflow' ||
-    lower === 'siliconcloud' ||
-    lower.includes('siliconflow') ||
-    lower.includes('siliconcloud') ||
-    lower.includes('silicon-flow')
-  );
-};
-
-const isXiaomi = (name: string): boolean => {
-  const lower = (name || '').trim().toLowerCase();
-  return (
-    lower === 'xiaomi' ||
-    lower === 'xiaomimimo' ||
-    lower.includes('xiaomi') ||
-    lower.startsWith('milm')
-  );
-};
-
-const isClaude = (name: string): boolean => {
-  const lower = (name || '').trim().toLowerCase();
-  return lower.includes('claude') || lower === 'anthropic';
-};
-
 export const ModelIcon: React.FC<ModelIconProps> = ({ modelName, className = "w-4 h-4", size = 16 }) => {
   const modelId = (modelName || '').trim().toLowerCase();
 
-  if (isXiaomi(modelName)) {
-    return (
-      <img
-        src={xiaomiLogoImg}
-        alt="Xiaomi MiMo"
-        className={`${className} object-contain inline-block shrink-0 rounded-md`}
-        style={{ width: size, height: size }}
-        referrerPolicy="no-referrer"
-      />
-    );
+  // Xiaomi: 项目里用 milm- 前缀,LobeHub 内置关键字是 mimo- /mimo-,手动桥接
+  if (modelId.startsWith('milm') || modelId.startsWith('mimo') || modelId.includes('xiaomi')) {
+    return <XiaomiMiMo size={size} className={className} />;
   }
 
-  if (isClaude(modelName)) {
-    return (
-      <img
-        src={claudeLogoImg}
-        alt="Claude"
-        className={`${className} object-contain inline-block shrink-0 rounded-md`}
-        style={{ width: size, height: size }}
-        referrerPolicy="no-referrer"
-      />
-    );
-  }
-
-  if (isSiliconFlow(modelName)) {
-    return (
-      <img
-        src={siliconflowLogoImg}
-        alt="SiliconFlow"
-        className={`${className} object-contain inline-block shrink-0 rounded-md`}
-        style={{ width: size, height: size }}
-        referrerPolicy="no-referrer"
-      />
-    );
+  // SiliconFlow: 平台名(关键词里没有 siliconflow 关键字),直接用 SiliconCloud 组件
+  if (
+    modelId === 'siliconflow' ||
+    modelId === 'siliconcloud' ||
+    modelId.startsWith('siliconflow/') ||
+    modelId.startsWith('siliconcloud/') ||
+    modelId.includes('/siliconflow') ||
+    modelId.includes('/siliconcloud')
+  ) {
+    return <SiliconCloud size={size} className={className} />;
   }
 
   return (

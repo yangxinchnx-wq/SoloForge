@@ -48,21 +48,34 @@ function setupApiProxy() {
 
 // ────────────────────────────────────────────
 // 画布宿主窗口
-// 隐藏的 Borderless 窗口，位于屏幕外
-// Flutter 窗口通过 SetParent 嵌入此窗口的 HWND
-// Electron 渲染层通过 webContents 截图/事件与画布交互
+// 透明 borderless 窗口，parent 设为 mainWindow 让 OS 自动管理 z-order
+// （画布窗口始终在 mainWindow 内容之下，不会盖到其它组件）
+// 位置由渲染端 reportBounds 上报（覆盖右侧画布区域）
+// Flutter 窗口通过 SetParent 嵌入此窗口的 HWND，作为子窗口可见
 // ────────────────────────────────────────────
-function createCanvasHostWindow() {
+let hostBounds = { x: 100, y: 100, width: 1200, height: 800 };
+
+function createCanvasHostWindow(parent) {
+  // 销毁旧的（重新创建的情况）
+  if (canvasHostWindow && !canvasHostWindow.isDestroyed()) {
+    try { canvasHostWindow.destroy(); } catch {}
+  }
   canvasHostWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    x: -32000,
-    y: -32000,
-    show: false,
+    width: hostBounds.width,
+    height: hostBounds.height,
+    x: hostBounds.x,
+    y: hostBounds.y,
+    parent: parent || undefined,  // ★ 关键：作为 mainWindow 的子窗口 → OS 自动管理 z-order
+    show: true,                   // 可见，transparent 让背景透出 IDE 底色
     frame: false,
     transparent: true,
     skipTaskbar: true,
     focusable: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    hasShadow: false,
+    backgroundColor: '#00000000',
     webPreferences: {
       offscreen: false,
       nodeIntegration: false,
@@ -70,9 +83,28 @@ function createCanvasHostWindow() {
       sandbox: true,
     },
   });
-  // 加载空白页（必须是 HTML，Chromium 不允许 about:blank 在 windows 上当宿主）
-  canvasHostWindow.loadURL('data:text/html,<html><body style="margin:0;background:transparent"></body></html>');
+  // 加载空白透明页（Chromium 不允许 about:blank 当宿主；用 data: URL）
+  canvasHostWindow.loadURL('data:text/html,<html><body style="margin:0;background:transparent;backdrop-filter:none"></body></html>');
+  canvasHostWindow.setAlwaysOnTop(false);
+  canvasHostWindow.setIgnoreMouseEvents(false);
   return canvasHostWindow;
+}
+
+// 把画布宿主窗口移动到指定区域（渲染端 PreviewPanel 实时上报）
+function positionCanvasHost(bounds) {
+  if (!canvasHostWindow || canvasHostWindow.isDestroyed()) return;
+  if (!bounds) return;
+  hostBounds = bounds;
+  try {
+    canvasHostWindow.setBounds({
+      x: Math.round(bounds.x),
+      y: Math.round(bounds.y),
+      width: Math.round(bounds.width),
+      height: Math.round(bounds.height),
+    });
+  } catch (e) {
+    console.warn('[canvas-host] setBounds failed:', e?.message);
+  }
 }
 
 // ────────────────────────────────────────────
@@ -255,13 +287,20 @@ async function startCanvas(sessionId, width, height) {
   const dataDir = resolveCanvasDataDir();
   const port = await findFreePort();
 
-  // 启动参数：--port 提供 WebSocket；不传 --parent-hwnd（交给 SetParent 后期注入更可靠）
+  // 启动参数：--port=... 提供 WebSocket；--parent-hwnd=... 由 canvas C++ 入口自己 SetParent
+  // 注意：canvas 的 C++ 入口使用 ParseArg(--port, arg, val) 解析，只识别 --key=value 形式，
+  //      单独的 --port <val> 形式会让 std::stoi("") 抛异常触发 STATUS_STACK_BUFFER_OVERRUN
+  const hostHwnd = canvasHostWindow.getNativeWindowHandle().readInt32LE(0);
+  // cwd 必须设为 binary 所在目录，因为 C++ 入口的 DartProject(L"data") 是相对 binary 目录的
+  // 而 dataDir 是 binary 下的 data/ 子目录，binary 在它的父目录
+  const exeDir = path.dirname(exe);
   const child = spawn(exe, [
-    '--port', String(port),
-    '--canvas-width', String(width),
-    '--canvas-height', String(height),
+    `--port=${port}`,
+    `--parent-hwnd=${hostHwnd}`,
+    `--canvas-width=${width}`,
+    `--canvas-height=${height}`,
   ], {
-    cwd: dataDir,
+    cwd: exeDir,
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '' },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
@@ -281,7 +320,7 @@ async function startCanvas(sessionId, width, height) {
     return { ok: false, error: `canvas WebSocket did not start on port ${port}` };
   }
 
-  // 找窗口 HWND（轮询最多 5s）
+  // 找窗口 HWND（轮询最多 5s）— C++ 入口收到 --parent-hwnd= 后会自己 SetParent + 修改样式
   let hwnd = 0;
   const pid = child.pid;
   for (let i = 0; i < 25 && hwnd === 0; i++) {
@@ -293,11 +332,11 @@ async function startCanvas(sessionId, width, height) {
     return { ok: false, error: `canvas window HWND not found for pid ${pid}` };
   }
 
-  // 嵌入到隐藏宿主窗口
-  const embed = await embedWindow(hwnd, canvasHostWindow.getNativeWindowHandle().readInt32LE(0), 0, 0, width, height);
-  if (!embed.ok) {
-    child.kill('SIGTERM');
-    return { ok: false, error: `embed failed: ${embed.error}` };
+  // 把画布窗口的子 Flutter 窗口尺寸对齐到最新 hostBounds（renderer 会在 start 前调用 reportBounds）
+  try {
+    await moveWindow(hwnd, 0, 0, hostBounds.width, hostBounds.height);
+  } catch (e) {
+    console.warn('[canvas] moveWindow failed:', e?.message);
   }
 
   const session = {
@@ -339,7 +378,16 @@ async function pushCanvasDSL(sessionId, dsl) {
   if (!s) return { ok: false, error: 'session not found' };
   // 通过 WebSocket 推 DSL 到 canvas
   return new Promise((resolve) => {
-    const payload = JSON.stringify({ type: 'render', dsl });
+    // 兼容两种 DSL 形态：
+    //   1) 渲染端直接给 {ui:{...}, platform:'material'} — 透传整个 dsl
+    //   2) 渲染端给 {ui:{...}} — 包成 {type:'render', ui: dsl}
+    let payload;
+    if (dsl && (dsl.ui || dsl.root)) {
+      // 已经是 root-level DSL 形态，原样发送
+      payload = JSON.stringify({ type: 'render', ...dsl });
+    } else {
+      payload = JSON.stringify({ type: 'render', ui: dsl });
+    }
     const req = http.request({
       host: '127.0.0.1',
       port: s.port,
@@ -380,6 +428,24 @@ function registerIpc() {
     const s = canvasSessions.get(sessionId);
     return { ok: true, active: !!s, info: s || null };
   });
+  // renderer 上报 PreviewPanel 区域的位置/尺寸 → 移动画布宿主窗口到这里
+  ipcMain.handle('canvas:report-bounds', async (_e, bounds) => {
+    try {
+      if (!bounds) return { ok: false, error: 'bounds missing' };
+      positionCanvasHost(bounds);
+      // 如果画布已经在跑，把嵌入的 Flutter 子窗口也同步 resize
+      for (const [, s] of canvasSessions) {
+        if (s.hwnd && s.process && !s.process.killed) {
+          try { await moveWindow(s.hwnd, 0, 0, bounds.width, bounds.height); } catch {}
+        }
+      }
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e?.message || String(e) };
+    }
+  });
+  // 查询画布宿主窗口是否已就绪（renderer 用来判断能否启动）
+  ipcMain.handle('canvas:host-info', async () => ({ ok: true, bounds: hostBounds }));
 }
 
 function createWindow() {
@@ -435,14 +501,14 @@ app.whenReady().then(() => {
   isDev = !app.isPackaged;
   setupApiProxy();
   buildMenu();
-  createCanvasHostWindow();
+  createWindow();                  // 先创建主窗口
+  createCanvasHostWindow(mainWindow); // 再以主窗口为 parent 创建画布宿主 → OS 自动管 z-order
   registerIpc();
-  createWindow();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createCanvasHostWindow();
       createWindow();
+      createCanvasHostWindow(mainWindow);
     }
   });
 });

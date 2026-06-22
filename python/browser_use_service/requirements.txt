@@ -1,0 +1,26 @@
+# SoloForge Browser-Use Service 依赖
+# 独立于 AI Society 服务的 requirements (避免污染)
+# Python: 3.11+ (browser-use 要求)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 职责：高层 LLM 浏览器任务编排, 走 Obscura CDP 引擎
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# MCP stdio protocol (跟 Obscura 自带 MCP 协议一致)
+mcp>=1.0.0
+
+# Browser-Use 高层 LLM 任务规划
+browser-use>=0.1.0
+
+# Async HTTP (Obscura /json/version 健康检查)
+httpx>=0.27.0
+
+# WebSocket client (Obscura CDP attach 健康检查)
+websockets>=12.0
+
+# Pydantic (browser-use 间接依赖, 显式锁定)
+pydantic>=2.5.0
+
+# Development
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+ruff>=0.3.0

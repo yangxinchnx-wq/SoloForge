@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  RefreshCw, Wifi, Search, Play, Square, Loader2,
-  CircleDot, AlertCircle
+  RefreshCw, Play, Square, Loader2,
+  CircleDot, AlertCircle, Monitor, Smartphone, Tablet, Watch,
+  Palette, MonitorSmartphone, Info, ChevronDown, Check, Maximize2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { useTheme } from '../context/ThemeContext';
 
 interface PreviewPanelProps {
   width?: number;
@@ -26,6 +26,8 @@ declare global {
         stop: (sessionId: string) => Promise<{ ok: boolean; notFound?: boolean }>;
         push: (sessionId: string, dsl: any) => Promise<{ ok: boolean; status?: number; body?: string; error?: string }>;
         status: (sessionId: string) => Promise<{ ok: boolean; active: boolean; info?: any }>;
+        reportBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: boolean; error?: string }>;
+        hostInfo: () => Promise<{ ok: boolean; bounds: { x: number; y: number; width: number; height: number } }>;
       };
     };
   }
@@ -33,54 +35,108 @@ declare global {
 
 const isElectron = () => typeof window !== 'undefined' && !!window.soloforge;
 
-export default function PreviewPanel({ width = 385, isResizing = false, dragStartWidth = 385, selectedChatId }: PreviewPanelProps) {
-  const { activeTheme } = useTheme();
-  const [activeProjectTag, setActiveProjectTag] = useState<string>('VUE');
-  const [device, setDevice] = useState<'desktop' | 'tablet' | 'mobile'>('desktop');
-  const [hmrState, setHmrState] = useState<'idle' | 'updating' | 'success'>('idle');
-  const [blogTitle, setBlogTitle] = useState('MyBlog');
-  const [activeTab, setActiveTab] = useState('home');
-  const [selectedPost, setSelectedPost] = useState<any>(null);
+// 预设底色 — 满足"干净"要求
+const BG_PRESETS: { name: string; value: string; fg: string }[] = [
+  { name: '纯白', value: '#FFFFFF', fg: '#1f2937' },
+  { name: '纯黑', value: '#000000', fg: '#f3f4f6' },
+  { name: '深夜', value: '#0B1020', fg: '#cbd5e1' },
+  { name: '雪灰', value: '#F1F5F9', fg: '#1e293b' },
+  { name: '护眼', value: '#E8F0E8', fg: '#2f4f4f' },
+  { name: '暖灰', value: '#F4ECE0', fg: '#3a2e1f' },
+];
 
-  // 画布状态
+// ── 画布尺寸预设（平铺，不分组） ──
+type SizeGroup = 'desktop' | 'mobile' | 'tablet' | 'watch';
+
+const SIZE_PRESETS: {
+  key: string; group: SizeGroup; groupLabel: string; icon: React.ComponentType<any>;
+  label: string; w: number; h: number;
+}[] = [
+  // 桌面
+  { key: 'fill',     group: 'desktop', groupLabel: '桌面', icon: Maximize2, label: '填满当前宽度', w: 0, h: 0 },
+  { key: '1920x1080', group: 'desktop', groupLabel: '桌面', icon: Monitor,   label: 'Full HD',      w: 1920, h: 1080 },
+  { key: '1440x900',  group: 'desktop', groupLabel: '桌面', icon: Monitor,   label: 'MacBook',      w: 1440, h: 900 },
+  { key: '1366x768',  group: 'desktop', groupLabel: '桌面', icon: Monitor,   label: '标准笔记本',   w: 1366, h: 768 },
+  { key: '1280x720',  group: 'desktop', groupLabel: '桌面', icon: Monitor,   label: 'HD',           w: 1280, h: 720 },
+  { key: '1024x768',  group: 'desktop', groupLabel: '桌面', icon: Monitor,   label: 'XGA',          w: 1024, h: 768 },
+  { key: '2560x1440', group: 'desktop', groupLabel: '桌面', icon: Monitor,   label: '2K',           w: 2560, h: 1440 },
+  // 手机
+  { key: 'm-iphone14pro',   group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'iPhone 14 Pro',     w: 393, h: 852 },
+  { key: 'm-iphone14',      group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'iPhone 14',         w: 390, h: 844 },
+  { key: 'm-iphone14promax',group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'iPhone 14 Pro Max', w: 430, h: 932 },
+  { key: 'm-iphonese',      group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'iPhone SE',         w: 375, h: 667 },
+  { key: 'm-galaxys23',     group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'Galaxy S23',        w: 360, h: 780 },
+  { key: 'm-pixel7',        group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'Pixel 7',           w: 412, h: 915 },
+  { key: 'm-xiaomi13',      group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'Xiaomi 13',         w: 393, h: 873 },
+  // 平板
+  { key: 't-ipadpro129', group: 'tablet', groupLabel: '平板', icon: Tablet, label: 'iPad Pro 12.9"',  w: 1024, h: 1366 },
+  { key: 't-ipadair',    group: 'tablet', groupLabel: '平板', icon: Tablet, label: 'iPad Air',       w: 820,  h: 1180 },
+  { key: 't-ipadmini',   group: 'tablet', groupLabel: '平板', icon: Tablet, label: 'iPad Mini',      w: 768,  h: 1024 },
+  { key: 't-surfacepro', group: 'tablet', groupLabel: '平板', icon: Tablet, label: 'Surface Pro',    w: 912,  h: 1368 },
+  { key: 't-galaxytabs8',group: 'tablet', groupLabel: '平板', icon: Tablet, label: 'Galaxy Tab S8',  w: 800,  h: 1280 },
+  // 手表
+  { key: 'w-apple41',  group: 'watch', groupLabel: '手表', icon: Watch, label: 'Apple Watch 41mm',        w: 176, h: 176 },
+  { key: 'w-apple45',  group: 'watch', groupLabel: '手表', icon: Watch, label: 'Apple Watch 45mm',        w: 198, h: 198 },
+  { key: 'w-apple49',  group: 'watch', groupLabel: '手表', icon: Watch, label: 'Apple Watch Ultra 49mm',  w: 205, h: 251 },
+  { key: 'w-galaxy6',  group: 'watch', groupLabel: '手表', icon: Watch, label: 'Galaxy Watch 6',          w: 240, h: 240 },
+];
+
+const DEFAULT_SIZE_KEY = 'fill';
+function getSizePreset(key: string) {
+  return SIZE_PRESETS.find(p => p.key === key);
+}
+
+export default function PreviewPanel({ width = 385, isResizing = false, dragStartWidth = 385, selectedChatId }: PreviewPanelProps) {
   const [canvasState, setCanvasState] = useState<CanvasState>('idle');
   const [canvasError, setCanvasError] = useState<string>('');
   const sessionIdRef = useRef<string>(`canvas-${selectedChatId || 'default'}`);
   const [canvasInfo, setCanvasInfo] = useState<{ port: number; pid: number } | null>(null);
+  const [bgColor, setBgColor] = useState<string>(BG_PRESETS[0].value);
+  const [customColor, setCustomColor] = useState<string>('#FFFFFF');
+  const [activeSizeKey, setActiveSizeKey] = useState<string>(DEFAULT_SIZE_KEY);
+  const [showColorPicker, setShowColorPicker] = useState(false);
+  const [showSizeMenu, setShowSizeMenu] = useState(false);
+  const [showElectronHint, setShowElectronHint] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const sizeMenuRef = useRef<HTMLDivElement | null>(null);
 
-  // Load project type context from local storage
-  const checkChatType = () => {
-    try {
-      const saved = localStorage.getItem('soloforge_chats_list');
-      if (saved) {
-        const chats = JSON.parse(saved);
-        const currentChat = chats.find((c: any) => c.id === selectedChatId);
-        if (currentChat) {
-          const tag = currentChat.tag || 'NEW';
-          setActiveProjectTag(tag);
-          return;
-        }
+  const activePreset = getSizePreset(activeSizeKey) || SIZE_PRESETS[0];
+
+  // 点外面关闭尺寸下拉
+  useEffect(() => {
+    if (!showSizeMenu) return;
+    const close = (e: MouseEvent) => {
+      if (sizeMenuRef.current && !sizeMenuRef.current.contains(e.target as Node)) {
+        setShowSizeMenu(false);
       }
-      if (selectedChatId === '1') setActiveProjectTag('VUE');
-      else if (selectedChatId === '2') setActiveProjectTag('AUTH');
-      else if (selectedChatId === '3') setActiveProjectTag('AI');
-      else setActiveProjectTag('NEW');
-    } catch (e) {
-      console.warn('Error fetching active chat tag context:', e);
-    }
-  };
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [showSizeMenu]);
 
   useEffect(() => {
     sessionIdRef.current = `canvas-${selectedChatId || 'default'}`;
-    checkChatType();
   }, [selectedChatId]);
 
+  // 上报 PreviewPanel 区域的位置和尺寸给主进程
   useEffect(() => {
-    window.addEventListener('soloforge-chats-updated', checkChatType);
-    return () => {
-      window.removeEventListener('soloforge-chats-updated', checkChatType);
+    if (!isElectron() || !containerRef.current) return;
+    const report = () => {
+      const el = containerRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      window.soloforge!.canvas.reportBounds({
+        x: Math.round(r.left), y: Math.round(r.top),
+        width: Math.round(r.width), height: Math.round(r.height),
+      }).catch(() => {});
     };
-  }, [selectedChatId]);
+    report();
+    const ro = new ResizeObserver(report);
+    ro.observe(containerRef.current);
+    window.addEventListener('resize', report);
+    window.addEventListener('scroll', report);
+    return () => { ro.disconnect(); window.removeEventListener('resize', report); window.removeEventListener('scroll', report); };
+  }, [width]);
 
   // 卸载时自动停掉画布
   useEffect(() => {
@@ -92,28 +148,49 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const triggerHmr = useCallback(() => {
-    if (hmrState === 'updating') return;
-    setHmrState('updating');
-    setTimeout(() => {
-      setHmrState('success');
-      setTimeout(() => setHmrState('idle'), 2000);
-    }, 1500);
-  }, [hmrState]);
+  // 把根容器 backgroundColor 合并进最近一次 DSL 重新 push
+  const pushBackground = useCallback(async (color: string) => {
+    if (!isElectron() || canvasState !== 'running') return;
+    const dsl = {
+      ui: {
+        type: 'container',
+        props: { padding: 16, backgroundColor: color, layout: 'column', spacing: 8 },
+        children: [
+          { type: 'text', props: { content: '🎨 画布已就绪', fontSize: 18, fontWeight: 700, color: pickFg(color) } },
+          { type: 'text', props: { content: `当前底色: ${color}`, fontSize: 12, color: pickFg(color), opacity: 0.75 } },
+          { type: 'text', props: { content: `Session: ${sessionIdRef.current}`, fontSize: 11, color: pickFg(color), opacity: 0.6 } },
+          { type: 'text', props: { content: `Port: ${canvasInfo?.port ?? '-'}  PID: ${canvasInfo?.pid ?? '-'}`, fontSize: 11, color: pickFg(color), opacity: 0.6 } },
+          { type: 'divider', props: { color: pickFg(color), opacity: 0.2 } },
+          { type: 'text', props: { content: '通过左侧聊天窗口生成 UI 描述，会自动推送到这里', fontSize: 12, color: pickFg(color), opacity: 0.55 } },
+          { type: 'button', props: { label: '示例按钮', variant: 'filled', color: '#3b82f6' } },
+          { type: 'progress', props: { value: 0.7, color: '#3b82f6' } },
+        ],
+      },
+      platform: 'material',
+    };
+    await window.soloforge!.canvas.push(sessionIdRef.current, dsl).catch(() => {});
+  }, [canvasState, canvasInfo]);
+
+  // 计算画布实际宽高（w=0 表示填满 PreviewPanel 宽度）
+  const computeFrame = useCallback((preset: typeof activePreset) => {
+    if (preset.w > 0) return { w: preset.w, h: preset.h };
+    return { w: Math.max(320, Math.floor(width - 32)), h: 640 };
+  }, [width]);
 
   // 启动画布
   const startCanvas = useCallback(async () => {
     if (!isElectron()) {
-      setCanvasError('画布需要 Electron 环境（请通过 npm run dev:electron 启动）');
+      setCanvasError('需要 Electron 环境运行画布（请使用 npm run dev 启动 IDE）');
       setCanvasState('error');
+      setShowElectronHint(true);
       return;
     }
     setCanvasState('starting');
     setCanvasError('');
+    setShowElectronHint(false);
     try {
-      const w = Math.max(320, Math.floor(width - 20));
-      const h = 600;
-      const res = await window.soloforge!.canvas.start(sessionIdRef.current, w, h);
+      const { w: frameW, h: frameH } = computeFrame(activePreset);
+      const res = await window.soloforge!.canvas.start(sessionIdRef.current, frameW, frameH);
       if (!res.ok) {
         setCanvasError(res.error || '启动失败');
         setCanvasState('error');
@@ -121,75 +198,49 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
       }
       setCanvasInfo({ port: res.session.port, pid: res.session.pid });
       setCanvasState('running');
-
-      // 推一份初始 DSL（默认 Vue 博客模板）
-      const initialDSL = {
-        platform: 'material',
-        root: {
-          type: 'container',
-          props: { padding: 16 },
-          children: [
-            { type: 'text', props: { text: '🎨 Flutter Canvas 已就绪', fontSize: 18, fontWeight: 700, color: '#3b82f6' } },
-            { type: 'spacer', props: { height: 8 } },
-            { type: 'text', props: { text: `Session: ${sessionIdRef.current}`, fontSize: 11, color: '#6b7280' } },
-            { type: 'text', props: { text: `Port: ${res.session.port}  PID: ${res.session.pid}`, fontSize: 11, color: '#6b7280' } },
-            { type: 'divider', props: {} },
-            { type: 'text', props: { text: '点击 "推送 DSL" 把 UI 描述发送到画布', fontSize: 12, color: '#9ca3af' } },
-            { type: 'progress', props: { value: 0.7, label: '示例进度条 70%' } },
-          ],
-        },
-      };
-      await window.soloforge!.canvas.push(sessionIdRef.current, initialDSL);
+      await pushBackground(bgColor);
     } catch (e: any) {
       setCanvasError(e?.message || String(e));
       setCanvasState('error');
     }
-  }, [width]);
-
-  // 推送样例 DSL（演示用）
-  const pushSampleDSL = useCallback(async () => {
-    if (!isElectron() || canvasState !== 'running') return;
-    const dsl = {
-      platform: 'material',
-      root: {
-        type: 'container',
-        props: { padding: 16, background: '#0f172a' },
-        children: [
-          { type: 'text', props: { text: '🚀 推送的 DSL 渲染', fontSize: 20, fontWeight: 800, color: '#22d3ee' } },
-          { type: 'spacer', props: { height: 12 } },
-          { type: 'text', props: { text: `时间戳: ${new Date().toLocaleTimeString()}`, fontSize: 12, color: '#94a3b8' } },
-          { type: 'spacer', props: { height: 16 } },
-          { type: 'button', props: { label: '点我（演示按钮）', primary: true, onClick: 'sample-click' } },
-          { type: 'spacer', props: { height: 12 } },
-          { type: 'input', props: { label: '示例输入框', placeholder: '在这里输入...' } },
-          { type: 'spacer', props: { height: 12 } },
-          { type: 'progress', props: { value: Math.random(), label: '随机进度' } },
-          { type: 'spacer', props: { height: 12 } },
-          { type: 'divider', props: {} },
-          { type: 'text', props: { text: '平台: Material 3  •  来自 IDE IPC', fontSize: 10, color: '#64748b' } },
-        ],
-      },
-    };
-    await window.soloforge!.canvas.push(sessionIdRef.current, dsl);
-  }, [canvasState]);
+  }, [activePreset, bgColor, pushBackground, computeFrame]);
 
   const stopCanvas = useCallback(async () => {
     if (!isElectron()) return;
-    await window.soloforge!.canvas.stop(sessionIdRef.current);
+    await window.soloforge!.canvas.stop(sessionIdRef.current).catch(() => {});
     setCanvasState('idle');
     setCanvasInfo(null);
   }, []);
 
-  const getWidthClass = () => {
-    if (device === 'mobile') return 'max-w-[280px] w-full';
-    if (device === 'tablet') return 'max-w-[340px] w-full';
-    return 'w-full';
+  // 切换尺寸预设：画布运行中时实时 resize，否则只更新 state
+  const pickSize = useCallback((key: string) => {
+    const preset = getSizePreset(key);
+    if (!preset) return;
+    setActiveSizeKey(key);
+    setShowSizeMenu(false);
+    if (isElectron() && canvasState === 'running') {
+      const { w, h } = computeFrame(preset);
+      window.soloforge!.canvas.resize(sessionIdRef.current, w, h).catch(() => {});
+    }
+  }, [canvasState, computeFrame]);
+
+  const handlePickColor = (color: string) => {
+    setBgColor(color);
+    setShowColorPicker(false);
+    if (canvasState === 'running') pushBackground(color);
   };
 
-  const posts = [
-    { id: 'vue3', title: '探索 Vue3 的组合式 API', category: '前端开发', date: '2024-05-20', reads: 1234, bg: 'from-emerald-500 to-teal-700', description: '深入理解 Vue3 组合式 API 的设计思想和使用方法, 探究 ref & reactive 响应式底层原理性能优势...', content: ['', ''] },
-    { id: 'nodejs', title: 'Node.js 后端开发实践', category: '后端开发', date: '2024-05-18', reads: 856, bg: 'from-green-600 to-neutral-700', description: '使用 Node.js + Express 搭建 RESTful API, 结合中间件开发, 设计全链路异常拦截与安全沙箱防护。', content: ['', ''] }
-  ];
+  const handlePickCustom = () => {
+    setBgColor(customColor);
+    setShowColorPicker(false);
+    if (canvasState === 'running') pushBackground(customColor);
+  };
+
+  // 按 groupLabel 聚合
+  const groupedSizes = SIZE_PRESETS.reduce<Record<string, typeof SIZE_PRESETS>>((acc, p) => {
+    (acc[p.groupLabel] = acc[p.groupLabel] || []).push(p);
+    return acc;
+  }, {});
 
   // 画布状态指示器
   const renderCanvasStatus = () => {
@@ -225,13 +276,62 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
     );
   };
 
+  // 占位渲染
+  const renderPlaceholder = () => {
+    if (canvasState === 'error' || (canvasState === 'idle' && !isElectron())) {
+      return (
+        <div
+          className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 select-none"
+          style={{ background: bgColor, transition: 'background 200ms ease' }}
+        >
+          <div className="w-14 h-14 rounded-2xl border-2 border-dashed flex items-center justify-center mb-3"
+               style={{ borderColor: pickFg(bgColor) + '40', color: pickFg(bgColor) + 'AA' }}>
+            <MonitorSmartphone className="w-7 h-7" />
+          </div>
+          <div className="font-display font-bold text-sm mb-1" style={{ color: pickFg(bgColor) }}>
+            画布区域
+          </div>
+          <div className="text-[11px] max-w-[260px] leading-relaxed mb-4" style={{ color: pickFg(bgColor) + 'AA' }}>
+            {showElectronHint
+              ? '当前不是 Electron 环境，画布无法启动。请用 npm run dev 启动 IDE 后再打开此面板。'
+              : '点击"启动画布"开始实时预览；左下角切换底色。'}
+          </div>
+          <div className="text-[9px] font-mono uppercase tracking-widest" style={{ color: pickFg(bgColor) + '55' }}>
+            {isElectron() ? `底色: ${bgColor}` : 'Requires Electron'}
+          </div>
+        </div>
+      );
+    }
+    if (canvasState === 'starting') {
+      return (
+        <div
+          className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 select-none"
+          style={{ background: bgColor, transition: 'background 200ms ease' }}
+        >
+          <Loader2 className="w-8 h-8 animate-spin mb-3" style={{ color: pickFg(bgColor) }} />
+          <div className="text-[11px] font-mono" style={{ color: pickFg(bgColor) + 'AA' }}>
+            正在启动画布进程…
+          </div>
+        </div>
+      );
+    }
+    // running: 透明背景 — 真正画布由嵌入的 canvasHostWindow 渲染
+    return (
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{ background: 'transparent' }}
+      />
+    );
+  };
+
   return (
     <div
+      ref={containerRef}
       style={{
         width,
         transition: isResizing ? 'none' : 'width 250ms cubic-bezier(0.16, 1, 0.3, 1)'
       }}
-      className="h-full bg-surface border-l border-outline/50 flex flex-col shrink-0 select-none z-10 overflow-hidden"
+      className="h-full bg-surface border-l border-outline/50 flex flex-col shrink-0 select-none z-10 overflow-hidden relative"
     >
       <div
         style={{
@@ -243,19 +343,19 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
           overflow: 'hidden'
         }}
       >
-        {/* TOP BAR / VIEW TOGGLE */}
+        {/* TOP BAR */}
         <div className="p-2.5 px-3 border-b border-outline/40 flex items-center justify-between bg-surface shrink-0">
           <div className="flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
             <span className="font-display font-semibold text-[11px] text-on-surface tracking-wide">
-              实时预览
+              实时预览 · 画布
             </span>
           </div>
           {renderCanvasStatus()}
         </div>
 
-        {/* 画布控制条 */}
-        <div className="px-3 py-2 bg-surface-bright/35 border-b border-outline/30 flex items-center gap-1.5 shrink-0">
+        {/* TOOLBAR — 只保留启动/停止 + 底色 */}
+        <div className="px-3 py-2 bg-surface-bright/35 border-b border-outline/30 flex items-center gap-1.5 shrink-0 flex-wrap">
           {canvasState !== 'running' ? (
             <button
               onClick={startCanvas}
@@ -266,120 +366,164 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
               <span>{canvasState === 'starting' ? '启动中' : '启动画布'}</span>
             </button>
           ) : (
-            <>
-              <button
-                onClick={pushSampleDSL}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-blue-500/15 hover:bg-blue-500/25 text-blue-500 text-[10px] font-mono font-semibold transition-colors"
-              >
-                <RefreshCw className="w-3 h-3" />
-                <span>推送 DSL</span>
-              </button>
-              <button
-                onClick={stopCanvas}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-500/15 hover:bg-red-500/25 text-red-500 text-[10px] font-mono font-semibold transition-colors"
-              >
-                <Square className="w-3 h-3" />
-                <span>停止</span>
-              </button>
-            </>
+            <button
+              onClick={stopCanvas}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-500/15 hover:bg-red-500/25 text-red-500 text-[10px] font-mono font-semibold transition-colors"
+            >
+              <Square className="w-3 h-3" />
+              <span>停止</span>
+            </button>
           )}
+
+          {/* 底色选择器 */}
+          <div className="relative">
+            <button
+              onClick={() => setShowColorPicker(s => !s)}
+              className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-surface-bright/60 hover:bg-surface-bright text-on-surface text-[10px] font-mono transition-colors"
+              title="底色"
+            >
+              <Palette className="w-3 h-3" />
+              <span
+                className="inline-block w-3 h-3 rounded-sm border border-outline/60"
+                style={{ background: bgColor }}
+              />
+              <span className="text-on-surface/70">{bgColor}</span>
+            </button>
+            <AnimatePresence>
+              {showColorPicker && (
+                <motion.div
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  className="absolute top-full left-0 mt-1 z-50 bg-surface border border-outline rounded-lg shadow-2xl p-2 min-w-[200px]"
+                >
+                  <div className="grid grid-cols-3 gap-1.5 mb-2">
+                    {BG_PRESETS.map(p => (
+                      <button
+                        key={p.value}
+                        onClick={() => handlePickColor(p.value)}
+                        className={`flex flex-col items-center gap-0.5 p-1.5 rounded border transition-all ${bgColor.toLowerCase() === p.value.toLowerCase() ? 'border-primary ring-1 ring-primary/40' : 'border-outline/50 hover:border-outline'}`}
+                      >
+                        <span className="w-9 h-6 rounded" style={{ background: p.value, border: '1px solid rgba(0,0,0,0.1)' }} />
+                        <span className="text-[9px] text-on-surface/70 font-mono">{p.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-1.5 pt-1.5 border-t border-outline/50">
+                    <input
+                      type="color"
+                      value={customColor}
+                      onChange={e => setCustomColor(e.target.value)}
+                      className="w-7 h-7 rounded cursor-pointer bg-transparent border-0 p-0"
+                    />
+                    <input
+                      type="text"
+                      value={customColor}
+                      onChange={e => setCustomColor(e.target.value)}
+                      className="flex-1 px-1.5 py-1 text-[10px] font-mono bg-bg border border-outline rounded text-on-surface"
+                    />
+                    <button
+                      onClick={handlePickCustom}
+                      className="px-2 py-1 text-[10px] font-mono bg-primary/15 hover:bg-primary/25 text-primary rounded"
+                    >
+                      应用
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
           {canvasError && (
-            <span className="flex-1 text-[10px] text-red-400 font-mono truncate" title={canvasError}>
+            <span className="flex-1 text-[10px] text-red-400 font-mono truncate min-w-0" title={canvasError}>
               {canvasError}
             </span>
           )}
         </div>
 
-        {/* WEB VIEW MODE */}
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="p-1 px-3 bg-surface-bright/45 border-b border-outline/30 flex items-center gap-2 shrink-0">
-            <button className="text-on-surface/30 hover:text-on-surface font-mono text-[11px]">&larr;</button>
-            <button className="text-on-surface/30 hover:text-on-surface font-mono text-[11px]">&rarr;</button>
-            <button onClick={triggerHmr} className="text-on-surface/30 hover:text-on-surface font-mono text-[11px] disabled:opacity-50" disabled={hmrState === 'updating'}>&#x21BB;</button>
-            <div className="flex-1 bg-bg rounded px-2.5 py-0.5 border border-outline text-[10px] text-on-surface/50 font-mono overflow-hidden whitespace-nowrap select-all flex items-center gap-1.5">
-              <Wifi className="w-2.5 h-2.5 text-green-500" />
-              <span>http://localhost:5173</span>
-            </div>
-          </div>
+        {/* CANVAS AREA — 整个剩余空间都是画布区 */}
+        <div className="flex-1 relative overflow-hidden">
+          {renderPlaceholder()}
 
-          <div className="flex-1 bg-bg p-3.5 flex items-start justify-center overflow-auto relative scrollbar-thin">
-            <div className={`${getWidthClass()} bg-[#111214] border border-[#222426]/80 rounded-xl overflow-hidden shadow-2xl flex flex-col min-h-[480px] max-h-[580px] transition-all duration-300`}>
-              <div className="bg-[#17181c] border-b border-[#222426]/60 p-3 flex items-center justify-between px-4">
-                <span
-                  onClick={() => { setSelectedPost(null); setActiveTab('home'); }}
-                  className="font-display font-black text-xs text-white tracking-tight cursor-pointer hover:opacity-80"
-                >
-                  {blogTitle}
+          {/* 内置尺寸选择器 — 画布右下角悬浮 */}
+          {canvasState === 'running' && (
+            <div ref={sizeMenuRef} className="absolute bottom-2 right-2 z-40">
+              <button
+                onClick={() => setShowSizeMenu(s => !s)}
+                title="画布尺寸"
+                className={`flex items-center gap-1.5 px-2 py-1 rounded-md backdrop-blur-md text-[10px] font-mono transition-colors border ${
+                  showSizeMenu
+                    ? 'bg-primary/80 border-primary text-white'
+                    : 'bg-black/50 hover:bg-black/65 border-white/15 text-white'
+                }`}
+              >
+                <Maximize2 className="w-3 h-3" />
+                <span>
+                  {activePreset.w === 0
+                    ? `填满 · ${computeFrame(activePreset).w}×${computeFrame(activePreset).h}`
+                    : `${activePreset.w} × ${activePreset.h}`}
                 </span>
-                <div className="flex items-center gap-3 text-[10px] font-medium text-on-surface/60">
-                  <span
-                    onClick={() => { setSelectedPost(null); setActiveTab('home'); }}
-                    className={`cursor-pointer hover:text-white ${activeTab === 'home' && !selectedPost ? 'text-[#3b82f6]' : ''}`}
+                <ChevronDown className={`w-3 h-3 transition-transform ${showSizeMenu ? 'rotate-180' : ''}`} />
+              </button>
+
+              <AnimatePresence>
+                {showSizeMenu && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 4 }}
+                    className="absolute bottom-full right-0 mb-1.5 bg-surface border border-outline rounded-lg shadow-2xl min-w-[220px] max-h-[420px] overflow-y-auto"
                   >
-                    首页
-                  </span>
-                  <span className="cursor-pointer hover:text-white">文章</span>
-                  <span className="cursor-pointer hover:text-white_80">分类</span>
-                  <Search className="w-3 h-3 text-on-surface/40 hover:text-white cursor-pointer" />
-                </div>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-4 space-y-4 select-text scrollbar-thin">
-                {!selectedPost ? (
-                  <>
-                    <div className="bg-gradient-to-r from-[#203a43] to-[#2c5364] text-white p-5 rounded-lg text-center relative overflow-hidden flex flex-col justify-center items-center py-6 shadow-md border border-[#222426]/40">
-                      <div className="absolute top-0 right-0 bg-[#e5c158]/20 text-[#ffe08b] text-[8px] font-mono font-bold px-2 py-0.5 rounded-bl">New Post</div>
-                      <h2 className="text-sm font-extrabold tracking-wide mb-1 flex items-center gap-1 justify-center">
-                        记录生活，分享技术
-                      </h2>
-                      <p className="text-[10px] text-white/70 max-w-[210px] leading-tight mb-3 text-center">
-                        这里是我的技术博客，分享前端、后端、数据库等技术文章
-                      </p>
-                    </div>
-
-                    <div className="space-y-3.5">
-                      <div className="flex items-center justify-between border-b border-[#2c2f33] pb-1">
-                        <span className="text-[11px] font-bold text-white tracking-wide">最新文章</span>
-                      </div>
-                      <div className="space-y-3">
-                        {posts.map((post) => (
-                          <div
-                            key={post.id}
-                            onClick={() => setSelectedPost(post)}
-                            className="bg-[#17191d] hover:bg-[#1a1c22] border border-[#222426]/60 hover:border-[#ffe08b]/20 p-3 rounded-lg flex gap-3 transition-all cursor-pointer group"
-                          >
-                            <div className={`w-12 h-12 rounded-md bg-gradient-to-tr ${post.bg} shrink-0 opacity-80 group-hover:opacity-100 flex items-center justify-center font-bold text-[10px] text-white font-mono`}>
-                              {post.category}
-                            </div>
-                            <div className="flex-1 min-w-0 space-y-1">
-                              <h3 className="text-xs font-bold text-white group-hover:text-primary transition-colors leading-snug truncate">
-                                {post.title}
-                              </h3>
-                              <p className="text-[10px] text-on-surface/50 line-clamp-2 leading-normal">
-                                {post.description}
-                              </p>
-                            </div>
+                    {Object.entries(groupedSizes).map(([groupLabel, items]) => {
+                      const firstIcon = items[0].icon;
+                      const Icon = firstIcon;
+                      return (
+                        <div key={groupLabel} className="border-b border-outline/40 last:border-b-0">
+                          <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-bright/30 sticky top-0">
+                            <Icon className="w-3 h-3 text-on-surface/70" />
+                            <span className="text-[10px] font-display font-semibold text-on-surface/80 uppercase tracking-wider">{groupLabel}</span>
+                            <span className="text-[9px] text-on-surface/40 font-mono ml-auto">{items.length}</span>
                           </div>
-                        ))}
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <motion.div initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} className="space-y-3 p-1">
-                    <button onClick={() => setSelectedPost(null)} className="text-[10px] text-primary/80 hover:text-primary font-mono flex items-center gap-1 mb-2 cursor-pointer">
-                      &larr; 返回首页
-                    </button>
-                    <h2 className="text-sm font-extrabold text-white leading-snug">{selectedPost.title}</h2>
+                          {items.map(p => {
+                            const isSel = p.key === activeSizeKey;
+                            return (
+                              <button
+                                key={p.key}
+                                onClick={() => pickSize(p.key)}
+                                className={`w-full flex items-center gap-2 px-2.5 py-1.5 hover:bg-surface-bright/60 transition-colors text-left ${isSel ? 'bg-primary/10' : ''}`}
+                              >
+                                <span className="flex-1 min-w-0">
+                                  <span className="block text-[10px] text-on-surface truncate">{p.label}</span>
+                                  <span className="block text-[9px] text-on-surface/50 font-mono">
+                                    {p.w === 0 ? '与面板等宽' : `${p.w} × ${p.h}`}
+                                  </span>
+                                </span>
+                                {isSel && <Check className="w-3 h-3 text-primary shrink-0" />}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      );
+                    })}
                   </motion.div>
                 )}
-              </div>
-              <div className="bg-[#17181c] border-t border-[#222426]/60 p-2.5 text-center text-[9px] text-on-surface/30">
-                &copy; 2026 SoloDev Technology Blogs
-              </div>
+              </AnimatePresence>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>
   );
+}
+
+// 根据背景色自动选前景色（深底浅字 / 浅底深字）
+function pickFg(bg: string): string {
+  const hex = bg.replace('#', '');
+  if (hex.length !== 6) return '#1f2937';
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  // YIQ 亮度
+  const yiq = (r * 299 + g * 587 + b * 114) / 1000;
+  return yiq >= 140 ? '#1f2937' : '#f3f4f6';
 }

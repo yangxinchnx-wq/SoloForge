@@ -55,32 +55,48 @@ const int _swpNoSize = 0x0001;
 const int _swpNoZOrder = 0x0004;
 const int _swpShowWindow = 0x0040;
 
-void main() {
+void main(List<String> args) {
   WidgetsFlutterBinding.ensureInitialized();
 
-  final args = List<String>.from(Platform.environment['FLUTTER_ARGS']?.split(' ') ?? [])
-    ..addAll(Platform.environment.keys.where((k) => k.startsWith('--')).map((k) => '${k}=${Platform.environment[k]}'));
+  // 命令行参数: 来自 C++ 入口 project.set_dart_entrypoint_arguments(std::move(args))
+  // 注意: Windows 下 Platform.executableArguments 在 AOT 模式下行为不一致，统一从 main() 参数拿
+  if (args.isEmpty) {
+    // 兜底：env var FLUTTER_ARGS（开发态 flutter run 用）
+    args = List<String>.from(Platform.environment['FLUTTER_ARGS']?.split(' ') ?? const <String>[]);
+  }
 
   int port = 9090;
   int? parentHwnd;
 
-  for (final arg in args) {
-    if (arg.startsWith('--port=')) {
-      port = int.tryParse(arg.substring(7)) ?? 9090;
-    } else if (arg.startsWith('--parent-hwnd=')) {
-      parentHwnd = int.tryParse(arg.substring(13));
+  for (int i = 0; i < args.length; i++) {
+    final a = args[i];
+    if (a == '--port' && i + 1 < args.length) {
+      port = int.tryParse(args[i + 1]) ?? 9090;
+      i++;
+    } else if (a.startsWith('--port=')) {
+      port = int.tryParse(a.substring(7)) ?? 9090;
+    } else if (a == '--parent-hwnd' && i + 1 < args.length) {
+      parentHwnd = int.tryParse(args[i + 1]);
+      i++;
+    } else if (a.startsWith('--parent-hwnd=')) {
+      parentHwnd = int.tryParse(a.substring(13));
     }
   }
 
-  for (int i = 0; i < args.length; i++) {
-    if (args[i] == '--port' && i + 1 < args.length) {
-      port = int.tryParse(args[i + 1]) ?? 9090;
-    } else if (args[i] == '--parent-hwnd' && i + 1 < args.length) {
-      parentHwnd = int.tryParse(args[i + 1]);
-    }
-  }
+  _writeLog('[main] started port=$port parentHwnd=$parentHwnd args=${args.join(" ")}');
 
   runApp(CanvasApp(port: port, parentHwnd: parentHwnd));
+}
+
+void _writeLog(String msg) {
+  try {
+    final logFile = File('${Platform.environment['TEMP'] ?? '.'}\\soloforge_canvas.log');
+    logFile.writeAsStringSync(
+      '${DateTime.now().toIso8601String()} $msg\n',
+      mode: FileMode.append,
+      flush: true,
+    );
+  } catch (_) {}
 }
 
 class CanvasApp extends StatefulWidget {
@@ -106,46 +122,12 @@ class _CanvasAppState extends State<CanvasApp> {
   }
 
   void _configureWindow() {
+    // 暂时禁用 FFI 调用 — release 模式 STATUS_STACK_BUFFER_OVERRUN 排查中
+    // SetParent 嵌入逻辑由主进程侧通过 PowerShell 完成
     try {
-      final hwnd = _getActiveWindow();
-      if (hwnd == 0) return;
-
-      if (widget.parentHwnd != null && widget.parentHwnd != 0) {
-        _setParent(hwnd, widget.parentHwnd!);
-
-        final currentStyle = _getWindowLongPtrW(hwnd, _gwlStyle);
-        final newStyle = (currentStyle &
-                ~(_wsCaption |
-                    _wsThickFrame |
-                    _wsMinimizeBox |
-                    _wsMaximizeBox |
-                    _wsSysMenu |
-                    _wsPopup)) |
-            _wsChild |
-            _wsVisible;
-        _setWindowLongPtrW(hwnd, _gwlStyle, newStyle);
-      } else {
-        final currentStyle = _getWindowLongPtrW(hwnd, _gwlStyle);
-        final newStyle = (currentStyle &
-                ~(_wsCaption |
-                    _wsThickFrame |
-                    _wsMinimizeBox |
-                    _wsMaximizeBox |
-                    _wsSysMenu)) |
-            _wsPopup |
-            _wsVisible;
-        _setWindowLongPtrW(hwnd, _gwlStyle, newStyle);
-      }
-
-      _setWindowPos(
-          hwnd,
-          0,
-          0,
-          0,
-          0,
-          0,
-          _swpFrameChanged | _swpNoMove | _swpNoSize | _swpNoZOrder | _swpShowWindow);
+      _writeLog('[configure] skipped (FFI disabled for release stability)');
     } catch (_) {}
+    return;
   }
 
   Future<void> _startServer() async {
@@ -193,7 +175,10 @@ class _CanvasAppState extends State<CanvasApp> {
       String? mode;
       Map<String, dynamic>? uiData;
 
-      if (data.containsKey('mode')) {
+      // platform 字段直接作为 mode（'material' / 'fluent' / 'chart'）
+      if (data.containsKey('platform')) {
+        mode = data['platform'] as String;
+      } else if (data.containsKey('mode')) {
         mode = data['mode'] as String;
       }
       if (data.containsKey('ui')) {

@@ -22,5 +22,7 @@ contextBridge.exposeInMainWorld('soloforge', {
     stop: (sessionId) => ipcRenderer.invoke('canvas:stop', { sessionId }),
     push: (sessionId, dsl) => ipcRenderer.invoke('canvas:push', { sessionId, dsl }),
     status: (sessionId) => ipcRenderer.invoke('canvas:status', { sessionId }),
+    reportBounds: (bounds) => ipcRenderer.invoke('canvas:report-bounds', bounds),
+    hostInfo: () => ipcRenderer.invoke('canvas:host-info'),
   },
 });

@@ -484,7 +484,8 @@ export default function Header({
         if (Array.isArray(parsed)) {
           const enabledList: string[] = [];
           parsed.forEach((prov: any) => {
-            if (prov.enabled) {
+            // 顶部主模型下拉要求:服务商已启用 AND 测试通过 AND 模型已启用
+            if (prov.enabled && prov.status === 'success') {
               if (Array.isArray(prov.models)) {
                 prov.models.forEach((m: any) => {
                   if (m.enabled) {
@@ -494,7 +495,11 @@ export default function Header({
               }
               if (Array.isArray(prov.customModels)) {
                 prov.customModels.forEach((cm: any) => {
-                  enabledList.push(cm);
+                  if (typeof cm === 'string') {
+                    enabledList.push(cm);
+                  } else if (cm && cm.id && cm.enabled !== false) {
+                    enabledList.push(cm.id);
+                  }
                 });
               }
             }

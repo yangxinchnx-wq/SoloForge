@@ -59,7 +59,9 @@
   },
   "dependencies": {
     "@google/genai": "^2.8.0",
-    "@lobehub/icons": "^1.97.2",
+    "@lobehub/fluent-emoji": "^4.1.0",
+    "@lobehub/icons": "^5.10.0",
+    "@lobehub/ui": "^5.15.17",
     "@rollup/rollup-win32-x64-msvc": "^4.62.2",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
