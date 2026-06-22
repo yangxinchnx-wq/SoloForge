@@ -51,6 +51,38 @@ const PROVIDER_MODEL_REGISTRY: Record<string, { id: string; name: string }[]> = 
   custom: []
 };
 
+// 仅在文本溢出时接管滚轮,横向滚动,边界硬钳制,不影响行拖拽
+const ScrollableText: React.FC<{ children: React.ReactNode; className?: string; title?: string }> = ({ children, className, title }) => {
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => {
+      if (!el) return;
+      // 未溢出就完全放行,让事件继续传给父级滚动容器
+      if (el.scrollWidth <= el.clientWidth + 1) return;
+      e.preventDefault();
+      e.stopPropagation();
+      // 优先 deltaY(普通滚轮),其次 deltaX(水平触摸板/水平滚轮)
+      const delta = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+      const maxScroll = el.scrollWidth - el.clientWidth;
+      const next = el.scrollLeft + delta;
+      el.scrollLeft = Math.max(0, Math.min(maxScroll, next));
+    };
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
+  }, []);
+  return (
+    <span
+      ref={ref}
+      title={title}
+      className={`block overflow-x-auto overflow-y-hidden whitespace-nowrap max-w-full pointer-events-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] ${className || ''}`}
+    >
+      {children}
+    </span>
+  );
+};
+
 interface SettingsModalProps {
   onClose: () => void;
   initialTabId?: string;
@@ -526,6 +558,51 @@ export default function SettingsModal({
 
   const providerListRef = useRef<HTMLUListElement>(null);
   const modelListRef = useRef<HTMLUListElement>(null);
+  const cloudModelPageRef = useRef<HTMLDivElement>(null);
+  const rightWorkspaceRef = useRef<HTMLDivElement>(null);
+
+  // 右侧详情工作区:滚轮接管 + 边界硬钳制(不允许向上/向下溢出)
+  useEffect(() => {
+    const el = rightWorkspaceRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => {
+      // 向上滚到顶:阻止任何向上溢出
+      if (e.deltaY < 0 && el.scrollTop <= 0) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      // 向下滚到底:阻止任何向下溢出
+      if (e.deltaY > 0 && el.scrollTop + el.clientHeight >= el.scrollHeight - 1) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+    };
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
+  }, [activeProviderId]);
+
+  // 云端模型 Tab: 接管滚轮 + 边界硬钳制(强制不让外层右侧大容器滚动)
+  useEffect(() => {
+    const el = cloudModelPageRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      const scrollable = target.closest(
+        '.overflow-y-auto, .overflow-x-auto, .overflow-auto'
+      ) as HTMLElement | null;
+      if (scrollable && el.contains(scrollable)) {
+        if (e.deltaY !== 0) scrollable.scrollTop += e.deltaY;
+        if (e.deltaX !== 0) scrollable.scrollLeft += e.deltaX;
+      }
+    };
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
+  }, []);
 
   const addCustomModel = (providerId: string) => {
     if (!customModelVal.trim()) return;
@@ -1169,7 +1246,10 @@ export default function SettingsModal({
 
             {/* 02. Model Add settings */}
             {activeTabId === 'model-add' && (
-                <div className="space-y-5 flex flex-col h-full text-left">
+                <div
+                  ref={cloudModelPageRef}
+                  className="space-y-5 flex flex-col h-full text-left"
+                >
                   {/* Tab Title Area */}
                   <div className="border-b border-[var(--color-outline)]/20 pb-4 shrink-0 flex items-center justify-between">
                     <div>
@@ -1189,7 +1269,7 @@ export default function SettingsModal({
                       </div>
                       
                       {/* Scrollable: Provider list only */}
-                      <div className="flex-1 min-h-0 overflow-y-auto p-2.5">
+                      <div className="flex-1 min-h-0 overflow-y-auto p-2.5" style={{ overscrollBehavior: 'contain' }}>
                         <Reorder.Group
                           ref={providerListRef}
                           axis="y"
@@ -1292,7 +1372,11 @@ export default function SettingsModal({
                     </div>
 
                     {/* Right Workspace: Details Setup Dynamic Form */}
-                    <div className="flex-1 flex flex-col min-h-0 bg-[var(--color-surface)]/30 overflow-hidden">
+                    <div
+                      ref={rightWorkspaceRef}
+                      className="flex-1 flex flex-col min-h-0 bg-[var(--color-surface)]/30 overflow-y-auto"
+                      style={{ overscrollBehavior: 'none' }}
+                    >
                       <AnimatePresence mode="wait">
                         <motion.div
                           key={activeProvider.id}
@@ -1543,7 +1627,7 @@ export default function SettingsModal({
                                         >
                                           <div className="flex items-center gap-2 flex-1 min-w-0 pointer-events-none">
                                             <ModelIcon modelName={model.id} size={20} className="shrink-0" />
-                                            <span className="font-mono text-[11.5px] truncate text-on-surface font-extrabold" title={model.id}>{model.name || model.id}</span>
+                                            <ScrollableText className="font-mono text-[11.5px] text-on-surface font-extrabold" title={model.id}>{model.name || model.id}</ScrollableText>
                                           </div>
 
                                           <div className="flex items-center shrink-0 ml-2">

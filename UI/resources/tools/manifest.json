@@ -15,6 +15,20 @@
     ]
   },
   {
+    "id": "browser-use",
+    "name": "Browser-Use",
+    "description": "高层 LLM 浏览器任务编排，LLM 自动规划执行步骤，底层由 Obscura CDP 引擎驱动",
+    "group": "浏览器",
+    "children": [
+      { "id": "bu_run_task", "name": "运行浏览器任务", "description": "自然语言描述任务, LLM 自动规划执行步骤" },
+      { "id": "bu_pause", "name": "暂停任务", "description": "暂停正在执行的浏览器任务" },
+      { "id": "bu_resume", "name": "恢复任务", "description": "恢复已暂停的浏览器任务" },
+      { "id": "bu_state", "name": "任务状态查询", "description": "查看浏览器任务执行进度与轨迹" },
+      { "id": "bu_screenshot", "name": "任务截图", "description": "对当前浏览器页面截图" },
+      { "id": "bu_history", "name": "历史轨迹", "description": "查看任务 ReAct 推理历史与结果" }
+    ]
+  },
+  {
     "id": "windows-mcp",
     "name": "Windows-MCP",
     "description": "Windows系统自动化MCP服务器，支持UI交互、应用控制、文件导航",

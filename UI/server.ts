@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import { fileURLToPath } from "url";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import os from "os";
@@ -7,6 +8,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { createProxyMiddleware, fixRequestBody } from "http-proxy-middleware";
 import { GoogleGenAI } from "@google/genai";
+import { registerBrowserUseRoutes } from "../src/core/browser-use/routes";
 
 // Load Environment variables
 dotenv.config();
@@ -38,6 +40,19 @@ async function startServer() {
 
   // Add JSON parsing middleware
   app.use(express.json({ limit: '10mb' }));
+
+  // ============================================================
+  // Browser-Use API (高层 LLM 任务编排, 走 Obscura CDP)
+  //   /api/browser-use/run            — 提交任务
+  //   /api/browser-use/tasks          — 列表
+  //   /api/browser-use/state/:id      — 状态
+  //   /api/browser-use/{pause,resume,cancel}/:id
+  //   /api/browser-use/stream/:id     — SSE 步进流
+  //   /api/browser-use/health         — 探活
+  // ============================================================
+  const __filename_srv = fileURLToPath(import.meta.url);
+  const repoRootSrv = path.resolve(path.dirname(__filename_srv), "..", "..");
+  registerBrowserUseRoutes(app, repoRootSrv);
 
   // ============================================================
   // 第一优先：3000 本地专属端点（3001 没有这些功能）

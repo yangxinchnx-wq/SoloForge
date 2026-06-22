@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, CheckCircle2, Loader2, Clock, ChevronDown, ChevronUp, Brain, Upload, Hammer, Tag, FolderHeart, Globe, Shield, Cpu, Zap, Check, ShieldCheck, Flame, BadgeCheck, Gauge, Workflow, Rocket, FileText, CheckCheck, Copy, FileCode, X, HelpCircle, Download, SlidersHorizontal, Smile, Volume2, Key, Code, Database, CreditCard, MessageSquare, FolderPlus, Circle, Pencil, Trash2 } from 'lucide-react';
+import { Send, Bot, User, CheckCircle2, Loader2, Clock, ChevronDown, ChevronUp, Brain, Upload, Hammer, Tag, FolderHeart, Globe, Shield, Cpu, Zap, Check, ShieldCheck, Flame, BadgeCheck, Gauge, Workflow, Rocket, FileText, CheckCheck, Copy, FileCode, X, HelpCircle, Download, SlidersHorizontal, Smile, Volume2, Key, Code, Database, CreditCard, MessageSquare, FolderPlus, Circle, Pencil, Trash2, GripVertical } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import TerminalPanel from './TerminalPanel';
 
@@ -953,6 +953,20 @@ export default function ChatPanel({
       ]
     },
     {
+      id: 'browser-use',
+      name: 'Browser-Use',
+      description: '高层 LLM 浏览器任务编排，LLM 自动规划执行步骤，底层由 Obscura CDP 引擎驱动',
+      group: '浏览器',
+      children: [
+        { id: 'bu_run_task', name: '运行浏览器任务', description: '自然语言描述任务, LLM 自动规划执行步骤' },
+        { id: 'bu_pause', name: '暂停任务', description: '暂停正在执行的浏览器任务' },
+        { id: 'bu_resume', name: '恢复任务', description: '恢复已暂停的浏览器任务' },
+        { id: 'bu_state', name: '任务状态查询', description: '查看浏览器任务执行进度与轨迹' },
+        { id: 'bu_screenshot', name: '任务截图', description: '对当前浏览器页面截图' },
+        { id: 'bu_history', name: '历史轨迹', description: '查看任务 ReAct 推理历史与结果' },
+      ]
+    },
+    {
       id: 'windows-mcp',
       name: 'Windows-MCP',
       description: 'Windows系统自动化MCP服务器，支持UI交互、应用控制、文件导航',
@@ -1243,7 +1257,7 @@ export default function ChatPanel({
       if (dir === 'height') {
         const delta = e.clientY - popoverResizeStart.current.y;
         const newHeight = popoverResizeStart.current.h + delta;
-        setPopoverHeight(Math.max(340, Math.min(Math.min(window.innerHeight - 120, 650), newHeight)));
+        setPopoverHeight(Math.max(340, Math.min(window.innerHeight - 180, newHeight)));
       } else if (dir === 'width-left') {
         const delta = popoverResizeStart.current.x - e.clientX;
         const newWidth = popoverResizeStart.current.w + delta;
@@ -2131,6 +2145,7 @@ export default function ChatPanel({
                       <div
                         className="absolute left-full top-0 ml-2 z-50 flex flex-col overflow-hidden border border-outline/20 bg-surface/95 backdrop-blur-md shadow-2xl rounded-xl text-left font-sans select-none"
                         style={{ height: popoverHeight, width: popoverWidth }}
+                        onWheel={(e) => e.stopPropagation()}
                       >
                         {/* Header */}
                         <div className="px-2 py-1.5 flex items-center justify-between border-b border-outline/15 shrink-0">
@@ -2371,20 +2386,23 @@ export default function ChatPanel({
 
                         {/* Bottom resize handle (高度) */}
                         <div onMouseDown={(e) => { e.preventDefault(); isResizingPopover.current = true; popoverResizeStart.current = { y: e.clientY, h: popoverHeight, x: e.clientX, w: popoverWidth, dir: 'height' }; }}
-                          className="group/handle h-2 shrink-0 cursor-ns-resize flex items-center justify-center border-t border-outline/20 bg-surface/50"
-                        >
-                          <span className="block w-1 h-1 rounded-full bg-on-surface/15 mx-px" />
-                          <span className="block w-1 h-1 rounded-full bg-on-surface/15 mx-px" />
-                          <span className="block w-1 h-1 rounded-full bg-on-surface/15 mx-px" />
-                        </div>
+                          className="h-2 shrink-0 cursor-ns-resize border-t border-outline/20 bg-surface/50 hover:bg-primary/15 transition-colors"
+                          title="拖动调整高度"
+                        />
                         {/* 左侧宽度拖拽手柄 */}
                         <div onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); isResizingPopover.current = true; popoverResizeStart.current = { y: e.clientY, h: popoverHeight, x: e.clientX, w: popoverWidth, dir: 'width-left' }; }}
-                          className="absolute top-0 left-0 bottom-0 w-1.5 cursor-ew-resize z-10 hover:bg-primary/10 transition-colors"
-                        />
+                          className="group absolute top-0 left-0 bottom-0 w-2 cursor-ew-resize z-10 hover:bg-primary/15 transition-colors flex items-center justify-center"
+                          title="拖动调整宽度"
+                        >
+                          <GripVertical className="w-2.5 h-3.5 text-primary opacity-0 group-hover:opacity-90 transition-opacity pointer-events-none" />
+                        </div>
                         {/* 右侧宽度拖拽手柄 */}
                         <div onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); isResizingPopover.current = true; popoverResizeStart.current = { y: e.clientY, h: popoverHeight, x: e.clientX, w: popoverWidth, dir: 'width' }; }}
-                          className="absolute top-0 right-0 bottom-0 w-1.5 cursor-ew-resize z-10 hover:bg-primary/10 transition-colors"
-                        />
+                          className="group absolute top-0 right-0 bottom-0 w-2 cursor-ew-resize z-10 hover:bg-primary/15 transition-colors flex items-center justify-center"
+                          title="拖动调整宽度"
+                        >
+                          <GripVertical className="w-2.5 h-3.5 text-primary opacity-0 group-hover:opacity-90 transition-opacity pointer-events-none" />
+                        </div>
                       </div>
                     </>
                   );
