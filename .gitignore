@@ -50,3 +50,33 @@ UI/resources/canvas/canvas_preview/pubspec.lock
 UI/git-service/git-service.exe
 *.exe
 !node_modules/.bin/*.exe
+
+# IDE workspace state (preserved per-user, never committed)
+.agents/
+.design_library/
+.githooks/
+.kilo/
+.trae/
+UI/.soloforge/
+UI/.soloforge_settings.json
+logs/
+test/
+soloforge-ide-design/
+skills-lock.json
+
+# Temporary build/test artifacts
+*.log
+_*.py
+_e2e.*
+_e2e_chats.mjs
+commit-msg-*.txt
+tscheck-full.txt
+tmp-*.txt
+tmp-*.cjs
+preview-*.png
+orig_chat.tsx
+e2e-shots/
+e2e-shots-ext/
+phase-reports/
+spike/
+*.egg-info/
