@@ -1,0 +1,354 @@
+{
+  "$schema": "./device-config.schema.json",
+  "version": "1.0.0",
+  "description": "3D 设备模型的 UV 屏幕区域配置。每个设备模型需要标定屏幕上 4 个角点的 UV 坐标（取值 0~1，左下角为原点），以及设备原生尺寸（用于 1:1 映射画布）。",
+  "models": {
+    "fill": {
+      "key": "fill",
+      "label": "填满当前宽度",
+      "group": "desktop",
+      "type": "2d",
+      "nativeSize": { "w": 0, "h": 0 },
+      "note": "非 3D 模式，使用现有 2D UI 预览逻辑"
+    },
+
+    "1920x1080": {
+      "key": "1920x1080",
+      "label": "Full HD 显示器",
+      "group": "desktop",
+      "type": "3d",
+      "file": "desktop/full_hd_monitor.glb",
+      "screenUV": {
+        "bl": [0.05, 0.06],
+        "br": [0.95, 0.06],
+        "tr": [0.95, 0.94],
+        "tl": [0.05, 0.94]
+      },
+      "nativeSize": { "w": 1920, "h": 1080 },
+      "official": "https://github.com/KhronosGroup/glTF-Sample-Viewer",
+      "community": "https://sketchfab.com/3d-models/monitor-cc0"
+    },
+    "1440x900": {
+      "key": "1440x900",
+      "label": "MacBook",
+      "group": "desktop",
+      "type": "3d",
+      "file": "desktop/macbook.glb",
+      "screenUV": {
+        "bl": [0.04, 0.05],
+        "br": [0.96, 0.05],
+        "tr": [0.96, 0.92],
+        "tl": [0.04, 0.92]
+      },
+      "nativeSize": { "w": 1440, "h": 900 },
+      "official": "https://www.apple.com/shop/buy-mac/macbook-pro",
+      "community": "https://sketchfab.com/search?q=macbook+free"
+    },
+    "1366x768": {
+      "key": "1366x768",
+      "label": "标准笔记本",
+      "group": "desktop",
+      "type": "3d",
+      "file": "desktop/standard_laptop.glb",
+      "screenUV": {
+        "bl": [0.05, 0.06],
+        "br": [0.95, 0.06],
+        "tr": [0.95, 0.93],
+        "tl": [0.05, 0.93]
+      },
+      "nativeSize": { "w": 1366, "h": 768 },
+      "community": "https://sketchfab.com/search?q=laptop+cc0"
+    },
+    "1280x720": {
+      "key": "1280x720",
+      "label": "HD",
+      "group": "desktop",
+      "type": "3d",
+      "file": "desktop/hd_monitor.glb",
+      "screenUV": {
+        "bl": [0.05, 0.06],
+        "br": [0.95, 0.06],
+        "tr": [0.95, 0.94],
+        "tl": [0.05, 0.94]
+      },
+      "nativeSize": { "w": 1280, "h": 720 },
+      "community": "https://sketchfab.com/search?q=monitor+hd"
+    },
+    "1024x768": {
+      "key": "1024x768",
+      "label": "XGA",
+      "group": "desktop",
+      "type": "3d",
+      "file": "desktop/xga_monitor.glb",
+      "screenUV": {
+        "bl": [0.05, 0.06],
+        "br": [0.95, 0.06],
+        "tr": [0.95, 0.94],
+        "tl": [0.05, 0.94]
+      },
+      "nativeSize": { "w": 1024, "h": 768 },
+      "community": "https://sketchfab.com/search?q=old+monitor"
+    },
+    "2560x1440": {
+      "key": "2560x1440",
+      "label": "2K",
+      "group": "desktop",
+      "type": "3d",
+      "file": "desktop/2k_monitor.glb",
+      "screenUV": {
+        "bl": [0.04, 0.05],
+        "br": [0.96, 0.05],
+        "tr": [0.96, 0.95],
+        "tl": [0.04, 0.95]
+      },
+      "nativeSize": { "w": 2560, "h": 1440 },
+      "community": "https://sketchfab.com/search?q=2k+monitor"
+    },
+
+    "m-iphone14pro": {
+      "key": "m-iphone14pro",
+      "label": "iPhone 14 Pro",
+      "group": "mobile",
+      "type": "3d",
+      "file": "mobile/iphone_14_pro.glb",
+      "screenUV": {
+        "bl": [0.06, 0.04],
+        "br": [0.94, 0.04],
+        "tr": [0.94, 0.96],
+        "tl": [0.06, 0.96]
+      },
+      "nativeSize": { "w": 393, "h": 852 },
+      "note": "iPhone 14 Pro 屏幕 393x852 逻辑像素（@3x = 1179x2556 物理像素）",
+      "official": "https://developer.apple.com/augmented-reality/quick-look/",
+      "community": "https://sketchfab.com/search?q=iphone+14+pro+free"
+    },
+    "m-iphone14": {
+      "key": "m-iphone14",
+      "label": "iPhone 14",
+      "group": "mobile",
+      "type": "3d",
+      "file": "mobile/iphone_14.glb",
+      "screenUV": {
+        "bl": [0.06, 0.04],
+        "br": [0.94, 0.04],
+        "tr": [0.94, 0.96],
+        "tl": [0.06, 0.96]
+      },
+      "nativeSize": { "w": 390, "h": 844 },
+      "community": "https://sketchfab.com/search?q=iphone+14+cc0"
+    },
+    "m-iphone14promax": {
+      "key": "m-iphone14promax",
+      "label": "iPhone 14 Pro Max",
+      "group": "mobile",
+      "type": "3d",
+      "file": "mobile/iphone_14_pro_max.glb",
+      "screenUV": {
+        "bl": [0.06, 0.04],
+        "br": [0.94, 0.04],
+        "tr": [0.94, 0.96],
+        "tl": [0.06, 0.96]
+      },
+      "nativeSize": { "w": 430, "h": 932 },
+      "community": "https://sketchfab.com/search?q=iphone+14+pro+max"
+    },
+    "m-iphonese": {
+      "key": "m-iphonese",
+      "label": "iPhone SE",
+      "group": "mobile",
+      "type": "3d",
+      "file": "mobile/iphone_se.glb",
+      "screenUV": {
+        "bl": [0.07, 0.10],
+        "br": [0.93, 0.10],
+        "tr": [0.93, 0.90],
+        "tl": [0.07, 0.90]
+      },
+      "nativeSize": { "w": 375, "h": 667 },
+      "community": "https://sketchfab.com/search?q=iphone+se"
+    },
+    "m-galaxys23": {
+      "key": "m-galaxys23",
+      "label": "Galaxy S23",
+      "group": "mobile",
+      "type": "3d",
+      "file": "mobile/galaxy_s23.glb",
+      "screenUV": {
+        "bl": [0.06, 0.05],
+        "br": [0.94, 0.05],
+        "tr": [0.94, 0.95],
+        "tl": [0.06, 0.95]
+      },
+      "nativeSize": { "w": 360, "h": 780 },
+      "community": "https://sketchfab.com/search?q=galaxy+s23"
+    },
+    "m-pixel7": {
+      "key": "m-pixel7",
+      "label": "Pixel 7",
+      "group": "mobile",
+      "type": "3d",
+      "file": "mobile/pixel_7.glb",
+      "screenUV": {
+        "bl": [0.06, 0.05],
+        "br": [0.94, 0.05],
+        "tr": [0.94, 0.95],
+        "tl": [0.06, 0.95]
+      },
+      "nativeSize": { "w": 412, "h": 915 },
+      "community": "https://sketchfab.com/search?q=pixel+7"
+    },
+    "m-xiaomi13": {
+      "key": "m-xiaomi13",
+      "label": "Xiaomi 13",
+      "group": "mobile",
+      "type": "3d",
+      "file": "mobile/xiaomi_13.glb",
+      "screenUV": {
+        "bl": [0.06, 0.05],
+        "br": [0.94, 0.05],
+        "tr": [0.94, 0.95],
+        "tl": [0.06, 0.95]
+      },
+      "nativeSize": { "w": 393, "h": 873 },
+      "community": "https://sketchfab.com/search?q=xiaomi+13"
+    },
+
+    "t-ipadpro129": {
+      "key": "t-ipadpro129",
+      "label": "iPad Pro 12.9\"",
+      "group": "tablet",
+      "type": "3d",
+      "file": "tablet/ipad_pro_129.glb",
+      "screenUV": {
+        "bl": [0.04, 0.04],
+        "br": [0.96, 0.04],
+        "tr": [0.96, 0.96],
+        "tl": [0.04, 0.96]
+      },
+      "nativeSize": { "w": 1024, "h": 1366 },
+      "community": "https://sketchfab.com/search?q=ipad+pro+12.9"
+    },
+    "t-ipadair": {
+      "key": "t-ipadair",
+      "label": "iPad Air",
+      "group": "tablet",
+      "type": "3d",
+      "file": "tablet/ipad_air.glb",
+      "screenUV": {
+        "bl": [0.05, 0.05],
+        "br": [0.95, 0.05],
+        "tr": [0.95, 0.95],
+        "tl": [0.05, 0.95]
+      },
+      "nativeSize": { "w": 820, "h": 1180 },
+      "community": "https://sketchfab.com/search?q=ipad+air"
+    },
+    "t-ipadmini": {
+      "key": "t-ipadmini",
+      "label": "iPad Mini",
+      "group": "tablet",
+      "type": "3d",
+      "file": "tablet/ipad_mini.glb",
+      "screenUV": {
+        "bl": [0.06, 0.06],
+        "br": [0.94, 0.06],
+        "tr": [0.94, 0.94],
+        "tl": [0.06, 0.94]
+      },
+      "nativeSize": { "w": 768, "h": 1024 },
+      "community": "https://sketchfab.com/search?q=ipad+mini"
+    },
+    "t-surfacepro": {
+      "key": "t-surfacepro",
+      "label": "Surface Pro",
+      "group": "tablet",
+      "type": "3d",
+      "file": "tablet/surface_pro.glb",
+      "screenUV": {
+        "bl": [0.05, 0.05],
+        "br": [0.95, 0.05],
+        "tr": [0.95, 0.95],
+        "tl": [0.05, 0.95]
+      },
+      "nativeSize": { "w": 912, "h": 1368 },
+      "community": "https://sketchfab.com/search?q=surface+pro"
+    },
+    "t-galaxytabs8": {
+      "key": "t-galaxytabs8",
+      "label": "Galaxy Tab S8",
+      "group": "tablet",
+      "type": "3d",
+      "file": "tablet/galaxy_tab_s8.glb",
+      "screenUV": {
+        "bl": [0.05, 0.05],
+        "br": [0.95, 0.05],
+        "tr": [0.95, 0.95],
+        "tl": [0.05, 0.95]
+      },
+      "nativeSize": { "w": 800, "h": 1280 },
+      "community": "https://sketchfab.com/search?q=galaxy+tab"
+    },
+
+    "w-apple41": {
+      "key": "w-apple41",
+      "label": "Apple Watch 41mm",
+      "group": "watch",
+      "type": "3d",
+      "file": "watch/apple_watch_41mm.glb",
+      "screenUV": {
+        "bl": [0.12, 0.18],
+        "br": [0.88, 0.18],
+        "tr": [0.88, 0.82],
+        "tl": [0.12, 0.82]
+      },
+      "nativeSize": { "w": 176, "h": 176 },
+      "note": "Apple Watch 屏幕为方形，使用 w=h=176 作为逻辑尺寸",
+      "community": "https://sketchfab.com/search?q=apple+watch"
+    },
+    "w-apple45": {
+      "key": "w-apple45",
+      "label": "Apple Watch 45mm",
+      "group": "watch",
+      "type": "3d",
+      "file": "watch/apple_watch_45mm.glb",
+      "screenUV": {
+        "bl": [0.10, 0.15],
+        "br": [0.90, 0.15],
+        "tr": [0.90, 0.85],
+        "tl": [0.10, 0.85]
+      },
+      "nativeSize": { "w": 198, "h": 198 },
+      "community": "https://sketchfab.com/search?q=apple+watch+45mm"
+    },
+    "w-apple49": {
+      "key": "w-apple49",
+      "label": "Apple Watch Ultra 49mm",
+      "group": "watch",
+      "type": "3d",
+      "file": "watch/apple_watch_ultra_49mm.glb",
+      "screenUV": {
+        "bl": [0.08, 0.30],
+        "br": [0.92, 0.30],
+        "tr": [0.92, 0.70],
+        "tl": [0.08, 0.70]
+      },
+      "nativeSize": { "w": 205, "h": 251 },
+      "community": "https://sketchfab.com/search?q=apple+watch+ultra"
+    },
+    "w-galaxy6": {
+      "key": "w-galaxy6",
+      "label": "Galaxy Watch 6",
+      "group": "watch",
+      "type": "3d",
+      "file": "watch/galaxy_watch_6.glb",
+      "screenUV": {
+        "bl": [0.10, 0.15],
+        "br": [0.90, 0.15],
+        "tr": [0.90, 0.85],
+        "tl": [0.10, 0.85]
+      },
+      "nativeSize": { "w": 240, "h": 240 },
+      "community": "https://sketchfab.com/search?q=galaxy+watch"
+    }
+  }
+}

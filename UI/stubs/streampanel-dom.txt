@@ -1,0 +1,168 @@
+Solo
+Forge
+主模型
+●
+混合模式
+资源管理器
+源代码管理
+历史对话
+代码编辑器
+搜索
+插件
+自定义主题
+AI 与 Token 审计
+极客设置中心
+资源管理
+workspace
+assets
+coverage
+dist
+docs
+electron
+git-service
+release
+resources
+scripts
+src
+stubs
+tests
+active_resources_db.json
+1.2KB
+AGENTS.md
+2.7KB
+custom_rules.md
+615B
+electron_install.log
+1.8KB
+electron-launch.log
+1.4KB
+index.html
+3.0KB
+metadata.json
+268B
+npm-install.log
+1.2KB
+package-lock.json
+321.2KB
+package.json
+3.3KB
+providers_db.json
+2.8KB
+README.md
+542B
+server.log
+5.7KB
+server.stderr.log
+36.4KB
+server.stdout.log
+1.3KB
+server.ts
+107.1KB
+start.mjs
+6.6KB
+tsc-out.log
+1.6KB
+tscheck-full.txt
+21B
+tsconfig.json
+508B
+vite.config.ts
+4.1KB
+vitest.config.ts
+732B
+复制
+1
+ 
+行 1, 列 1
+代码正常
+对话历史 (0)
+
+暂无对话
+
+点击右上角 + 按钮
+或按 Ctrl+N 新建对话
+
+新建对话
+电商平台原型开发
+ID: 1
+智能体配置
+你
+11:59:58
+
+帮我创建一个博客系统，包含文章列表、文章详情、评论功能，使用Vue3 + Node.js
+
+●
+21:39:25
+
+[demo] 合成任务 @ 21:39:24
+
+AI 执行流程
+进行中 (3/3)
+100%
+100%
+追问用户
+任务: [demo] 合成任务 @ 21:39:24
+LLM
+收集事实证据
+100%
+Qwen 2.5 72B
+被分配了
+收集事实证据
+LLM
+检索相关历史
+100%
+Kimi K2
+被分配了
+检索相关历史
+LLM
+汇总并交叉验证
+100%
+ChatGLM-4
+被分配了
+汇总并交叉验证
+记忆
+上传文件
+技能
+·
+6
+工具
+·
+3
+知识库
+·
+·
+普通模式 (安全)
+发送
+实时预览 · 画布
+DEV
+未启动
+启动画布
+填满 · 541×640
+#FFFFFF
+画布区域
+点击"启动画布"开始实时预览；左下角切换底色。
+REQUIRES ELECTRON
+项目:
+BlogSystem
+分支:
+main
+内存:
+15.32 GB
+/
+31.9 GB
+48%
+CPU:
+18%
+C:
+读:
+706.3
+M/s
+|
+写:
+109.8
+M/s
+进度:
+65%
+控制台
+浅色模式
+UTF-8
