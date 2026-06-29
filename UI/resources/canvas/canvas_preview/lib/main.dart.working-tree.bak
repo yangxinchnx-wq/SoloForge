@@ -1,0 +1,1634 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:ffi';
+import 'dart:io';
+import 'dart:ui' as ui;
+import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'ui_parser.dart';
+import 'platform_renderer.dart';
+import 'services/three_d/device_config_loader.dart';
+import 'services/three_d/three_d_scene_manager.dart';
+
+/// s1.8: RTT 屏内输入事件
+///
+/// 用户在 3D 设备"屏幕"上点击/拖动时, renderer 推过来的事件.
+/// 坐标是设备屏幕本地坐标 (0~1 归一化), 不是 canvas 坐标.
+class RttInputEvent {
+  final String sessionId;
+  final String deviceId;
+  final String type;      // 'tap' | 'doubleTap' | 'longPress' | 'panStart' | 'panMove' | 'panEnd'
+  final double u;         // 0~1, 屏幕内 u 坐标 (左=0, 右=1)
+  final double v;         // 0~1, 屏幕内 v 坐标 (上=0, 下=1) - 注意 UV 坐标系
+  final int timestamp;    // ms since epoch
+
+  const RttInputEvent({
+    required this.sessionId,
+    required this.deviceId,
+    required this.type,
+    required this.u,
+    required this.v,
+    required this.timestamp,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'sessionId': sessionId,
+    'deviceId': deviceId,
+    'type': type,
+    'u': u,
+    'v': v,
+    'timestamp': timestamp,
+  };
+
+  factory RttInputEvent.fromJson(Map<String, dynamic> json) {
+    return RttInputEvent(
+      sessionId: (json['sessionId'] as String?) ?? '',
+      deviceId: (json['deviceId'] as String?) ?? '',
+      type: (json['type'] as String?) ?? 'tap',
+      u: ((json['u'] as num?) ?? 0.0).toDouble(),
+      v: ((json['v'] as num?) ?? 0.0).toDouble(),
+      timestamp: ((json['timestamp'] as num?) ?? DateTime.now().millisecondsSinceEpoch).toInt(),
+    );
+  }
+}
+
+// Lazy load user32 符号 — 在 release AOT 中顶层 DynamicLibrary.open 可能触发
+// native stack guard。延迟到第一次 WindowConfig.init() 调用。
+DynamicLibrary? _user32Lib;
+int Function(int, int)? _getWindowLongPtrW;
+int Function(int, int, int)? _setWindowLongPtrW;
+int Function(int, int)? _setParent;
+int Function(int, int, int, int, int, int, int)? _setWindowPos;
+int Function()? _getActiveWindow;
+
+void _ensureUser32() {
+  if (_user32Lib != null) return;
+  _user32Lib = DynamicLibrary.open('user32.dll');
+  _getWindowLongPtrW = _user32Lib!.lookupFunction<
+      IntPtr Function(IntPtr, Int32),
+      int Function(int, int)
+    >('GetWindowLongPtrW');
+  _setWindowLongPtrW = _user32Lib!.lookupFunction<
+      IntPtr Function(IntPtr, Int32, IntPtr),
+      int Function(int, int, int)
+    >('SetWindowLongPtrW');
+  _setParent = _user32Lib!.lookupFunction<
+      IntPtr Function(IntPtr, IntPtr),
+      int Function(int, int)
+    >('SetParent');
+  _setWindowPos = _user32Lib!.lookupFunction<
+      Int32 Function(IntPtr, IntPtr, Int32, Int32, Int32, Int32, Int32),
+      int Function(int, int, int, int, int, int, int)
+    >('SetWindowPos');
+  _getActiveWindow = _user32Lib!.lookupFunction<
+      IntPtr Function(),
+      int Function()
+    >('GetActiveWindow');
+}
+
+const int _gwlStyle = -16;
+const int _wsChild = 0x40000000;
+const int _wsVisible = 0x10000000;
+const int _wsCaption = 0x00C00000;
+const int _wsThickFrame = 0x00040000;
+const int _wsMinimizeBox = 0x00020000;
+const int _wsMaximizeBox = 0x00010000;
+const int _wsSysMenu = 0x00080000;
+const int _wsPopup = 0x80000000;
+const int _swpFrameChanged = 0x0020;
+const int _swpNoMove = 0x0002;
+const int _swpNoSize = 0x0001;
+const int _swpNoZOrder = 0x0004;
+const int _swpShowWindow = 0x0040;
+
+void main(List<String> args) {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // 命令行参数: 来自 C++ 入口 project.set_dart_entrypoint_arguments(std::move(args))
+  // 注意: Windows 下 Platform.executableArguments 在 AOT 模式下行为不一致，统一从 main() 参数拿
+  if (args.isEmpty) {
+    // 兜底：env var FLUTTER_ARGS（开发态 flutter run 用）
+    args = List<String>.from(Platform.environment['FLUTTER_ARGS']?.split(' ') ?? const <String>[]);
+  }
+
+  int port = 9090;
+  int? parentHwnd;
+  String? modelsDir;
+
+  for (int i = 0; i < args.length; i++) {
+    final a = args[i];
+    if (a == '--port' && i + 1 < args.length) {
+      port = int.tryParse(args[i + 1]) ?? 9090;
+      i++;
+    } else if (a.startsWith('--port=')) {
+      port = int.tryParse(a.substring(7)) ?? 9090;
+    } else if (a == '--parent-hwnd' && i + 1 < args.length) {
+      parentHwnd = int.tryParse(args[i + 1]);
+      i++;
+    } else if (a.startsWith('--parent-hwnd=')) {
+      parentHwnd = int.tryParse(a.substring(13));
+    } else if (a == '--models-dir' && i + 1 < args.length) {
+      modelsDir = args[i + 1];
+      i++;
+    } else if (a.startsWith('--models-dir=')) {
+      modelsDir = a.substring(13);
+    }
+  }
+
+  _writeLog('[main] started port=$port parentHwnd=$parentHwnd modelsDir=$modelsDir args=${args.join(" ")}');
+
+  runApp(CanvasApp(port: port, parentHwnd: parentHwnd, modelsDir: modelsDir));
+}
+
+void _writeLog(String msg) {
+  try {
+    final logFile = File('${Platform.environment['TEMP'] ?? '.'}\\soloforge_canvas.log');
+    logFile.writeAsStringSync(
+      '${DateTime.now().toIso8601String()} $msg\n',
+      mode: FileMode.append,
+      flush: true,
+    );
+  } catch (_) {}
+}
+
+class CanvasApp extends StatefulWidget {
+  final int port;
+  final int? parentHwnd;
+  final String? modelsDir;
+
+  const CanvasApp({super.key, required this.port, this.parentHwnd, this.modelsDir});
+
+  @override
+  State<CanvasApp> createState() => _CanvasAppState();
+}
+
+class _CanvasAppState extends State<CanvasApp> {
+  HttpServer? _httpServer;
+  String _renderMode = 'material';
+
+  // s1.2 截图支持: GlobalKey 指向 RepaintBoundary, 收到 /screenshot 请求时调用
+  final GlobalKey _captureKey = GlobalKey();
+  // 截图状态: idle | pending
+  // pending 时 build 阶段会触发 _captureAndRespond()
+  String _captureStatus = 'idle';
+  // 截图结果 (JSON 字符串, 包含 base64 PNG)
+  String? _captureResult;
+
+  /// 画布底色 (用户手选, 切设备时**不变**)
+  ///
+  /// 这是整块 canvas 的底色, 不是某个 UI 元素的背景
+  /// 之前 pushBackground 会重推一坨示例 UI 覆盖用户的真实内容,
+  /// 现在分离: 底色走 _bgColor 通道, UI 走 _uiNode 通道
+  Color _bgColor = const Color(0xFFFFFFFF);
+
+  /// s3.2c: 多 session 设备独立 UI
+  ///
+  /// _uiNode: 共享 UI 节点 (所有设备共享, 向后兼容)
+  /// _deviceUiNodes: 设备独立 UI 节点 (key=deviceId, 优先于 _uiNode)
+  ///   当 DeviceInstance.uiSessionId 有值时, 设备 UI 从 _deviceUiNodes[deviceId] 读取
+  ///   否则回退到 _uiNode (共享 UI)
+  UiNode? _uiNode;
+  final Map<String, UiNode?> _deviceUiNodes = {};
+
+  /// s4.0: 流式 AST chunk 暂存
+  ///   LLM 流式推送半成品 AST 时先存这里（不立即解析/渲染）
+  ///   flushAST 时再解析为 UiNode 并写回 _uiNode / _deviceUiNodes
+  Map<String, dynamic>? _pendingAst;
+  final Map<String, Map<String, dynamic>> _pendingAstByDevice = {};
+
+  // s3.2a: 每个 device 屏幕的稳定 GlobalKey
+  //   - 同一 deviceId 始终返回同一个 GlobalKey
+  //   - s3.2b 接入时用这个 key 截图推 RTT
+  //   - device 移除时暂不清理 (WeakMap-like, 不会无限增长因为 device 数量有界)
+  final Map<String, GlobalKey> _deviceScreenKeys = {};
+
+  // s3.2c: 每个 device 卡片的 State 的 GlobalKey (typed)
+  //   - 用于在收到 RTT 输入事件时, 通过 GlobalKey 拿到 card state
+  //   - 调用 card.handleRttInput(u, v, type) 分发事件到 PlatformRenderer
+  final Map<String, GlobalKey<_DevicePlaceholderCardState>> _deviceCardKeys = {};
+
+  // s2.1: three_d 场景管理器
+  //
+  // 管理共享 Scene + 设备渲染器集合,
+  // 真实 WebGL 渲染依赖 s3.1 (FFI TextureRegistry 接入),
+  // s2.1 阶段这个 manager 仅持有数据模型 + transform 状态
+  ThreeDSceneManager? _sceneManager;
+
+  // 3D 设备状态: sessionId -> deviceId -> DeviceInstance
+  // 这里存的是 React 端推过来的最新状态,
+  // DeviceRenderer 通过这个 state 驱动真实 3D 场景。
+  final Map<String, Map<String, DeviceInstance>> _devicesBySession = {};
+
+  // 当前活跃 session (React 端切换会话时更新)
+  String? _activeSessionId;
+
+  // 已加载的配置缓存 (避免每次 selectDevice 都重读 device-config.json)
+  Map<String, DeviceModelConfig>? _configCache;
+
+  // s1.8: RTT 纹理缓存 (sessionId -> deviceId -> 最新一帧的 PNG base64)
+  //
+  // 写入路径: renderer 推 UI DSL → Flutter 渲染完一帧 → 截图(已有 _captureAndRespond)
+  //          → POST /api/canvas/rtt/texture 缓存到这里
+  // 读取路径: 未来 three_d 接入后 (s2.1/s3.2) 从这里取 PNG 贴到模型屏幕区域
+  // 当前 s1.8 阶段: 数据通道打通, 真实纹理管线在 s2.1/s3.2 接入
+  final Map<String, Map<String, String>> _rttTextures = {};
+
+  // s1.8: RTT 屏内输入事件队列 (renderer → main → React)
+  //
+  // 用途: 用户在 3D 设备"屏幕"上点击/拖动 (屏内坐标) → renderer 转换到 canvas 坐标
+  //      → 通过这个通道推给 main, main 走 WebSocket/EventEmitter 推回 React
+  // 当前 s1.8 阶段: 只缓存不广播, s3.2 接入真实 three_d 击穿测试时再用
+  final List<RttInputEvent> _rttInputQueue = [];
+  static const int _rttInputQueueMax = 100;
+
+  // 显式传入的 models 目录(主进程通过 --models-dir 传)
+  // 不传时,走 fallback: 探测 exe 旁 ../models/ 或 ../../models/
+  String? _modelsDirOverride;
+
+  @override
+  void initState() {
+    super.initState();
+    _modelsDirOverride = widget.modelsDir;
+    _configureWindow();
+    _startServer();
+    _preloadConfigs();
+    // s2.1: 异步初始化 three_d 场景管理器
+    //   init 失败不阻塞 UI — 自动回退到 s1.7 2D 卡片
+    _initSceneManager();
+  }
+
+  /// s2.1: 异步初始化 ThreeDSceneManager
+  ///
+  /// s2.1 阶段: 仅数据模型初始化, 不创建 WebGL 上下文
+  ///   真实 GL 上下文在 s3.1 通过 FFI TextureRegistry 接入
+  Future<void> _initSceneManager() async {
+    try {
+      // 默认尺寸 800x600, 真实画布尺寸在布局完成后由 setCanvasSize 更新
+      final m = ThreeDSceneManager();
+      await m.init(canvasWidth: 800, canvasHeight: 600);
+      if (!mounted) {
+        m.dispose();
+        return;
+      }
+      setState(() {
+        _sceneManager = m;
+      });
+      _writeLog('[scene] ThreeDSceneManager init: ok (s2.1 data model, s3.1 will bind WebGL)');
+    } catch (e) {
+      _writeLog('[scene] ThreeDSceneManager init failed: $e (fallback to 2D)');
+    }
+  }
+
+  void _configureWindow() {
+    // s3.1: 若 parentHwnd 已传入，C++ 入口已做 SetParent + 样式修改，
+    //   这里不需要再调 FFI（GetActiveWindow 在 SetParent 后可能返回 0）
+    if (widget.parentHwnd != null) {
+      _writeLog('[configure] embedded mode (parentHwnd=${widget.parentHwnd}), C++ entry already configured window styles');
+      return;
+    }
+
+    // standalone 模式: 用 FFI 移除标题栏/边框
+    try {
+      _ensureUser32();
+      if (_getWindowLongPtrW == null || _setWindowLongPtrW == null) {
+        _writeLog('[configure] FFI symbols not loaded, skipping');
+        return;
+      }
+      // 获取当前窗口句柄
+      final hwnd = _getActiveWindow?.call();
+      if (hwnd == null || hwnd == 0) {
+        _writeLog('[configure] GetActiveWindow returned 0, skipping');
+        return;
+      }
+      _writeLog('[configure] hwnd=$hwnd, applying window styles...');
+
+      // 读取当前样式
+      final style = _getWindowLongPtrW!(hwnd, _gwlStyle);
+      if (style == 0) {
+        _writeLog('[configure] GetWindowLongPtrW returned 0, skipping');
+        return;
+      }
+
+      // 移除标题栏/边框 (让窗口成为无边框子窗口, 由 Electron 父窗口管理)
+      final newStyle = (style & ~_wsCaption & ~_wsThickFrame & ~_wsMinimizeBox &
+                        ~_wsMaximizeBox & ~_wsSysMenu) | _wsChild | _wsVisible;
+      _setWindowLongPtrW!(hwnd, _gwlStyle, newStyle);
+
+      // 通知系统重绘窗口框架
+      _setWindowPos?.call(hwnd, 0, 0, 0, 0, 0,
+        _swpFrameChanged | _swpNoMove | _swpNoSize | _swpNoZOrder | _swpShowWindow);
+
+      _writeLog('[configure] FFI window style applied successfully');
+    } catch (e) {
+      _writeLog('[configure] FFI error: $e (fallback to PowerShell embedding)');
+    }
+  }
+
+  /// 启动时预加载 22 个设备的 config
+  ///
+  /// s1.6: 改用 loadAllDetailed() 拿到错误列表
+  ///   错误立刻写到 log, 方便排查 device-config.json 问题
+  Future<void> _preloadConfigs() async {
+    // 把主进程传过来的 models 目录透传给 loader
+    if (_modelsDirOverride != null) {
+      DeviceConfigLoader.setModelsDir(_modelsDirOverride);
+    }
+    final result = await DeviceConfigLoader.loadAllDetailed();
+    _configCache = result.configs;
+    _writeLog('[init] preloaded ${result.configs.length} device configs, ${result.errors.length} errors (modelsDir=$_modelsDirOverride)');
+    // s1.6: 错误逐条写 log
+    for (final err in result.errors) {
+      _writeLog('[config-error] $err');
+    }
+  }
+
+  Future<void> _startServer() async {
+    try {
+      _httpServer = await HttpServer.bind('127.0.0.1', widget.port);
+      await for (final request in _httpServer!) {
+        if (request.uri.path == '/ws' || request.uri.path == '/') {
+          try {
+            final channel = await WebSocketTransformer.upgrade(request);
+            channel.listen((dynamic data) {
+              if (data is String) {
+                _handleMessage(data);
+              }
+            }, onError: (_) {}, cancelOnError: false);
+          } catch (_) {}
+        } else if (request.method == 'POST' &&
+            (request.uri.path == '/render' ||
+                request.uri.path == '/transform' ||
+                request.uri.path == '/push-ui' ||
+                request.uri.path == '/clear-devices' ||
+                request.uri.path == '/set-background' ||
+                request.uri.path == '/select-device')) {
+          await _handleHttpRender(request);
+        } else if (request.method == 'POST' && request.uri.path == '/screenshot') {
+          // s1.2: 截屏 — 返回当前画布的 PNG base64
+          await _handleHttpScreenshot(request);
+        } else if (request.method == 'GET' && request.uri.path == '/api/canvas/devices/validation') {
+          // s1.6: 设备配置校验结果 (configs + errors)
+          await _handleHttpValidation(request);
+        } else if (request.method == 'POST' && request.uri.path == '/api/canvas/devices/reload') {
+          // s1.6: 强制重载 device-config.json (开发调试用)
+          await _handleHttpReloadConfigs(request);
+        } else if (request.method == 'POST' && request.uri.path == '/api/canvas/rtt/texture') {
+          // s1.8: RTT 纹理推送 (renderer 推过来, 缓存给后续 three_d 用)
+          await _handleHttpRttTexture(request);
+        } else if (request.method == 'GET' && request.uri.path.startsWith('/api/canvas/rtt/texture/')) {
+          // s1.8: RTT 纹理查询 (s2.1 接入 three_d 时从这里取)
+          await _handleHttpRttTextureGet(request);
+        } else if (request.method == 'POST' && request.uri.path == '/api/canvas/rtt/input') {
+          // s1.8: RTT 屏内输入事件 (s3.2 屏内 UI 用)
+          await _handleHttpRttInput(request);
+        } else if (request.method == 'GET' && request.uri.path == '/api/canvas/rtt/input') {
+          // s1.8: 拉取输入事件队列 (s3.2 屏内 UI 用)
+          await _handleHttpRttInputGet(request);
+        } else if (request.method == 'GET' && request.uri.path == '/api/canvas/scene/status') {
+          // s2.1: three_d 场景状态 (调试 + 验证同步)
+          await _handleHttpSceneStatus(request);
+        } else if (request.method == 'GET' && request.uri.path == '/api/canvas/rtt/devices') {
+          // s3.2a: 列出当前所有有 GlobalKey 的 device
+          //   React 端用此确认哪些 device 屏幕有 RTT 能力
+          await _handleHttpListDeviceScreens(request);
+        } else {
+          request.response.statusCode = 404;
+          await request.response.close();
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _handleHttpRender(HttpRequest request) async {
+    try {
+      final body = await utf8.decoder.bind(request).join();
+      _handleMessage(body);
+      request.response.statusCode = 200;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode({ 'ok': true }));
+    } catch (e) {
+      request.response.statusCode = 400;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode({ 'ok': false, 'error': e.toString() }));
+    } finally {
+      await request.response.close();
+    }
+  }
+
+  /// s1.2: 截屏 — 触发 _captureStatus = 'pending', build 阶段会调 _captureAndRespond
+  ///
+  /// 流程:
+  /// 1. 设置 _captureStatus = 'pending' (触发 build 渲染一帧)
+  /// 2. build 阶段 _captureAndRespond 拿到 PNG, 写到 _captureResult
+  /// 3. 这里轮询 _captureResult 直到非空 (最多 2s)
+  /// 4. 拿到结果后返回给调用方
+  Future<void> _handleHttpScreenshot(HttpRequest request) async {
+    try {
+      // 触发 capture
+      setState(() {
+        _captureStatus = 'pending';
+        _captureResult = null;
+      });
+
+      // 轮询等待结果 (最多 2s, 给 build 阶段留时间)
+      String? result;
+      for (int i = 0; i < 40; i++) {
+        await Future.delayed(const Duration(milliseconds: 50));
+        if (_captureResult != null) {
+          result = _captureResult;
+          break;
+        }
+      }
+
+      // 重置状态
+      setState(() {
+        _captureStatus = 'idle';
+        _captureResult = null;
+      });
+
+      if (result == null) {
+        request.response.statusCode = 504;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({
+          'ok': false,
+          'error': 'screenshot timeout (2s) — capture pipeline stalled',
+        }));
+        return;
+      }
+
+      // 解析出 png 字段
+      final parsed = jsonDecode(result) as Map<String, dynamic>;
+      request.response.statusCode = 200;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode({
+        'ok': true,
+        'png': parsed['png'],
+        'width': parsed['width'],
+        'height': parsed['height'],
+        'byteLength': parsed['byteLength'],
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      }));
+    } catch (e) {
+      request.response.statusCode = 500;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode({ 'ok': false, 'error': e.toString() }));
+    } finally {
+      try { await request.response.close(); } catch (_) {}
+    }
+  }
+
+  void _handleMessage(String message) {
+    try {
+      final data = jsonDecode(message) as Map<String, dynamic>;
+      String? mode;
+      Map<String, dynamic>? uiData;
+      String? action;
+
+      // platform 字段直接作为 mode（'material' / 'fluent' / 'chart' / '3d'）
+      if (data.containsKey('platform')) {
+        mode = data['platform'] as String;
+      } else if (data.containsKey('mode')) {
+        mode = data['mode'] as String;
+      }
+      if (data.containsKey('ui')) {
+        uiData = data['ui'] as Map<String, dynamic>;
+      } else if (data.containsKey('type')) {
+        uiData = data;
+      }
+
+      // 3D 设备相关 action
+      if (data.containsKey('action')) {
+        action = data['action'] as String;
+        _handleDeviceAction(action, data);
+        return;
+      }
+
+      if (mode != null || uiData != null) {
+        setState(() {
+          if (mode != null) _renderMode = mode;
+          if (uiData != null) _uiNode = UiParser.parse(uiData);
+        });
+      }
+    } catch (_) {}
+  }
+
+  void _handleDeviceAction(String action, Map<String, dynamic> data) {
+    switch (action) {
+      case 'selectDevice':
+        final modelKey = data['modelKey'] as String?;
+        final sessionId = data['sessionId'] as String?;
+        if (modelKey != null) {
+          // 'fill' 是 2D 模式标记
+          if (modelKey == 'fill') {
+            setState(() {
+              _renderMode = 'material';
+              // 切回 2D 时清空 3D 设备, 不清 ui (用户可能推过 UI 进来)
+              _devicesBySession.remove(sessionId ?? _activeSessionId);
+            });
+            _writeLog('[device] switch to 2D fill mode');
+            break;
+          }
+          if (sessionId != null) {
+            _activeSessionId = sessionId;
+          }
+          setState(() {
+            _renderMode = '3d';
+            // 切到 3D 时清空之前的 ui (欢迎提示等), 让 3D 设备场景独占画面
+            // 用户后续推 UI 会通过 pushUI 进来, 走 RTT 贴图到设备屏幕
+            _uiNode = null;
+          });
+          // 注册一个 fallback device, 让 _buildDevice3DScene 立即有东西渲染。
+          // React 端 Model3DOverlay 通过 transformDevice 发真实位置后,会被覆盖。
+          // (中心 0.5, 0.5 是 _buildDevice3DScene 的默认渲染位置)
+          _applyDeviceTransform(
+            sessionId ?? _activeSessionId ?? 'default',
+            'dev-fallback-${modelKey}',
+            {
+              'modelKey': modelKey,
+              'xRatio': 0.5,
+              'yRatio': 0.5,
+              'rotationX': 0.0,
+              'rotationY': 0.0,
+              'rotationZ': 0.0,
+              'displayScale': 1.0,
+              'isSelected': true,
+            },
+          );
+          _writeLog('[device] select: $modelKey (session=$_activeSessionId)');
+        }
+        break;
+      case 'transformDevice':
+        // 接收 { sessionId, deviceId, transform }
+        final sessionId = data['sessionId'] as String?;
+        final deviceId = data['deviceId'] as String?;
+        final transform = data['transform'] as Map<String, dynamic>?;
+        if (sessionId != null && deviceId != null && transform != null) {
+          _applyDeviceTransform(sessionId, deviceId, transform);
+        }
+        break;
+      case 'setBackground':
+        // 底色变更: 单独通道, 切设备时不动
+        final color = data['color'] as String?;
+        if (color != null) {
+          _applyBackground(color);
+        }
+        break;
+      case 'clearDevices':
+        final sessionId = data['sessionId'] as String?;
+        if (sessionId != null) {
+          _devicesBySession.remove(sessionId);
+        } else {
+          _devicesBySession.clear();
+        }
+        setState(() {
+          _renderMode = 'material';
+          // 不清 _uiNode, 用户推过来的 UI 仍要保留
+        });
+        _writeLog('[device] cleared all (session=$sessionId)');
+        break;
+      case 'pushUI':
+        // s3.2c: 多 session 设备独立 UI
+        //   有 deviceId 时 → 存到 _deviceUiNodes[deviceId] (设备独立 UI)
+        //   无 deviceId 时 → 存到 _uiNode (共享 UI, 向后兼容)
+        //   兼容 dsl (Canvas3DClient) 和 ui (旧协议) 两种字段名
+        final deviceId = data['deviceId'] as String?;
+        final uiJson = (data['ui'] ?? data['dsl']) as Map<String, dynamic>?;
+        if (uiJson != null) {
+          final parsed = UiParser.parse(uiJson);
+          if (deviceId != null && deviceId.isNotEmpty) {
+            _deviceUiNodes[deviceId] = parsed;
+            _writeLog('[device] pushUI to device=$deviceId');
+          } else {
+            _uiNode = parsed;
+            _writeLog('[device] pushUI shared');
+          }
+          setState(() {});
+        }
+        break;
+      case 'feedASTChunk':
+        // s4.0: 喂一个半成品 AST chunk
+        //   暂存到 _pendingAst / _pendingAstByDevice
+        //   不解析、不渲染（半成品 AST 解析会失败或渲染破碎）
+        //   flushAST 时一次性解析 + 渲染
+        final deviceId = data['deviceId'] as String?;
+        final partialAst = data['partialAst'] as Map<String, dynamic>?;
+        if (partialAst != null) {
+          if (deviceId != null && deviceId.isNotEmpty) {
+            _pendingAstByDevice[deviceId] = partialAst;
+          } else {
+            _pendingAst = partialAst;
+          }
+          _writeLog('[ast] feedASTChunk device=$deviceId keys=${partialAst.keys.toList()}');
+        }
+        break;
+      case 'flushAST':
+        // s4.0: 把累积的 AST chunk 解析为 UiNode 并应用
+        //   有 deviceId → 从 _pendingAstByDevice[deviceId] 取，存到 _deviceUiNodes
+        //   无 deviceId → 从 _pendingAst 取，存到 _uiNode
+        final deviceId = data['deviceId'] as String?;
+        final pending = (deviceId != null && deviceId.isNotEmpty)
+            ? _pendingAstByDevice[deviceId]
+            : _pendingAst;
+        if (pending != null) {
+          try {
+            final parsed = UiParser.parse(pending);
+            if (deviceId != null && deviceId.isNotEmpty) {
+              _deviceUiNodes[deviceId] = parsed;
+              _pendingAstByDevice.remove(deviceId);
+              _writeLog('[ast] flushAST to device=$deviceId (parsed)');
+            } else {
+              _uiNode = parsed;
+              _pendingAst = null;
+              _writeLog('[ast] flushAST shared (parsed)');
+            }
+            setState(() {});
+          } catch (e, st) {
+            _writeLog('[ast] flushAST parse error: $e\n$st');
+          }
+        } else {
+          _writeLog('[ast] flushAST with no pending (device=$deviceId)');
+        }
+        break;
+    }
+  }
+
+  /// 解析 hex 颜色字符串
+  Color _parseHexColor(String hex) {
+    var clean = hex.replaceFirst('#', '');
+    if (clean.length == 6) clean = 'FF$clean';
+    if (clean.length != 8) return const Color(0xFFFFFFFF);
+    final value = int.tryParse(clean, radix: 16);
+    return value == null ? const Color(0xFFFFFFFF) : Color(value);
+  }
+
+  /// 应用底色 (用户手选, 切设备时不动)
+  void _applyBackground(String colorHex) {
+    setState(() {
+      _bgColor = _parseHexColor(colorHex);
+    });
+    _writeLog('[bg] set to $colorHex');
+  }
+
+  /// 应用单个设备的 transform 变化
+  ///
+  /// 更新内部 state 容器, 并 mark dirty 触发 setState
+  /// (后续接入 DeviceRenderer 后, 这里要遍历调用 renderer.setPosition/setRotation)
+  void _applyDeviceTransform(
+    String sessionId,
+    String deviceId,
+    Map<String, dynamic> transform,
+  ) {
+    final sessionMap = _devicesBySession.putIfAbsent(sessionId, () => {});
+
+    // 拿到旧 instance, 缺字段时用 fallback
+    final old = sessionMap[deviceId];
+    if (old == null) {
+      // 没注册过的设备, 用 transform 数据 + 默认值创建
+      sessionMap[deviceId] = DeviceInstance(
+        id: deviceId,
+        modelKey: (transform['modelKey'] as String?) ?? 'unknown',
+        xRatio: (transform['xRatio'] as num?)?.toDouble() ?? 0.5,
+        yRatio: (transform['yRatio'] as num?)?.toDouble() ?? 0.5,
+        rotationX: (transform['rotationX'] as num?)?.toDouble() ?? 0,
+        rotationY: (transform['rotationY'] as num?)?.toDouble() ?? 0,
+        rotationZ: (transform['rotationZ'] as num?)?.toDouble() ?? 0,
+        displayScale: (transform['displayScale'] as num?)?.toDouble() ?? 1.0,
+        isSelected: (transform['isSelected'] as bool?) ?? false,
+      );
+    } else {
+      // 已存在, copyWith 增量更新
+      sessionMap[deviceId] = old.copyWith(
+        xRatio: (transform['xRatio'] as num?)?.toDouble() ?? old.xRatio,
+        yRatio: (transform['yRatio'] as num?)?.toDouble() ?? old.yRatio,
+        rotationX: (transform['rotationX'] as num?)?.toDouble() ?? old.rotationX,
+        rotationY: (transform['rotationY'] as num?)?.toDouble() ?? old.rotationY,
+        rotationZ: (transform['rotationZ'] as num?)?.toDouble() ?? old.rotationZ,
+        displayScale: (transform['displayScale'] as num?)?.toDouble() ?? old.displayScale,
+        isSelected: (transform['isSelected'] as bool?) ?? old.isSelected,
+      );
+    }
+
+    // 触发重绘 (后续 DeviceRenderer 接入后, 这里会驱动 scene graph)
+    setState(() {
+      // 引用更新即可触发 build
+    });
+
+    // s2.1: 同步到 three_d 场景管理器
+    //   1) 拿 modelKey -> DeviceModelConfig (从 _configCache)
+    //   2) 把增量 transform 推给 manager.updateDevice
+    //   真实 WebGL 渲染在 s3.1 接入, 现在只更新 scene 数据模型
+    _syncToSceneManager(sessionId, deviceId, sessionMap[deviceId]!);
+
+    _writeLog('[transform] $sessionId/$deviceId: x=${sessionMap[deviceId]!.xRatio.toStringAsFixed(3)} '
+        'y=${sessionMap[deviceId]!.yRatio.toStringAsFixed(3)} '
+        'rx=${sessionMap[deviceId]!.rotationX.toStringAsFixed(2)} '
+        'ry=${sessionMap[deviceId]!.rotationY.toStringAsFixed(2)}');
+  }
+
+  /// s2.1: 把 device transform 同步到 ThreeDSceneManager
+  ///
+  /// 注: 这是 s2.1 的真实接入点, 不是占位
+  ///   - manager 持有 Scene + DeviceRenderer 数据模型
+  ///   - 真实 WebGL 渲染在 s3.1 通过 TextureRegistry 完成
+  ///   - 当前阶段 manager.getDebugInfo() 会显示 devices 已注册
+  void _syncToSceneManager(String sessionId, String deviceId, DeviceInstance dev) {
+    final manager = _sceneManager;
+    if (manager == null) return;
+    final cfg = _configCache?[dev.modelKey];
+    if (cfg == null) {
+      // 配置未加载, 跳过 (s1.6 校验通过的才进 _configCache)
+      return;
+    }
+    // 不阻塞主流程
+    manager.updateDevice(
+      sessionId,
+      deviceId,
+      cfg,
+      DeviceTransformUpdate(
+        deviceId: deviceId,
+        xRatio: dev.xRatio,
+        yRatio: dev.yRatio,
+        rotationX: dev.rotationX,
+        rotationY: dev.rotationY,
+        rotationZ: dev.rotationZ,
+        displayScale: dev.displayScale,
+        isSelected: dev.isSelected,
+        highlightColor: '#FF6B6B', // s1.7 占位, 后续支持多选不同色
+      ),
+    ).catchError((Object e) {
+      _writeLog('[scene] updateDevice failed: $e');
+    });
+  }
+
+  /// 获取当前活跃 session 的所有设备 (供渲染层使用)
+  List<DeviceInstance> getActiveDevices() {
+    if (_activeSessionId == null) return const [];
+    final sessionMap = _devicesBySession[_activeSessionId];
+    if (sessionMap == null) return const [];
+    return sessionMap.values.toList();
+  }
+
+  @override
+  void dispose() {
+    _httpServer?.close();
+    // s2.1: 清理 scene manager
+    _sceneManager?.dispose();
+    _sceneManager = null;
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // s1.2: 截图触发 — build 末尾检查 pending 状态, 安排一帧后执行
+    if (_captureStatus == 'pending') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _captureAndRespond();
+      });
+    }
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        // 底色由 _bgColor 决定 (用户手选, 切设备时不变)
+        backgroundColor: _bgColor,
+        body: RepaintBoundary(
+          key: _captureKey,
+          child: _buildBody(context),
+        ),
+      ),
+    );
+  }
+
+  /// s1.2: 真正执行截图 — 拿到 RepaintBoundary 的 RenderObject, 转 PNG
+  ///
+  /// 这个方法只在 _captureStatus == 'pending' 时被 build 后置回调调用
+  Future<void> _captureAndRespond() async {
+    if (_captureStatus != 'pending') return;
+    try {
+      final boundary = _captureKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+      if (boundary == null) {
+        _captureResult = jsonEncode({
+          'png': '',
+          'width': 0,
+          'height': 0,
+          'byteLength': 0,
+          'error': 'no RenderRepaintBoundary',
+        });
+        return;
+      }
+
+      // 等一帧确保布局完成
+      await WidgetsBinding.instance.endOfFrame;
+
+      // 抓 image
+      final image = await boundary.toImage(pixelRatio: 2.0);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      image.dispose();
+      if (byteData == null) {
+        _captureResult = jsonEncode({
+          'png': '',
+          'width': 0,
+          'height': 0,
+          'byteLength': 0,
+          'error': 'toByteData returned null',
+        });
+        return;
+      }
+
+      final bytes = byteData.buffer.asUint8List();
+      _captureResult = jsonEncode({
+        'png': base64Encode(bytes),
+        'width': image.width,
+        'height': image.height,
+        'byteLength': bytes.lengthInBytes,
+      });
+    } catch (e) {
+      _captureResult = jsonEncode({
+        'png': '',
+        'width': 0,
+        'height': 0,
+        'byteLength': 0,
+        'error': e.toString(),
+      });
+    }
+  }
+
+  /// s1.6: 返回 device-config.json 的校验结果
+  ///
+  /// 响应格式:
+  ///   {
+  ///     "ok": true,
+  ///     "configCount": 22,
+  ///     "errorCount": 0,
+  ///     "errors": [],
+  ///     "checkedAt": 1234567890
+  ///   }
+  Future<void> _handleHttpValidation(HttpRequest request) async {
+    try {
+      final result = DeviceConfigLoader.getLastValidation();
+      if (result == null) {
+        // 还没跑过 loadAll, 现在跑一次
+        await DeviceConfigLoader.loadAllDetailed();
+      }
+      final r = DeviceConfigLoader.getLastValidation()!;
+      final errors = r.errors.map((e) => {
+        'modelKey': e.modelKey,
+        'field': e.field,
+        'reason': e.reason,
+      }).toList();
+      request.response.statusCode = 200;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode({
+        'ok': true,
+        'configCount': r.configs.length,
+        'errorCount': r.errors.length,
+        'errors': errors,
+        'checkedAt': DateTime.now().millisecondsSinceEpoch,
+      }));
+    } catch (e) {
+      request.response.statusCode = 500;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode({ 'ok': false, 'error': e.toString() }));
+    } finally {
+      try { await request.response.close(); } catch (_) {}
+    }
+  }
+
+  /// s1.6: 强制重载配置 (开发调试 — 改了 device-config.json 后调用)
+  Future<void> _handleHttpReloadConfigs(HttpRequest request) async {
+    try {
+      DeviceConfigLoader.clearCache();
+      final r = await DeviceConfigLoader.loadAllDetailed();
+      // 同步到本地 cache 字段
+      _configCache = r.configs;
+      _writeLog('[reload] device configs: ${r.configs.length} ok, ${r.errors.length} errors');
+      request.response.statusCode = 200;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode({
+        'ok': true,
+        'configCount': r.configs.length,
+        'errorCount': r.errors.length,
+        'reloadedAt': DateTime.now().millisecondsSinceEpoch,
+      }));
+    } catch (e) {
+      request.response.statusCode = 500;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode({ 'ok': false, 'error': e.toString() }));
+    } finally {
+      try { await request.response.close(); } catch (_) {}
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // s1.8: RTT 事件端点
+  //
+  // 4 个端点构成最小可用通道:
+  //   POST /api/canvas/rtt/texture              推纹理 (base64 PNG)
+  //   GET  /api/canvas/rtt/texture/:sid/:did    查纹理
+  //   POST /api/canvas/rtt/input                推屏内输入事件
+  //   GET  /api/canvas/rtt/input                拉取事件队列 (drain)
+  //
+  // s2.1 接入真实 three_d 时, renderer 端在 _captureAndRespond 后调
+  //   POST /texture 存到 _rttTextures, 然后 three_d 渲染循环
+  //   GET /texture/:sid/:did 取最新一帧贴到模型屏幕区域
+  // ─────────────────────────────────────────────────────────
+
+  /// s1.8: 接收 RTT 纹理 (base64 PNG)
+  ///
+  /// body: { sessionId, deviceId, png (base64), width, height, timestamp }
+  Future<void> _handleHttpRttTexture(HttpRequest request) async {
+    try {
+      final body = await utf8.decoder.bind(request).join();
+      final data = jsonDecode(body) as Map<String, dynamic>;
+      final sid = data['sessionId'] as String?;
+      final did = data['deviceId'] as String?;
+      final png = data['png'] as String?;
+      if (sid == null || did == null || png == null || png.isEmpty) {
+        request.response.statusCode = 400;
+        request.response.headers.contentType = ContentType.json;
+        await request.response.write(jsonEncode({
+          'ok': false, 'error': 'sessionId, deviceId, png (non-empty) required',
+        }));
+        return;
+      }
+      final sessionMap = _rttTextures.putIfAbsent(sid, () => {});
+      sessionMap[did] = png;
+      _writeLog('[rtt] texture stored: $sid/$did ${png.length} chars');
+      request.response.statusCode = 200;
+      request.response.headers.contentType = ContentType.json;
+      await request.response.write(jsonEncode({
+        'ok': true,
+        'sessionId': sid,
+        'deviceId': did,
+        'byteLength': png.length,
+        'storedAt': DateTime.now().millisecondsSinceEpoch,
+      }));
+    } catch (e) {
+      request.response.statusCode = 500;
+      request.response.headers.contentType = ContentType.json;
+      await request.response.write(jsonEncode({ 'ok': false, 'error': e.toString() }));
+    } finally {
+      try { await request.response.close(); } catch (_) {}
+    }
+  }
+
+  /// s1.8: 查询 RTT 纹理
+  ///
+  /// path: /api/canvas/rtt/texture/:sessionId/:deviceId
+  Future<void> _handleHttpRttTextureGet(HttpRequest request) async {
+    try {
+      // 解析 path: /api/canvas/rtt/texture/{sid}/{did}
+      final parts = request.uri.path.split('/');
+      // 期望: ['', 'api', 'canvas', 'rtt', 'texture', sid, did]
+      if (parts.length < 7) {
+        request.response.statusCode = 400;
+        request.response.headers.contentType = ContentType.json;
+        await request.response.write(jsonEncode({
+          'ok': false, 'error': 'expected /api/canvas/rtt/texture/{sid}/{did}',
+        }));
+        return;
+      }
+      final sid = parts[5];
+      final did = parts[6];
+      final sessionMap = _rttTextures[sid];
+      final png = sessionMap?[did];
+      if (png == null) {
+        request.response.statusCode = 404;
+        request.response.headers.contentType = ContentType.json;
+        await request.response.write(jsonEncode({
+          'ok': false, 'error': 'no texture cached for $sid/$did',
+          'hint': 'POST /api/canvas/rtt/texture first',
+        }));
+        return;
+      }
+      request.response.statusCode = 200;
+      request.response.headers.contentType = ContentType.json;
+      await request.response.write(jsonEncode({
+        'ok': true,
+        'sessionId': sid,
+        'deviceId': did,
+        'png': png,
+        'byteLength': png.length,
+        'fetchedAt': DateTime.now().millisecondsSinceEpoch,
+      }));
+    } catch (e) {
+      request.response.statusCode = 500;
+      request.response.headers.contentType = ContentType.json;
+      await request.response.write(jsonEncode({ 'ok': false, 'error': e.toString() }));
+    } finally {
+      try { await request.response.close(); } catch (_) {}
+    }
+  }
+
+  /// s1.8: 接收屏内输入事件
+  ///
+  /// body: { sessionId, deviceId, type, u, v, timestamp }
+  /// s3.2c: 收到事件后立即分发到对应 device card 的 handleRttInput,
+  ///   不再只缓存到队列里 — UV→UI 节点反查, 让屏内 UI 真能点击
+  Future<void> _handleHttpRttInput(HttpRequest request) async {
+    try {
+      final body = await utf8.decoder.bind(request).join();
+      final data = jsonDecode(body) as Map<String, dynamic>;
+      final event = RttInputEvent.fromJson(data);
+      if (event.sessionId.isEmpty || event.deviceId.isEmpty) {
+        request.response.statusCode = 400;
+        request.response.headers.contentType = ContentType.json;
+        await request.response.write(jsonEncode({
+          'ok': false, 'error': 'sessionId, deviceId required',
+        }));
+        return;
+      }
+      _rttInputQueue.add(event);
+      // 限制队列长度, 避免 OOM
+      while (_rttInputQueue.length > _rttInputQueueMax) {
+        _rttInputQueue.removeAt(0);
+      }
+
+      // s3.2c: UV→UI 节点反查 — 立即分发到对应 device card
+      //   找到 card 的 GlobalKey, 拿到 state, 调用 handleRttInput
+      final cardKey = _deviceCardKeys[event.deviceId];
+      if (cardKey != null) {
+        final cardState = cardKey.currentState;
+        if (cardState != null) {
+          // 在下一帧分发, 确保 widget 已构建
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            try {
+              cardState.handleRttInput(event.u, event.v, event.type);
+            } catch (e) {
+              _writeLog('[rtt-input] dispatch error: $e');
+            }
+          });
+        }
+      }
+
+      request.response.statusCode = 200;
+      request.response.headers.contentType = ContentType.json;
+      await request.response.write(jsonEncode({
+        'ok': true,
+        'queueSize': _rttInputQueue.length,
+        'dispatched': cardKey != null && cardKey.currentState != null,
+        'receivedAt': DateTime.now().millisecondsSinceEpoch,
+      }));
+    } catch (e) {
+      request.response.statusCode = 500;
+      request.response.headers.contentType = ContentType.json;
+      await request.response.write(jsonEncode({ 'ok': false, 'error': e.toString() }));
+    } finally {
+      try { await request.response.close(); } catch (_) {}
+    }
+  }
+
+  /// s1.8: 拉取并清空输入事件队列
+  ///
+  /// 返回后队列清空, 避免重复处理
+  Future<void> _handleHttpRttInputGet(HttpRequest request) async {
+    try {
+      // 可选过滤参数: ?sessionId=xxx&deviceId=yyy
+      final sid = request.uri.queryParameters['sessionId'];
+      final did = request.uri.queryParameters['deviceId'];
+      final filtered = _rttInputQueue.where((e) {
+        if (sid != null && e.sessionId != sid) return false;
+        if (did != null && e.deviceId != did) return false;
+        return true;
+      }).toList();
+      // drain
+      _rttInputQueue.clear();
+      final events = filtered.map((e) => e.toJson()).toList();
+      request.response.statusCode = 200;
+      request.response.headers.contentType = ContentType.json;
+      await request.response.write(jsonEncode({
+        'ok': true,
+        'count': events.length,
+        'events': events,
+        'drainedAt': DateTime.now().millisecondsSinceEpoch,
+      }));
+    } catch (e) {
+      request.response.statusCode = 500;
+      request.response.headers.contentType = ContentType.json;
+      await request.response.write(jsonEncode({ 'ok': false, 'error': e.toString() }));
+    } finally {
+      try { await request.response.close(); } catch (_) {}
+    }
+  }
+
+  /// s2.1: three_d 场景状态查询
+  ///
+  /// 返回 manager 的 debug info, 包括:
+  ///   - initialized / initError
+  ///   - deviceCount / deviceIds
+  ///   - updateCount (反映 React 端 transformDevice 调用是否被同步)
+  ///   - canvasSize
+  ///
+  /// 用户手测验证 s2.1: 启动画布 → 选设备 → curl 看到这个端点 deviceCount=1
+  Future<void> _handleHttpSceneStatus(HttpRequest request) async {
+    try {
+      final m = _sceneManager;
+      final body = m == null
+          ? {
+              'ok': true,
+              'managerReady': false,
+              'hint': 'ThreeDSceneManager not initialized yet',
+            }
+          : {
+              'ok': true,
+              'managerReady': m.isAvailable,
+              'initError': m.initError,
+              'devices': m.deviceIds,
+              ...m.getDebugInfo(),
+            };
+      request.response.statusCode = 200;
+      request.response.headers.contentType = ContentType.json;
+      await request.response.write(jsonEncode(body));
+    } catch (e) {
+      request.response.statusCode = 500;
+      request.response.headers.contentType = ContentType.json;
+      await request.response.write(jsonEncode({ 'ok': false, 'error': e.toString() }));
+    } finally {
+      try { await request.response.close(); } catch (_) {}
+    }
+  }
+
+  /// s3.2a: 列出所有已注册 screenKey 的 device
+  ///
+  /// React 端用此确认哪些 device 的屏幕有 RTT 能力
+  /// s3.2b 接入时, 会同时返回该 device 屏幕的 current GlobalKey context 是否活跃
+  Future<void> _handleHttpListDeviceScreens(HttpRequest request) async {
+    try {
+      final screens = _deviceScreenKeys.keys.toList();
+      request.response.statusCode = 200;
+      request.response.headers.contentType = ContentType.json;
+      await request.response.write(jsonEncode({
+        'ok': true,
+        'count': screens.length,
+        'devices': screens,
+        // s3.2a hint: 告诉调用方 RTT 通道已经就位, 但截图循环还没接
+        'rttPipelineReady': true,
+        'rttCaptureLoopRunning': false,
+        'rttCaptureLoopHint': 's3.2b will add: per-frame capture from each device screen GlobalKey',
+        'checkedAt': DateTime.now().millisecondsSinceEpoch,
+      }));
+    } catch (e) {
+      request.response.statusCode = 500;
+      request.response.headers.contentType = ContentType.json;
+      await request.response.write(jsonEncode({ 'ok': false, 'error': e.toString() }));
+    } finally {
+      try { await request.response.close(); } catch (_) {}
+    }
+  }
+
+  /// 渲染主体: 根据 _renderMode 分流
+  ///
+  /// - '3d'   : 3D 设备场景
+  /// - 'material' / 'fluent' / 'chart' : 走 PlatformRenderer
+  /// - 默认    : 占位文字
+  Widget _buildBody(BuildContext context) {
+    if (_renderMode == '3d') {
+      return _buildDevice3DScene(context);
+    }
+    if (_uiNode != null) {
+      return PlatformRenderer(_renderMode).build(_uiNode!, context);
+    }
+    return const Center(
+      child: Text(
+        'canvas_preview',
+        style: TextStyle(
+          color: Color(0x44FFFFFF),
+          fontSize: 16,
+          fontWeight: FontWeight.w300,
+        ),
+      ),
+    );
+  }
+
+  /// 3D 设备场景 (当前是状态可视化占位)
+  ///
+  /// 真实 three_d 渲染需要 FFI + WebGL 上下文, 后续接入
+  /// 现在用 2D Stack + Transform 矩阵让 React 端推过来的 transform 真实可见
+  ///
+  /// s1.7: 占位卡片按 group (desktop/mobile/tablet/watch) 区分形状 + 颜色
+  ///   desktop  : 横屏矩形 (16:9 / 16:10 / 4:3)  深蓝
+  ///   mobile   : 竖屏圆角矩形 (9:19.5)         深绿
+  ///   tablet   : 圆角矩形 (3:4 / 4:3)          深紫
+  ///   watch    : 圆形 (正方形)                  深红
+  ///   这样选不同设备预设时, 视觉上一眼能区分,
+  ///   等 s2.1 接入真实 three_d 时, 这个占位会被 GLB 替换
+  Widget _buildDevice3DScene(BuildContext context) {
+    final devices = getActiveDevices();
+    if (devices.isEmpty) {
+      return const Center(
+        child: Text(
+          '3D 设备场景\n从右侧选择设备预设',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: Color(0x66FFFFFF),
+            fontSize: 12,
+            fontWeight: FontWeight.w300,
+            height: 1.6,
+          ),
+        ),
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Stack(
+          children: devices.map((dev) {
+            // s1.7: 按 group + nativeSize 算出占位卡片的宽高
+            final preview = _deviceGroupPreview(dev.modelKey);
+            final baseW = preview.width;
+            final baseH = preview.height;
+            final x = dev.xRatio * constraints.maxWidth;
+            final y = dev.yRatio * constraints.maxHeight;
+            return Positioned(
+              left: x - baseW / 2,
+              top: y - baseH / 2,
+              // s3.2c: AbsorbPointer(absorbing:false) — 不吸收指针事件, 让 hitTest 穿透到子 widget
+              //   这样 RTT 注入的指针事件能通过 hitTest 找到 PlatformRenderer 内的 widget
+              //   同时保留文档意图: 卡片区域不主动拦截鼠标事件 (事件由 RTT 通道注入)
+              child: AbsorbPointer(
+                absorbing: false,
+                child: Transform(
+                  alignment: Alignment.center,
+                  // 真实 three_d 用 rotationX/Y/Z 控制, 这里用 2D 近似
+                  // (Z 是 2D 平面旋转, X/Y 透视用 matrix 模拟)
+                  transform: Matrix4.identity()
+                    ..setEntry(3, 2, 0.001) // 透视
+                    ..rotateX(dev.rotationX)
+                    ..rotateY(dev.rotationY)
+                    ..rotateZ(dev.rotationZ)
+                    ..scale(dev.displayScale),
+                  // s3.2a: 屏内 UI 渲染
+                  //   把当前 session 的 _uiNode 喂给设备卡片
+                  //   用 GlobalKey 包住屏幕区域 — 后续 s3.2b 截图推 RTT 用
+                  // s3.2c: 多 session 设备独立 UI — 优先用 _deviceUiNodes[dev.id]
+                  child: _DevicePlaceholderCard(
+                    key: _deviceCardKey(dev.id),
+                    dev: dev,
+                    baseWidth: baseW,
+                    baseHeight: baseH,
+                    group: preview.group,
+                    borderRadius: preview.radius,
+                    isCircle: preview.isCircle,
+                    fillColor: preview.fillColor,
+                    uiNode: _deviceUiNodes[dev.id] ?? _uiNode,
+                    renderMode: _renderMode,
+                    screenKey: _deviceScreenKey(dev.id),
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        );
+      },
+    );
+  }
+
+  /// s3.2a: 为每个 device 维护一个稳定的 screenKey
+  ///
+  /// - 同一 device.id 每次返回同一个 GlobalKey (WeakMap-like)
+  /// - device 移除时调 _releaseDeviceScreenKey 回收 (s3.2a 暂不实现)
+  GlobalKey? _deviceScreenKey(String deviceId) {
+    return _deviceScreenKeys.putIfAbsent(deviceId, () => GlobalKey());
+  }
+
+  /// s3.2c: 为每个 device 维护一个 cardState 的 typed GlobalKey
+  ///
+  /// - 同一 device.id 每次返回同一个 GlobalKey<_DevicePlaceholderCardState>
+  /// - 用于在 _handleHttpRttInput 中拿到 card state 并调用 handleRttInput
+  GlobalKey<_DevicePlaceholderCardState> _deviceCardKey(String deviceId) {
+    return _deviceCardKeys.putIfAbsent(deviceId, () => GlobalKey<_DevicePlaceholderCardState>());
+  }
+
+  /// s1.7: 根据 modelKey 算出占位卡片的形状/颜色
+  ///
+  /// 优先从 _configCache 读 group + nativeSize, 找不到时用 'desktop' fallback
+  _DeviceGroupPreview _deviceGroupPreview(String modelKey) {
+    final cfg = _configCache?[modelKey];
+    final group = cfg?.group ?? 'desktop';
+    final nw = (cfg?.nativeWidth ?? 0).toDouble();
+    final nh = (cfg?.nativeHeight ?? 0).toDouble();
+    // 归一化到 base = 200, 保持 nativeSize 比例
+    double w, h;
+    if (nw > 0 && nh > 0) {
+      if (nw >= nh) {
+        w = 200;
+        h = 200 * (nh / nw);
+      } else {
+        h = 200;
+        w = 200 * (nw / nh);
+      }
+    } else {
+      w = 200; h = 120; // 无 nativeSize 时的兜底
+    }
+    switch (group) {
+      case 'mobile':
+        return _DeviceGroupPreview(
+          group: 'mobile',
+          width: w, height: h,
+          radius: 18, isCircle: false,
+          fillColor: const Color(0x88204a3a),
+        );
+      case 'tablet':
+        return _DeviceGroupPreview(
+          group: 'tablet',
+          width: w, height: h,
+          radius: 16, isCircle: false,
+          fillColor: const Color(0x88302a4a),
+        );
+      case 'watch':
+        return _DeviceGroupPreview(
+          group: 'watch',
+          width: 140, height: 140,
+          radius: 0, isCircle: true,
+          fillColor: const Color(0x884a2a2a),
+        );
+      case 'desktop':
+      default:
+        return _DeviceGroupPreview(
+          group: 'desktop',
+          width: w, height: h,
+          radius: 8, isCircle: false,
+          fillColor: const Color(0x882a2a3a),
+        );
+    }
+  }
+}
+
+/// s1.7: 占位卡片的形状参数
+class _DeviceGroupPreview {
+  final String group;
+  final double width;
+  final double height;
+  final double radius;
+  final bool isCircle;
+  final Color fillColor;
+
+  const _DeviceGroupPreview({
+    required this.group,
+    required this.width,
+    required this.height,
+    required this.radius,
+    required this.isCircle,
+    required this.fillColor,
+  });
+}
+
+/// s1.7: 占位设备卡片
+///
+/// 区分横屏/竖屏/圆形 + 选中高亮 + modelKey 文字
+/// s3.2a: 屏内 UI 渲染 — 在卡片内 Stack 一层 PlatformRenderer 渲染 React 推过来的 _uiNode
+///   屏幕区域用 RepaintBoundary 包, 后续 s3.2b 接入: 截图 → 推 s1.8 /texture 端点
+/// s3.2c: UV→UI 节点反查 — handleRttInput 方法接收 RTT 事件, 转换 UV 到本地坐标,
+///   用 Flutter hitTest 找到被点击的 widget, 触发其 onTap/onPressed
+class _DevicePlaceholderCard extends StatefulWidget {
+  final DeviceInstance dev;
+  final double baseWidth;
+  final double baseHeight;
+  final String group;
+  final double borderRadius;
+  final bool isCircle;
+  final Color fillColor;
+  /// s3.2a: 屏内 UI 节点 (null 时只显示 modelKey 文字)
+  final UiNode? uiNode;
+  /// s3.2a: 屏内 PlatformRenderer 模式 (默认 'material')
+  final String renderMode;
+  /// s3.2a: 屏幕区域 GlobalKey — 后续 s3.2b 用来截图推 RTT
+  final GlobalKey? screenKey;
+
+  const _DevicePlaceholderCard({
+    required this.dev,
+    required this.baseWidth,
+    required this.baseHeight,
+    required this.group,
+    required this.borderRadius,
+    required this.isCircle,
+    required this.fillColor,
+    this.uiNode,
+    this.renderMode = 'material',
+    this.screenKey,
+  });
+
+  @override
+  State<_DevicePlaceholderCard> createState() => _DevicePlaceholderCardState();
+}
+
+class _DevicePlaceholderCardState extends State<_DevicePlaceholderCard> {
+  /// s3.2c: 接收 RTT 输入事件并分发到 PlatformRenderer 内的 widget
+  ///
+  /// u/v 是屏幕归一化坐标 (0~1), type 是事件类型
+  /// 用全局坐标注入合成指针事件到 Flutter 手势系统,
+  /// Flutter 内置的 hitTest + gesture arena 会自动路由到正确的 GestureDetector/InkWell 等.
+  /// 不再手动遍历 render tree 或字符串匹配 runtimeType.
+  void handleRttInput(double u, double v, String type) {
+    final key = widget.screenKey;
+    if (key == null) return;
+    final ctx = key.currentContext;
+    if (ctx == null) return;
+    final box = ctx.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize) return;
+
+    final size = box.size;
+    final localX = u * size.width;
+    final localY = v * size.height;
+    final localPos = Offset(localX, localY);
+
+    // s3.2c: 用全局坐标注入指针事件, 让 Flutter 手势系统自动路由
+    _injectPointerEvent(box, localPos, type);
+
+    _writeLog('[rtt-input] dispatched to device=${widget.dev.id} u=$u v=$v type=$type local=($localX,$localY)');
+  }
+
+  /// s3.2c: 注入合成指针事件到 Flutter 手势系统
+  ///
+  /// 通过 GestureBinding.handlePointerEvent 注入 PointerDown/PointerUp,
+  /// Flutter 内置的 hitTest + gesture arena 会自动路由到正确的 GestureDetector/InkWell 等.
+  ///
+  /// 支持事件类型:
+  ///   - tap:        PointerDown → PointerUp (50ms 间隔)
+  ///   - doubleTap:  两次 tap (间隔 300ms)
+  ///   - longPress:  PointerDown → 等 500ms → PointerUp (触发长按手势)
+  ///   - panStart:   PointerDown (不立即 up, 等待后续 panMove/panEnd)
+  ///   - panMove:    PointerMove (需在 panStart 之后)
+  ///   - panEnd:     PointerUp (结束 pan 序列)
+  ///
+  /// 注意: position 和 localPosition 都使用全局坐标 — 因为事件注入在 GestureBinding 层面,
+  ///   Flutter 的 hitTest 从根节点开始, 使用 position 查找目标, 再自动转换到各层 local 坐标.
+  void _injectPointerEvent(RenderBox box, Offset localPosition, String type) {
+    try {
+      final globalPos = box.localToGlobal(localPosition);
+      final now = DateTime.now().millisecondsSinceEpoch;
+
+      switch (type) {
+        case 'tap':
+          _emitTap(globalPos, now, pointer: 0);
+          break;
+        case 'doubleTap':
+          _emitTap(globalPos, now, pointer: 0);
+          Future.delayed(const Duration(milliseconds: 300), () {
+            _emitTap(globalPos, DateTime.now().millisecondsSinceEpoch, pointer: 1);
+          });
+          break;
+        case 'longPress':
+          // 长按: PointerDown → 等 500ms → PointerUp
+          // Flutter 的 LongPressGestureRecognizer 默认 duration 是 500ms
+          GestureBinding.instance.handlePointerEvent(PointerDownEvent(
+            position: globalPos,
+            localPosition: globalPos,
+            timeStamp: Duration(milliseconds: now),
+            pointer: 0,
+            kind: PointerDeviceKind.touch,
+          ));
+          Future.delayed(const Duration(milliseconds: 550), () {
+            GestureBinding.instance.handlePointerEvent(PointerUpEvent(
+              position: globalPos,
+              localPosition: globalPos,
+              timeStamp: Duration(milliseconds: DateTime.now().millisecondsSinceEpoch),
+              pointer: 0,
+              kind: PointerDeviceKind.touch,
+            ));
+          });
+          break;
+        case 'panStart':
+          GestureBinding.instance.handlePointerEvent(PointerDownEvent(
+            position: globalPos,
+            localPosition: globalPos,
+            timeStamp: Duration(milliseconds: now),
+            pointer: 0,
+            kind: PointerDeviceKind.touch,
+          ));
+          break;
+        case 'panMove':
+          GestureBinding.instance.handlePointerEvent(PointerMoveEvent(
+            position: globalPos,
+            localPosition: globalPos,
+            timeStamp: Duration(milliseconds: now),
+            pointer: 0,
+            kind: PointerDeviceKind.touch,
+          ));
+          break;
+        case 'panEnd':
+          GestureBinding.instance.handlePointerEvent(PointerUpEvent(
+            position: globalPos,
+            localPosition: globalPos,
+            timeStamp: Duration(milliseconds: now),
+            pointer: 0,
+            kind: PointerDeviceKind.touch,
+          ));
+          break;
+      }
+
+      _writeLog('[rtt-input] injected $type at global=(${globalPos.dx.toStringAsFixed(1)},${globalPos.dy.toStringAsFixed(1)})');
+    } catch (e) {
+      _writeLog('[rtt-input] injectPointerEvent error: $e');
+    }
+  }
+
+  /// s3.2c: 发送一次 tap (PointerDown → PointerUp)
+  void _emitTap(Offset globalPos, int nowMs, {int pointer = 0}) {
+    GestureBinding.instance.handlePointerEvent(PointerDownEvent(
+      position: globalPos,
+      localPosition: globalPos,
+      timeStamp: Duration(milliseconds: nowMs),
+      pointer: pointer,
+      kind: PointerDeviceKind.touch,
+    ));
+    GestureBinding.instance.handlePointerEvent(PointerUpEvent(
+      position: globalPos,
+      localPosition: globalPos,
+      timeStamp: Duration(milliseconds: nowMs + 50),
+      pointer: pointer,
+      kind: PointerDeviceKind.touch,
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dev = widget.dev;
+    final baseWidth = widget.baseWidth;
+    final baseHeight = widget.baseHeight;
+    final group = widget.group;
+    final borderRadius = widget.borderRadius;
+    final isCircle = widget.isCircle;
+    final fillColor = widget.fillColor;
+    final uiNode = widget.uiNode;
+    final renderMode = widget.renderMode;
+    final screenKey = widget.screenKey;
+
+    final borderColor = dev.isSelected
+        ? const Color(0xFFFF6B6B)
+        : const Color(0x44FFFFFF);
+    return Container(
+      width: baseWidth,
+      height: baseHeight,
+      decoration: BoxDecoration(
+        color: fillColor,
+        borderRadius: isCircle
+            ? null
+            : BorderRadius.circular(borderRadius),
+        shape: isCircle ? BoxShape.circle : BoxShape.rectangle,
+        border: Border.all(
+          color: borderColor,
+          width: dev.isSelected ? 2 : 1,
+        ),
+        boxShadow: [
+          if (dev.isSelected)
+            BoxShadow(
+              color: const Color(0x88FF6B6B),
+              blurRadius: 16,
+              spreadRadius: 1,
+            ),
+        ],
+      ),
+      alignment: Alignment.center,
+      child: Padding(
+        padding: EdgeInsets.all(isCircle ? 8 : 12),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // s1.7: 设备类型小标签, 一眼能看出 group
+            Text(
+              group.toUpperCase(),
+              style: TextStyle(
+                color: const Color(0xFFEEEEEE).withValues(alpha: 0.55),
+                fontSize: isCircle ? 8 : 9,
+                fontWeight: FontWeight.w300,
+                letterSpacing: 1.0,
+              ),
+            ),
+            SizedBox(height: isCircle ? 2 : 4),
+            // s3.2a: 屏内 UI 渲染 — 同一个 _uiNode 在每个设备屏幕里都显示
+            //   简化版: 全部设备共享 React 推过来的当前 UI
+            //   进阶版 (s3.2b): 每个设备有独立的 sessionId, 显示不同 UI
+            if (uiNode != null)
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: isCircle
+                      ? BorderRadius.circular(999)
+                      : BorderRadius.circular(borderRadius * 0.4),
+                  // s3.2a: 屏幕区域 RepaintBoundary — 后续 s3.2b 用来截图
+                  child: RepaintBoundary(
+                    key: screenKey,
+                    child: Container(
+                      color: const Color(0xFFFFFFFF),
+                      child: PlatformRenderer(renderMode).build(uiNode, context),
+                    ),
+                  ),
+                ),
+              )
+            else
+              Text(
+                dev.modelKey,
+                style: TextStyle(
+                  color: const Color(0xFFEEEEEE),
+                  fontSize: isCircle ? 9 : 10,
+                  fontWeight: FontWeight.w500,
+                ),
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
