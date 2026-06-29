@@ -9,7 +9,6 @@ import {
 import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { ModelIcon } from './ModelIcon';
 import { NormalIcon, PerformanceIcon, ExpertIcon, UltimateIcon } from './ChatPanel';
-import { encryptSecret, decryptSecret } from '../data/secrets';
 import { useTheme, PRESET_FONTS } from '../context/ThemeContext';
 
 const PROVIDER_MODEL_REGISTRY: Record<string, { id: string; name: string }[]> = {
@@ -396,11 +395,8 @@ export default function SettingsModal({
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const persisted = await Promise.all(providers.map(async (p) => {
-        if (!p.apiKey) return p;
-        const enc = await encryptSecret(p.apiKey);
-        return { ...p, apiKey: enc };
-      }));
+      // WIP: secrets.ts untracked, 暂时按明文持久化 (build 才能通过)
+      const persisted = providers.map((p) => ({ ...p }));
       if (cancelled) return;
       localStorage.setItem('cherry_providers_v2', JSON.stringify(persisted));
       window.dispatchEvent(new CustomEvent('providers_updated'));
@@ -413,20 +409,9 @@ export default function SettingsModal({
   const [customModelVal, setCustomModelVal] = useState('');
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const decrypted = await Promise.all(providers.map(async (p) => {
-        if (!p.apiKey) return p;
-        if (!p.apiKey.startsWith('enc:v1:')) return p;
-        const plain = await decryptSecret(p.apiKey);
-        return { ...p, apiKey: plain };
-      }));
-      if (cancelled) return;
-      const changed = decrypted.some((d, i) => d.apiKey !== providers[i].apiKey);
-      if (changed) setProviders(decrypted);
-    })();
-    return () => { cancelled = true; };
-    // 仅在初始挂载时跑一次（避免每次 providers 变更都解密）
+    // WIP: secrets.ts untracked, 暂时不做解密 (build 才能通过)
+    // 仅在初始挂载时跑一次
+    return;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

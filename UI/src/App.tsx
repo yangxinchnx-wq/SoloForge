@@ -14,7 +14,6 @@ import SettingsModal from './components/SettingsModal';
 import StatsModal from './components/StatsModal';
 import FloatingEditorWindow from './components/FloatingEditorWindow';
 import AgentSettingsModal from './components/AgentSettingsModal';
-import { mockFileContents } from './data/mockFiles';
 import { SecondaryModel } from './types';
 import { useTheme, THEME_PRESETS } from './context/ThemeContext';
 import { X } from 'lucide-react';
@@ -66,14 +65,14 @@ export default function App() {
         if (saved) cache = JSON.parse(saved);
       } catch (e) {}
     }
-    return cache[file] !== undefined ? cache[file] : (mockFileContents[file] || '');
+    return cache[file] !== undefined ? cache[file] : '';
   });
 
   // Synchronous state adjustment when selectedFile changes to prevent intermediate mismatched frames
   const [prevSelectedFile, setPrevSelectedFile] = useState(selectedFile);
   if (selectedFile !== prevSelectedFile) {
     setPrevSelectedFile(selectedFile);
-    const content = fileCache[selectedFile] !== undefined ? fileCache[selectedFile] : (mockFileContents[selectedFile] || '');
+    const content = fileCache[selectedFile] !== undefined ? fileCache[selectedFile] : '';
     setEditorContent(content);
   }
 
@@ -275,7 +274,7 @@ export default function App() {
     if (isFont) {
       const filename = file.substring(file.lastIndexOf('/') + 1);
       const fontNameDisplay = filename.replace(/\.[^/.]+$/, "") + " (Local)";
-      const rawContent = fileCacheRef.current[file] || mockFileContents[file] || '';
+      const rawContent = fileCacheRef.current[file] || '';
       
       // Seed base64 / dataUrl if not already a data uri
       const fontUrl = rawContent.startsWith('data:') 
@@ -287,7 +286,7 @@ export default function App() {
       setToastMsg(`已自动从资源管理器加载本地字体「${fontNameDisplay}」并设为激活！`);
     }
 
-    const content = fileCacheRef.current[file] !== undefined ? fileCacheRef.current[file] : (mockFileContents[file] || '');
+    const content = fileCacheRef.current[file] !== undefined ? fileCacheRef.current[file] : '';
     if (typeof window !== 'undefined') {
       try {
         const channel = new BroadcastChannel('soloforge-editor-sync-channel');
