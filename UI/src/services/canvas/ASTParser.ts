@@ -1,9 +1,56 @@
+// Streaming methods delegate to StreamingASTParser (universal JSON payload stream).
+// 旧 parse() API 仍工作,新 createStream/feedChunk/endStream/resetStream/parseUniversal/bestEffortRoot
+// 全部可用,作为统一 facade.
+import type { StreamState, UniversalNode } from './UniversalAST';
+import {
+  createStreamState,
+  feedChunk as streamFeedChunk,
+  markDone as streamMarkDone,
+  resetStream as streamResetStream,
+  parseOnce as streamParseOnce,
+  bestEffortRoot as streamBestEffortRoot,
+} from './StreamingASTParser';
+
 export class ASTParser {
   parse(code: string, platform: 'material' | 'fluent' | 'chart'): string {
     const detectedPlatform = this.detectPlatform(code) || platform;
     const ast = this.parseWidget(code, detectedPlatform);
     return JSON.stringify(ast, null, 2);
   }
+
+  // ─── Streaming facade (universal LLM JSON) ───
+
+  /** 创建初始流状态 */
+  createStream(): StreamState {
+    return createStreamState();
+  }
+
+  /** 喂入一个 chunk, 返回新 state (纯函数) */
+  feedChunk(state: StreamState, chunk: string): StreamState {
+    return streamFeedChunk(state, chunk);
+  }
+
+  /** 标记流结束 */
+  endStream(state: StreamState): StreamState {
+    return streamMarkDone(state);
+  }
+
+  /** 重置流 */
+  resetStream(): StreamState {
+    return streamResetStream();
+  }
+
+  /** 单次解析 (非流式) */
+  parseUniversal(raw: string): { payload: import('./UniversalAST').PreviewPayload | null; errors: string[] } {
+    return streamParseOnce(raw);
+  }
+
+  /** 从 stream state 中尽量提取 root (半成品也行) */
+  bestEffortRoot(state: StreamState): UniversalNode | undefined {
+    return streamBestEffortRoot(state.payload);
+  }
+
+  // ─── 旧版 Flutter widget 解析 (private) ───
 
   private detectPlatform(code: string): 'material' | 'fluent' | 'chart' | null {
     const materialPatterns = /Scaffold|MaterialApp|ElevatedButton|AppBar|FloatingActionButton|Theme\(/;
