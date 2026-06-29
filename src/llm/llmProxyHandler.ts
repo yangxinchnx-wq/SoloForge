@@ -1,0 +1,246 @@
+/**
+ * llmProxyHandler.ts — /api/llm/stream HTTP 处理器
+ *
+ * 协议：
+ *   POST /api/llm/stream
+ *   Headers: Content-Type: application/json, X-SoloForge-Token: <token> (可选)
+ *   Body: {
+ *     providerId?: string,                // ← 新增: 从金库取 key/baseUrl
+ *     systemPrompt?, userGoal, history?, model?, temperature?, maxTokens?, jsonMode?,
+ *     baseUrl?: string,                   // ← 仅当 providerId 缺失且不走金库时使用
+ *     apiKey?: string,                    // ← 不推荐, 但兼容旧版前端直接传
+ *   }
+ *
+ *   Response: text/event-stream
+ *     data: {"delta":"hello","done":false}\n\n
+ *     data: {"delta":"","done":true}\n\n
+ *     (or) data: {"error":"...","done":true}\n\n
+ *
+ * 优先级 (2026-06-27):
+ *   1. providerId → 从 apiKeyVault 取 baseUrl + apiKey
+ *   2. 顶层 baseUrl + apiKey (兼容老 path, 仍然能工作)
+ *   3. 环境变量 SOLOFORGE_LLM_* (旧默认)
+ *
+ * 为什么这样设计：
+ *   - 前端永远不持有 apiKey 明文 (走 providerId 分支)
+ *   - SSE chunk 格式与 UI 端 OpenAICompatibleProvider 兼容
+ *   - 简单的 token 校验（env 配了才校验）
+ *   - 错误以 SSE 形式推回，前端能看到
+ */
+
+import type { ServerResponse } from 'http';
+import { streamOpenAIChat } from './openaiStreamClient';
+import { getLLMProxyConfig, isLLMProxyReady, describeLLMProxyConfig } from './llmConfig';
+import { apiKeyVault } from '../security/apiKeyVault';
+import { logger } from '../core/logger';
+import {
+  llmStreamTotal,
+  llmStreamLatency,
+  llmActiveStreams,
+  llmStreamChunks,
+  llmStreamChars,
+} from '../observability/metrics';
+import { getDefaultSentry } from '../observability/sentryAdapter';
+
+export interface LLMProxyRequest {
+  providerId?: string;
+  systemPrompt?: string;
+  userGoal: string;
+  history?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+  jsonMode?: boolean;
+  baseUrl?: string;
+  apiKey?: string;
+}
+
+interface HandleResult {
+  status: number;
+  headers: Record<string, string>;
+  body: any;
+  /** 如果是 SSE 模式，此处会被 streamLLM 接管，handler 不会返回 body */
+  stream?: true;
+}
+
+/**
+ * 顶层处理器（ApiServer.route 调用）
+ */
+export async function handleLLMStreamProxy(
+  req: { headers: Record<string, string | string[] | undefined>; on?: any },
+  res: ServerResponse,
+  body: any,
+): Promise<HandleResult> {
+  // 简易 token 校验 (优先, 即使 provider 未配置也要校验)
+  const cfg = getLLMProxyConfig();
+  if (cfg.apiToken.length > 0) {
+    const provided = String(req.headers['x-soloforge-token'] ?? '');
+    if (provided !== cfg.apiToken) {
+      return { status: 401, headers: {}, body: { error: 'Invalid X-SoloForge-Token' } };
+    }
+  }
+
+  // 参数校验
+  const parsed = parseRequestBody(body);
+  if ('error' in parsed) {
+    return { status: 400, headers: {}, body: { error: parsed.error } };
+  }
+
+  // 解析 baseUrl / apiKey (三路优先级)
+  let resolvedBaseUrl = '';
+  let resolvedApiKey = '';
+  let resolvedProvider = 'env';
+
+  if (parsed.providerId) {
+    const got = await apiKeyVault.getKey(parsed.providerId);
+    if (!got) {
+      return {
+        status: 404,
+        headers: {},
+        body: {
+          error: `provider '${parsed.providerId}' has no key in vault. ` +
+                 `请在「设置 → 模型」中配置此 provider 的 API Key, 或设置环境变量 ` +
+                 `${(parsed.providerId || '').toUpperCase().replace(/-/g, '_')}_API_KEY 后再试。`,
+          providerId: parsed.providerId,
+        },
+      };
+    }
+    resolvedBaseUrl = got.baseUrl;
+    resolvedApiKey = got.apiKey;
+    resolvedProvider = `${got.source}:${parsed.providerId}`;
+    if (!resolvedBaseUrl) {
+      return {
+        status: 400,
+        headers: {},
+        body: { error: `provider '${parsed.providerId}' has no baseUrl in vault` },
+      };
+    }
+  } else if (parsed.baseUrl && parsed.apiKey) {
+    // 兼容旧前端直接传
+    resolvedBaseUrl = parsed.baseUrl;
+    resolvedApiKey = parsed.apiKey;
+    resolvedProvider = 'inline';
+  } else if (isLLMProxyReady()) {
+    resolvedBaseUrl = cfg.baseUrl;
+    resolvedApiKey = cfg.apiKey;
+    resolvedProvider = `env:${cfg.provider}`;
+  } else {
+    return {
+      status: 503,
+      headers: {},
+      body: {
+        error: 'LLM proxy not configured. Either provide {providerId} (recommended, uses vault), or {baseUrl+apiKey} inline, or set SOLOFORGE_LLM_API_KEY env var.',
+        config: describeLLMProxyConfig(),
+      },
+    };
+  }
+
+  // 接管 SSE 写入
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.write(`: SoloForge LLM proxy ok (${resolvedProvider})\n\n`);
+
+  // 监听客户端断开（route 调用场景可能没有 req.on）
+  let clientClosed = false;
+  if (typeof req.on === 'function') {
+    req.on('close', () => { clientClosed = true; });
+  }
+
+  // 准备消息列表
+  const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
+  if (parsed.systemPrompt) messages.push({ role: 'system', content: parsed.systemPrompt });
+  if (parsed.history) {
+    for (const m of parsed.history) {
+      if (m && (m.role === 'user' || m.role === 'assistant' || m.role === 'system') && typeof m.content === 'string') {
+        messages.push({ role: m.role, content: m.content });
+      }
+    }
+  }
+  messages.push({ role: 'user', content: parsed.userGoal });
+
+  llmActiveStreams.inc({ provider: resolvedProvider });
+  const t0 = Date.now();
+  let result: 'success' | 'error' | 'cancelled' = 'success';
+
+  try {
+    let chunkCount = 0;
+    let totalChars = 0;
+    for await (const chunk of streamOpenAIChat({
+      baseUrl: resolvedBaseUrl,
+      apiKey: resolvedApiKey,
+      model: parsed.model,
+      messages,
+      temperature: parsed.temperature,
+      maxTokens: parsed.maxTokens,
+      jsonMode: parsed.jsonMode,
+    })) {
+      if (clientClosed) {
+        logger.info('LLMProxy', `client disconnected after ${chunkCount} chunks`);
+        result = 'cancelled';
+        break;
+      }
+      if (chunk.done) {
+        res.write(`data: ${JSON.stringify({ delta: '', done: true })}\n\n`);
+        break;
+      }
+      chunkCount++;
+      totalChars += chunk.delta.length;
+      res.write(`data: ${JSON.stringify({ delta: chunk.delta, done: false })}\n\n`);
+    }
+    if (!clientClosed) {
+      res.write(`: done ${chunkCount} chunks, ${totalChars} chars in ${Date.now() - t0}ms\n\n`);
+      res.end();
+    }
+    logger.info('LLMProxy', `stream complete [${resolvedProvider}]: ${chunkCount} chunks, ${totalChars} chars, ${Date.now() - t0}ms`);
+  } catch (err) {
+    result = 'error';
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error('LLMProxy', `stream error [${resolvedProvider}]: ${msg}`);
+    getDefaultSentry().captureException(err instanceof Error ? err : new Error(msg), { endpoint: '/api/llm/stream', provider: resolvedProvider });
+    if (!clientClosed) {
+      try {
+        res.write(`data: ${JSON.stringify({ error: msg, done: true })}\n\n`);
+        res.end();
+      } catch { /* connection lost */ }
+    }
+  } finally {
+    // 观测埋点（P3）
+    const dur = Date.now() - t0;
+    llmStreamTotal.inc({ provider: resolvedProvider, result });
+    llmStreamLatency.observe(dur, { provider: resolvedProvider, result });
+    llmActiveStreams.dec({ provider: resolvedProvider });
+  }
+  return { status: 200, headers: {}, body: null, stream: true };
+}
+
+function parseRequestBody(body: any): LLMProxyRequest | { error: string } {
+  if (!body || typeof body !== 'object') {
+    return { error: 'Body must be a JSON object' };
+  }
+  if (typeof body.userGoal !== 'string' || body.userGoal.length === 0) {
+    return { error: 'userGoal is required (string)' };
+  }
+  return {
+    providerId: typeof body.providerId === 'string' ? body.providerId : undefined,
+    systemPrompt: typeof body.systemPrompt === 'string' ? body.systemPrompt : undefined,
+    userGoal: body.userGoal,
+    history: Array.isArray(body.history) ? body.history : undefined,
+    model: typeof body.model === 'string' ? body.model : undefined,
+    temperature: typeof body.temperature === 'number' ? body.temperature : undefined,
+    maxTokens: typeof body.maxTokens === 'number' ? body.maxTokens : undefined,
+    jsonMode: body.jsonMode === true,
+    baseUrl: typeof body.baseUrl === 'string' ? body.baseUrl : undefined,
+    apiKey: typeof body.apiKey === 'string' ? body.apiKey : undefined,
+  };
+}
+
+/**
+ * GET /api/llm/config — 返回脱敏配置（供前端判断走哪个 provider）
+ */
+export function handleLLMConfigGet(): HandleResult {
+  return { status: 200, headers: {}, body: describeLLMProxyConfig() };
+}
