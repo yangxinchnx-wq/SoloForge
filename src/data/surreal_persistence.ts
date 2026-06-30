@@ -207,14 +207,6 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
   }
 
   /**
-   * 检查数据库是否已准备好
-   * 解决文档中提到的 isReady 方法缺失问题
-   */
-  public isReady(): boolean {
-    return this.connected && this.surreal !== null;
-  }
-
-  /**
    * 异步等待数据库就绪
    */
   public async waitUntilReady(timeoutMs: number = 5000): Promise<boolean> {
