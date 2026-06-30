@@ -28,7 +28,7 @@ export class TransactionKernel {
 
   public commitTransaction(patches: StatePatch[], expectedVersion: number): boolean {
     if (this.currentSnapshot.version !== expectedVersion) {
-      console.error("[SYS_TRANSACTION] 版本冲突! 预期: " + expectedVersion + ", 当前: " + this.currentSnapshot.version);
+      console.error("[SYS_TRANSACTION] Ã§ÂÂÃ¦ÂÂ¬Ã¥ÂÂ²Ã§ÂªÂ! Ã©Â¢ÂÃ¦ÂÂ: " + expectedVersion + ", Ã¥Â½ÂÃ¥ÂÂ: " + this.currentSnapshot.version);
       return false;
     }
 
@@ -49,23 +49,27 @@ export class TransactionKernel {
         data: newData
       };
 
-      console.log("[SYS_TRANSACTION] 事务提交成功. 新版本: " + this.currentSnapshot.version);
+      console.log("[SYS_TRANSACTION] Ã¤ÂºÂÃ¥ÂÂ¡Ã¦ÂÂÃ¤ÂºÂ¤Ã¦ÂÂÃ¥ÂÂ. Ã¦ÂÂ°Ã§ÂÂÃ¦ÂÂ¬: " + this.currentSnapshot.version);
       return true;
     } catch (err) {
-      console.error("[SYS_TRANSACTION] 事务应用失败，触发自动紧急回滚!", err);
-      return this.rollback();
+      const rolled = this.rollback();
+      // Patch list malformed (e.g. undefined entry, missing targetKey). Do NOT silently
+      // roll back and report success. Roll back state, then surface the error to the caller.
+      const reason = err instanceof Error ? err.message : String(err);
+      console.error("[SYS_TRANSACTION] patch apply failed, rolled=" + rolled + ", reason=" + reason);
+      throw new Error("ERR_TX_PATCH_APPLY_FAILED: " + reason);
     }
   }
 
   public rollback(): boolean {
     const previousSnapshot = this.rollbackStack.pop();
     if (!previousSnapshot) {
-      console.error("[CRITICAL_SYS] 回滚失败: 历史备份栈已空!");
+      console.error("[CRITICAL_SYS] Ã¥ÂÂÃ¦Â»ÂÃ¥Â¤Â±Ã¨Â´Â¥: Ã¥ÂÂÃ¥ÂÂ²Ã¥Â¤ÂÃ¤Â»Â½Ã¦Â ÂÃ¥Â·Â²Ã§Â©Âº!");
       throw new Error("SYS001: Rollback stack underflow");
     }
 
     this.currentSnapshot = previousSnapshot;
-    console.warn("[SYS_TRANSACTION] 💥 触发安全机制，系统已原子化回滚至版本: " + this.currentSnapshot.version);
+    console.warn("[SYS_TRANSACTION] Ã°ÂÂÂ¥ Ã¨Â§Â¦Ã¥ÂÂÃ¥Â®ÂÃ¥ÂÂ¨Ã¦ÂÂºÃ¥ÂÂ¶Ã¯Â¼ÂÃ§Â³Â»Ã§Â»ÂÃ¥Â·Â²Ã¥ÂÂÃ¥Â­ÂÃ¥ÂÂÃ¥ÂÂÃ¦Â»ÂÃ¨ÂÂ³Ã§ÂÂÃ¦ÂÂ¬: " + this.currentSnapshot.version);
     return true;
   }
 }

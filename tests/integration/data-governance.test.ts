@@ -1,106 +1,106 @@
-// ─────────────────────────────────────────────────────────────────
+// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 // SoloForge Acceptance Test Harness: Data Governance & Rollback
 // Path: tests/integration/data-governance.test.ts
-// ─────────────────────────────────────────────────────────────────
+// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 import { describe, it, expect } from 'vitest';
-// 100% 精准对齐 delete_protection.ts 物理导出的接口与类名
+// 100% ç²¾åå¯¹é½ delete_protection.ts ç©çå¯¼åºçæ¥å£ä¸ç±»å
 import { DeleteProtection, DeleteCommand } from '../../src/data/delete_protection';
-// 100% 精准对齐 transaction_kernel.ts 物理导出的接口与类名
+// 100% ç²¾åå¯¹é½ transaction_kernel.ts ç©çå¯¼åºçæ¥å£ä¸ç±»å
 import { TransactionKernel, StatePatch } from '../../src/data/transaction_kernel';
 
-describe('SoloForge Layer 3 数据治理阻断与原子内核事务自愈集成验收测试套件', () => {
+describe('SoloForge Layer 3 æ°æ®æ²»çé»æ­ä¸åå­åæ ¸äºå¡èªæéæéªæ¶æµè¯å¥ä»¶', () => {
 
-  it('验收点 1：[不可变宪法硬拦截] 当任意智能体企图物理 drop 或篡改核心宪法资产时，治理拦截器必须硬性阻断，拒绝物理抹除', async () => {
-    // 物理实例化本地原装类
+  it('éªæ¶ç¹ 1ï¼[ä¸å¯åå®ªæ³ç¡¬æ¦æª] å½ä»»ææºè½ä½ä¼å¾ç©ç drop æç¯¡æ¹æ ¸å¿å®ªæ³èµäº§æ¶ï¼æ²»çæ¦æªå¨å¿é¡»ç¡¬æ§é»æ­ï¼æç»ç©çæ¹é¤', async () => {
+    // ç©çå®ä¾åæ¬å°åè£ç±»
     const interceptor = new DeleteProtection();
 
-    // 严密构造完全符合 DeleteCommand 契约的数据荷载
+    // ä¸¥å¯æé å®å¨ç¬¦å DeleteCommand å¥çº¦çæ°æ®è·è½½
     const command: DeleteCommand = {
-      targetId: 'constitution_global', // 触发 'constitution_' 硬拦截前缀
+      targetId: 'constitution_global', // è§¦å 'constitution_' ç¡¬æ¦æªåç¼
       contentType: 'governance_rule',
       requestedBy: 'rogue_agent_xyz'
     };
 
     const mockLiveExtractedData = { version: 3, content: "Sovereign Rules" };
 
-    // 执行真实的拦截方法
+    // æ§è¡çå®çæ¦æªæ¹æ³
     const result = await interceptor.interceptAndExecute(command, mockLiveExtractedData);
 
-    // 断言：系统必须阻断物理删除，返回 success = false 且 action = 'BLOCKED'
+    // æ­è¨ï¼ç³»ç»å¿é¡»é»æ­ç©çå é¤ï¼è¿å success = false ä¸ action = 'BLOCKED'
     expect(result.success).toBe(false);
     expect(result.action).toBe('BLOCKED');
     
-    // 断言：硬拦截请求绝不能漏进软删除冷备回收站中
+    // æ­è¨ï¼ç¡¬æ¦æªè¯·æ±ç»ä¸è½æ¼è¿è½¯å é¤å·å¤åæ¶ç«ä¸­
     expect((await interceptor.getTrashManifest()).length).toBe(0);
   });
 
-  it('验收点 2：[可降级软删除归档] 当删除非核心普通文档资产时，系统必须允许通过，但必须剥离出活跃矩阵并路由至 30天 TTL 冷备区', async () => {
+  it('éªæ¶ç¹ 2ï¼[å¯éçº§è½¯å é¤å½æ¡£] å½å é¤éæ ¸å¿æ®éææ¡£èµäº§æ¶ï¼ç³»ç»å¿é¡»åè®¸éè¿ï¼ä½å¿é¡»å¥ç¦»åºæ´»è·ç©éµå¹¶è·¯ç±è³ 30å¤© TTL å·å¤åº', async () => {
     const interceptor = new DeleteProtection();
 
     const command: DeleteCommand = {
-      targetId: 'document_old_obsolete_logs_2025', // 普通日志，不命中任何 immutablePrefixes 阻断前缀
+      targetId: 'document_old_obsolete_logs_2025', // æ®éæ¥å¿ï¼ä¸å½ä¸­ä»»ä½ immutablePrefixes é»æ­åç¼
       contentType: 'document',
       requestedBy: 'agent_beta'
     };
 
     const mockData = { size: "12MB", payload: "stale text data" };
 
-    // 执行真实的软删除归档方法
+    // æ§è¡çå®çè½¯å é¤å½æ¡£æ¹æ³
     const result = await interceptor.interceptAndExecute(command, mockData);
 
-    // 断言：普通资产允许下线软删除，返回 success = true 且 action = 'SOFT_DELETED'
+    // æ­è¨ï¼æ®éèµäº§åè®¸ä¸çº¿è½¯å é¤ï¼è¿å success = true ä¸ action = 'SOFT_DELETED'
     expect(result.success).toBe(true);
     expect(result.action).toBe('SOFT_DELETED');
 
-    // 断言：回收站冷备区（mockTrashDb）中必须能精准追溯到这一条被抹平数据的历史物理快照
+    // æ­è¨ï¼åæ¶ç«å·å¤åºï¼mockTrashDbï¼ä¸­å¿é¡»è½ç²¾åè¿½æº¯å°è¿ä¸æ¡è¢«æ¹å¹³æ°æ®çåå²ç©çå¿«ç§
     const trash = await interceptor.getTrashManifest();
     expect(trash.length).toBe(1);
     expect(trash[0].deletedBy).toBe('agent_beta');
     expect(trash[0].payload.size).toBe('12MB');
   });
 
-  it('验收点 3：[事务原子性与内核灾难自愈] 验证内核在版本冲突时拒绝提交，并在遭遇运行时异常时通过 rollback 栈完美原子化复原', async () => {
+  it('éªæ¶ç¹ 3ï¼[äºå¡åå­æ§ä¸åæ ¸ç¾é¾èªæ] éªè¯åæ ¸å¨çæ¬å²çªæ¶æç»æäº¤ï¼å¹¶å¨é­éè¿è¡æ¶å¼å¸¸æ¶éè¿ rollback æ å®ç¾åå­åå¤å', async () => {
     const initialRegistry = {
       'core_scheduler_memory': { status: 'nominal' }
     };
     
-    // 1. 物理实例化事务内核，当前底层 currentSnapshot.version 默认为 1
+    // 1. ç©çå®ä¾åäºå¡åæ ¸ï¼å½ååºå± currentSnapshot.version é»è®¤ä¸º 1
     const kernel = new TransactionKernel(initialRegistry);
 
-    // 2. 测试正常提交链路
+    // 2. æµè¯æ­£å¸¸æäº¤é¾è·¯
     const validPatches: StatePatch[] = [
       { targetKey: 'core_scheduler_memory', value: { status: 'active_running' } }
     ];
-    const success = kernel.commitTransaction(validPatches, 1); // 传入预期版本号 1
+    const success = kernel.commitTransaction(validPatches, 1); // ä¼ å¥é¢æçæ¬å· 1
     expect(success).toBe(true);
-    expect(kernel.getSnapshot().version).toBe(2); // 版本原子性自增为 2
+    expect(kernel.getSnapshot().version).toBe(2); // çæ¬åå­æ§èªå¢ä¸º 2
     expect(kernel.getSnapshot().data['core_scheduler_memory'].status).toBe('active_running');
 
-    // 3. 测试版本冲突拦截链路 (OCC)
+    // 3. æµè¯çæ¬å²çªæ¦æªé¾è·¯ (OCC)
     const conflictPatches: StatePatch[] = [
       { targetKey: 'core_scheduler_memory', value: { status: 'hacked_state' } }
     ];
-    // 故意传入已经过期的预期版本号 1（当前实际版本已经是 2）
+    // ææä¼ å¥å·²ç»è¿æçé¢æçæ¬å· 1ï¼å½åå®éçæ¬å·²ç»æ¯ 2ï¼
     const conflictResult = kernel.commitTransaction(conflictPatches, 1);
-    expect(conflictResult).toBe(false); // 触发冲突拦截，拒绝提交
-    expect(kernel.getSnapshot().version).toBe(2); // 版本号稳固锁定在 2
-    expect(kernel.getSnapshot().data['core_scheduler_memory'].status).toBe('active_running'); // 数据未被脏化
+    expect(conflictResult).toBe(false); // è§¦åå²çªæ¦æªï¼æç»æäº¤
+    expect(kernel.getSnapshot().version).toBe(2); // çæ¬å·ç¨³åºéå®å¨ 2
+    expect(kernel.getSnapshot().data['core_scheduler_memory'].status).toBe('active_running'); // æ°æ®æªè¢«èå
 
-    // 4. 测试事务在迭代 patches 应用失败时，try-catch 代码块中自动触发 this.rollback() 的应急倒卷自愈能力
-    // 故意在 patches 数组中混入一个 undefined 项，使得 for 循环在执行 patch.targetKey 时物理引爆 TypeError
+    // 4. æµè¯äºå¡å¨è¿­ä»£ patches åºç¨å¤±è´¥æ¶ï¼try-catch ä»£ç åä¸­èªå¨è§¦å this.rollback() çåºæ¥åå·èªæè½å
+    // ææå¨ patches æ°ç»ä¸­æ··å¥ä¸ä¸ª undefined é¡¹ï¼ä½¿å¾ for å¾ªç¯å¨æ§è¡ patch.targetKey æ¶ç©çå¼ç TypeError
     const brokenPatches = [
       { targetKey: 'core_scheduler_memory', value: { status: 'broken_dirty_data' } },
       undefined as unknown as StatePatch
     ];
 
-    // 执行提交。发生崩溃后，catch 块捕获并执行 this.rollback()，根据物理源码，rollback 成功最终返回布尔值 true
-    const rollbackResult = kernel.commitTransaction(brokenPatches, 2);
-    expect(rollbackResult).toBe(true);
+    // æ§è¡æäº¤ãåçå´©æºåï¼catch åæè·å¹¶æ§è¡ this.rollback()ï¼æ ¹æ®ç©çæºç ï¼rollback æåæç»è¿åå¸å°å¼ true
+    // Commit must NOT silently report success. Surface the error to the caller.
+    expect(() => kernel.commitTransaction(brokenPatches, 2)).toThrow(/ERR_TX_PATCH_APPLY_FAILED/);
 
-    // 核心自愈断言：检查回滚后的底层物理状态快照
+    // æ ¸å¿èªææ­è¨ï¼æ£æ¥åæ»åçåºå±ç©çç¶æå¿«ç§
     const finalSnapshot = kernel.getSnapshot();
-    expect(finalSnapshot.version).toBe(2); // 版本号必须原子性回滚倒卷到 2，拒绝变成错误的 3
-    expect(finalSnapshot.data['core_scheduler_memory'].status).toBe('active_running'); // 前一步写入的 broken_dirty_data 必须被彻底抹除，状态完好如初！
+    expect(finalSnapshot.version).toBe(2); // çæ¬å·å¿é¡»åå­æ§åæ»åå·å° 2ï¼æç»åæéè¯¯ç 3
+    expect(finalSnapshot.data['core_scheduler_memory'].status).toBe('active_running'); // åä¸æ­¥åå¥ç broken_dirty_data å¿é¡»è¢«å½»åºæ¹é¤ï¼ç¶æå®å¥½å¦åï¼
   });
 });

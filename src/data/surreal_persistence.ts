@@ -1,9 +1,9 @@
-// ─────────────────────────────────────────────────────────────────
+// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 // SoloForge Data Layer: SurrealDB Persistence Manager
 // Path: src/data/surreal_persistence.ts
-// Description: SurrealDB 持久化管理器 - 实现幂等写入和乐观锁
-// 文档要求：Repository 层核心实现
-// ─────────────────────────────────────────────────────────────────
+// Description: SurrealDB æä¹åç®¡çå¨ - å®ç°å¹ç­åå¥åä¹è§é
+// ææ¡£è¦æ±ï¼Repository å±æ ¸å¿å®ç°
+// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 import { RuntimeComponent } from '../kernel/runtime-component';
 import { Surreal } from 'surrealdb';
@@ -11,18 +11,18 @@ import { createNodeEngines } from '@surrealdb/node';
 import path from 'path';
 
 // ============================================================
-// 类型定义
+// ç±»åå®ä¹
 // ============================================================
 
 /**
- * SurrealDB 驱动接口
+ * SurrealDB é©±å¨æ¥å£
  */
 export interface SurrealDbDriverInterface {
   query(sqlStatement: string, queryBindings: Record<string, any>): Promise<any[][]>;
 }
 
 /**
- * 决策载荷
+ * å³ç­è½½è·
  */
 export interface DecisionPayload {
   id: string;
@@ -37,7 +37,7 @@ export interface DecisionPayload {
 }
 
 /**
- * 更新载荷
+ * æ´æ°è½½è·
  */
 export interface UpdatePayload {
   selectedStrategy?: string;
@@ -48,7 +48,7 @@ export interface UpdatePayload {
 }
 
 /**
- * 追踪卷宗
+ * è¿½è¸ªå·å®
  */
 export interface TraceCaseFile {
   traceId: string;
@@ -59,7 +59,7 @@ export interface TraceCaseFile {
 }
 
 /**
- * 持久化管理器接口
+ * æä¹åç®¡çå¨æ¥å£
  */
 export interface GeminiPersistenceManager {
   commitDecision(payload: DecisionPayload): Promise<void>;
@@ -70,7 +70,7 @@ export interface GeminiPersistenceManager {
 }
 
 /**
- * 影子决策载荷（符合文档要求的事务 + 乐观锁）
+ * å½±å­å³ç­è½½è·ï¼ç¬¦åææ¡£è¦æ±çäºå¡ + ä¹è§éï¼
  */
 export interface ShadowDecisionPayload {
   id: string;
@@ -89,13 +89,13 @@ export interface ShadowDecisionPayload {
 }
 
 // ============================================================
-// SurrealDB 持久化管理器实现
+// SurrealDB æä¹åç®¡çå¨å®ç°
 // ============================================================
 
 export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceManager {
   public readonly name = 'surreal';
 
-  // 内部存储（用于测试）
+  // åé¨å­å¨ï¼ç¨äºæµè¯ï¼
   private tableStore: Map<string, any> = new Map();
   private dbDriver: SurrealDbDriverInterface | null = null;
   private surreal: Surreal | null = null;
@@ -106,14 +106,14 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
   }
 
   /**
-   * 设置数据库驱动
+   * è®¾ç½®æ°æ®åºé©±å¨
    */
   public setDriver(driver: SurrealDbDriverInterface): void {
     this.dbDriver = driver;
   }
 
   /**
-   * 启动组件 - 连接 SurrealDB
+   * å¯å¨ç»ä»¶ - è¿æ¥ SurrealDB
    */
   async start(): Promise<void> {
     try {
@@ -123,18 +123,18 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
         engines: createNodeEngines(),
       });
 
-      // 使用 rocksdb 协议（嵌入式持久化）
+      // ä½¿ç¨ rocksdb åè®®ï¼åµå¥å¼æä¹åï¼
       const dbPath = path.join(process.cwd(), 'data', 'soloforge_db').replace(/\\/g, '/');
       await this.surreal.connect(`rocksdb://${dbPath}`);
 
-      // 选择命名空间和数据库
+      // éæ©å½åç©ºé´åæ°æ®åº
       await this.surreal.use({ namespace: 'soloforge_core', database: 'autonomous_network' });
 
       this.connected = true;
-      this.dbDriver = this; // 使用自身作为驱动
+      this.dbDriver = this; // ä½¿ç¨èªèº«ä½ä¸ºé©±å¨
       console.log('[SurrealPersistence] Connected successfully');
 
-      // 初始化表结构
+      // åå§åè¡¨ç»æ
       await this.initSchema();
     } catch (err: any) {
       console.error('[SurrealPersistence] Connection failed:', err.message);
@@ -143,13 +143,13 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
   }
 
   /**
-   * 初始化数据库表结构
+   * åå§åæ°æ®åºè¡¨ç»æ
    */
   private async initSchema(): Promise<void> {
     if (!this.surreal) return;
 
     try {
-      // 创建表（如果不存在）
+      // åå»ºè¡¨ï¼å¦æä¸å­å¨ï¼
       const tables = ['conversation', 'message', 'decision', 'courtSubmission', 'courtVerdict', 'eventLog'];
       for (const table of tables) {
         await this.surreal.query(`DEFINE TABLE IF NOT EXISTS ${table} SCHEMAFULL;`, {});
@@ -161,7 +161,7 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
   }
 
   /**
-   * 停止组件
+   * åæ­¢ç»ä»¶
    */
   async stop(): Promise<void> {
     if (this.surreal) {
@@ -174,22 +174,22 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
   }
 
   /**
-   * 健康检查
+   * å¥åº·æ£æ¥
    */
   async healthCheck(): Promise<boolean> {
     return this.connected;
   }
 
   /**
-   * 检查数据库是否已准备好
+   * æ£æ¥æ°æ®åºæ¯å¦å·²åå¤å¥½
    */
   public isReady(): boolean {
     return this.connected && this.surreal !== null;
   }
 
   /**
-   * 通用 SurrealQL 查询方法（消费者和组件共用）
-   * 文档要求：Repository 层提供统一查询入口
+   * éç¨ SurrealQL æ¥è¯¢æ¹æ³ï¼æ¶è´¹èåç»ä»¶å±ç¨ï¼
+   * ææ¡£è¦æ±ï¼Repository å±æä¾ç»ä¸æ¥è¯¢å¥å£
    */
   async query(sqlStatement: string, bindings: Record<string, any> = {}): Promise<any[][]> {
     if (this.surreal) {
@@ -207,15 +207,7 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
   }
 
   /**
-   * 检查数据库是否已准备好
-   * 解决文档中提到的 isReady 方法缺失问题
-   */
-  public isReady(): boolean {
-    return this.connected && this.surreal !== null;
-  }
-
-  /**
-   * 异步等待数据库就绪
+   * å¼æ­¥ç­å¾æ°æ®åºå°±ç»ª
    */
   public async waitUntilReady(timeoutMs: number = 5000): Promise<boolean> {
     const start = Date.now();
@@ -226,12 +218,12 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
   }
 
   /**
-   * 提交决策记录
-   * 实现幂等：使用 ID 作为唯一键
+   * æäº¤å³ç­è®°å½
+   * å®ç°å¹ç­ï¼ä½¿ç¨ ID ä½ä¸ºå¯ä¸é®
    */
   async commitDecision(payload: DecisionPayload): Promise<void> {
     if (this.dbDriver) {
-      // 使用真实驱动
+      // ä½¿ç¨çå®é©±å¨
       const sql = `CREATE type::thing('decision', $id) CONTENT {
         id: $id,
         traceId: $traceId,
@@ -248,7 +240,7 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
 
       await this.dbDriver.query(sql, {
         id: payload.id,
-        traceId: payload.id.split('_')[0], // 从 ID 提取 traceId
+        traceId: payload.id.split('_')[0], // ä» ID æå traceId
         selectedStrategy: payload.selectedStrategy,
         strategyReason: payload.strategyReason,
         budgetUsed: payload.budgetUsed,
@@ -259,7 +251,7 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
         aggregatedCandidates: payload.aggregatedCandidates
       });
     } else {
-      // 使用内存存储
+      // ä½¿ç¨åå­å­å¨
       this.tableStore.set(payload.id, {
         ...payload,
         version: 1
@@ -268,8 +260,8 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
   }
 
   /**
-   * 带乐观锁更新决策
-   * 实现幂等：版本不匹配时抛出错误
+   * å¸¦ä¹è§éæ´æ°å³ç­
+   * å®ç°å¹ç­ï¼çæ¬ä¸å¹éæ¶æåºéè¯¯
    */
   async updateDecisionWithOptimisticLock(
     id: string,
@@ -277,7 +269,7 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
     updates: Partial<UpdatePayload>
   ): Promise<void> {
     if (this.dbDriver) {
-      // 使用真实驱动
+      // ä½¿ç¨çå®é©±å¨
       const sql = `UPDATE type::thing('decision', $id) SET
         selectedStrategy = $selectedStrategy,
         strategyReason = $strategyReason,
@@ -296,19 +288,19 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
         currentVersion: expectedVersion
       });
 
-      // 检查是否更新成功（SurrealDB 在 WHERE 未命中时返回空数组）
+      // æ£æ¥æ¯å¦æ´æ°æåï¼SurrealDB å¨ WHERE æªå½ä¸­æ¶è¿åç©ºæ°ç»ï¼
       if (!result[0] || result[0].length === 0) {
-        throw new Error(`ERR_OPTIMISTIC_LOCK_FAILED: 版本 ${expectedVersion} 不匹配`);
+        throw new Error(`ERR_OPTIMISTIC_LOCK_FAILED: çæ¬ ${expectedVersion} ä¸å¹é`);
       }
     } else {
-      // 使用内存存储
+      // ä½¿ç¨åå­å­å¨
       const current = this.tableStore.get(id);
       if (!current) {
         throw new Error(`Decision not found: ${id}`);
       }
 
       if (current.version !== expectedVersion) {
-        throw new Error(`ERR_OPTIMISTIC_LOCK_FAILED: 版本 ${expectedVersion} 不匹配`);
+        throw new Error(`ERR_OPTIMISTIC_LOCK_FAILED: çæ¬ ${expectedVersion} ä¸å¹é`);
       }
 
       this.tableStore.set(id, {
@@ -321,13 +313,13 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
   }
 
   /**
-   * 追踪卷宗查询
+   * è¿½è¸ªå·å®æ¥è¯¢
    */
   async queryTrace(traceId: string): Promise<TraceCaseFile> {
     console.log(`[SurrealPersistence] Querying trace: ${traceId}`);
 
     if (this.dbDriver) {
-      // 使用真实驱动查询
+      // ä½¿ç¨çå®é©±å¨æ¥è¯¢
       const decisions = await this.dbDriver.query(
         'SELECT * FROM decision WHERE traceId = $traceId',
         { traceId }
@@ -367,12 +359,12 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
   }
 
   /**
-   * 提交影子决策记录
-   * 实现幂等：使用 ID 作为唯一键
+   * æäº¤å½±å­å³ç­è®°å½
+   * å®ç°å¹ç­ï¼ä½¿ç¨ ID ä½ä¸ºå¯ä¸é®
    */
   async commitShadowDecision(payload: ShadowDecisionPayload): Promise<void> {
     if (this.dbDriver) {
-      // 使用真实驱动（事务 + 乐观锁）
+      // ä½¿ç¨çå®é©±å¨ï¼äºå¡ + ä¹è§éï¼
       const sql = `CREATE type::thing('governor_shadow_decision', $id) CONTENT {
         id: $id,
         traceId: $traceId,
@@ -405,7 +397,7 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
         timestamp: payload.timestamp
       });
     } else {
-      // 使用内存存储
+      // ä½¿ç¨åå­å­å¨
       this.tableStore.set(payload.id, {
         ...payload,
         version: payload.version
@@ -414,7 +406,7 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
   }
 
   /**
-   * 查询影子决策记录
+   * æ¥è¯¢å½±å­å³ç­è®°å½
    */
   async queryShadowDecisions(traceId: string): Promise<ShadowDecisionPayload[]> {
     console.log(`[SurrealPersistence] Querying shadow decisions: ${traceId}`);
@@ -442,7 +434,7 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
       }));
     }
 
-    // 内存存储：过滤匹配的记录
+    // åå­å­å¨ï¼è¿æ»¤å¹éçè®°å½
     const results: ShadowDecisionPayload[] = [];
     for (const record of this.tableStore.values()) {
       if (record.traceId === traceId && record.id?.startsWith('shadow_')) {
@@ -454,11 +446,11 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
 }
 
 // ============================================================
-// 向后兼容别名（供测试使用）
+// ååå¼å®¹å«åï¼ä¾æµè¯ä½¿ç¨ï¼
 // ============================================================
 
 /**
- * @deprecated 使用 SurrealPersistence 代替
+ * @deprecated ä½¿ç¨ SurrealPersistence ä»£æ¿
  */
 export const GeminiPersistenceManager = SurrealPersistence;
 
