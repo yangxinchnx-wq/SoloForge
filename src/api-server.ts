@@ -246,15 +246,23 @@ export class SoloForgeApiServer {
     // UI 静态文件（必须放在前面，避免被 /ui 路由捕获）
     if (reqPath.startsWith('/ui/') && method === 'GET') {
       const fileName = reqPath.slice(4);
-      const uiDir = 'C:/Users/yangx/Desktop/SoloForge/src/ui';
+      const uiDir = path.join(process.cwd(), 'src', 'ui');
       const filePath = path.join(uiDir, fileName);
-      if (fs.existsSync(filePath)) {
-        const ext = path.extname(fileName);
-        const contentType = ext === '.js' ? 'application/javascript' : ext === '.css' ? 'text/css' : 'text/plain';
-        const content = fs.readFileSync(filePath);
-        // 如果是 Buffer，转成字符串发送
-        const bodyStr = Buffer.isBuffer(content) ? content.toString('utf-8') : content;
-        return { status: 200, headers: { 'Content-Type': contentType }, body: bodyStr };
+      const resolvedUiDir = path.resolve(uiDir);
+      const resolvedFilePath = path.resolve(filePath);
+      if (!resolvedFilePath.startsWith(resolvedUiDir + path.sep) && resolvedFilePath !== resolvedUiDir) {
+        return { status: 400, headers: { 'Content-Type': 'application/json' }, body: { error: 'Invalid path' } };
+      }
+      try {
+        if (fs.existsSync(resolvedFilePath) && fs.statSync(resolvedFilePath).isFile()) {
+          const ext = path.extname(fileName);
+          const contentType = ext === '.js' ? 'application/javascript' : ext === '.css' ? 'text/css' : 'text/plain';
+          const content = fs.readFileSync(resolvedFilePath);
+          const bodyStr = Buffer.isBuffer(content) ? content.toString('utf-8') : content;
+          return { status: 200, headers: { 'Content-Type': contentType }, body: bodyStr };
+        }
+      } catch (e: any) {
+        logger.warn('ApiServer', `Failed to serve static file ${fileName}: ${e.message}`);
       }
     }
 
@@ -265,8 +273,16 @@ export class SoloForgeApiServer {
 
     // 测试页面
     if (reqPath === '/test-nav' && method === 'GET') {
-      const testHtml = fs.readFileSync(path.join('C:/Users/yangx/Desktop/SoloForge/src/ui/test-nav.html'), 'utf-8');
-      return { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' }, body: testHtml };
+      try {
+        const testNavPath = path.join(process.cwd(), 'src', 'ui', 'test-nav.html');
+        if (fs.existsSync(testNavPath)) {
+          const testHtml = fs.readFileSync(testNavPath, 'utf-8');
+          return { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' }, body: testHtml };
+        }
+      } catch (e: any) {
+        logger.warn('ApiServer', `Failed to serve test-nav: ${e.message}`);
+      }
+      return { status: 404, headers: { 'Content-Type': 'application/json' }, body: { error: 'Not Found' } };
     }
 
     // Kernel APIs
@@ -357,7 +373,6 @@ export class SoloForgeApiServer {
       path.join(process.cwd(), 'src', 'ui', 'index.html'),
       path.join(__dirname, 'ui', 'index.html'),
       path.join(process.cwd(), '..', 'src', 'ui', 'index.html'),
-      'C:/Users/yangx/Desktop/SoloForge/src/ui/index.html'
     ];
 
     for (const uiPath of possiblePaths) {
@@ -583,7 +598,10 @@ export class SoloForgeApiServer {
       const { execSync } = require("child_process");
 
       // 使用 PowerShell 脚本文件获取网络接口每秒字节数
-      const scriptPath = 'C:/Users/yangx/Desktop/SoloForge/get-network-speed.ps1';
+      const scriptPath = path.join(process.cwd(), 'get-network-speed.ps1');
+      if (!fs.existsSync(scriptPath)) {
+        return { up: this.cachedNetworkSpeed.up, down: this.cachedNetworkSpeed.down };
+      }
       const psOutput = execSync(
         `powershell -ExecutionPolicy Bypass -File "${scriptPath}"`,
         { encoding: "utf8", timeout: 5000, windowsHide: true }

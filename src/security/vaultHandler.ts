@@ -119,8 +119,9 @@ export async function handleVaultDelete(providerId: string): Promise<VaultRouteR
 }
 
 /**
- * 内部用: 返回金库中的明文 key + baseUrl
+ * 内部用: 返回金库中的 key 元信息 (不含明文 apiKey)
  *   - 仅供同源 API 调用, 不返回给前端
+ *   - 仅返回 key 是否存在、长度、来源、baseUrl 等元数据
  */
 export async function handleVaultResolve(providerId: string): Promise<VaultRouteResult> {
   if (!isValidId(providerId)) {
@@ -133,7 +134,7 @@ export async function handleVaultResolve(providerId: string): Promise<VaultRoute
     }
     return jsonResponse(200, {
       id: providerId,
-      apiKey: got.apiKey,
+      hasKey: true,
       baseUrl: got.baseUrl,
       keyLength: got.apiKey.length,
       source: got.source,
