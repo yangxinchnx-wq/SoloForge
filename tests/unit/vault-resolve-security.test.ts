@@ -1,9 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+const { mockApiKeyVault } = vi.hoisted(() => ({ mockApiKeyVault: { getKey: vi.fn() } }));
 import { handleVaultResolve } from '../../src/security/vaultHandler';
-
-const mockApiKeyVault = {
-  getKey: vi.fn(),
-};
 
 vi.mock('../../src/security/apiKeyVault', () => ({
   apiKeyVault: mockApiKeyVault,

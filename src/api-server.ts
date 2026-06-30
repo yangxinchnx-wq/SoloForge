@@ -1,8 +1,8 @@
-// ─────────────────────────────────────────────────────────────────
+// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 // SoloForge API Server Layer
 // Path: src/api-server.ts
-// Description: HTTP + SSE API 服务器 - 将内核状态暴露给前端
-// ─────────────────────────────────────────────────────────────────
+// Description: HTTP + SSE API æå¡å¨ - å°åæ ¸ç¶ææ´é²ç»åç«¯
+// âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 import http from 'http';
 import fs from 'fs';
@@ -21,9 +21,23 @@ import { TelemetryMetricExporter } from './kernel/observability/telemetry-export
 import { SurrealPersistence } from './data/surreal_persistence';
 import { DataArchiverService } from './data/data-archiver';
 import { logger } from './core/logger';
+// ð§¬ Agent æ°æ®æµè´¯éå±
+import { AgentRegistry, AgentDispatchRequest } from './core/agent/agent-registry';
+import { AgentDecisionOrchestrator } from './core/agent/agent-decision-orchestrator';
+import { AgentEventHub } from './core/agent/agent-event-hub';
+import {
+  handleVaultList,
+  handleVaultGet,
+  handleVaultPut,
+  handleVaultDelete,
+  handleVaultVerify,
+  handleVaultExport,
+  handleVaultImport,
+  handleVaultVerifyPassphrase,
+} from './security/vaultHandler';
 
 // ============================================================
-// 类型定义
+// ç±»åå®ä¹
 // ============================================================
 
 interface ApiRequest {
@@ -42,7 +56,7 @@ interface ApiResponse {
 }
 
 // ============================================================
-// API 服务器
+// API æå¡å¨
 // ============================================================
 
 export class SoloForgeApiServer {
@@ -53,13 +67,16 @@ export class SoloForgeApiServer {
   private telemetryExporter: TelemetryMetricExporter | null = null;
   private surrealPersistence: SurrealPersistence | null = null;
   private dataArchiver: DataArchiverService | null = null;
+  private agentRegistry: AgentRegistry | null = null;
+  private agentOrchestrator: AgentDecisionOrchestrator | null = null;
+  private agentEventHub: AgentEventHub | null = null;
   private startedAt: number = Date.now();
   private prevCpuTimes: { idle: number; total: number } | null = null;
   private bytesTransferred: { sent: number; received: number } = { sent: 0, received: 0 };
   private prevBytesTransferred: { sent: number; received: number; time: number } | null = null;
   private cachedNetworkSpeed: { up: number; down: number; time: number } = { up: 0, down: 0, time: 0 };
-  private networkCacheMs = 1000; // 1秒缓存
-  // 观测系统状态
+  private networkCacheMs = 1000; // 1ç§ç¼å­
+  // è§æµç³»ç»ç¶æ
   private isObserving = false;
   private observations: Array<{
     cycleId: number;
@@ -82,21 +99,21 @@ export class SoloForgeApiServer {
     this.surrealPersistence = surrealPersistence || null;
     this.port = parseInt(process.env.API_PORT || String(port), 10);
 
-    // 初始化数据归档服务
+    // åå§åæ°æ®å½æ¡£æå¡
     if (surrealPersistence) {
       this.dataArchiver = new DataArchiverService(surrealPersistence, 5 * 60 * 1000);
     }
   }
 
   /**
-   * 获取数据归档服务实例
+   * è·åæ°æ®å½æ¡£æå¡å®ä¾
    */
   public getDataArchiver(): DataArchiverService | null {
     return this.dataArchiver;
   }
 
   /**
-   * 启动 API 服务器
+   * å¯å¨ API æå¡å¨
    */
   public async start(): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -105,19 +122,26 @@ export class SoloForgeApiServer {
       });
 
       this.server.listen(this.port, () => {
-        logger.info('ApiServer', `🌐 SoloForge API Server listening on http://localhost:${this.port}`);
+        logger.info('ApiServer', `ð SoloForge API Server listening on http://localhost:${this.port}`);
         logger.info('ApiServer', `   Admin UI: http://localhost:${this.port}/admin`);
         logger.info('ApiServer', `   SSE Events: http://localhost:${this.port}/api/events/stream`);
+        logger.info('ApiServer', `   ð°ï¸  Agent WS: ws://localhost:${this.port}/ws/agents`);
+
+        // ð°ï¸ æè½½ agent äºä»¶å¹¿æ­ hub (Electron main ä¸»å¨è¿å¥)
+        if (this.kernel && !this.agentEventHub) {
+          this.agentEventHub = new AgentEventHub(this.kernel);
+          this.agentEventHub.attach(this.server);
+        }
         resolve();
       });
 
       this.server.on('error', (err: any) => {
         if (err.code === 'EADDRINUSE') {
-          logger.warn('ApiServer', `⚠️ Port ${this.port} in use, trying ${this.port + 1}...`);
+          logger.warn('ApiServer', `â ï¸ Port ${this.port} in use, trying ${this.port + 1}...`);
           this.port += 1;
           this.server?.listen(this.port);
         } else {
-          logger.error('ApiServer', `💥 Server error: ${err.message}`);
+          logger.error('ApiServer', `ð¥ Server error: ${err.message}`);
           reject(err);
         }
       });
@@ -125,7 +149,7 @@ export class SoloForgeApiServer {
   }
 
   /**
-   * 停止 API 服务器
+   * åæ­¢ API æå¡å¨
    */
   public async stop(): Promise<void> {
     for (const client of this.sseClients) {
@@ -136,7 +160,7 @@ export class SoloForgeApiServer {
     return new Promise((resolve) => {
       if (this.server) {
         this.server.close(() => {
-          logger.info('ApiServer', '🔌 API Server stopped');
+          logger.info('ApiServer', 'ð API Server stopped');
           resolve();
         });
       } else {
@@ -146,7 +170,7 @@ export class SoloForgeApiServer {
   }
 
   /**
-   * 广播事件到所有 SSE 客户端
+   * å¹¿æ­äºä»¶å°ææ SSE å®¢æ·ç«¯
    */
   public broadcastEvent(event: string, payload: any): void {
     const data = JSON.stringify({ event, payload, timestamp: Date.now() });
@@ -165,7 +189,7 @@ export class SoloForgeApiServer {
   }
 
   // ============================================================
-  // 请求处理
+  // è¯·æ±å¤ç
   // ============================================================
 
   private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -205,7 +229,7 @@ export class SoloForgeApiServer {
         return;
       }
 
-      // 计算响应大小
+      // è®¡ç®ååºå¤§å°
       const responseBody = typeof apiRes.body === 'string' ? apiRes.body : JSON.stringify(apiRes.body);
       this.bytesTransferred.sent += Buffer.byteLength(responseBody, 'utf8');
       this.bytesTransferred.received += Buffer.byteLength(body || '', 'utf8');
@@ -237,13 +261,13 @@ export class SoloForgeApiServer {
   }
 
   // ============================================================
-  // 路由
+  // è·¯ç±
   // ============================================================
 
   private async route(req: ApiRequest): Promise<ApiResponse> {
     const { path: reqPath, method } = req;
 
-    // UI 静态文件（必须放在前面，避免被 /ui 路由捕获）
+    // UI éææä»¶ï¼å¿é¡»æ¾å¨åé¢ï¼é¿åè¢« /ui è·¯ç±æè·ï¼
     if (reqPath.startsWith('/ui/') && method === 'GET') {
       const fileName = reqPath.slice(4);
       const uiDir = 'C:/Users/yangx/Desktop/SoloForge/src/ui';
@@ -252,18 +276,18 @@ export class SoloForgeApiServer {
         const ext = path.extname(fileName);
         const contentType = ext === '.js' ? 'application/javascript' : ext === '.css' ? 'text/css' : 'text/plain';
         const content = fs.readFileSync(filePath);
-        // 如果是 Buffer，转成字符串发送
+        // å¦ææ¯ Bufferï¼è½¬æå­ç¬¦ä¸²åé
         const bodyStr = Buffer.isBuffer(content) ? content.toString('utf-8') : content;
         return { status: 200, headers: { 'Content-Type': contentType }, body: bodyStr };
       }
     }
 
-    // Admin UI - 多个入口
+    // Admin UI - å¤ä¸ªå¥å£
     if ((reqPath === '/' || reqPath === '/admin' || reqPath === '/ui') && method === 'GET') {
       return this.handleAdminUI();
     }
 
-    // 测试页面
+    // æµè¯é¡µé¢
     if (reqPath === '/test-nav' && method === 'GET') {
       const testHtml = fs.readFileSync(path.join('C:/Users/yangx/Desktop/SoloForge/src/ui/test-nav.html'), 'utf-8');
       return { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' }, body: testHtml };
@@ -305,6 +329,16 @@ export class SoloForgeApiServer {
     if (reqPath === '/api/agents' && method === 'GET') {
       return await this.handleAgents();
     }
+    // ð§¬ Agent æ°æ®æµè´¯éç«¯ç¹
+    if (reqPath === '/api/agents/snapshot' && method === 'GET') {
+      return await this.handleAgentSnapshot();
+    }
+    if (reqPath === '/api/agents/dispatch' && method === 'POST') {
+      return await this.handleAgentDispatch(req.body);
+    }
+    if (reqPath === '/api/agents/dispute' && method === 'POST') {
+      return await this.handleAgentDispute(req.body);
+    }
     if (reqPath === '/api/archiver/check' && method === 'POST') {
       return await this.handleArchiverCheck();
     }
@@ -345,7 +379,56 @@ export class SoloForgeApiServer {
       return this.handleObservationClear();
     }
 
+    // Vault APIs (apiKey éåº, OS é¥åä¸²å¯ä¸å¯ä¿¡æº)
+    // è·¯ç±:
+    //   GET    /api/vault/keys              â ååºææ provider (è±æ)
+    //   GET    /api/vault/keys/:id          â åä¸ª provider åä¿¡æ¯
+    //   PUT    /api/vault/keys/:id          â åå¥/æ´æ° apiKey + baseUrl
+    //   DELETE /api/vault/keys/:id          â å é¤ (idempotent)
+    //   POST   /api/vault/keys/:id/verify   â æµè¯è¿éæ§
+    //   POST   /api/vault/export           â å å¯å¯¼åº
+    //   POST   /api/vault/import           â å å¯å¯¼å¥
+    //   POST   /api/vault/verify-passphrase â éªè¯ passphrase
+    if (reqPath === '/api/vault/keys' && method === 'GET') {
+      return this.vaultResultToApi(await handleVaultList());
+    }
+    const vaultKeyMatch = reqPath.match(/^\/api\/vault\/keys\/([A-Za-z0-9_-]{1,64})(?:\/(verify))?$/);
+    if (vaultKeyMatch) {
+      const id = decodeURIComponent(vaultKeyMatch[1]);
+      const sub = vaultKeyMatch[2];
+      if (sub === 'verify') {
+        if (method === 'POST') return this.vaultResultToApi(await handleVaultVerify(id));
+      } else if (method === 'GET') {
+        return this.vaultResultToApi(await handleVaultGet(id));
+      } else if (method === 'PUT') {
+        return this.vaultResultToApi(await handleVaultPut(id, req.body));
+      } else if (method === 'DELETE') {
+        return this.vaultResultToApi(await handleVaultDelete(id));
+      }
+    }
+    if (reqPath === '/api/vault/export' && method === 'POST') {
+      return this.vaultResultToApi(await handleVaultExport(req.body));
+    }
+    if (reqPath === '/api/vault/import' && method === 'POST') {
+      return this.vaultResultToApi(await handleVaultImport(req.body));
+    }
+    if (reqPath === '/api/vault/verify-passphrase' && method === 'POST') {
+      return this.vaultResultToApi(await handleVaultVerifyPassphrase(req.body));
+    }
+
     return { status: 404, headers: { 'Content-Type': 'application/json' }, body: { error: 'Not Found' } };
+  }
+
+  /**
+   * æ vaultHandler è¿åç VaultRouteResult è½¬æ¢ä¸º API å±ç ApiResponse å½¢ç¶
+   * (headers å¯é, é»è®¤ application/json; body éä¼ )
+   */
+  private vaultResultToApi(r: { status: number; headers?: Record<string, string>; body: any }): ApiResponse {
+    return {
+      status: r.status,
+      headers: r.headers || { 'Content-Type': 'application/json' },
+      body: r.body,
+    };
   }
 
   // ============================================================
@@ -376,7 +459,7 @@ export class SoloForgeApiServer {
       }
     }
 
-    // 返回简单的内联 HTML
+    // è¿åç®åçåè HTML
     return {
       status: 200,
       headers: { 'Content-Type': 'text/html; charset=utf-8' },
@@ -389,7 +472,7 @@ export class SoloForgeApiServer {
 <html>
 <head>
   <meta charset="utf-8">
-  <title>SoloForge 管理后台</title>
+  <title>SoloForge ç®¡çåå°</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body { background: linear-gradient(135deg, #0a0a0f 0%, #12121a 100%); min-height: 100vh; }
@@ -399,40 +482,40 @@ export class SoloForgeApiServer {
 </head>
 <body class="text-gray-200 p-8">
   <div class="max-w-6xl mx-auto">
-    <h1 class="text-4xl font-bold text-amber-400 mb-8">SoloForge 管理后台</h1>
+    <h1 class="text-4xl font-bold text-amber-400 mb-8">SoloForge ç®¡çåå°</h1>
 
     <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
       <div class="glass p-6">
-        <h3 class="text-gray-400 mb-2">组件数</h3>
+        <h3 class="text-gray-400 mb-2">ç»ä»¶æ°</h3>
         <div class="stat" id="components">--</div>
       </div>
       <div class="glass p-6">
-        <h3 class="text-gray-400 mb-2">运行时间</h3>
+        <h3 class="text-gray-400 mb-2">è¿è¡æ¶é´</h3>
         <div class="stat text-3xl" id="uptime">--:--:--</div>
       </div>
       <div class="glass p-6">
-        <h3 class="text-gray-400 mb-2">状态</h3>
+        <h3 class="text-gray-400 mb-2">ç¶æ</h3>
         <div class="flex items-center gap-2">
           <span class="w-3 h-3 rounded-full bg-green-500 animate-pulse"></span>
-          <span class="text-green-400">运行中</span>
+          <span class="text-green-400">è¿è¡ä¸­</span>
         </div>
       </div>
     </div>
 
     <div class="glass p-6 mb-8">
-      <h2 class="text-xl font-bold mb-4">API 端点</h2>
+      <h2 class="text-xl font-bold mb-4">API ç«¯ç¹</h2>
       <ul class="space-y-2">
-        <li><a href="/api/status" class="text-blue-400 hover:underline">/api/status</a> - 系统状态</li>
-        <li><a href="/api/database/stats" class="text-blue-400 hover:underline">/api/database/stats</a> - 数据库统计</li>
-        <li><a href="/api/agents" class="text-blue-400 hover:underline">/api/agents</a> - 组件列表</li>
-        <li><a href="/api/kernel/status" class="text-blue-400 hover:underline">/api/kernel/status</a> - 内核状态</li>
-        <li><a href="/metrics" class="text-blue-400 hover:underline">/metrics</a> - Prometheus 指标</li>
+        <li><a href="/api/status" class="text-blue-400 hover:underline">/api/status</a> - ç³»ç»ç¶æ</li>
+        <li><a href="/api/database/stats" class="text-blue-400 hover:underline">/api/database/stats</a> - æ°æ®åºç»è®¡</li>
+        <li><a href="/api/agents" class="text-blue-400 hover:underline">/api/agents</a> - ç»ä»¶åè¡¨</li>
+        <li><a href="/api/kernel/status" class="text-blue-400 hover:underline">/api/kernel/status</a> - åæ ¸ç¶æ</li>
+        <li><a href="/metrics" class="text-blue-400 hover:underline">/metrics</a> - Prometheus ææ </li>
       </ul>
     </div>
 
     <div class="glass p-6">
-      <h2 class="text-xl font-bold mb-4">系统信息</h2>
-      <div id="sysinfo" class="text-gray-400">加载中...</div>
+      <h2 class="text-xl font-bold mb-4">ç³»ç»ä¿¡æ¯</h2>
+      <div id="sysinfo" class="text-gray-400">å è½½ä¸­...</div>
     </div>
   </div>
 
@@ -444,19 +527,19 @@ export class SoloForgeApiServer {
         document.getElementById('components').textContent = (data.agents?.active || '--') + '/' + (data.agents?.total || '--');
         document.getElementById('sysinfo').innerHTML = \`
           <p>Node.js: \${data.nodeVersion || '--'}</p>
-          <p>平台: \${data.platform || '--'}</p>
+          <p>å¹³å°: \${data.platform || '--'}</p>
           <p>CPU: \${data.cpu?.toFixed(1) || '--'}%</p>
-          <p>内存: \${data.memory?.toFixed(1) || '--'}%</p>
-          <p>内核状态: \${data.kernel?.state || '--'}</p>
+          <p>åå­: \${data.memory?.toFixed(1) || '--'}%</p>
+          <p>åæ ¸ç¶æ: \${data.kernel?.state || '--'}</p>
         \`;
       } catch (e) {
-        document.getElementById('sysinfo').textContent = '无法加载数据，请确保后端服务正在运行';
+        document.getElementById('sysinfo').textContent = 'æ æ³å è½½æ°æ®ï¼è¯·ç¡®ä¿åç«¯æå¡æ­£å¨è¿è¡';
       }
     }
     loadData();
     setInterval(loadData, 5000);
 
-    // 计时器
+    // è®¡æ¶å¨
     let seconds = 0;
     setInterval(() => {
       seconds++;
@@ -484,7 +567,7 @@ export class SoloForgeApiServer {
       totalIdle += cpu.times.idle;
     }
 
-    // 计算瞬时 CPU 使用率（两次采样对比）
+    // è®¡ç®ç¬æ¶ CPU ä½¿ç¨çï¼ä¸¤æ¬¡éæ ·å¯¹æ¯ï¼
     let cpuUsage = 0;
     if (this.prevCpuTimes) {
       const idleDiff = totalIdle - this.prevCpuTimes.idle;
@@ -511,7 +594,7 @@ export class SoloForgeApiServer {
       }
     } catch {}
 
-    // 计算网络速率
+    // è®¡ç®ç½ç»éç
     let networkSpeed = { up: 0, down: 0 };
     try {
       const networkStats = this.getSystemNetworkSpeed();
@@ -543,7 +626,7 @@ export class SoloForgeApiServer {
   }
 
   /**
-   * 获取网络速率（字节/秒）
+   * è·åç½ç»éçï¼å­è/ç§ï¼
    */
   private getNetworkSpeed(): { up: number; down: number } {
     try {
@@ -569,12 +652,12 @@ export class SoloForgeApiServer {
   }
 
   /**
-   * 获取真实的系统网络接口流量（Windows）- 使用 PowerShell Get-Counter
+   * è·åçå®çç³»ç»ç½ç»æ¥å£æµéï¼Windowsï¼- ä½¿ç¨ PowerShell Get-Counter
    */
   private getSystemNetworkSpeed(): { up: number; down: number } {
     const now = Date.now();
 
-    // 500ms 缓存，避免频繁调用
+    // 500ms ç¼å­ï¼é¿åé¢ç¹è°ç¨
     if (now - this.cachedNetworkSpeed.time < 500) {
       return { up: this.cachedNetworkSpeed.up, down: this.cachedNetworkSpeed.down };
     }
@@ -582,7 +665,7 @@ export class SoloForgeApiServer {
     try {
       const { execSync } = require("child_process");
 
-      // 使用 PowerShell 脚本文件获取网络接口每秒字节数
+      // ä½¿ç¨ PowerShell èæ¬æä»¶è·åç½ç»æ¥å£æ¯ç§å­èæ°
       const scriptPath = 'C:/Users/yangx/Desktop/SoloForge/get-network-speed.ps1';
       const psOutput = execSync(
         `powershell -ExecutionPolicy Bypass -File "${scriptPath}"`,
@@ -594,7 +677,7 @@ export class SoloForgeApiServer {
         .filter(v => !isNaN(v));
 
       let totalUp = 0, totalDown = 0;
-      // 偶数索引是发送速率，奇数索引是接收速率
+      // å¶æ°ç´¢å¼æ¯åééçï¼å¥æ°ç´¢å¼æ¯æ¥æ¶éç
       for (let i = 0; i < values.length; i += 2) {
         totalUp += values[i] || 0;
         totalDown += values[i + 1] || 0;
@@ -715,6 +798,72 @@ export class SoloForgeApiServer {
   }
 
   // ============================================================
+  // ð§¬ Agent æ°æ®æµè´¯é Handlers
+  //   /api/agents/snapshot  GET   â ååºæ± ä¸­ææ agent + å®æ¶ä¿¡ç¨å + metrics
+  //   /api/agents/dispatch  POST  â RACER éè·¯ + çå®æ§è¡
+  //   /api/agents/dispute   POST  â æäº¤è¯ç¶ â æ³é¢ â ååååä¿¡ç¨
+  // ============================================================
+
+  private async handleAgentSnapshot(): Promise<ApiResponse> {
+    if (!this.agentRegistry) {
+      return { status: 503, headers: { 'Content-Type': 'application/json' }, body: { error: 'AgentRegistry not initialized' } };
+    }
+    const snapshot = this.agentRegistry.snapshot();
+    return {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: {
+        count: snapshot.length,
+        cpuLoad: this.agentRegistry.getCpuLoad(),
+        agents: snapshot,
+      },
+    };
+  }
+
+  private async handleAgentDispatch(body: any): Promise<ApiResponse> {
+    if (!this.agentOrchestrator) {
+      return { status: 503, headers: { 'Content-Type': 'application/json' }, body: { error: 'AgentDecisionOrchestrator not initialized' } };
+    }
+    const req: AgentDispatchRequest = {
+      packetUuid: body?.packetUuid,
+      packetSizeKb: body?.packetSizeKb,
+      requiresDeepCognition: body?.requiresDeepCognition,
+      globalConfidenceMetric: body?.globalConfidenceMetric,
+      taskComplexityMetrics: body?.taskComplexityMetrics,
+    };
+    try {
+      const result = await this.agentOrchestrator.dispatchPacket(req);
+      return { status: 200, headers: { 'Content-Type': 'application/json' }, body: result };
+    } catch (e: any) {
+      return { status: 500, headers: { 'Content-Type': 'application/json' }, body: { error: e.message } };
+    }
+  }
+
+  private async handleAgentDispute(body: any): Promise<ApiResponse> {
+    if (!this.agentRegistry) {
+      return { status: 503, headers: { 'Content-Type': 'application/json' }, body: { error: 'AgentRegistry not initialized' } };
+    }
+    const agentId = body?.agentId;
+    const statement = body?.statement ?? 'Custody dispute over packet execution ordering';
+    const attackMode = body?.attackMode ?? 'legitimate';
+    if (!agentId) {
+      return { status: 400, headers: { 'Content-Type': 'application/json' }, body: { error: 'agentId is required' } };
+    }
+    const agent = this.agentRegistry.getAgent(agentId);
+    if (!agent) {
+      return { status: 404, headers: { 'Content-Type': 'application/json' }, body: { error: `agent not found: ${agentId}` } };
+    }
+    const traceId = body?.traceId ?? `trace_${Date.now()}`;
+    const claim = agent.forgeDisputeClaim(statement, attackMode);
+    try {
+      const verdict = await this.agentRegistry.raiseDispute(claim, traceId);
+      return { status: 200, headers: { 'Content-Type': 'application/json' }, body: { claim, verdict, traceId } };
+    } catch (e: any) {
+      return { status: 500, headers: { 'Content-Type': 'application/json' }, body: { error: e.message } };
+    }
+  }
+
+  // ============================================================
   // Kernel Handlers
   // ============================================================
 
@@ -831,7 +980,7 @@ soloforge_kernel_version{state="${this.kernel['state'] || 'READY'}"} ${this.kern
   }
 
   private handleArchiverStats(): ApiResponse {
-    // 返回模拟的归档统计
+    // è¿åæ¨¡æçå½æ¡£ç»è®¡
     const stats = {
       totalRecords: 0,
       hotRecords: 0,
@@ -846,26 +995,26 @@ soloforge_kernel_version{state="${this.kernel['state'] || 'READY'}"} ${this.kern
   }
 
   // ============================================================
-  // Observation Handlers (文明演化观测)
+  // Observation Handlers (æææ¼åè§æµ)
   // ============================================================
 
   /**
-   * 获取观测数据
+   * è·åè§æµæ°æ®
    */
   private handleObservationData(): ApiResponse {
     try {
-      // 获取真实事件数据
+      // è·åçå®äºä»¶æ°æ®
       const eventLog = this.kernel.eventBus.getEventLog();
 
-      // 统计真实数据
+      // ç»è®¡çå®æ°æ®
       const totalEvents = eventLog.length;
       let interventions = 0;
       let courtCases = 0;
       let coalitions = 0;
 
-      // 统计各类事件
+      // ç»è®¡åç±»äºä»¶
       for (const event of eventLog) {
-        const eventType = (event.type || event.event || '').toLowerCase();
+        const eventType = ((event as any).type ?? (event as any).event ?? '').toLowerCase();
         if (eventType.includes('govern') || eventType.includes('intervention')) {
           interventions++;
         } else if (eventType.includes('court') || eventType.includes('verdict')) {
@@ -875,19 +1024,19 @@ soloforge_kernel_version{state="${this.kernel['state'] || 'READY'}"} ${this.kern
         }
       }
 
-      // 计算真实系统熵值（基于事件多样性）
+      // è®¡ç®çå®ç³»ç»çµå¼ï¼åºäºäºä»¶å¤æ ·æ§ï¼
       let entropy = 0.5;
       if (totalEvents > 0) {
-        // 事件越多，系统越复杂，熵值越高
+        // äºä»¶è¶å¤ï¼ç³»ç»è¶å¤æï¼çµå¼è¶é«
         const eventRate = Math.min(totalEvents / 500, 1);
-        // 多样性因子
+        // å¤æ ·æ§å å­
         const diversity = (interventions + courtCases + coalitions) / Math.max(totalEvents, 1);
-        // 综合熵值
+        // ç»¼åçµå¼
         entropy = 0.2 + eventRate * 0.5 + diversity * 0.3;
         entropy = Math.max(0, Math.min(1, entropy));
       }
 
-      // 如果正在观测，记录新数据
+      // å¦ææ­£å¨è§æµï¼è®°å½æ°æ°æ®
       if (this.isObserving) {
         const cycleId = this.observations.length + 1;
         const observation = {
@@ -900,7 +1049,7 @@ soloforge_kernel_version{state="${this.kernel['state'] || 'READY'}"} ${this.kern
         };
         this.observations.push(observation);
 
-        // 保留最近 100 条记录
+        // ä¿çæè¿ 100 æ¡è®°å½
         if (this.observations.length > 100) {
           this.observations = this.observations.slice(-100);
         }
@@ -920,7 +1069,7 @@ soloforge_kernel_version{state="${this.kernel['state'] || 'READY'}"} ${this.kern
           kernelVersion: this.kernel.version || 1,
           currentTick: this.kernel.currentTick || 0,
           uptime: Date.now() - this.startedAt,
-          // 附加真实统计
+          // éå çå®ç»è®¡
           stats: {
             totalEvents,
             interventions,
@@ -947,7 +1096,7 @@ soloforge_kernel_version{state="${this.kernel['state'] || 'READY'}"} ${this.kern
   }
 
   /**
-   * 开始观测
+   * å¼å§è§æµ
    */
   private handleObservationStart(): ApiResponse {
     if (this.isObserving) {
@@ -957,9 +1106,9 @@ soloforge_kernel_version{state="${this.kernel['state'] || 'READY'}"} ${this.kern
     this.isObserving = true;
     this.observations = [];
 
-    // 每 5 秒采集一次数据
+    // æ¯ 5 ç§ééä¸æ¬¡æ°æ®
     this.observationInterval = setInterval(() => {
-      // 触发一次数据更新，广播给 SSE 客户端
+      // è§¦åä¸æ¬¡æ°æ®æ´æ°ï¼å¹¿æ­ç» SSE å®¢æ·ç«¯
       this.broadcastEvent('observation', { isObserving: true, timestamp: Date.now() });
     }, 5000);
 
@@ -968,7 +1117,7 @@ soloforge_kernel_version{state="${this.kernel['state'] || 'READY'}"} ${this.kern
   }
 
   /**
-   * 停止观测
+   * åæ­¢è§æµ
    */
   private handleObservationStop(): ApiResponse {
     if (this.observationInterval) {
@@ -982,7 +1131,7 @@ soloforge_kernel_version{state="${this.kernel['state'] || 'READY'}"} ${this.kern
   }
 
   /**
-   * 清空观测数据
+   * æ¸ç©ºè§æµæ°æ®
    */
   private handleObservationClear(): ApiResponse {
     this.observations = [];
@@ -991,15 +1140,15 @@ soloforge_kernel_version{state="${this.kernel['state'] || 'READY'}"} ${this.kern
   }
 
   // ============================================================
-  // Scheduler Handlers (任务调度器)
+  // Scheduler Handlers (ä»»å¡è°åº¦å¨)
   // ============================================================
 
   /**
-   * 获取调度器统计
+   * è·åè°åº¦å¨ç»è®¡
    */
   private handleSchedulerStats(): ApiResponse {
-    // 获取 Rust 调度器的统计信息
-    // 由于 Rust 调度器可能不可用，返回模拟数据
+    // è·å Rust è°åº¦å¨çç»è®¡ä¿¡æ¯
+    // ç±äº Rust è°åº¦å¨å¯è½ä¸å¯ç¨ï¼è¿åæ¨¡ææ°æ®
     const stats = {
       mode: 'RUNNING',
       queueSize: Math.floor(Math.random() * 10),
@@ -1013,7 +1162,7 @@ soloforge_kernel_version{state="${this.kernel['state'] || 'READY'}"} ${this.kern
       error: null
     };
 
-    // 尝试从真实的调度器客户端获取数据
+    // å°è¯ä»çå®çè°åº¦å¨å®¢æ·ç«¯è·åæ°æ®
     try {
       const schedulerClient = (this.kernel as any).schedulerClient;
       if (schedulerClient && schedulerClient.stats) {
@@ -1033,10 +1182,10 @@ soloforge_kernel_version{state="${this.kernel['state'] || 'READY'}"} ${this.kern
   }
 
   /**
-   * 获取调度器队列
+   * è·åè°åº¦å¨éå
    */
   private handleSchedulerQueue(): ApiResponse {
-    // 返回调度器队列信息
+    // è¿åè°åº¦å¨éåä¿¡æ¯
     return {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -1050,11 +1199,11 @@ soloforge_kernel_version{state="${this.kernel['state'] || 'READY'}"} ${this.kern
   }
 
   // ============================================================
-  // Events Handlers (事件列表)
+  // Events Handlers (äºä»¶åè¡¨)
   // ============================================================
 
   /**
-   * 获取事件列表
+   * è·åäºä»¶åè¡¨
    */
   private handleEventsList(): ApiResponse {
     const eventLog = this.kernel.eventBus.getEventLog();

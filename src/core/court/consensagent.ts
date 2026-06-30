@@ -1,7 +1,7 @@
 // src/core/court/consensagent.ts
 import crypto from 'crypto';
 import { RuntimeKernel } from '../../kernel/runtime-kernel';
-import { CourtEvent } from '../events/court-events'; // 🔒 Static anchored enum system
+import { CourtEvent } from '../events/court-events'; // ð Static anchored enum system
 import { logger } from '../logger';
 
 export interface LegalEvidenceNode {
@@ -28,7 +28,7 @@ export interface JudicialVerdictEnvelope {
 }
 
 /**
- * 🏛️ Hardened Consensual Multi-Agent Courtroom Engine
+ * ðï¸ Hardened Consensual Multi-Agent Courtroom Engine
  * Responsibility: Manages primary legal cross-examinations under strict two-phase serialization.
  * Design Spec: Eradicates raw inline SQL queries to preserve domain purity.
  */
@@ -52,7 +52,7 @@ export class ConsensAgentCourtRoom {
     });
 
     this.isOperational = true;
-    logger.info(this.moduleName, '🏛️ [OS Phase 3 Court Core] Hardened multi-agent evidentiary tribunal live.');
+    logger.info(this.moduleName, 'ðï¸ [OS Phase 3 Court Core] Hardened multi-agent evidentiary tribunal live.');
   }
 
   public enforcePhase1LockState(locked: boolean): void {
@@ -78,7 +78,7 @@ export class ConsensAgentCourtRoom {
 
   private calculateEvidenceWeightFormula(evidence: LegalEvidenceNode, disputeText: string): number {
     const cc = this.kernel.configCenter;
-    // 🔒 Fix Audit Item 4: Pull formula coefficients dynamically from center to eradicate magic digits
+    // ð Fix Audit Item 4: Pull formula coefficients dynamically from center to eradicate magic digits
     const wCred = cc.get('society.court.weight_credibility', 0.5);
     const wRel = cc.get('society.court.weight_relevance', 0.3);
     const wTime = cc.get('society.court.weight_temporal', 0.2);
@@ -88,7 +88,7 @@ export class ConsensAgentCourtRoom {
   }
 
   /**
-   * 🏗️ Command Handler: Two-Phase Version Checked Arbitrator Pipeline
+   * ðï¸ Command Handler: Two-Phase Version Checked Arbitrator Pipeline
    */
   private async handleArbitrationTransaction(command: any): Promise<any> {
     const { traceId, argumentsList, evidenceSnapshotMap } = command.payload;
@@ -97,7 +97,7 @@ export class ConsensAgentCourtRoom {
       throw new Error("ERR_COURT_FLOW_VIOLATION: Adjudication loop must be strictly isolated inside Phase 1 locked barriers.");
     }
 
-    // 🔒 [Optimistic Locking Phase 1]: Lock down state fingerprint prior to long-turn loop logic
+    // ð [Optimistic Locking Phase 1]: Lock down state fingerprint prior to long-turn loop logic
     const initialVersion = this.kernel.version;
     const tx = await this.kernel.transactionManager.begin(
       command.id || crypto.randomUUID(),
@@ -137,8 +137,7 @@ export class ConsensAgentCourtRoom {
       };
 
       // 3. Heuristic high-risk destruction auto-circuit breaker triggers escape escalation
-      if (undisputedWinnerNode?.disputedClaimStatement.includes('IRREVERSIBLE_DESTRUCTION_OPERATION') ||
-          undisputedWinnerNode?.disputedClaimStatement.includes('物理删库')) {
+      if (undisputedWinnerNode?.disputedClaimStatement.includes('IRREVERSIBLE_DESTRUCTION_OPERATION')) {
         verdictEnvelope.verdictResolutionStatus = 'ESCAPE_ROUTING_TO_LLM';
         verdictEnvelope.winningAgentSignature = null;
         this.kernel.eventBus.emit(CourtEvent.ESCALATION_TRIGGERED, { target: undisputedWinnerNode.originatingAgentId });
@@ -155,7 +154,7 @@ export class ConsensAgentCourtRoom {
         this.kernel.eventBus.emit(CourtEvent.DEADLOCK_DETECTED, { winner: undisputedWinnerNode.score, runnerUp: immediateRunnerUpNode.score });
       }
 
-      // 🔒 [Optimistic Locking Phase 2]: Intercept and abort transaction if state owner mismatched
+      // ð [Optimistic Locking Phase 2]: Intercept and abort transaction if state owner mismatched
       if (this.kernel.version !== initialVersion) {
         throw new Error(`ERR_SF_COURT_RACE: Macro state evolved during core courtroom processing lifecycle.`);
       }
@@ -169,7 +168,7 @@ export class ConsensAgentCourtRoom {
         finalized_at: verdictEnvelope.timestamp
       };
 
-      // 🧱 Commit ownership: EventBus fires standard completed facts notice onto unified sink consumers
+      // ð§± Commit ownership: EventBus fires standard completed facts notice onto unified sink consumers
       await this.kernel.transactionManager.commit(tx.id);
 
       if (verdictEnvelope.verdictResolutionStatus === 'DECIDED_LEGITIMATE') {
