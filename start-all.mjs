@@ -226,7 +226,9 @@ async function startBackend() {
     log("backend", WARN(`3001 已占用,假定已在运行`));
     return null;
   }
-  return spawnBg("backend", process.execPath, [TSX_CLI, "src/index.ts"], { cwd: ROOT });
+  // dev 模式自动签发 token, 避免 3001 启动失败
+  const env = { ...process.env, SOLOFORGE_REQUIRE_TOKENS: "0" };
+  return spawnBg("backend", process.execPath, [TSX_CLI, "src/index.ts"], { cwd: ROOT, env });
 }
 
 async function startUiDev() {

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, CheckCircle2, Loader2, Clock, ChevronDown, ChevronUp, Brain, Upload, Hammer, Tag, FolderHeart, Globe, Shield, Cpu, Zap, Check, ShieldCheck, Flame, BadgeCheck, Gauge, Workflow, Rocket, FileText, CheckCheck, Copy, FileCode, X, HelpCircle, Download, SlidersHorizontal, Smile, Volume2, Key, Code, Database, CreditCard, MessageSquare, FolderPlus, Circle, Pencil, Trash2, GripVertical } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { MountTransition } from './MountTransition';
 import TerminalPanel from './TerminalPanel';
 
 import { AndroidIcon, WindowsIcon, HarmonyOSIcon, DefaultChatIcon } from './HistoryAndEditorPanel';
@@ -111,15 +111,8 @@ function CollapsibleCodeBlock({ fileName, text }: { fileName: string; text: stri
         </div>
       </div>
       
-      <AnimatePresence initial={false}>
-        {isExpanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: 'easeInOut' }}
-            className="overflow-hidden border-t border-outline/30"
-          >
+      <MountTransition show={isExpanded} variant="height" duration={200}>
+          <div className="overflow-hidden border-t border-outline/30">
             <div className="relative">
               <pre className="max-h-72 overflow-auto p-3 font-mono text-[10.5px] text-on-surface/85 bg-bg/40 select-text scrollbar-thin scrollbar-thumb-outline/50 scrollbar-track-transparent leading-relaxed whitespace-pre font-bold">
                 <code>{text}</code>
@@ -139,9 +132,8 @@ function CollapsibleCodeBlock({ fileName, text }: { fileName: string; text: stri
                 <Copy className="w-3.5 h-3.5" />
               </button>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          </div>
+      </MountTransition>
     </div>
   );
 }
@@ -1835,11 +1827,9 @@ export default function ChatPanel({
           {activeMessages.map((msg, index) => {
             const isUser = msg.sender === 'user';
             return (
-              <motion.div 
+              <div
                 key={index}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                className={`flex flex-col gap-2.5 ${isUser ? 'items-end' : 'items-start'}`}
+                className={`sf-anim sf-anim-slide-up flex flex-col gap-2.5 ${isUser ? 'items-end' : 'items-start'}`}
               >
                 {/* Header Row: Avatar + Info */}
                 <div className={`flex gap-3 items-center mb-1 ${isUser ? 'flex-row-reverse' : ''}`}>
@@ -1897,15 +1887,13 @@ export default function ChatPanel({
                     )}
                   </div>
                 </div>
-              </motion.div>
+              </div>
             );
           })}
 
           {isGenerating && (
-            <motion.div 
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="flex flex-col gap-2.5 text-left"
+            <div
+              className="sf-anim sf-anim-slide-up flex flex-col gap-2.5 text-left"
             >
               {/* Header Row: Avatar + Loading info (Center-aligned) */}
               <div className="flex gap-3.5 items-center mb-1">
@@ -1953,7 +1941,7 @@ export default function ChatPanel({
                   <AuditView findings={streamState.auditFindings} />
                 )}
               </div>
-            </motion.div>
+            </div>
           )}
 
         {/* 1:1 Static Agent Execution Process (placed in between messages or at the bottom for fidelity to screenshot) */}
@@ -2479,12 +2467,9 @@ export default function ChatPanel({
           <div className="flex items-center justify-between pt-1 border-t border-outline/30">
             {/* Conversation mode select dropdown */}
             <div className="relative" id="chat-mode-selection-dropdown">
-              <motion.button 
+              <button 
                 onClick={() => setShowModeDropdown(!showModeDropdown)}
-                whileHover={{ y: -1 }}
-                whileTap={{ y: 1 }}
-                transition={{ type: "spring", stiffness: 500, damping: 30 }}
-                className="flex items-center gap-1.5 text-[10px] text-on-surface/85 bg-surface-bright hover:bg-bg border border-outline px-2.5 py-1 rounded cursor-pointer hover:text-on-surface transition-all font-sans font-bold shadow select-none"
+                className="sf-lift flex items-center gap-1.5 text-[10px] text-on-surface/85 bg-surface-bright hover:bg-bg border border-outline px-2.5 py-1 rounded cursor-pointer hover:text-on-surface transition-all font-sans font-bold shadow select-none"
                 style={{ backfaceVisibility: "hidden", WebkitFontSmoothing: "subpixel-antialiased" }}
               >
                 {permissionMode === 'normal' && <NormalIcon className="w-3.5 h-3.5" />}
@@ -2497,20 +2482,15 @@ export default function ChatPanel({
                    permissionMode === 'expert' ? '专家模式 (全自动)' : '极致模式 (全自动)'}
                 </span>
                 <ChevronDown className={`w-2.5 h-2.5 opacity-60 transition-transform duration-200 ${showModeDropdown ? 'rotate-180' : ''}`} />
-              </motion.button>
+              </button>
 
-              <AnimatePresence>
-                {showModeDropdown && (
+              <MountTransition show={showModeDropdown} variant="slide-up" duration={150}>
                   <>
                     <div 
                       className="fixed inset-0 z-40 cursor-default" 
                       onClick={() => setShowModeDropdown(false)}
                     />
-                    <motion.div 
-                      initial={{ opacity: 0, y: 6 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: 6 }}
-                      transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
+                    <div 
                       style={{ 
                         transformOrigin: "bottom left",
                         backfaceVisibility: "hidden",
@@ -2523,14 +2503,12 @@ export default function ChatPanel({
                       </span>
 
                       {/* Normal Mode Option */}
-                      <motion.button
+                      <button
                         onClick={() => {
                           setPermissionMode?.('normal');
                           setShowModeDropdown(false);
                         }}
-                        whileHover={{ x: 2 }}
-                        transition={{ type: "spring", stiffness: 450, damping: 25 }}
-                        className={`flex flex-col gap-0.5 p-2 rounded text-left transition-colors cursor-pointer select-none group ${
+                        className={`flex flex-col gap-0.5 p-2 rounded text-left transition-colors cursor-pointer select-none group sf-lift ${
                           permissionMode === 'normal' ? 'bg-emerald-500/10 border border-emerald-500/25 text-on-surface' : 'hover:bg-surface-bright text-on-surface/80 hover:text-on-surface'
                         }`}
                         style={{ backfaceVisibility: "hidden", WebkitFontSmoothing: "subpixel-antialiased" }}
@@ -2545,17 +2523,15 @@ export default function ChatPanel({
                         <p className="text-[9px] leading-relaxed text-on-surface/50 font-medium whitespace-normal font-sans group-hover:text-on-surface/70 transition-colors">
                           自动识别并绕过风险命令，守护代码与环境安全。
                         </p>
-                      </motion.button>
+                      </button>
 
                       {/* Performance Mode Option */}
-                      <motion.button
+                      <button
                         onClick={() => {
                           setPermissionMode?.('performance');
                           setShowModeDropdown(false);
                         }}
-                        whileHover={{ x: 2 }}
-                        transition={{ type: "spring", stiffness: 450, damping: 25 }}
-                        className={`flex flex-col gap-0.5 p-2 rounded text-left transition-colors cursor-pointer select-none group ${
+                        className={`flex flex-col gap-0.5 p-2 rounded text-left transition-colors cursor-pointer select-none group sf-lift ${
                           permissionMode === 'performance' ? 'bg-purple-500/10 border border-purple-500/25 text-on-surface' : 'hover:bg-surface-bright text-on-surface/80 hover:text-on-surface'
                         }`}
                         style={{ backfaceVisibility: "hidden", WebkitFontSmoothing: "subpixel-antialiased" }}
@@ -2570,17 +2546,15 @@ export default function ChatPanel({
                         <p className="text-[9px] leading-relaxed text-on-surface/50 font-medium whitespace-normal font-sans group-hover:text-on-surface/70 transition-colors">
                           自主加载各项基础工具逻辑，支持多模型智能混合。
                         </p>
-                      </motion.button>
+                      </button>
 
                       {/* Expert Mode Option */}
-                      <motion.button
+                      <button
                         onClick={() => {
                           setPermissionMode?.('expert');
                           setShowModeDropdown(false);
                         }}
-                        whileHover={{ x: 2 }}
-                        transition={{ type: "spring", stiffness: 450, damping: 25 }}
-                        className={`flex flex-col gap-0.5 p-2 rounded text-left transition-colors cursor-pointer select-none group ${
+                        className={`flex flex-col gap-0.5 p-2 rounded text-left transition-colors cursor-pointer select-none group sf-lift ${
                           permissionMode === 'expert' ? 'bg-amber-500/10 border border-amber-500/25 text-on-surface' : 'hover:bg-surface-bright text-on-surface/80 hover:text-on-surface'
                         }`}
                         style={{ backfaceVisibility: "hidden", WebkitFontSmoothing: "subpixel-antialiased" }}
@@ -2595,17 +2569,15 @@ export default function ChatPanel({
                         <p className="text-[9px] leading-relaxed text-on-surface/50 font-medium whitespace-normal font-sans group-hover:text-on-surface/70 transition-colors">
                           深度专家级 resource 调度，多模型高频协同攻坚复杂任务。
                         </p>
-                      </motion.button>
+                      </button>
 
                       {/* Ultimate Mode Option */}
-                      <motion.button
+                      <button
                         onClick={() => {
                           setPermissionMode?.('ultimate');
                           setShowModeDropdown(false);
                         }}
-                        whileHover={{ x: 2 }}
-                        transition={{ type: "spring", stiffness: 450, damping: 25 }}
-                        className={`flex flex-col gap-0.5 p-2 rounded text-left transition-colors cursor-pointer select-none group ${
+                        className={`flex flex-col gap-0.5 p-2 rounded text-left transition-colors cursor-pointer select-none group sf-lift ${
                           permissionMode === 'ultimate' ? 'bg-red-500/10 border border-red-500/25 text-on-surface' : 'hover:bg-surface-bright text-on-surface/80 hover:text-on-surface'
                         }`}
                         style={{ backfaceVisibility: "hidden", WebkitFontSmoothing: "subpixel-antialiased" }}
@@ -2620,11 +2592,10 @@ export default function ChatPanel({
                         <p className="text-[9px] leading-relaxed text-on-surface/50 font-medium whitespace-normal font-sans group-hover:text-on-surface/70 transition-colors">
                           最大化释放算力，无中断调度全部工具加速实现诉求。
                         </p>
-                      </motion.button>
-                    </motion.div>
+                      </button>
+                    </div>
                   </>
-                )}
-              </AnimatePresence>
+              </MountTransition>
             </div>
 
             {/* Submit Send Button */}
@@ -2641,14 +2612,10 @@ export default function ChatPanel({
       </div>
 
       {/* Code Documentation Generator Modal */}
-      <AnimatePresence>
-        {isDocsModalOpen && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+      <MountTransition show={isDocsModalOpen} variant="fade" duration={180}>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
             {/* Backdrop */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+            <div
               onClick={() => setIsDocsModalOpen(false)}
               className="absolute inset-0 bg-transparent"
             />
@@ -2660,12 +2627,8 @@ export default function ChatPanel({
             />
 
             {/* Modal Body */}
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0, y: 15 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.95, opacity: 0, y: 15 }}
-              transition={{ type: "spring", stiffness: 360, damping: 28 }}
-              className="relative w-full max-w-2xl bg-surface border border-outline rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.15)] overflow-hidden flex flex-col max-h-[85vh] font-sans z-50 text-left"
+            <div
+              className="sf-anim sf-anim-fade-scale relative w-full max-w-2xl bg-surface border border-outline rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.15)] overflow-hidden flex flex-col max-h-[85vh] font-sans z-50 text-left"
             >
               {/* Header */}
               <div className="p-4 border-b border-outline/40 bg-bg/40 flex items-center justify-between">
@@ -2692,15 +2655,8 @@ export default function ChatPanel({
               {/* Content */}
               <div className="p-5 flex-1 overflow-y-auto space-y-4">
                 {/* Helper Guide Explanation Section */}
-                <AnimatePresence>
-                  {showHelperGuide && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      exit={{ opacity: 0, height: 0 }}
-                      transition={{ duration: 0.2 }}
-                      className="overflow-hidden"
-                    >
+                <MountTransition show={showHelperGuide} variant="height" duration={200}>
+                    <div className="overflow-hidden">
                       <div className="p-4 bg-emerald-500/5 rounded-lg border border-emerald-500/15 space-y-2.5 text-xs text-left mb-2">
                         <div className="flex items-center gap-2 text-emerald-400 font-bold">
                           <HelpCircle className="w-4 h-4 shrink-0 text-[#ffde82]" />
@@ -2726,9 +2682,8 @@ export default function ChatPanel({
                           </ul>
                         </div>
                       </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                    </div>
+                </MountTransition>
 
                 {/* Active Context Selection File info */}
                 <div className="p-3 bg-bg/40 rounded-lg border border-outline flex items-center justify-between text-xs">
@@ -2913,10 +2868,9 @@ export default function ChatPanel({
                   </div>
                 )}
               </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+            </div>
+        </div>
+      </MountTransition>
 
 
 

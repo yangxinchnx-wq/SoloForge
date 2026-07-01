@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { Layers, ChevronDown, Plus, Minus, X, Laptop, Folder, FileCode, ChevronRight } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { MountTransition } from './MountTransition';
 import { SecondaryModel } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import { ModelIcon } from './ModelIcon';
@@ -107,44 +107,30 @@ const SecondaryModelSelector = memo(({
 
   return (
     <div className={`relative ${showSubmodelManager ? 'z-50' : ''}`}>
-      <motion.button
-        whileHover={{ scale: 1.02 }}
-        whileTap={{ scale: 0.97 }}
+      <button
         onClick={() => {
           setShowSubmodelManager(!showSubmodelManager);
         }}
-        className={`flex items-center gap-1.5 px-4 h-[30px] rounded-full text-xs font-bold select-none cursor-pointer border whitespace-nowrap flex-nowrap transition-colors duration-150 touch-manipulation ${
-          showSubmodelManager 
-            ? 'bg-[var(--color-primary)] text-[var(--color-surface)] border-[var(--color-primary)] shadow-lg shadow-primary/25' 
+        className={`sf-press flex items-center gap-1.5 px-4 h-[30px] rounded-full text-xs font-bold select-none cursor-pointer border whitespace-nowrap flex-nowrap transition-colors duration-150 touch-manipulation ${
+          showSubmodelManager
+            ? 'bg-[var(--color-primary)] text-[var(--color-surface)] border-[var(--color-primary)] shadow-lg shadow-primary/25'
             : 'bg-[var(--color-surface)]/60 hover:bg-[var(--color-surface)]/90 text-[var(--color-primary)] border-[var(--color-outline)]/30 hover:border-[var(--color-outline)]/60'
         }`}
         title="点击展开项目副模型控制台"
       >
-        <motion.div
-          animate={{ rotate: showSubmodelManager ? [0, -10, 10, 0] : 0 }}
-          transition={{ duration: 0.4 }}
-          className="flex items-center justify-center shrink-0"
-        >
+        <div className={`flex items-center justify-center shrink-0 transition-transform duration-300 ${showSubmodelManager ? 'rotate-[20deg]' : 'rotate-0'}`}>
           <Layers className="w-3.5 h-3.5" />
-        </motion.div>
+        </div>
         <span>协同副模型</span>
-        <motion.div
-          animate={{ 
-            rotate: showSubmodelManager ? 180 : 0,
-            scale: showSubmodelManager ? 1.1 : 1
-          }}
-          transition={{ type: "spring", stiffness: 300, damping: 20 }}
-          className="flex items-center justify-center shrink-0"
-        >
+        <div className={`flex items-center justify-center shrink-0 transition-transform duration-300 ${showSubmodelManager ? 'rotate-180 scale-110' : 'rotate-0 scale-100'}`}>
           <ChevronDown className="w-3.5 h-3.5 opacity-80" />
-        </motion.div>
-      </motion.button>
+        </div>
+      </button>
 
       {/* Scientific Submodels Control Panel Popover */}
-      <AnimatePresence>
+      <MountTransition show={showSubmodelManager} variant="fade-scale" duration={140}>
         {showSubmodelManager && (
           <div
-            key="overlay"
             className="fixed inset-0 z-40 cursor-default"
             onClick={() => {
               setShowSubmodelManager(false);
@@ -152,12 +138,7 @@ const SecondaryModelSelector = memo(({
           />
         )}
         {showSubmodelManager && (
-          <motion.div
-            key="popover"
-            initial={{ opacity: 0, scale: 0.96, y: -4 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.96, y: -4 }}
-            transition={{ duration: 0.12, ease: "easeOut" }}
+          <div
             className="absolute right-0 mt-3.5 w-80 bg-[var(--color-surface)] border border-[var(--color-outline)]/45 rounded-2xl shadow-[0_24px_64px_rgba(0,0,0,0.15)] p-4 flex flex-col font-sans z-50 text-left cursor-default max-h-[500px] overflow-visible"
           >
             <div className="flex items-center justify-between border-b border-[var(--color-outline)]/20 pb-2.5 mb-3">
@@ -319,9 +300,9 @@ const SecondaryModelSelector = memo(({
                   )}
                 </div>
               </div>
-            </motion.div>
+            </div>
         )}
-      </AnimatePresence>
+      </MountTransition>
     </div>
   );
 });
@@ -675,39 +656,25 @@ export default function Header({
             >
               <ModelIcon modelName={mainModel} size={20} className="shrink-0" />
               <div className="h-4 overflow-hidden relative flex items-center justify-center min-w-[84px]">
-                <AnimatePresence mode="popLayout" initial={false}>
-                  <motion.span
-                    key={mainModel}
-                    initial={{ y: -12, opacity: 0 }}
-                    animate={{ y: 0, opacity: 1 }}
-                    exit={{ y: 12, opacity: 0 }}
-                    transition={{ duration: 0.18, ease: "easeOut" }}
-                    className="inline-block whitespace-nowrap text-primary"
-                  >
-                    {mainModel}
-                  </motion.span>
-                </AnimatePresence>
+                <span
+                  key={mainModel}
+                  className="sf-anim sf-anim-slide-right inline-block whitespace-nowrap text-primary"
+                >
+                  {mainModel}
+                </span>
               </div>
-              <motion.div
-                animate={{ rotate: showModelMenu ? 180 : 0 }}
-                transition={{ duration: 0.2 }}
-                className="flex items-center justify-center shrink-0"
-              >
+              <div className={`flex items-center justify-center shrink-0 transition-transform duration-200 ${showModelMenu ? 'rotate-180' : 'rotate-0'}`}>
                 <ChevronDown className="w-3.5 h-3.5 text-on-surface/40" />
-              </motion.div>
+              </div>
             </button>
-            <AnimatePresence>
+            <MountTransition show={showModelMenu} variant="fade-scale" duration={140}>
               {showModelMenu && (
                 <>
                   <div
                     className="fixed inset-0 z-40 bg-transparent"
                     onClick={() => setShowModelMenu(false)}
                   />
-                  <motion.div
-                    initial={{ opacity: 0, y: -6, scale: 0.96 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -6, scale: 0.96 }}
-                    transition={{ duration: 0.12, ease: "easeOut" }}
+                  <div
                     className="absolute left-0 mt-3.5 w-52 bg-[var(--color-surface)] border border-[var(--color-outline)]/35 rounded-xl shadow-[0_16px_48px_rgba(0,0,0,0.15)] z-50 p-1 flex flex-col gap-0.5"
                   >
                     {availableModels.map((m) => {
@@ -728,19 +695,17 @@ export default function Header({
                             <span>{m}</span>
                           </span>
                           {isSelected && (
-                            <motion.span 
-                              layoutId="active-model-indicator"
-                              className="relative z-10 w-1.5 h-1.5 rounded-full bg-primary"
-                              transition={{ type: "spring", stiffness: 400, damping: 28 }}
+                            <span
+                              className="sf-anim sf-anim-fade-scale relative z-10 w-1.5 h-1.5 rounded-full bg-primary"
                             />
                           )}
                         </button>
                       );
                     })}
-                  </motion.div>
+                  </div>
                 </>
               )}
-            </AnimatePresence>
+            </MountTransition>
           </div>
         </div>
 
@@ -781,33 +746,22 @@ export default function Header({
         </div>
 
         {/* Secondary Models dynamic tags */}
-        <AnimatePresence>
+        <div
+          className={`sf-anim sf-anim-fade flex items-center gap-2 border-l border-[var(--color-outline)]/40 pl-3 whitespace-nowrap flex-nowrap ${mixedTasks ? '' : 'opacity-0 w-0 ml-0 overflow-hidden'}`}
+        >
           {mixedTasks && (
-            <motion.div
-              initial={{ opacity: 0, width: 0, marginLeft: 0, overflow: "hidden" }}
-              animate={{ 
-                opacity: 1, 
-                width: "auto", 
-                marginLeft: 4,
-                transitionEnd: { overflow: "visible" }
-              }}
-              exit={{ opacity: 0, width: 0, marginLeft: 0, overflow: "hidden" }}
-              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-              className="flex items-center gap-2 border-l border-[var(--color-outline)]/40 pl-3 whitespace-nowrap flex-nowrap"
-            >
-              <SecondaryModelSelector
-                secModels={secModels}
-                allAvailableModelsList={allAvailableModelsList}
-                addSecModel={addSecModel}
-                removeSecModel={removeSecModel}
-                changeSecModelWeight={changeSecModelWeight}
-                setSecModelWeightDirect={setSecModelWeightDirect}
-                updateSecModelAtIndex={updateSecModelAtIndex}
-                onOpenChange={setIsSecModelSelectorOpen}
-              />
-            </motion.div>
+            <SecondaryModelSelector
+              secModels={secModels}
+              allAvailableModelsList={allAvailableModelsList}
+              addSecModel={addSecModel}
+              removeSecModel={removeSecModel}
+              changeSecModelWeight={changeSecModelWeight}
+              setSecModelWeightDirect={setSecModelWeightDirect}
+              updateSecModelAtIndex={updateSecModelAtIndex}
+              onOpenChange={setIsSecModelSelectorOpen}
+            />
           )}
-        </AnimatePresence>
+        </div>
       </div>
 
       {/* Right User info and window mock controllers */}

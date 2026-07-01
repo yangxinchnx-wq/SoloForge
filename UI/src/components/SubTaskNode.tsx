@@ -4,7 +4,7 @@
  */
 import React, { useState } from 'react';
 import { ChevronDown, Bot, Globe, Wrench, Zap, Loader2, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { MountTransition } from './MountTransition';
 import type { SubTask, SubTaskSource } from '../types/streaming';
 import { StepRecordItem } from './StepRecordItem';
 import { ModelDelegationTag } from './ModelDelegationTag';
@@ -88,14 +88,8 @@ export function SubTaskNode({ subTask, mainModel, defaultOpen = true }: SubTaskN
       )}
 
       {/* 展开：步骤列表 */}
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="overflow-hidden"
-          >
+      <MountTransition show={open} variant="height" duration={200}>
+        <div>
             <div className="px-3 pb-2 border-t border-outline/5">
               {subTask.stepHistory.length > 0 ? (
                 <div className="pt-2 space-y-0.5">
@@ -118,9 +112,8 @@ export function SubTaskNode({ subTask, mainModel, defaultOpen = true }: SubTaskN
                 <span className="text-[10px] text-on-surface/40 font-mono">{subTask.browserUrl}</span>
               </div>
             )}
-          </motion.div>
-        )}
-      </AnimatePresence>
+        </div>
+      </MountTransition>
     </div>
   );
 }

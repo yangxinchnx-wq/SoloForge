@@ -4,7 +4,6 @@ import {
   Database, MessageSquare, Calendar, Flame, Cpu, Zap, Award, Download,
   Activity, Gauge, HardDrive, LineChart as LineChartIcon, Brain
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
 import {
   ResponsiveContainer,
   AreaChart,
@@ -454,12 +453,8 @@ export default function StatsModal({ onClose }: StatsModalProps) {
 
   return (
     <div className="fixed inset-0 bg-[#000000]/85 backdrop-blur-md flex items-center justify-center z-50 p-4">
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.95, y: 15 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 15 }}
-        transition={{ duration: 0.25, ease: 'easeOut' }}
-        className="w-full max-w-5xl bg-[#0c0d10] border border-[#22242b] rounded-2xl shadow-2xl flex flex-col h-[82vh] md:h-[78vh] overflow-hidden select-none text-on-surface"
+      <div
+        className="sf-anim sf-anim-fade-scale w-full max-w-5xl bg-[#0c0d10] border border-[#22242b] rounded-2xl shadow-2xl flex flex-col h-[82vh] md:h-[78vh] overflow-hidden select-none text-on-surface"
       >
         {/* Header container */}
         <div className="bg-[#0e0f12] border-b border-[#22242b] px-6 py-4.5 flex items-center justify-between shrink-0">
@@ -546,11 +541,9 @@ export default function StatsModal({ onClose }: StatsModalProps) {
                 className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer relative overflow-hidden group"
               >
                 {activeTab === 'overview' && (
-                  <motion.div 
-                    layoutId="statsTabIndicator"
+                  <div
                     className="absolute inset-0 bg-[#ffde82]/10 border border-[#ffde82]/20 rounded-lg"
                     style={{ originY: "0px" }}
-                    transition={{ type: "spring", stiffness: 95, damping: 22 }}
                   />
                 )}
                 <span className={`relative z-10 flex items-center gap-2.5 ${activeTab === 'overview' ? 'text-[#ffde82]' : 'text-on-surface/60'}`}>
@@ -564,11 +557,9 @@ export default function StatsModal({ onClose }: StatsModalProps) {
                 className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer relative overflow-hidden group"
               >
                 {activeTab === 'conversations' && (
-                  <motion.div 
-                    layoutId="statsTabIndicator"
+                  <div
                     className="absolute inset-0 bg-[#ffde82]/10 border border-[#ffde82]/20 rounded-lg"
                     style={{ originY: "0px" }}
-                    transition={{ type: "spring", stiffness: 95, damping: 22 }}
                   />
                 )}
                 <span className={`relative z-10 flex items-center gap-2.5 ${activeTab === 'conversations' ? 'text-[#ffde82]' : 'text-on-surface/60'}`}>
@@ -582,11 +573,9 @@ export default function StatsModal({ onClose }: StatsModalProps) {
                 className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer relative overflow-hidden group"
               >
                 {activeTab === 'models' && (
-                  <motion.div 
-                    layoutId="statsTabIndicator"
+                  <div
                     className="absolute inset-0 bg-[#ffde82]/10 border border-[#ffde82]/20 rounded-lg"
                     style={{ originY: "0px" }}
-                    transition={{ type: "spring", stiffness: 95, damping: 22 }}
                   />
                 )}
                 <span className={`relative z-10 flex items-center gap-2.5 ${activeTab === 'models' ? 'text-[#ffde82]' : 'text-on-surface/60'}`}>
@@ -600,11 +589,9 @@ export default function StatsModal({ onClose }: StatsModalProps) {
                 className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer relative overflow-hidden group"
               >
                 {activeTab === 'performance' && (
-                  <motion.div 
-                    layoutId="statsTabIndicator"
+                  <div
                     className="absolute inset-0 bg-[#ffde82]/10 border border-[#ffde82]/20 rounded-lg"
                     style={{ originY: "0px" }}
-                    transition={{ type: "spring", stiffness: 95, damping: 22 }}
                   />
                 )}
                 <span className={`relative z-10 flex items-center gap-2.5 ${activeTab === 'performance' ? 'text-[#ffde82]' : 'text-on-surface/60'}`}>
@@ -674,15 +661,10 @@ export default function StatsModal({ onClose }: StatsModalProps) {
 
           {/* Right Main Panel */}
           <div className="flex-1 bg-[#090a0d] p-6 overflow-y-auto scrollbar-thin">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={activeTab}
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -12 }}
-                transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }} // ultra soothing custom bezier curve
-                className="space-y-6 min-h-full"
-              >
+            <div
+              key={activeTab}
+              className="sf-anim sf-anim-slide-right space-y-6 min-h-full"
+            >
                 {/* Tab 1: Overview */}
                 {activeTab === 'overview' && (
                   <div className="space-y-6">
@@ -1343,11 +1325,10 @@ export default function StatsModal({ onClose }: StatsModalProps) {
                 </div>
               </div>
             )}
-          </motion.div>
-        </AnimatePresence>
+            </div>
           </div>
         </div>
-      </motion.div>
+      </div>
     </div>
   );
 }

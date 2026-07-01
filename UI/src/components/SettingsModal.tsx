@@ -6,7 +6,7 @@ import {
   Search, RefreshCw, Layers, Plus, Terminal, Heart, Eye, EyeOff, DownloadCloud, FileText, Link2, Key, Radio, ShieldAlert, Settings,
   Mic, Wrench, Film, Type, Compass, Sliders, Flame
 } from 'lucide-react';
-import { motion, AnimatePresence, Reorder } from 'motion/react';
+import { MountTransition } from './MountTransition';
 import * as DndKitCore from '@dnd-kit/core';
 import * as DndKitModifiers from '@dnd-kit/modifiers';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
@@ -17,7 +17,7 @@ type DragEndEvent = DndKitCore.DragEndEvent;
 type DragStartEvent = DndKitCore.DragStartEvent;
 import { ModelIcon } from './ModelIcon';
 import { NormalIcon, PerformanceIcon, ExpertIcon, UltimateIcon } from './ChatPanel';
-import { useTheme, PRESET_FONTS } from '../context/ThemeContext';
+import { useTheme, PRESET_FONTS, preloadFontByName } from '../context/ThemeContext';
 
 const PROVIDER_MODEL_REGISTRY: Record<string, { id: string; name: string }[]> = {
   xiaomi: [
@@ -1077,20 +1077,12 @@ export default function SettingsModal({
   }) : [];
 
   return (
-    <motion.div 
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.2, ease: 'easeOut' }}
-      className="fixed inset-0 flex items-center justify-center z-[100] p-4 text-on-surface font-sans select-none overflow-hidden"
+    <div
+      className="sf-anim sf-anim-fade fixed inset-0 flex items-center justify-center z-[100] p-4 text-on-surface font-sans select-none overflow-hidden"
       style={{ backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', backgroundColor: 'rgba(0, 0, 0, 0.45)' }}
     >
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.96, y: 16 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.97, y: 12 }}
-        transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
-        className="settings-modal-card bg-[var(--color-surface)] border border-[var(--color-outline)]/20 rounded-2xl w-full max-w-5xl h-[85vh] shadow-[0_12px_45px_rgba(0,0,0,0.4)] overflow-hidden flex flex-col text-[var(--color-on-surface)]"
+      <div
+        className="sf-anim sf-anim-fade-scale settings-modal-card bg-[var(--color-surface)] border border-[var(--color-outline)]/20 rounded-2xl w-full max-w-5xl h-[85vh] shadow-[0_12px_45px_rgba(0,0,0,0.4)] overflow-hidden flex flex-col text-[var(--color-on-surface)]"
       >
         {/* Modal Unified Header */}
         <div className="flex items-center justify-between p-4 px-6 border-b border-[var(--color-outline)]/20 bg-[var(--color-bg)] text-[var(--color-on-surface)]">
@@ -1156,15 +1148,7 @@ export default function SettingsModal({
 
           {/* Right Column: Specific Panel details with scrolling */}
           <div className="flex-1 bg-[var(--color-surface)] p-6 overflow-y-auto scrollbar-thin text-left">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={activeTabId}
-                initial={{ opacity: 0, x: 16 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -16 }}
-                transition={{ duration: 0.2, ease: "easeInOut" }}
-                className="w-full min-h-full flex flex-col"
-              >
+            <div key={activeTabId} className="sf-anim sf-anim-slide-right w-full min-h-full flex flex-col">
                 {/* 01. Language settings */}
                 {activeTabId === 'language' && (
                   <div className="space-y-6 animate-fadeIn text-left pb-6">
@@ -1230,10 +1214,15 @@ export default function SettingsModal({
                           }
 
                           return (
-                            <div 
+                            <div
                               key={idx}
                               role="button"
+                              tabIndex={0}
+                              data-font-card={font.name}
                               onClick={() => setSelectedFont(font.name)}
+                              onMouseEnter={() => preloadFontByName(font.name, customFonts)}
+                              onFocus={() => preloadFontByName(font.name, customFonts)}
+                              onTouchStart={() => preloadFontByName(font.name, customFonts)}
                               className={`p-3.5 rounded-xl border text-left flex flex-col justify-between cursor-pointer transition-all ${
                                 isActive 
                                   ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 shadow-[0_0_12px_rgba(var(--color-primary-rgb),0.25)]'
@@ -1404,19 +1393,14 @@ export default function SettingsModal({
 
                       {/* Fixed: Plus button */}
                       <div className="p-2.5 pt-0 shrink-0">
-                        <motion.button
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ delay: 0.1 }}
-                          whileHover={{ scale: 1.02 }}
-                          whileTap={{ scale: 0.98 }}
+                        <button
                           onClick={createNewCustomProvider}
-                          className="w-full py-2.5 rounded-xl border border-dashed border-[var(--color-outline)]/20 hover:border-[var(--color-primary)] bg-[var(--color-primary)]/5 hover:bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center gap-1.5 text-xs font-bold transition-all cursor-pointer shadow-sm"
+                          className="sf-press sf-anim sf-anim-fade w-full py-2.5 rounded-xl border border-dashed border-[var(--color-outline)]/20 hover:border-[var(--color-primary)] bg-[var(--color-primary)]/5 hover:bg-[var(--color-primary)]/10 text-[var(--color-primary)] flex items-center justify-center gap-1.5 text-xs font-bold transition-all cursor-pointer shadow-sm"
                           title="添加新的自定义模型通道"
                         >
                           <Plus className="w-4 h-4" />
                           <span>添加自定义端点</span>
-                        </motion.button>
+                        </button>
                       </div>
                     </div>
 
@@ -1426,15 +1410,7 @@ export default function SettingsModal({
                       className="flex-1 flex flex-col min-h-0 bg-[var(--color-surface)]/30 overflow-y-auto"
                       style={{ overscrollBehavior: 'none' }}
                     >
-                      <AnimatePresence mode="wait">
-                        <motion.div
-                          key={activeProvider.id}
-                          initial={{ opacity: 0, y: 12 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -12 }}
-                          transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
-                          className="flex-1 flex flex-col p-6 space-y-6"
-                        >
+                      <div key={activeProvider.id} className="sf-anim sf-anim-slide-up flex-1 flex flex-col p-6 space-y-6">
                           {/* Active Provider Info Panel Header */}
                           <div className="flex items-center justify-between pb-4 border-b border-[var(--color-outline)]/15 shrink-0">
                             <div className="space-y-1">
@@ -1556,12 +1532,9 @@ export default function SettingsModal({
                               </div>
 
                               {/* Scanning Output Result Panel */}
-                              <AnimatePresence>
+                              <div className={scanResult ? 'sf-anim sf-anim-fade' : 'sf-anim sf-anim-fade sf-exit'}>
                                 {scanResult && (
-                                  <motion.div
-                                    initial={{ opacity: 0, height: 0 }}
-                                    animate={{ opacity: 1, height: 'auto' }}
-                                    exit={{ opacity: 0, height: 0 }}
+                                  <div
                                     className="bg-[var(--color-primary)]/5 border border-[var(--color-primary)]/20 rounded-xl p-3.5 space-y-2.5 overflow-hidden shadow-inner text-left"
                                   >
                                     <div className="flex justify-between items-center pb-1.5 border-b border-[var(--color-primary)]/15">
@@ -1632,10 +1605,10 @@ export default function SettingsModal({
                                         });
                                       })()}
                                     </div>
-                                  </motion.div>
+                                  </div>
                                 )}
-                              </AnimatePresence>
-                              
+                              </div>
+
                               {/* Model Reorder List */}
                               <div className="max-h-[220px] overflow-y-auto pr-1">
                                 {activeProvider.models.filter(m => m.enabled).length === 0 && activeProvider.customModels.length === 0 && (
@@ -1645,56 +1618,32 @@ export default function SettingsModal({
                                   </div>
                                 )}
                                 {activeProvider.enabled && dragModels.length > 0 && (
-                                  <Reorder.Group
-                                    ref={modelListRef}
-                                    axis="y"
-                                    values={dragModels}
-                                    onReorder={(reordered) => reorderModels(activeProvider.id, reordered)}
-                                    className="space-y-1.5"
-                                    style={{ overflow: 'visible' }}
+                                  <DndContext
+                                    sensors={sensors}
+                                    collisionDetection={closestCenter}
+                                    modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+                                    onDragEnd={({ active, over }: DragEndEvent) => {
+                                      if (!over || active.id === over.id) return;
+                                      const oldIndex = dragModels.findIndex((m) => m.id === active.id);
+                                      const newIndex = dragModels.findIndex((m) => m.id === over.id);
+                                      if (oldIndex !== -1 && newIndex !== -1) {
+                                        reorderModels(activeProvider.id, arrayMove(dragModels, oldIndex, newIndex));
+                                      }
+                                    }}
                                   >
-                                    {dragModels.map((model) => (
-                                        <Reorder.Item
-                                          key={model.id}
-                                          value={model}
-                                          dragListener={true}
-                                          dragElastic={0}
-                                          whileDrag={{
-                                            zIndex: 50,
-                                            opacity: 1,
-                                          }}
-                                          layout
-                                          transition={{
-                                            layout: {
-                                              type: 'spring',
-                                              stiffness: 600,
-                                              damping: 35,
-                                              mass: 0.3,
-                                            },
-                                          }}
-                                          className="flex items-center justify-between p-2.5 rounded-xl border text-xs cursor-grab active:cursor-grabbing select-none touch-none bg-[var(--color-primary)]/10 border-[var(--color-primary)]/45 text-[var(--color-on-surface)] font-bold shadow-sm"
-                                        >
-                                          <div className="flex items-center gap-2 flex-1 min-w-0 pointer-events-none">
-                                            <ModelIcon modelName={model.id} size={20} className="shrink-0" />
-                                            <ScrollableText className="font-mono text-[11.5px] text-on-surface font-extrabold" title={model.id}>{model.name || model.id}</ScrollableText>
-                                          </div>
-
-                                          <div className="flex items-center shrink-0 ml-2">
-                                            <button
-                                              type="button"
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                toggleModelEnabled(activeProvider.id, model.id);
-                                              }}
-                                              className="w-5.5 h-5.5 rounded-md flex items-center justify-center font-bold text-xs bg-rose-500/10 text-rose-550 hover:bg-rose-500 hover:text-white active:scale-95 transition-all cursor-pointer shadow-sm"
-                                              title="从已选中模型中移除"
-                                            >
-                                              -
-                                            </button>
-                                          </div>
-                                        </Reorder.Item>
-                                      ))}
-                                  </Reorder.Group>
+                                    <SortableContext items={dragModels.map((m) => m.id)} strategy={verticalListSortingStrategy}>
+                                      <div className="space-y-1.5" style={{ overflow: 'visible' }}>
+                                        {dragModels.map((model) => (
+                                          <SortableModelItem
+                                            key={model.id}
+                                            id={model.id}
+                                            name={model.name}
+                                            onRemove={() => toggleModelEnabled(activeProvider.id, model.id)}
+                                          />
+                                        ))}
+                                      </div>
+                                    </SortableContext>
+                                  </DndContext>
                                 )}
 
                                 {activeProvider.customModels
@@ -1709,10 +1658,9 @@ export default function SettingsModal({
                                   })
                                   .map((cm) => {
                                     return (
-                                      <motion.div
+                                      <div
                                         key={cm}
-                                        whileHover={{ y: -1 }}
-                                        className="flex items-center justify-between p-2.5 rounded-xl border text-xs bg-[var(--color-primary)]/10 border-[var(--color-primary)]/30 text-[var(--color-on-surface)] shadow-inner"
+                                        className="sf-lift flex items-center justify-between p-2.5 rounded-xl border text-xs bg-[var(--color-primary)]/10 border-[var(--color-primary)]/30 text-[var(--color-on-surface)] shadow-inner"
                                       >
                                         <div className="flex items-center gap-2 truncate font-mono text-[11.5px] text-left max-w-[80%]">
                                           <ModelIcon modelName={cm} size={20} className="shrink-0" />
@@ -1729,7 +1677,7 @@ export default function SettingsModal({
                                             <Trash2 className="w-3.5 h-3.5" />
                                           </button>
                                         </div>
-                                      </motion.div>
+                                      </div>
                                     );
                                   })}
                               </div>
@@ -1785,52 +1733,35 @@ export default function SettingsModal({
 
                             {/* Testing Status Message */}
                             <div className="flex items-center shrink-0">
-                              <AnimatePresence mode="wait">
-                                {activeProvider.status === 'loading' && (
-                                  <motion.div 
-                                    initial={{ opacity: 0, x: 5 }} 
-                                    animate={{ opacity: 1, x: 0 }} 
-                                    exit={{ opacity: 0, x: -5 }} 
-                                    className="text-yellow-400 font-bold text-[11px] flex items-center gap-1.5"
-                                  >
-                                    <RefreshCw className="w-4 h-4 animate-spin" />
-                                    <span>线路握手中...</span>
-                                  </motion.div>
-                                )}
-                                {activeProvider.status === 'success' && activeProvider.enabled && (
-                                  <motion.div 
-                                    initial={{ opacity: 0, scale: 0.95 }} 
-                                    animate={{ opacity: 1, scale: 1 }} 
-                                    exit={{ opacity: 0, scale: 0.95 }}
-                                    className="text-emerald-400 font-extrabold text-[11px] flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg"
-                                  >
-                                    <Check className="w-4 h-4" />
-                                    <span>测试成功 ({activeProvider.delay}毫秒)</span>
-                                  </motion.div>
-                                )}
-                                {activeProvider.status === 'failed' && activeProvider.enabled && (
-                                  <motion.div 
-                                    initial={{ opacity: 0, scale: 0.95 }} 
-                                    animate={{ opacity: 1, scale: 1 }} 
-                                    exit={{ opacity: 0, scale: 0.95 }}
-                                    className="text-red-400 font-extrabold text-[11px] flex items-center gap-1.5 bg-red-400/10 border border-red-500/20 px-3 py-1.5 rounded-lg cursor-help shrink-0"
-                                    title={activeProvider.errorMessage}
-                                  >
-                                    <AlertCircle className="w-4 h-4 shrink-0" />
-                                    <span>握手失败</span>
-                                  </motion.div>
-                                )}
-                                {!activeProvider.enabled && (
-                                  <div className="text-on-surface/30 text-[11px]">
-                                    服务商未启用
-                                  </div>
-                                )}
-                              </AnimatePresence>
+                              {activeProvider.status === 'loading' && (
+                                <div className="sf-anim sf-anim-fade text-yellow-400 font-bold text-[11px] flex items-center gap-1.5">
+                                  <RefreshCw className="w-4 h-4 animate-spin" />
+                                  <span>线路握手中...</span>
+                                </div>
+                              )}
+                              {activeProvider.status === 'success' && activeProvider.enabled && (
+                                <div className="sf-anim sf-anim-fade text-emerald-400 font-extrabold text-[11px] flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg">
+                                  <Check className="w-4 h-4" />
+                                  <span>测试成功 ({activeProvider.delay}毫秒)</span>
+                                </div>
+                              )}
+                              {activeProvider.status === 'failed' && activeProvider.enabled && (
+                                <div className="sf-anim sf-anim-fade text-red-400 font-extrabold text-[11px] flex items-center gap-1.5 bg-red-400/10 border border-red-500/20 px-3 py-1.5 rounded-lg cursor-help shrink-0"
+                                  title={activeProvider.errorMessage}
+                                >
+                                  <AlertCircle className="w-4 h-4 shrink-0" />
+                                  <span>握手失败</span>
+                                </div>
+                              )}
+                              {!activeProvider.enabled && (
+                                <div className="text-on-surface/30 text-[11px]">
+                                  服务商未启用
+                                </div>
+                              )}
                             </div>
                           </div>
                           </div>
-                        </motion.div>
-                      </AnimatePresence>
+                      </div>
                     </div>
 
                     <DragOverlay
@@ -2728,12 +2659,10 @@ export default function SettingsModal({
                 </div>
               </div>
             )}
-              </motion.div>
-            </AnimatePresence>
-
+            </div>
           </div>
         </div>
-      </motion.div>
-    </motion.div>
+      </div>
+    </div>
   );
 }

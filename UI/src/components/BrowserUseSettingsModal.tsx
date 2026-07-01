@@ -14,7 +14,7 @@
  * 后续: 同步到后端 PUT /api/browser-use/config (TODO)
  */
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { MountTransition } from './MountTransition';
 import { X, Globe, Key, Cpu, Eye, Network, Save, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 export interface BrowserUseConfig {
@@ -99,20 +99,14 @@ export function BrowserUseSettingsModal({ onClose }: Props): React.ReactElement 
   const models = PROVIDER_MODELS[cfg.provider] ?? [];
 
   return (
-    <AnimatePresence>
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
+    <MountTransition show={true} variant="fade" duration={180}>
+      <div
         onClick={onClose}
         className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
       >
-        <motion.div
-          initial={{ scale: 0.95, y: 20 }}
-          animate={{ scale: 1, y: 0 }}
-          exit={{ scale: 0.95, y: 20 }}
+        <div
           onClick={(e) => e.stopPropagation()}
-          className="w-full max-w-lg max-h-[90vh] overflow-y-auto scrollbar-thin bg-surface border border-outline/40 rounded-lg shadow-2xl"
+          className="sf-anim sf-anim-fade-scale w-full max-w-lg max-h-[90vh] overflow-y-auto scrollbar-thin bg-surface border border-outline/40 rounded-lg shadow-2xl"
         >
           {/* Header */}
           <div className="sticky top-0 z-10 bg-surface/95 backdrop-blur px-4 py-3 border-b border-outline/30 flex items-center gap-2">
@@ -285,9 +279,9 @@ export function BrowserUseSettingsModal({ onClose }: Props): React.ReactElement 
               <Save className="w-3 h-3" /> 保存
             </button>
           </div>
-        </motion.div>
-      </motion.div>
-    </AnimatePresence>
+        </div>
+      </div>
+    </MountTransition>
   );
 }
 

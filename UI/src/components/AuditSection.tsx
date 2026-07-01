@@ -4,7 +4,7 @@
  */
 import React, { useState } from 'react';
 import { ChevronDown, Shield, Gavel, Scale, CheckCircle2, AlertTriangle, XCircle, RefreshCw } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { MountTransition } from '../MountTransition';
 import type { AuditTask, AuditFinding, ArbitrationResult } from '../types/streaming';
 import type { PermissionMode } from '../types/streaming';
 
@@ -50,14 +50,8 @@ export function AuditSection({ auditTask, result, mode, modelCount }: AuditSecti
         )}
       </div>
 
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="overflow-hidden"
-          >
+      <MountTransition show={open} variant="height" duration={200}>
+        <div>
             <div className="px-3 pb-2 border-t border-outline/5 space-y-2 pt-2">
               {/* 审查发现 */}
               {auditTask.findings.length > 0 && (
@@ -109,9 +103,8 @@ export function AuditSection({ auditTask, result, mode, modelCount }: AuditSecti
                 </div>
               )}
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+        </div>
+      </MountTransition>
     </div>
   );
 }

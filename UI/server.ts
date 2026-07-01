@@ -570,8 +570,17 @@ async function startServer() {
     target: MARL_REPUTATION_HTTP,
     changeOrigin: true,
     pathRewrite: { "^/api/marl/reputation": "/sync/reputation" },
+    pathFilter: (pathname) => pathname === "/api/marl/reputation" || pathname.startsWith("/api/marl/reputation/"),
     logger: console,
     on: {
+      proxyReq: (proxyReq, req) => {
+        // 上面 app.use(express.json({limit:'10mb'})) 会消费原始 POST body 流,
+        // 必须用 fixRequestBody 从 req.body 重新写入 upstream, 否则 8766 receiver
+        // 收到空 body, 触发 "Malformed payload string" 后 HPM 关闭连接.
+        if ((req as any).body && Object.keys((req as any).body).length) {
+          fixRequestBody(proxyReq, req as any);
+        }
+      },
       error: (err, _req, res) => {
         console.error(`[proxy→8766] error: ${err.message}`);
         if (res && 'writeHead' in res) {
@@ -587,7 +596,9 @@ async function startServer() {
       },
     },
   });
-  app.use("/api/marl/reputation", marlReputationProxy);
+  // 用 pathFilter 而非 app.use("/api/marl/reputation", ...) — Express 会先截 prefix,
+  // HPM 拿到的 pathname 变 "/", pathRewrite 失效 (audit B2 验证后保留 pathFilter 写法).
+  app.use(marlReputationProxy);
   console.log(`[proxy] MARL Reputation API /api/marl/reputation/* → ${MARL_REPUTATION_HTTP}/sync/reputation (P9 端, audit B2 修复)`);
 
   // GET custom rules markdown content

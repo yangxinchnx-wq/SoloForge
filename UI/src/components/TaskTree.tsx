@@ -3,7 +3,6 @@
  * 展示根任务、子任务列表、审查区、进度条
  */
 import React from 'react';
-import { motion, AnimatePresence } from 'motion/react';
 import { Layers, ChevronDown } from 'lucide-react';
 import type { RootTask, PermissionMode } from '../types/streaming';
 import type { ArbitrationResult } from '../types/streaming';
@@ -41,10 +40,9 @@ export function TaskTree({ task, mainModel, modelCount, mode, arbitrationResult 
       {/* 全局进度条 */}
       <div className="flex items-center gap-2 px-1">
         <div className="flex-1 h-2 rounded-full bg-on-surface/10 overflow-hidden">
-          <motion.div
-            className={`h-full rounded-full ${progressColor} transition-all duration-500`}
-            initial={{ width: '0%' }}
-            animate={{ width: `${task.progress}%` }}
+          <div
+            className={`h-full rounded-full ${progressColor} sf-anim-progress`}
+            style={{ width: `${task.progress}%` }}
           />
         </div>
         <span className="text-[11px] font-mono font-bold text-on-surface/60 w-8 text-right">

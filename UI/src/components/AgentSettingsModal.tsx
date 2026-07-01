@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { MountTransition } from './MountTransition';
 import { 
   Bot, X, ShieldCheck, Hammer, Database, Shield, 
   SlidersHorizontal, ChevronDown, Flame, Brain, 
@@ -612,10 +612,7 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
           cursor: nesw-resize !important;
         }
       `}</style>
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.95, y: 12 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 12 }}
+      <div 
         style={{
           position: 'absolute',
           left: `${position.x}px`,
@@ -625,7 +622,7 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
           backgroundColor: activeTheme.surface,
           borderColor: activeTheme.outline,
         }}
-        className="pointer-events-auto border rounded-2xl shadow-[0_16px_50px_rgba(0,0,0,0.85)] overflow-hidden flex flex-col cursor-default relative backdrop-blur-md bg-opacity-95"
+        className="sf-anim sf-anim-fade-scale pointer-events-auto border rounded-2xl shadow-[0_16px_50px_rgba(0,0,0,0.85)] overflow-hidden flex flex-col cursor-default relative backdrop-blur-md bg-opacity-95"
         onMouseDown={handleMouseDown}
       >
 
@@ -826,14 +823,10 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
         >
           <div className="absolute bottom-1.5 right-1.5 w-3 h-3 border-b-2 border-r-2 border-primary/45 group-hover/corner:border-primary group-hover/corner:scale-110 transition-all pointer-events-none rounded-br-sm" />
         </div>
-      </motion.div>
+      </div>
 
-      <AnimatePresence>
-        {selectedSkillToEdit && (
-          <motion.div
-            initial={{ opacity: 0, x: subPanelAbsolute.x > position.x ? -20 : 20, scale: 0.95 }}
-            animate={{ opacity: 1, x: 0, scale: 1 }}
-            exit={{ opacity: 0, x: subPanelAbsolute.x > position.x ? -20 : 20, scale: 0.95 }}
+      <MountTransition show={!!selectedSkillToEdit} variant="fade-scale" duration={150}>
+          <div
             style={{
               position: 'absolute',
               left: `${subPanelAbsolute.x}px`,
@@ -958,9 +951,8 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
             >
               <div className="absolute bottom-1.5 right-1.5 w-3 h-3 border-b-2 border-r-2 border-primary/45 group-hover/corner:border-primary group-hover/corner:scale-110 transition-all pointer-events-none rounded-br-sm" />
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          </div>
+      </MountTransition>
     </div>
   );
 }

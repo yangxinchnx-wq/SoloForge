@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { X, Palette, Check, Sun, Moon, Zap, CloudSnow, Heart, RefreshCw, PanelBottom, Menu, Wand2, Sliders, MessageSquare, FileCode, Settings } from 'lucide-react';
-import { motion } from 'motion/react';
 import { THEME_PRESETS, SYNTAX_THEMES, useTheme } from '../context/ThemeContext';
 
 interface ThemeModalProps {
@@ -413,10 +412,7 @@ export default function ThemeModal({
 
   return (
     <div className="fixed inset-0 pointer-events-none z-[100] text-on-surface font-sans select-none overflow-hidden animate-fadeIn">
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.95, y: 12 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 12 }}
+      <div
         style={{
           position: 'absolute',
           left: `${position.x}px`,
@@ -426,7 +422,7 @@ export default function ThemeModal({
           backgroundColor: activeTheme.surface,
           borderColor: activeTheme.outline,
         }}
-        className="pointer-events-auto border rounded-2xl shadow-[0_16px_50px_rgba(0,0,0,0.85)] overflow-hidden flex flex-col cursor-default relative backdrop-blur-md bg-opacity-95"
+        className="sf-anim sf-anim-fade-scale pointer-events-auto border rounded-2xl shadow-[0_16px_50px_rgba(0,0,0,0.85)] overflow-hidden flex flex-col cursor-default relative backdrop-blur-md bg-opacity-95"
         onMouseDown={handleMouseDown}
       >
         {/* 4 Corner Resizers for Custom Size Manipulation */}
@@ -836,7 +832,7 @@ export default function ThemeModal({
             );
           })()}
         </div>
-      </motion.div>
+      </div>
     </div>
   );
 }
