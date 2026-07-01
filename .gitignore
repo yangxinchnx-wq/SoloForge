@@ -127,3 +127,7 @@ diag-*.txt
 UI/settings.diff
 UI/typecheck.out
 UI/tc*.full
+
+# MARL service live stdout/stderr while the python runtime is running
+marl_prod.err
+marl_prod.out
