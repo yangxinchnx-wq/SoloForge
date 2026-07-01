@@ -46,7 +46,7 @@ function buildCspHeader(isDev) {
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
-    "connect-src 'self' ws: wss: http://localhost:* http://127.0.0.1:*",
+    "connect-src 'self' ws: wss: http://localhost:* http://127.0.0.1:* https://api.openai.com https://api.anthropic.com https://api.deepseek.com https://generativelanguage.googleapis.com https://api.siliconflow.cn https://api.moonshot.cn https://api.xiaomimimo.com",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'none'",
