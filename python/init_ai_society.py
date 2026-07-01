@@ -26,7 +26,7 @@ def main() -> int:
 
     cfg = get_config()
     print(f"\n[config] sqlite_path  = {cfg.sqlite_path}")
-    print(f"[config] lancedb_path = {cfg.lancedb_path}")
+    print(f"[config] qdrant       = {cfg.qdrant_host}:{cfg.qdrant_http_port} (collection: {cfg.qdrant_collection})")
     print(f"[config] data_dir     = {cfg.data_dir}")
 
     if not cfg.sqlite_path.exists():
@@ -40,7 +40,7 @@ def main() -> int:
           f"target={before.get('target_version')}  "
           f"needs={before.get('needs_migration')}")
 
-    # 2) 走 manager.initialize() (含迁移 + 建表 + 预置 + LanceDB)
+    # 2) 走 manager.initialize() (含迁移 + 建表 + 预置)
     print("\n[step 2] DatabaseManager.initialize() ...")
     mgr = DatabaseManager(cfg)
     mgr.initialize()
@@ -91,12 +91,29 @@ def main() -> int:
     finally:
         conn.close()
 
-    # 5) LanceDB 目录验证
-    print("\n[step 5] LanceDB directory verification:")
-    if cfg.lancedb_path.exists():
-        print(f"  [OK] {cfg.lancedb_path}  exists")
-    else:
-        print(f"  [WARN] {cfg.lancedb_path}  still missing (lazy init on first write)")
+    # 5) Qdrant 健康检查（仅提示, 不阻塞 SQLite 初始化）
+    print("\n[step 5] Qdrant health check (skip if not running):")
+    try:
+        from soloforge_ai_society.services.qdrant_client import get_qdrant_client
+        qc = get_qdrant_client()
+        ok = qc.health_check()
+        print(f"  [{'OK' if ok else 'WARN'}] Qdrant {cfg.qdrant_host}:{cfg.qdrant_http_port}  {'healthy' if ok else 'unavailable'}")
+    except Exception as e:
+        print(f"  [WARN] Qdrant check skipped: {e}")
+
+    # 5b) DuckDB 二进制检查（2026-07-02 新增；L5 OLAP 分析层）
+    print("\n[step 5b] DuckDB binary check (L5 OLAP):")
+    try:
+        from soloforge_ai_society.services.analytics import AnalyticsService
+        svc = AnalyticsService(duckdb_path=str(cfg.duckdb_binary))
+        h = svc.health()
+        ok = h["duckdb_available"] and h["sqlite_exists"]
+        print(f"  [{'OK' if ok else 'WARN'}] duckdb={h['duckdb_binary']}")
+        print(f"             sqlite={h['sqlite_path']}")
+        print(f"             snapshot_dir={cfg.duckdb_snapshot_dir}")
+        print(f"             queries={', '.join(h['queries_defined'])}")
+    except Exception as e:
+        print(f"  [WARN] DuckDB check skipped: {e}")
 
     # 6) 预置数据抽样
     print("\n[step 6] Preset data sample:")

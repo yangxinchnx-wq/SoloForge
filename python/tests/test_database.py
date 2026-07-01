@@ -261,7 +261,6 @@ class TestDatabaseManager:
         db.initialize()
 
         assert db.pool is not None
-        assert db.get_lancedb() is not None
 
         db.close()
 

@@ -201,8 +201,8 @@ export default function TerminalPanel({ permissionMode = 'normal' }: TerminalPan
           statusText: '应用服务监听中 (Port: 3000)',
           logItems: [
             ...i.logItems,
-            { time: endNow, type: 'success', msg: '生成 /dist 生产捆绑包 (CJS 静态资源格式)' },
-            { time: endNow, type: 'info',    msg: 'node dist/server.cjs' },
+            { time: endNow, type: 'success', msg: '生成 /dist 生产捆绑包 (ESM 静态资源格式)' },
+            { time: endNow, type: 'info',    msg: 'node dist/server.mjs' },
             { time: endNow, type: 'success', msg: '服务已在 0.0.0.0:3000 稳定部署并提供访问' },
           ],
         } : i));

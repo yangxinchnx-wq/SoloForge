@@ -50,7 +50,7 @@ async function startServer() {
   //   /api/browser-use/stream/:id     — SSE 步进流
   //   /api/browser-use/health         — 探活
   // ============================================================
-  const __filename_srv = fileURLToPath(import.meta.url);
+  const __filename_srv = typeof __filename !== "undefined" ? __filename : fileURLToPath(import.meta.url);
   const repoRootSrv = path.resolve(path.dirname(__filename_srv), "..", "..");
   registerBrowserUseRoutes(app, repoRootSrv);
 

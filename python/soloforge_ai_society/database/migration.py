@@ -176,10 +176,10 @@ class MigrationManager:
         conn.commit()
 
     def _record_migration(self, conn: sqlite3.Connection, migration: Migration) -> None:
-        """记录迁移"""
+        """记录迁移（修复 2026-07-01: 用 OR IGNORE 兼容已存在的 schema_version 行）"""
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)",
+            "INSERT OR IGNORE INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)",
             (migration.version, migration.description, datetime.now().isoformat())
         )
         conn.commit()

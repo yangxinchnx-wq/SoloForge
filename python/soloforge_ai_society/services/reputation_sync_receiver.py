@@ -17,20 +17,38 @@ if _PROJECT_PY not in sys.path:
 # M1 修复 (2026-07-01, audit P1): apply_p6_baseline 在 acquire_connection 内 import, 避免循环依赖
 
 class LocalDatabaseConnectionPool:
-    """
-    Thread-safe connection pool emulator for embedded SQLite persistence isolation.
-    """
-    def __init__(self, db_path: str, max_connections: int = 5):
-        self.db_path = db_path
-        self.max_connections = max_connections
-        # SQLite embedded architecture enforces single-thread isolation hooks
-        
-    def acquire_connection(self) -> sqlite3.Connection:
-        from soloforge_ai_society.database.pool import apply_p6_baseline
-        conn = sqlite3.connect(self.db_path, timeout=30.0)
-        # M1 修复 (2026-07-01): apply_p6_baseline 设 7 个 PRAGMA 一次性到位 (audit P1 M1)
-        apply_p6_baseline(conn)
-        return conn
+        """
+        Thread-safe connection pool emulator for embedded SQLite persistence isolation.
+        """
+        def __init__(self, db_path: str, max_connections: int = 5, table_name: str = "agent_reputation_ledger"):
+            self.db_path = db_path
+            self.max_connections = max_connections
+            self.table_name = table_name
+            # SQLite embedded architecture enforces single-thread isolation hooks
+
+        def acquire_connection(self) -> sqlite3.Connection:
+            from soloforge_ai_society.database.pool import apply_p6_baseline
+            conn = sqlite3.connect(self.db_path, timeout=30.0)
+            # M1 修复 (2026-07-01): apply_p6_baseline 设 7 个 PRAGMA 一次性到位 (audit P1 M1)
+            apply_p6_baseline(conn)
+            # P9 端到端修复 (2026-07-01): 接收端主表 IF NOT EXISTS (cluster_id UNIQUE 用于 ON CONFLICT upsert)
+            # 解决首次启动 HTTP /sync/reputation 时 'no such table' OperationalError → contract_violation
+            try:
+                conn.execute(
+                    f"CREATE TABLE IF NOT EXISTS {self.table_name} ("
+                    f"  command_id TEXT,"
+                    f"  transaction_id TEXT,"
+                    f"  cluster_id TEXT UNIQUE,"
+                    f"  current_reputation_score REAL DEFAULT 0,"
+                    f"  update_reason TEXT,"
+                    f"  kernel_seal INTEGER,"
+                    f"  synchronized_at TEXT"
+                    f");"
+                )
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass
+            return conn
 
 
 class ReputationSyncReceiver:
@@ -42,8 +60,8 @@ class ReputationSyncReceiver:
         self.logger = logging.getLogger("ReputationSyncReceiver")
         self.config = config_registry
         max_conn = int(config_registry.get("society.reputation.pool_max", 5))
-        self.pool = LocalDatabaseConnectionPool(db_path, max_conn)
         self.table_name = config_registry.get("society.reputation.table_name", "agent_reputation_ledger")
+        self.pool = LocalDatabaseConnectionPool(db_path, max_conn, table_name=self.table_name)
 
     def process_incoming_relay_command(self, raw_json_message: Optional[str]) -> str:
         """
@@ -245,15 +263,26 @@ class _ReceiverHTTPServer(http.server.BaseHTTPRequestHandler):
         # 静默默认 access log (避免刷屏)
         pass
 
+    def do_GET(self):
+        if self.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"status":"ok","endpoint":"/sync/reputation"}')
+            return
+        self.send_response(404)
+        self.end_headers()
+
 
 _receiver_instance: Optional[ReputationSyncReceiver] = None
+_sync_http_server = None  # 全局句柄, 供 stop_sync_http_server() 关闭
 
 
 def start_sync_http_server(receiver: ReputationSyncReceiver, host: str = "127.0.0.1", port: int = 8766) -> threading.Thread:
     """
     P0 修复 (2026-07-01, B2): 启动 8766 HTTP server 接收 Node outbox push。
     """
-    global _receiver_instance
+    global _receiver_instance, _sync_http_server
     _receiver_instance = receiver
 
     class _ThreadingHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
@@ -261,10 +290,22 @@ def start_sync_http_server(receiver: ReputationSyncReceiver, host: str = "127.0.
         allow_reuse_address = True
 
     server = _ThreadingHTTPServer((host, port), _ReceiverHTTPServer)
+    _sync_http_server = server
     thread = threading.Thread(target=server.serve_forever, name="reputation-sync-http", daemon=True)
     thread.start()
     receiver.logger.info(f"ReputationSync HTTP server listening on http://{host}:{port}/sync/reputation")
     return thread
+
+
+def stop_sync_http_server() -> None:
+    """停止 8766 HTTP server (P9 e2e 测试收尾用)"""
+    global _sync_http_server
+    if _sync_http_server is not None:
+        _sync_http_server.shutdown()
+        _sync_http_server.server_close()
+        _sync_http_server = None
+        if _receiver_instance is not None:
+            _receiver_instance.logger.info("ReputationSync HTTP server stopped")
 
 
 # =====================================================================

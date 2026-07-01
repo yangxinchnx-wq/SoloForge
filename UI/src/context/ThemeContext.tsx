@@ -685,7 +685,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
   }, [currentThemeId, primaryColor, primaryColorTargets, customColors, syntaxThemeId]);
 
-  const value = useMemo(() => ({
+  const value: ThemeContextType = {
     primaryColor,
     primaryColorTargets,
     currentThemeId,
@@ -701,7 +701,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     addCustomFont,
     deleteCustomFont,
     setSelectedFont
-  }), [primaryColor, primaryColorTargets, currentThemeId, activeTheme, syntaxThemeId, customFonts, selectedFont]);
+  };
 
   return (
     <ThemeContext.Provider value={value}>

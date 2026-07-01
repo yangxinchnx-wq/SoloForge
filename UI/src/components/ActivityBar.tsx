@@ -38,8 +38,8 @@ export default function ActivityBar({
       <div className="flex flex-col items-center w-full gap-2">
         {topTabs.map((tab) => {
           const Icon = tab.icon;
-          const isActive = tab.id === 'history' 
-            ? showHistory 
+          const isActive = tab.id === 'history'
+            ? showHistory
             : tab.id === 'codeEditor'
               ? showCodeEditor
               : activeTab === tab.id;
@@ -49,27 +49,22 @@ export default function ActivityBar({
               {isActive && (
                 <div className="absolute left-0 top-1.5 bottom-1.5 w-0.5 bg-primary rounded-r" />
               )}
-              
               <button
+                title={tab.label}
                 onClick={() => {
                   if (tab.id === 'history') {
                     setShowHistory(!showHistory);
                   } else if (tab.id === 'codeEditor') {
                     setShowCodeEditor(!showCodeEditor);
                   } else {
-                    if (activeTab === tab.id) {
-                      setActiveTab('');
-                    } else {
-                      setActiveTab(tab.id);
-                    }
+                    setActiveTab(activeTab === tab.id ? '' : tab.id);
                   }
                 }}
                 className={`p-2.5 rounded-lg transition-all cursor-pointer relative ${
-                  isActive 
-                    ? 'bg-primary/10 text-primary shadow-inner' 
+                  isActive
+                    ? 'bg-primary/10 text-primary shadow-inner'
                     : 'text-on-surface/50 hover:text-on-surface/90 hover:bg-surface-bright'
                 }`}
-                title={tab.label}
               >
                 <Icon className="w-5 h-5" />
               </button>

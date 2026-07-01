@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
-import { Layers, ChevronDown, Plus, Minus, X, Laptop, Folder, FileCode, ChevronRight } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react';
+import { Layers, ChevronDown, Plus, Folder, FileCode, ChevronRight } from 'lucide-react';
 import { MountTransition } from './MountTransition';
 import { SecondaryModel } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import { ModelIcon } from './ModelIcon';
+import { WindowControls } from './WindowControls';
 
 interface ModelStatus {
   state: 'online' | 'warning' | 'offline';
@@ -601,9 +602,54 @@ export default function Header({
 
   const totalWeight = secModels.reduce((acc, curr) => acc + curr.weight, 0);
 
+  // 2026: 自定义窗口拖动(完全绕过 OS drag,消除 Win11 snap layout 的尺寸说明 tooltip)
+  // 之前用 CSS -webkit-app-region:drag,OS 收到 WM_ENTERSIZEMOVE → DWM 画 snap tooltip
+  // 改成:Header 自己抓 mousedown,走 IPC 调 setPosition,OS 永远收不到 drag event
+  const dragRef = useRef<{ startX: number; startY: number } | null>(null);
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const cur = dragRef.current;
+      if (!cur) return;
+      e.preventDefault();
+      const dx = e.screenX - cur.startX;
+      const dy = e.screenY - cur.startY;
+      cur.startX = e.screenX;
+      cur.startY = e.screenY;
+      const api = (window as any).soloforge?.moveWindow;
+      if (typeof api === 'function') api(dx, dy).catch(() => {});
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      document.body.style.userSelect = '';
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, []);
+  const onHeaderMouseDown = (e: React.MouseEvent<HTMLElement>) => {
+    // 排除所有交互元素(按钮/输入框/链接/下拉等),让点击能正常触发
+    const t = e.target as HTMLElement;
+    if (t.closest('button, input, select, textarea, a, [role="button"], [role="combobox"], [role="listbox"], [role="menuitem"], [data-no-drag]')) return;
+    // 排除 WindowControls(右上角自定义窗口按钮区)
+    if (t.closest('[data-window-controls]')) return;
+    e.preventDefault();
+    dragRef.current = { startX: e.screenX, startY: e.screenY };
+    document.body.style.userSelect = 'none';
+  };
+
 
   return (
-    <header className="relative h-[48px] bg-surface border-b border-outline/50 flex items-center justify-between px-3 shrink-0 select-none text-on-surface font-sans z-[60]">
+    <header
+      onMouseDown={onHeaderMouseDown}
+      className="soloforge-drag-header relative h-[48px] bg-surface border-b border-outline/50 flex items-center justify-between pl-3 shrink-0 select-none text-on-surface font-sans z-[60]"
+    >
+      {/* 2026: 不再使用 Electron titleBarOverlay(native "−/□/×" 在 Win11 22H2+ 会被 DWM 强行加暗色 tint)
+          改用 <WindowControls /> 在 React 端画按钮,背景 100% 跟 --color-surface 一致,主题色切换时自动跟随
+          注意:Header 父级 .soloforge-drag-header 是 -webkit-app-region: drag;
+                WindowControls 自己内部用 WebkitAppRegion:'no-drag' 阻止按钮区域被 drag 捕获 */}
       {/* Left logo & info and breadcrumbs */}
       <div className="flex items-center gap-2 shrink-0 z-10 mr-4">
         <div className="flex items-center gap-2 cursor-pointer select-none">
@@ -764,10 +810,10 @@ export default function Header({
         </div>
       </div>
 
-      {/* Right User info and window mock controllers */}
-      <div className="flex items-center gap-4 shrink-0 z-10 bg-surface">
+      {/* Right User info + 自定义窗口控制按钮 */}
+      <div className="flex items-center shrink-0 z-10 bg-surface">
         {/* User profile avatar info with online indicator */}
-        <div className="flex items-center gap-2 border-r border-outline/50 pr-4 py-1">
+        <div className="flex items-center gap-2 border-r border-outline/50 pr-4 py-1 mr-2">
           <div className="relative">
             <div
               role="img"
@@ -792,18 +838,9 @@ export default function Header({
           </div>
         </div>
 
-        {/* Windows title controller mockup block */}
-        <div className="flex items-center gap-2.5 text-on-surface/40">
-          <button className="hover:text-[var(--color-on-surface)] transition-colors cursor-pointer">
-            <Minus className="w-3.5 h-3.5" />
-          </button>
-          <button className="hover:text-[var(--color-on-surface)] transition-colors cursor-pointer">
-            <Laptop className="w-3.5 h-3.5" />
-          </button>
-          <button className="hover:text-red-400 transition-colors cursor-pointer">
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
+        {/* 2026: 自定义窗口控件(替代 Electron titleBarOverlay)
+            按钮背景 100% 跟 Header 的 bg-surface 一致 → 不再有 DWM 暗 tint → 跟主页面颜色完美融合 */}
+        <WindowControls />
       </div>
     </header>
   );

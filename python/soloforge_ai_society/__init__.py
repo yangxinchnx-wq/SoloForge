@@ -9,7 +9,7 @@ SoloForge AI Society - AI 社会核心模块
 提供多智能体社会体系的核心功能：
 - Institution（制度系统）
 - Governance（治理层）
-- Social Memory（社会记忆 - 向量搜索）
+- Social Memory（社会记忆 - Qdrant 向量搜索）
 - Reputation（社会信誉）
 - Culture（文化规范）
 - Economy（经济系统）
@@ -24,17 +24,17 @@ SoloForge AI Society - AI 社会核心模块
 │   ├── SurrealDB (surrealkv://)  ← 决策、仲裁、审计、事件日志             │
 │   │                                                                          │
 │   └── AI 社会（Python）        ← 本模块                                     │
-│       ├── SQLite (ai_society.db)     ← 制度/信誉/经济/法律/联盟            │
-│       └── LanceDB (social_memory)    ← 社会记忆向量搜索                    │
+│       ├── SQLite (ai_society.db)  ← 制度/信誉/经济/法律/联盟/事件         │
+│       └── Qdrant (6333/6334)     ← ai_society_events 向量 (MiniLM 384d)  │
 │                                                                             │
-│   通信方式：Node.js ↔ Python IPC（Stdin/Stdout 或 HTTP）                   │
+│   通信方式：Node.js ↔ Python IPC（HTTP 8766 /sync/reputation）             │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 技术选型：
-- SQLite：嵌入式 OLTP，零配置，高可靠
-- LanceDB：嵌入式向量数据库，语义搜索
-- Python：3.12.10
+- SQLite：嵌入式 OLTP，零配置，高可靠 (P6 PRAGMA + WAL + mmap)
+- Qdrant：向量数据库 (P7 int8 量化 + 384 维 MiniLM)
+- Python：3.13
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
@@ -54,8 +54,8 @@ from .services.economy_service import EconomyService
 from .services.law_service import LawService
 from .services.coalition_service import CoalitionService
 from .services.reputation_sync_receiver import ReputationSyncReceiver
-from .vector.embedder import TFIDFEmbedder, get_embedder
-from .vector.search import VectorSearch
+from .vector.factory import get_embedder
+from .vector.qdrant_adapter import QdrantVectorSearch
 
 __all__ = [
     # Config
@@ -79,8 +79,7 @@ __all__ = [
     "LawService",
     "CoalitionService",
     "ReputationSyncReceiver",
-    # Vector
-    "TFIDFEmbedder",
+    # Vector (Qdrant + MiniLM)
     "get_embedder",
-    "VectorSearch",
+    "QdrantVectorSearch",
 ]
