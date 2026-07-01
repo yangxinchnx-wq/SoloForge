@@ -14,11 +14,7 @@ _PROJECT_PY = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__
 if _PROJECT_PY not in sys.path:
     sys.path.insert(0, _PROJECT_PY)
 
-# M1 修复 (2026-07-01): 用统一 apply_p6_baseline 替代手动 journal_mode
-try:
-    from soloforge_ai_society.database.pool import apply_p6_baseline
-except ImportError:
-    apply_p6_baseline = None
+# M1 修复 (2026-07-01, audit P1): apply_p6_baseline 在 acquire_connection 内 import, 避免循环依赖
 
 class LocalDatabaseConnectionPool:
     """
@@ -30,13 +26,10 @@ class LocalDatabaseConnectionPool:
         # SQLite embedded architecture enforces single-thread isolation hooks
         
     def acquire_connection(self) -> sqlite3.Connection:
+        from soloforge_ai_society.database.pool import apply_p6_baseline
         conn = sqlite3.connect(self.db_path, timeout=30.0)
-        # M1 修复 (2026-07-01): 用统一 apply_p6_baseline 替代手动 journal_mode (audit M1)
-        if apply_p6_baseline is not None:
-            apply_p6_baseline(conn)
-        else:
-            # 兜底: 至少 journal_mode=WAL (旧行为)
-            conn.execute("PRAGMA journal_mode=WAL;")
+        # M1 修复 (2026-07-01): apply_p6_baseline 设 7 个 PRAGMA 一次性到位 (audit P1 M1)
+        apply_p6_baseline(conn)
         return conn
 
 

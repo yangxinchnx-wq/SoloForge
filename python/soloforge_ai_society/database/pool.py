@@ -22,6 +22,47 @@ from typing import Generator, Optional
 logger = logging.getLogger(__name__)
 
 
+def apply_p6_baseline(conn: sqlite3.Connection) -> None:
+    """
+    M1 修复 (2026-07-01, audit P1 M1): 7 个 P6 PRAGMA 一次性 baseline.
+
+    任何 raw `sqlite3.connect(...)` 之后都必须调用这个函数, 确保 WAL + 6 个性能/一致性 PRAGMA
+    都生效. 之前散落在 pool.py:76-80 (5 个) + migration.py + health.py + receiver.py 各处, 不一致.
+
+    P6 baseline:
+    - journal_mode=WAL       (并发读 + 写不互锁)
+    - synchronous=NORMAL     (WAL 下 NORMAL 即可, 不必 FULL)
+    - cache_size=-64000      (64MB 页缓存, 单连接)
+    - mmap_size=268435456    (256MB mmap, 大表 scan 加速)
+    - temp_store=MEMORY      (临时 B-tree 走内存)
+    - foreign_keys=ON        (FK 约束开启)
+    - busy_timeout=30000     (30s 忙等, 兼容长 GC pause)
+    """
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA cache_size = -65536")  # 64MB (KB units)
+    conn.execute("PRAGMA mmap_size = 268435456")
+    conn.execute("PRAGMA temp_store = MEMORY")
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 30000")
+
+
+def verify_pragma_alignment(conn: sqlite3.Connection) -> dict:
+    """
+    M1 修复配套: 验证 conn 7 个 PRAGMA 是否都在 baseline 状态.
+    返回 dict {key: actual_value}, 测试脚本用它来断言.
+    """
+    return {
+        "journal_mode": (conn.execute("PRAGMA journal_mode").fetchone()[0] or "").lower(),
+        "synchronous": conn.execute("PRAGMA synchronous").fetchone()[0],
+        "cache_size": conn.execute("PRAGMA cache_size").fetchone()[0],
+        "mmap_size": conn.execute("PRAGMA mmap_size").fetchone()[0],
+        "temp_store": conn.execute("PRAGMA temp_store").fetchone()[0],
+        "foreign_keys": conn.execute("PRAGMA foreign_keys").fetchone()[0],
+        "busy_timeout": conn.execute("PRAGMA busy_timeout").fetchone()[0],
+    }
+
+
 class ConnectionPool:
     """
     SQLite 连接池
