@@ -80,6 +80,8 @@ e2e-shots-ext/
 phase-reports/
 spike/
 *.egg-info/
+test-shots/
+.trae-stash-backups/
 
 # Ad-hoc debug scripts and runtime screenshots (not part of the product)
 *.ps1
