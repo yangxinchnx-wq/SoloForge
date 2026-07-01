@@ -52,6 +52,38 @@ describe('SoloForgeApiServer.ANALYTICS_QUERIES', () => {
   });
 });
 
+describe('SoloForgeApiServer.ANALYTICS_SNAPSHOT_TABLES (whitelist)', () => {
+  it('应包含 14 张业务表（与 init_ai_society.py 对齐）', () => {
+    const tables = (SoloForgeApiServer as any).ANALYTICS_SNAPSHOT_TABLES;
+    expect(tables.length).toBe(14);
+    // 业务核心 9 张
+    expect(tables).toContain('institution');
+    expect(tables).toContain('governance');
+    expect(tables).toContain('reputation');
+    expect(tables).toContain('culture');
+    expect(tables).toContain('economy');
+    expect(tables).toContain('law');
+    expect(tables).toContain('law_violation');
+    expect(tables).toContain('coalition');
+    expect(tables).toContain('social_memory');
+    // 业务记录 5 张
+    expect(tables).toContain('credit_transaction');
+    expect(tables).toContain('economy_record');
+    expect(tables).toContain('governance_record');
+    expect(tables).toContain('reputation_record');
+    expect(tables).toContain('reputation_sync_log');
+  });
+
+  it('不应包含不存在的表 (agent/cluster/memory/event/transaction)', () => {
+    const tables = (SoloForgeApiServer as any).ANALYTICS_SNAPSHOT_TABLES;
+    expect(tables).not.toContain('agent');
+    expect(tables).not.toContain('cluster');
+    expect(tables).not.toContain('memory');
+    expect(tables).not.toContain('event');
+    expect(tables).not.toContain('transaction');
+  });
+});
+
 describe.skipIf(!HAS_DEPS)('DuckDB Analytics Handlers (e2e)', () => {
   let svc: SoloForgeApiServer;
   let tmpDir: string;
@@ -140,6 +172,38 @@ describe.skipIf(!HAS_DEPS)('DuckDB Analytics Handlers (e2e)', () => {
     });
     expect(r.status).toBe(400);
     expect(r.body.error).toContain('whitelist');
+  });
+
+  it('handleAnalyticsDirect(CAST AS INTEGER): 自动转 TRY_CAST 不 500', () => {
+    // 2026-07-02 修复: SQLite VARCHAR 列 CAST AS INTEGER 会 500, 应自动转 TRY_CAST 返回 NULL
+    // priority 列是 BIGINT (SQLite INTEGER 推断), CAST 应 OK; 用 culture.intensity 测类型不匹配场景
+    const r = (svc as any).handleAnalyticsDirect({
+      sql: 'SELECT name, CAST(priority AS INTEGER) AS p_int FROM db.main.institution ORDER BY p_int DESC LIMIT 3',
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.cast_transformed).toBe(true);
+    expect(r.body.row_count).toBe(3);
+  });
+
+  it('handleAnalyticsDirect(TRY_CAST): 已是 TRY_CAST 则不再转换', () => {
+    const r = (svc as any).handleAnalyticsDirect({
+      sql: 'SELECT TRY_CAST(priority AS VARCHAR) FROM db.main.institution LIMIT 1',
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.cast_transformed).toBe(false);
+  });
+
+  it('handleAnalyticsSnapshot(institution 白名单表): 应该成功', () => {
+    // 2026-07-02 修复: institution 不在旧白名单, 现在应允许
+    const out = path.join(tmpDir, 'institution.duckdb');
+    const r = (svc as any).handleAnalyticsSnapshot({
+      out_path: out,
+      tables: ['institution', 'culture', 'economy'],
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.tables_exported.length).toBe(3);
+    const names = r.body.tables_exported.map((t: any) => t.table);
+    expect(names).toContain('institution');
   });
 
   it('handleAnalyticsParquet: 导出 2 张表为 .parquet', () => {

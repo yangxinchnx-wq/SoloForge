@@ -27,7 +27,7 @@ import { AgentRegistry, AgentDispatchRequest } from './core/agent/agent-registry
 import { AgentDecisionOrchestrator } from './core/agent/agent-decision-orchestrator';
 import { AgentEventHub } from './core/agent/agent-event-hub';
 import {
-  evaluateRequest,
+  evaluateRequestAsync,
   corsHeadersFor,
   safeJoin,
   defaultAuthConfig,
@@ -46,6 +46,8 @@ import {
   AuditEvent,
   AuditSink,
 } from './security/auth';
+import { AuditSinkSurreal, createAuditSinkFromSurreal } from './security/auditSinkSurreal';
+import { queryAuditLog, countAuditLog, type AuditQuery } from './security/auditQuery';
 import {
   handleVaultList,
   handleVaultGet,
@@ -115,6 +117,7 @@ export class SoloForgeApiServer {
   private readonly piiSalt = process.env.SOLOFORGE_PII_SALT || 'soloforge-default-salt';
   public setAuditSink(sink: AuditSink): void { (this as any).audit = sink; }
   public setPiiSalt(s: string): void { (this as any).piiSalt = s; }
+  private auditSinkSurreal: AuditSinkSurreal | null = null;
 
   private observations: Array<{
     cycleId: number;
@@ -155,12 +158,46 @@ export class SoloForgeApiServer {
    */
   public async start(): Promise<void> {
     // Production startup gate: refuse to start without API tokens unless explicitly disabled.
-    // Resolve tokens: env -> vault -> auto-generate (first-run / desktop mode).
+    // Resolve tokens: env -> vault (v2 tokenStore) -> v1 fallback -> auto-generate.
     // If REQUIRE_TOKENS=1 and nothing is available, loadApiTokensAsync throws.
     const { loadApiTokensAsync } = await import('./security/auth');
     const tokens = await loadApiTokensAsync();
     this.authConfig = { ...this.authConfig, apiTokens: tokens };
     logger.info("ApiServer", `[auth] ${tokens.length} API token(s) loaded (lengths: ${tokens.map((t) => t.length).join(",")})`);
+
+    // 🌀 Token Rotation Worker (v2): 每 5 分钟扫描, 自动轮换即将过期的 active kid
+    if (process.env.SOLOFORGE_ROTATION_DISABLED !== '1') {
+      try {
+        const { getTokenRotationService } = await import('./security/tokenRotationService');
+        const svc = getTokenRotationService();
+        svc.start();
+        // 启动后立即跑一次 (暖机), 不阻塞 listen
+        void svc.tickOnce().catch((e) =>
+          logger.warn('TokenRotation', `startup tick failed: ${(e as Error).message}`)
+        );
+        logger.info('ApiServer', '🌀 Token rotation worker started');
+      } catch (e) {
+        logger.warn('ApiServer', `Token rotation worker not started: ${(e as Error).message}`);
+      }
+    }
+    // 🗃️ Audit Sink Surreal: 异步批量写 SurrealDB httpAuditLog 表
+    // 仅在有 surrealPersistence 时挂载, 否则继续用 stdout sink
+    if (this.surrealPersistence) {
+      try {
+        this.auditSinkSurreal = createAuditSinkFromSurreal(this.surrealPersistence, {
+          mirrorToStdout: true,    // 同步写 stdout, 调试/告警用
+          fallbackToStdout: true,  // DB 写失败时降级到 stdout (tag=AUDIT_FALLBACK)
+          flushThreshold: 50,      // 50 条立即 flush
+          flushIntervalMs: 5000,   // 5s 定时 flush
+        });
+        this.setAuditSink(this.auditSinkSurreal.asSink());
+        logger.info('ApiServer', '🗃️  Audit sink -> SurrealDB httpAuditLog (stdout mirror on, fallback on)');
+      } catch (e) {
+        logger.warn('ApiServer', `Audit sink surreal not mounted: ${(e as Error).message}`);
+      }
+    } else {
+      logger.info('ApiServer', '🗃️  Audit sink -> stdout only (no SurrealPersistence)');
+    }
     return new Promise((resolve, reject) => {
       this.server = http.createServer(async (req, res) => {
         await this.handleRequest(req, res);
@@ -214,6 +251,19 @@ export class SoloForgeApiServer {
       client.end();
     }
     this.sseClients.clear();
+
+    // 🗃️ Flush audit sink (best-effort, 5s 超时)
+    if (this.auditSinkSurreal) {
+      try {
+        await Promise.race([
+          this.auditSinkSurreal.close(),
+          new Promise((r) => setTimeout(r, 5000)),
+        ]);
+        logger.info('ApiServer', '🗃️  Audit sink closed');
+      } catch (e) {
+        logger.warn('ApiServer', `Audit sink close failed: ${(e as Error).message}`);
+      }
+    }
 
     return new Promise((resolve) => {
       if (this.server) {
@@ -313,18 +363,31 @@ export class SoloForgeApiServer {
       body, headers: req.headers, remoteAddress,
     };
 
-    const guard = evaluateRequest({
+    const guard = await evaluateRequestAsync({
       reqPath, method, headers: req.headers, query: apiReq.query, remoteAddress,
     }, this.authConfig);
 
     if (!guard.allow) {
-      this.audit({
-        id: requestId, timestamp: Date.now(),
-        action: 'auth.fail', route: reqPath, method, status: guard.status,
-        remoteAddress: ipHash, userAgent, reason: guard.reason,
-      });
+      // 复用检测命中时, 写一条专门的审计 (含 autoRevoked 数量)
+      if (guard.reuseDetected) {
+        this.audit({
+          id: requestId, timestamp: Date.now(),
+          action: 'auth.reuse_detected', route: reqPath, method, status: guard.status,
+          remoteAddress: ipHash, userAgent,
+          reason: guard.reason,
+          autoRevokedTokens: guard.autoRevokedTokens,
+        });
+      } else {
+        this.audit({
+          id: requestId, timestamp: Date.now(),
+          action: 'auth.fail', route: reqPath, method, status: guard.status,
+          remoteAddress: ipHash, userAgent, reason: guard.reason,
+        });
+      }
+      const resBody: any = { error: 'Unauthorized', reason: guard.reason };
+      if (guard.reuseDetected) resBody.reuseDetected = true;
       res.writeHead(guard.status, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Unauthorized', reason: guard.reason }));
+      res.end(JSON.stringify(resBody));
       return;
     }
     apiReq.principal = guard.principal;
@@ -489,31 +552,151 @@ export class SoloForgeApiServer {
     //   - 硬性限定只能从 127.0.0.1(::1 / IPv4-mapped IPv6 loopback)访问,远程 IP 直接被鉴权层拒
     //   - 不接受任何 query 参数(避免 XSS / header 注入风险)
     //   - 不接受 POST/PUT/DELETE,只 GET(幂等)
-    //   - 不返回任何敏感信息(token 之外,只返回 count 和 source 标识)
+    //   - 不返回任何敏感信息(token 之外,只返回 count / source / kid)
     //
-    // 响应:
+    // 响应 (v2):
     //   {
-    //     "token":  "a3f7...",       // 当前主 token(64 字符 hex)
-    //     "count":  1,                // vault 中有效 token 总数
-    //     "source": "vault" | "env"   // 当前主 token 的来源
+    //     "token":     "a3f7...",  // 当前主 token (最新的 active kid)
+    //     "kid":       "k_xxxxxxxx", // token 的 Key ID (供审计关联)
+    //     "familyId":  "f_xxxxxxxx", // Token Family ID
+    //     "count":     1,            // vault 中有效 (active+rotating) token 总数
+    //     "source":    "vault" | "env",
+    //     "expiresAt": 1754000000000  // ms timestamp
     //   }
     //
     // 典型调用:
     //   curl http://127.0.0.1:<port>/api/auth/bootstrap
     //
     // 前端使用建议:
-    //   1. 启动时调用一次,把 token 存到 sessionStorage / 内存
+    //   1. 启动时调用一次,把 token + kid 存到 sessionStorage / 内存
     //   2. 后续所有 fetch / axios / EventSource 加上 Authorization 头
     //   3. 收到 401 时重新调一次 bootstrap(应对 token 轮换)
+    //   4. 如果响应里 reuseDetected=true, 整族已被吊销, 强制重认证
     // =========================================================================
     if (reqPath === '/api/auth/bootstrap' && method === 'GET') {
+      // env 模式: 直接从 env 抽一个 (旧行为兼容)
+      const envRaw = process.env.SOLOFORGE_API_TOKENS || '';
+      if (envRaw) {
+        const envTokens = envRaw.split(',').map((s: string) => s.trim()).filter(Boolean);
+        if (envTokens.length > 0) {
+          return {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+            body: {
+              token: envTokens[0],
+              kid: null,
+              familyId: null,
+              count: envTokens.length,
+              source: 'env',
+              expiresAt: null,
+            },
+          };
+        }
+      }
+      // vault 模式: 从 tokenStore 选最新 active
+      try {
+        const { pickBootstrapToken } = await import('./security/tokenStore');
+        const cand = await pickBootstrapToken();
+        if (cand) {
+          return {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+            body: {
+              token: cand.token,
+              kid: cand.kid,
+              familyId: cand.familyId,
+              count: this.authConfig.apiTokens.length,
+              source: 'vault',
+              expiresAt: cand.expiresAt,
+            },
+          };
+        }
+      } catch { /* 兜底: 用老方法 */ }
+      // 兜底: 老方法 (env 模式或 vault 不可用)
       return {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
         body: {
           token: this.authConfig.apiTokens[0] || null,
+          kid: null,
+          familyId: null,
           count: this.authConfig.apiTokens.length,
           source: process.env.SOLOFORGE_API_TOKENS ? 'env' : 'vault',
+        },
+      };
+    }
+
+    // =========================================================================
+    // GET /api/audit/list
+    // =========================================================================
+    // 作用: 审计日志查询 (admin only)
+    //
+    // 查询参数 (query string):
+    //   action       string   按 action 前缀过滤 (e.g. 'auth.fail', 'rate.limit')
+    //   route        string   按 route 精确过滤
+    //   status       int      按 HTTP 状态码过滤
+    //   principalId  string   按主体 ID 过滤
+    //   since        int      ms epoch, 时间下界
+    //   until        int      ms epoch, 时间上界 (范围不能超过 7 天)
+    //   reuseOnly    '1'      仅看 token_reuse_detected 命中
+    //   limit        int      1..500, 默认 100
+    //
+    // 响应:
+    //   { count, total, items: [...AuditRow] }
+    //
+    // 安全:
+    //   - admin 角色限定 (ROLE_BY_ROUTE /api/audit -> admin)
+    //   - 限制时间范围 7 天
+    //   - 限制 limit 上限 500
+    //   - 不返回原始 IP (sink 已 hash 过)
+    // =========================================================================
+    if (reqPath === '/api/audit/list' && method === 'GET') {
+      if (!this.surrealPersistence || !this.surrealPersistence.isReady()) {
+        return {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+          body: { error: 'Service Unavailable', reason: 'audit_db_not_ready' },
+        };
+      }
+      const q: AuditQuery = {};
+      const r = apiReq.query;
+      if (r.action) q.action = r.action;
+      if (r.route) q.route = r.route;
+      if (r.status) q.status = parseInt(r.status, 10);
+      if (r.principalId) q.principalId = r.principalId;
+      if (r.since) q.since = parseInt(r.since, 10);
+      if (r.until) q.until = parseInt(r.until, 10);
+      if (r.reuseOnly === '1') q.reuseOnly = true;
+      if (r.limit) q.limit = parseInt(r.limit, 10);
+      try {
+        const [items, total] = await Promise.all([
+          queryAuditLog(this.surrealPersistence, q),
+          countAuditLog(this.surrealPersistence, q),
+        ]);
+        return {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+          body: { count: items.length, total, items },
+        };
+      } catch (e) {
+        const err = e as Error;
+        return {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+          body: { error: 'Bad Request', reason: err.message },
+        };
+      }
+    }
+
+    // GET /api/audit/stats — sink 自身统计
+    if (reqPath === '/api/audit/stats' && method === 'GET') {
+      const stats = this.auditSinkSurreal?.getStats() ?? null;
+      return {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          sinkMounted: !!this.auditSinkSurreal,
+          stats,
         },
       };
     }
@@ -1606,10 +1789,17 @@ soloforge_kernel_version{state="${this.kernel['state'] || 'READY'}"} ${this.kern
     },
   };
 
+  // 2026-07-02: 与 init_ai_society.py init 出来的 14 张业务表完全对齐
+  //   (institution / governance / reputation / culture / economy / law / law_violation
+  //    / coalition / social_memory / credit_transaction / economy_record
+  //    / governance_record / reputation_record / reputation_sync_log)
+  // 之前错误的 5 张 (agent/cluster/memory/event/transaction) 在 ai_society.db 中根本不存在,
+  // 现已替换为 5 张实际存在的业务表 (institution/governance/culture/economy/social_memory) + reputation_sync_log
   private static readonly ANALYTICS_SNAPSHOT_TABLES: string[] = [
-    "agent", "cluster", "memory", "reputation", "reputation_record",
-    "event", "transaction", "credit_transaction", "coalition",
-    "governance_record", "law", "law_violation", "economy_record",
+    "institution", "governance", "reputation", "culture", "economy", "law",
+    "law_violation", "coalition", "social_memory",
+    "credit_transaction", "economy_record", "governance_record",
+    "reputation_record", "reputation_sync_log",
   ];
 
   private resolveDuckDbBinary(): string | null {
@@ -1712,24 +1902,28 @@ soloforge_kernel_version{state="${this.kernel['state'] || 'READY'}"} ${this.kern
   }
 
   private handleAnalyticsDirect(body: any): ApiResponse {
-    const sql = String(body?.sql || "").trim();
-    if (!sql) {
+    const rawSql = String(body?.sql || "").trim();
+    if (!rawSql) {
       return { status: 400, headers: { "Content-Type": "application/json" }, body: { error: "sql is required (POST body: { sql: 'SELECT ...' })" } };
     }
     // 防御：拦截明显破坏性语句（无 WHERE 的 DROP/TRUNCATE/DELETE/UPDATE）
-    const upper = sql.toUpperCase().replace(/\s+/g, " ");
+    const upper = rawSql.toUpperCase().replace(/\s+/g, " ");
     if (/\b(DROP|TRUNCATE)\b/.test(upper) || (/\b(DELETE\s+FROM|UPDATE\s+\w+\s+SET)\b/.test(upper) && !upper.includes("WHERE"))) {
       return { status: 403, headers: { "Content-Type": "application/json" }, body: { error: "destructive statement rejected" } };
     }
+    // 2026-07-02 修复: CAST(x AS T) → TRY_CAST(x AS T)
+    //   SQLite 列类型弱, DuckDB ATTACH 后推断为 VARCHAR, CAST AS INTEGER 在非数字列上会 500
+    //   TRY_CAST 失败返回 NULL 而不是报错, 符合 OLAP 容错语义
+    const sql = rawSql.replace(/\bCAST\s*\(/gi, "TRY_CAST(");
     const r = this.runDuckDbQuery(sql);
     if (!r.ok) {
-      return { status: 500, headers: { "Content-Type": "application/json" }, body: { error: "duckdb query failed", stderr: r.stderr } };
+      return { status: 500, headers: { "Content-Type": "application/json" }, body: { error: "duckdb query failed", stderr: r.stderr, sql: rawSql, transformed_sql: sql } };
     }
     const rows = this.parseCsv(r.csv);
     return {
       status: 200,
       headers: { "Content-Type": "application/json" },
-      body: { row_count: Math.max(0, rows.length - 1), rows, elapsed_ms: r.elapsedMs },
+      body: { row_count: Math.max(0, rows.length - 1), rows, elapsed_ms: r.elapsedMs, cast_transformed: sql !== rawSql },
     };
   }
 
