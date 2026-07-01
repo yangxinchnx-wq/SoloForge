@@ -1,45 +1,71 @@
 /**
- * MainModelSelector — 顶部主模型下拉
+ * MainModelSelector — 顶部主模型下拉 (framer-motion 重构版)
  *
- * 抽离自 Header.tsx, 解决:
- *   1. 原代码 JSX 与业务态强耦合, 单测需 mount 整个 Header
- *   2. 下拉关闭的 backdrop + AnimatePresence 嵌套, 容易泄漏
- *   3. 选中/外部点击/键盘 Esc 三种关闭路径各自实现
+ * 2026-07-02 重构要点:
+ *   - 下拉面板改用 framer-motion 椭圆弹出动画 (与 SecondaryModelSelector 风格一致)
+ *   - 锚点: 按钮中心 (transformOrigin: '50% 50%')
+ *   - 关闭: clipPath ellipse(0% 0% at 50% 50%) + scale 0.6
+ *   - 开启: clipPath ellipse(150% 150% at 50% 50%) + scale 1
+ *   - backdrop 用 motion.div 透明覆盖, fade-in/fade-out
+ *   - Esc 关闭、点击外部关闭、选中关闭 三种关闭路径都走 AnimatePresence exit 动画
  *
- * 设计:
- *   - 受控/非受控两种用法
- *   - openOnHover=false (点开); Esc 关闭; 选完即关
- *   - 暴露纯函数 `filterModels` 以便单测
- *   - props.draggable = true 时返回 data-no-drag 标记
+ * Props 与旧版一致 (由 Header.tsx 透传)
  */
 
 import React, { memo, useCallback, useEffect, useId, useRef, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronDown } from 'lucide-react';
-import { MountTransition } from '../MountTransition';
 import { ModelIcon } from '../ModelIcon';
 import { computeAvailableModels, pickModel } from './mainModelSelectorLogic';
 export { computeAvailableModels, pickModel } from './mainModelSelectorLogic';
 
-// ──────────────── 类型 ────────────────
-
 export interface MainModelSelectorProps {
-  /** 当前主模型 id (受控) */
   mainModel: string;
-  /** 选中回调, 父组件负责同步到 store */
   onChange: (model: string) => void;
-  /** 可用模型 id 列表 (来自 providers) */
   availableModels: readonly string[];
-  /** 拖动相关: true 时挂 data-no-drag, 让父 header 知道这里不可拖 */
   draggable?: boolean;
-  /** 自定义 placeholder (列表为空时) */
   emptyHint?: string;
-  /** 自定义 button 文本 (label 在外部, 这里只渲染按钮) */
   className?: string;
-  /** 下拉打开/关闭时通知父组件 (用于 z-index 等协调) */
   onOpenChange?: (open: boolean) => void;
 }
 
-// ──────────────── 主组件 ────────────────
+// 椭圆弹出 (从按钮中心扩散) — 与 SecondaryModelSelector 视觉对齐
+const panelVariants = {
+  hidden: {
+    clipPath: 'ellipse(0% 0% at 50% 50%)',
+    opacity: 0,
+    scale: 0.6,
+    transition: {
+      duration: 0.18,
+      ease: [0.4, 0, 1, 1] as [number, number, number, number],
+    },
+  },
+  visible: {
+    clipPath: 'ellipse(150% 150% at 50% 50%)',
+    opacity: 1,
+    scale: 1,
+    transition: {
+      duration: 0.32,
+      ease: [0.16, 1, 0.3, 1] as [number, number, number, number],
+      staggerChildren: 0.025,
+      delayChildren: 0.06,
+    },
+  },
+};
+
+const itemVariants = {
+  hidden: { opacity: 0, y: -4 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.18, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] },
+  },
+};
+
+const backdropVariants = {
+  hidden: { opacity: 0, transition: { duration: 0.15 } },
+  visible: { opacity: 1, transition: { duration: 0.2 } },
+};
 
 function MainModelSelectorImpl({
   mainModel,
@@ -64,15 +90,12 @@ function MainModelSelectorImpl({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const buttonId = useId();
 
-  // 列表去重 + 兜底 (空时, fallback = null)
   const { list, fallback } = computeAvailableModels(availableModels);
   const safeMainModel = list.includes(mainModel) ? mainModel : (fallback ?? mainModel);
 
-  // ── 关闭逻辑 ──
   const close = useCallback(() => setOpen(false), []);
   const toggle = useCallback(() => setOpen((o) => !o), []);
 
-  // ── 选完即关 + 通知父组件 ──
   const handleSelect = useCallback(
     (m: string) => {
       const { next, changed } = pickModel(list, safeMainModel, m);
@@ -82,7 +105,7 @@ function MainModelSelectorImpl({
     [list, safeMainModel, onChange],
   );
 
-  // ── Esc 关闭 ──
+  // Esc 关闭
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -95,7 +118,7 @@ function MainModelSelectorImpl({
     return () => document.removeEventListener('keydown', onKey);
   }, [open, close]);
 
-  // ── 点击外部关闭 (用 ref 替代 backdrop, 避免盖住其它面板) ──
+  // 点击外部关闭
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
@@ -103,7 +126,6 @@ function MainModelSelectorImpl({
       if (rootRef.current.contains(e.target as Node)) return;
       close();
     };
-    // 用 mousedown 不用 click, 避免和 button 的 onClick 抢顺序
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [open, close]);
@@ -116,75 +138,119 @@ function MainModelSelectorImpl({
       className={`relative font-sans ${open ? 'z-50' : ''} ${className}`}
       {...dragProps}
     >
-      <button
+      <motion.button
         id={buttonId}
         type="button"
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label="选择主模型"
         onClick={toggle}
-        className="flex items-center gap-1.5 bg-[var(--color-surface)]/60 hover:bg-[var(--color-surface)]/90 border-[3px] border-primary/45 hover:border-primary/75 px-3 h-[30px] rounded-full text-xs text-[var(--color-on-surface)] active:scale-95 transition-all cursor-pointer font-bold select-none overflow-visible"
+        whileTap={{ scale: 0.94 }}
+        transition={{ type: 'spring', stiffness: 600, damping: 28 }}
+        className="flex items-center gap-1.5 bg-[var(--color-surface)]/60 hover:bg-[var(--color-surface)]/90 border-[3px] border-primary/45 hover:border-primary/75 px-3 h-[30px] rounded-full text-xs text-[var(--color-on-surface)] cursor-pointer font-bold select-none overflow-visible"
       >
         <ModelIcon modelName={safeMainModel} size={20} className="shrink-0" />
         <div className="h-4 overflow-hidden relative flex items-center justify-center min-w-[84px]">
-          <span
+          <motion.span
             key={safeMainModel}
-            className="sf-anim sf-anim-slide-right inline-block whitespace-nowrap text-primary"
+            initial={{ opacity: 0, x: 16 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+            className="inline-block whitespace-nowrap text-primary"
           >
             {safeMainModel}
-          </span>
+          </motion.span>
         </div>
-        <div className={`flex items-center justify-center shrink-0 transition-transform duration-200 ${open ? 'rotate-180' : 'rotate-0'}`}>
+        <motion.span
+          aria-hidden="true"
+          initial={false}
+          animate={{ rotate: open ? 180 : 0 }}
+          transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+          className="flex items-center justify-center shrink-0"
+        >
           <ChevronDown className="w-3.5 h-3.5 text-on-surface/40" />
-        </div>
-      </button>
+        </motion.span>
+      </motion.button>
 
-      <MountTransition show={open} variant="fade-scale" duration={140}>
+      <AnimatePresence>
         {open && (
-          <div
-            role="listbox"
-            aria-labelledby={buttonId}
-            className="absolute left-0 mt-3.5 w-64 bg-[var(--color-surface)] border border-[var(--color-outline)]/25 rounded-xl shadow-[0_8px_32px_rgba(0,0,0,0.10)] z-50 p-1 flex flex-col gap-0.5"
-          >
-            {list.length === 0 ? (
-              <div className="px-3 py-4 text-center text-[11px] text-on-surface/55 leading-relaxed select-none">
-                <div className="text-on-surface/80 font-bold mb-1">{emptyHint}</div>
-                <div className="text-[10px] text-on-surface/40">
-                  请前往「设置 → 模型」添加并启用至少一个云端服务商。
-                </div>
-              </div>
-            ) : (
-              list.map((m) => {
-                const isSelected = safeMainModel === m;
-                return (
-                  <button
-                    key={m}
-                    type="button"
-                    role="option"
-                    aria-selected={isSelected}
-                    onClick={() => handleSelect(m)}
-                    className={`relative w-full text-left px-3 py-2 rounded-lg text-xs font-semibold flex items-center justify-between select-none cursor-pointer transition-all duration-150 ease-out hover:bg-primary/10 ${
-                      isSelected
-                        ? 'text-primary font-bold'
-                        : 'text-[var(--color-on-surface)]/80 hover:text-[var(--color-on-surface)]'
-                    }`}
-                  >
-                    <span className="relative z-10 flex items-center gap-2">
-                      <ModelIcon modelName={m} size={20} className="shrink-0" />
-                      <span>{m}</span>
-                    </span>
-                    {isSelected && (
-                      <span
-                        className="sf-anim sf-anim-fade-scale relative z-10 w-1.5 h-1.5 rounded-full bg-primary"
-                      />
-                    )}
-                  </button>
-                );
-              })
-            )}
-          </div>
+          <>
+            <motion.div
+              key="backdrop"
+              variants={backdropVariants}
+              initial="hidden"
+              animate="visible"
+              exit="hidden"
+              className="fixed inset-0 z-40 bg-transparent"
+              onClick={() => setOpen(false)}
+            />
+
+            <motion.div
+              key="panel"
+              role="listbox"
+              aria-labelledby={buttonId}
+              variants={panelVariants}
+              initial="hidden"
+              animate="visible"
+              exit="hidden"
+              style={{
+                transformOrigin: '50% 50%',
+                willChange: 'clip-path, transform, opacity',
+                transform: 'translateZ(0)',
+                backfaceVisibility: 'hidden',
+                WebkitBackfaceVisibility: 'hidden',
+              }}
+              className="absolute left-0 mt-3.5 w-64 bg-[var(--color-surface)] border border-[var(--color-outline)]/25 rounded-xl shadow-[0_8px_32px_rgba(0,0,0,0.10)] z-50 p-1 flex flex-col gap-0.5"
+            >
+              {list.length === 0 ? (
+                <motion.div
+                  variants={itemVariants}
+                  className="px-3 py-4 text-center text-[11px] text-on-surface/55 leading-relaxed select-none"
+                >
+                  <div className="text-on-surface/80 font-bold mb-1">{emptyHint}</div>
+                  <div className="text-[10px] text-on-surface/40">
+                    请前往「设置 → 模型」添加并启用至少一个云端服务商。
+                  </div>
+                </motion.div>
+              ) : (
+                list.map((m) => {
+                  const isSelected = safeMainModel === m;
+                  return (
+                    <motion.button
+                      key={m}
+                      type="button"
+                      role="option"
+                      aria-selected={isSelected}
+                      variants={itemVariants}
+                      onClick={() => handleSelect(m)}
+                      whileHover={{ x: 2 }}
+                      transition={{ type: 'spring', stiffness: 700, damping: 30 }}
+                      className={`relative w-full text-left px-3 py-2 rounded-lg text-xs font-semibold flex items-center justify-between select-none cursor-pointer hover:bg-primary/10 ${
+                        isSelected
+                          ? 'text-primary font-bold'
+                          : 'text-[var(--color-on-surface)]/80 hover:text-[var(--color-on-surface)]'
+                      }`}
+                    >
+                      <span className="relative z-10 flex items-center gap-2">
+                        <ModelIcon modelName={m} size={20} className="shrink-0" />
+                        <span>{m}</span>
+                      </span>
+                      {isSelected && (
+                        <motion.span
+                          initial={{ scale: 0 }}
+                          animate={{ scale: 1 }}
+                          transition={{ type: 'spring', stiffness: 700, damping: 24 }}
+                          className="relative z-10 w-1.5 h-1.5 rounded-full bg-primary"
+                        />
+                      )}
+                    </motion.button>
+                  );
+                })
+              )}
+            </motion.div>
+          </>
         )}
-      </MountTransition>
+      </AnimatePresence>
     </div>
   );
 }
