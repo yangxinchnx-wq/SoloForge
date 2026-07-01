@@ -82,6 +82,10 @@ spike/
 *.egg-info/
 test-shots/
 .trae-stash-backups/
+parse-test*.mjs
+parse-test/
+_test.tsx
+_test/
 
 # Ad-hoc debug scripts and runtime screenshots (not part of the product)
 *.ps1
