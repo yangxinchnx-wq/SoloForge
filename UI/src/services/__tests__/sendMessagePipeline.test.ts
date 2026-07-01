@@ -51,7 +51,7 @@ describe('buildUserMessage', () => {
     const msg = buildUserMessage('hello', null);
     expect(msg.sender).toBe('user');
     expect(msg.content).toBe('hello');
-    expect(msg.avatar).toContain('unsplash');
+    expect(msg.avatar).toBe('');
     expect(msg.time).toMatch(/\d{2}:\d{2}:\d{2}/);
   });
 
