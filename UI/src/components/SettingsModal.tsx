@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  X, Globe, PlusCircle, Laptop, Cpu, Code2, GitBranch, 
+import {
+  X, Globe, PlusCircle, Laptop, Cpu, Code2, GitBranch,
   ShieldCheck, Brain, Download, Navigation, Database, Share2, Save,
-  Check, AlertCircle, Play, Pause, Trash2, Edit2, 
+  Check, AlertCircle, Play, Pause, Trash2, Edit2,
   Search, RefreshCw, Layers, Plus, Terminal, Heart, Eye, EyeOff, DownloadCloud, FileText, Link2, Key, Radio, ShieldAlert, Settings,
   Mic, Wrench, Film, Type, Compass, Sliders, Flame
 } from 'lucide-react';
@@ -11,13 +11,16 @@ import * as DndKitCore from '@dnd-kit/core';
 import * as DndKitModifiers from '@dnd-kit/modifiers';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { ModelIcon } from './ModelIcon';
+import { NormalIcon, PerformanceIcon, ExpertIcon, UltimateIcon } from './ChatPanel';
+import { useTheme, PRESET_FONTS, preloadFontByName } from '../context/ThemeContext';
+
 const { DndContext, DragOverlay, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors } = DndKitCore;
 const { restrictToVerticalAxis, restrictToParentElement } = DndKitModifiers;
 type DragEndEvent = DndKitCore.DragEndEvent;
 type DragStartEvent = DndKitCore.DragStartEvent;
-import { ModelIcon } from './ModelIcon';
-import { NormalIcon, PerformanceIcon, ExpertIcon, UltimateIcon } from './ChatPanel';
-import { useTheme, PRESET_FONTS, preloadFontByName } from '../context/ThemeContext';
+type DragOverEvent = DndKitCore.DragOverEvent;
+type Modifier = DndKitCore.Modifier;
 
 const PROVIDER_MODEL_REGISTRY: Record<string, { id: string; name: string }[]> = {
   xiaomi: [
@@ -74,41 +77,63 @@ interface ProviderCardProps {
   isSelected: boolean;
   onSelect: (id: string) => void;
   onDelete?: (id: string) => void;
+  /** Apple HIG spring transition, sourced from parent (providerItemTransition). */
+  itemTransition?: string;
+  /** When true, this card is rendered inside <DragOverlay>: opaque clone,
+   *  no dnd listeners, no click handler, fixed transform=identity. */
+  isOverlayClone?: boolean;
+  /** When true, this card is the current dnd-kit `over` target. */
+  isOverTarget?: boolean;
+  /** When true, play the post-drop pulse highlight. */
+  isPulsing?: boolean;
 }
 
 const ProviderCard = React.forwardRef<HTMLDivElement, ProviderCardProps>(
-  ({ provider, isSelected, onSelect, onDelete }, ref) => {
+  ({ provider, isSelected, onSelect, onDelete, itemTransition, isOverlayClone, isOverTarget, isPulsing }, ref) => {
     const { setNodeRef, attributes, listeners, transform, transition, isDragging } = useSortable({ id: provider.id });
     const [showDelHint, setShowDelHint] = React.useState(false);
     const isCustom = provider.id.startsWith('custom_');
 
-    const dndTransition = transition || 'transform 180ms cubic-bezier(0.22, 1, 0.36, 1)';
-    const style: React.CSSProperties = {
-      transform: CSS.Transform.toString(transform),
-      transition: dndTransition,
-      cursor: isDragging ? 'grabbing' : 'grab',
-      visibility: isDragging ? 'hidden' : 'visible',
-      willChange: isDragging ? 'transform' : 'auto',
-      backfaceVisibility: 'hidden',
-      WebkitBackfaceVisibility: 'hidden',
-    };
+    // GPU-accelerated style: transform only, no opacity (spec: visibility hidden).
+    // Apple HIG spring curve for collision displacement — overshoot gives the
+    // "jelly" feel when items get pushed aside by the dragged card.
+    // Overlay clone: render at identity transform (dnd-kit positions it via
+    // top-level DragOverlay transform), and use the spring curve for drop-in.
+    const dndStyle: React.CSSProperties = isOverlayClone
+      ? {
+          transform: 'translate3d(0,0,0) scale(1)',
+          transition: 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)',
+          willChange: 'transform',
+          backfaceVisibility: 'hidden',
+          WebkitBackfaceVisibility: 'hidden',
+          contain: 'layout paint style',
+        }
+      : {
+          transform: CSS.Transform.toString(transform),
+          transition: transition || itemTransition || 'transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1)',
+          visibility: isDragging ? 'hidden' : 'visible',
+          willChange: isDragging ? 'transform' : 'auto',
+          backfaceVisibility: 'hidden',
+          WebkitBackfaceVisibility: 'hidden',
+          contain: 'layout paint style',
+        };
 
     return (
       <div
-        ref={(node) => {
+        ref={isOverlayClone ? undefined : (node: HTMLDivElement | null) => {
           setNodeRef(node);
           if (typeof ref === 'function') ref(node);
           else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
         }}
-        style={style}
+        style={dndStyle}
         data-provider-id={provider.id}
-        {...attributes}
-        {...listeners}
-        onClick={(e) => {
+        {...(isOverlayClone ? {} : attributes)}
+        {...(isOverlayClone ? {} : listeners)}
+        onClick={isOverlayClone ? undefined : (e) => {
           if (isDragging) { e.preventDefault(); e.stopPropagation(); return; }
           onSelect(provider.id);
         }}
-        className="w-full relative select-none cursor-pointer touch-none box-border block focus:outline-none outline-none rounded-xl"
+        className={`w-full relative select-none cursor-pointer touch-none box-border block focus:outline-none outline-none rounded-xl ${isOverTarget ? 'sf-drop-target' : ''} ${isPulsing ? 'sf-drop-pulse' : ''}`}
       >
         <div
           onMouseEnter={() => setShowDelHint(true)}
@@ -698,6 +723,219 @@ export default function SettingsModal({
     };
     el.addEventListener('wheel', handler, { passive: false });
     return () => el.removeEventListener('wheel', handler);
+  }, []);
+
+  // ==========================================
+  // 【服务商列表拖拽基础结构 — 对齐主界面 HistoryAndEditorPanel】
+  // - sensors: PointerSensor (distance 5) + KeyboardSensor
+  // - modifiers: vertical-axis + parent-element + lockAboveFirst (禁止顶出首项)
+  // - transition: Apple HIG spring curve (380ms cubic-bezier(0.34,1.56,0.64,1))
+  // - drop animation: 260ms cubic-bezier(0.22,1,0.36,1)
+  // - reduced-motion: 自动降级到 180/140ms legacy curve，无 spring overshoot
+  // - 自定义 window 'mousemove' + rAF 自动滚动 (EDGE=56, MAX_SPEED=14, k=power(d/EDGE,1.6))
+  // - visibility:hidden 源卡 + DragOverlay 克隆 → 永不透明
+  // - 滚动容器 sf-scroll-contain + sf-drag-context is-dimming → 拖拽中整列变暗
+  // - 目标槽 sf-drop-target 蓝色环 + sf-drop-pulse 落下后脉冲
+  // ==========================================
+  const providerScrollRef = useRef<HTMLDivElement>(null);
+  const providerDragMoveHandlerRef = useRef<((ev: MouseEvent) => void) | null>(null);
+  const providerWheelHandlerRef = useRef<((ev: WheelEvent) => void) | null>(null);
+  const providerDragRafRef = useRef<number | null>(null);
+  const [activeDragProviderId, setActiveDragProviderId] = React.useState<string | null>(null);
+  const [overProviderId, setOverProviderId] = React.useState<string | null>(null);
+  const [pulsingProviderIds, setPulsingProviderIds] = React.useState<Set<string>>(new Set());
+  const providerPulseTimerRef = React.useRef<number | null>(null);
+  const activeDragProvider = activeDragProviderId ? providers.find(p => p.id === activeDragProviderId) : null;
+
+  // Honour user OS-level motion preference (Apple HIG + WCAG 2.3.3)
+  const providerReducedMotion = React.useMemo(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return false;
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  }, []);
+  const providerItemTransition = providerReducedMotion
+    ? 'transform 180ms cubic-bezier(0.22, 1, 0.36, 1)'
+    : 'transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1)';
+  const providerDropAnimation = React.useMemo(
+    () => ({
+      duration: providerReducedMotion ? 140 : 260,
+      easing: 'cubic-bezier(0.22, 1, 0.36, 1)' as const,
+    }),
+    [providerReducedMotion],
+  );
+
+  // Hard-prevent the dragged card from crossing ABOVE the first item.
+  const providerLockAboveFirst: Modifier = React.useCallback(
+    (args) => {
+      const { active, containerNodeRect, activeNodeRect, transform } = args;
+      if (!active || !activeNodeRect || !containerNodeRect) return transform;
+      const activeId = String(active.id);
+      const activeIndex = providers.findIndex((p) => p.id === activeId);
+      if (activeIndex <= 0) {
+        return { ...transform, y: Math.max(0, transform.y) };
+      }
+      const projectedTop = activeNodeRect.top + transform.y;
+      if (projectedTop < containerNodeRect.top) {
+        const dy = containerNodeRect.top - activeNodeRect.top;
+        return { ...transform, y: dy };
+      }
+      return transform;
+    },
+    [providers],
+  );
+
+  const providerSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  const handleProviderDragOver = (event: DragOverEvent) => {
+    const overIdStr = event.over ? String(event.over.id) : null;
+    if (overIdStr !== overProviderId) setOverProviderId(overIdStr);
+  };
+
+  const triggerProviderPulse = (ids: Iterable<string>) => {
+    if (providerPulseTimerRef.current !== null) {
+      window.clearTimeout(providerPulseTimerRef.current);
+    }
+    setPulsingProviderIds(new Set(ids));
+    providerPulseTimerRef.current = window.setTimeout(() => {
+      setPulsingProviderIds(new Set());
+      providerPulseTimerRef.current = null;
+    }, 600);
+  };
+
+  const handleProviderDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      const oldIndex = providers.findIndex((p) => p.id === active.id);
+      const newIndex = providers.findIndex((p) => p.id === over.id);
+      if (oldIndex !== -1 && newIndex !== -1) {
+        reorderProviders(arrayMove(providers, oldIndex, newIndex));
+        // Reorder succeeded: pulse slot + 1-hop neighbours for a sense of
+        // "wave" sweeping through the affected area of the list.
+        const impacted = new Set<string>();
+        impacted.add(String(over.id));
+        const lower = Math.max(0, Math.min(oldIndex, newIndex) - 1);
+        const upper = Math.min(providers.length - 1, Math.max(oldIndex, newIndex) + 1);
+        for (let i = lower; i <= upper; i++) {
+          if (i !== oldIndex) impacted.add(providers[i].id);
+        }
+        triggerProviderPulse(impacted);
+      }
+    } else {
+      // No reorder happened (dropped on self, or on no target).
+      // Still play a brief pulse on the source card so the user gets
+      // visual confirmation that the drag was received and resolved.
+      const droppedId = String(active.id);
+      if (providers.some((p) => p.id === droppedId)) {
+        triggerProviderPulse([droppedId]);
+      }
+    }
+    setActiveDragProviderId(null);
+    setOverProviderId(null);
+    if (providerDragMoveHandlerRef.current) {
+      window.removeEventListener('mousemove', providerDragMoveHandlerRef.current);
+      providerDragMoveHandlerRef.current = null;
+    }
+    if (providerWheelHandlerRef.current) {
+      providerScrollRef.current?.removeEventListener('wheel', providerWheelHandlerRef.current);
+      providerWheelHandlerRef.current = null;
+    }
+    if (providerDragRafRef.current !== null) {
+      cancelAnimationFrame(providerDragRafRef.current);
+      providerDragRafRef.current = null;
+    }
+  };
+
+  const handleProviderDragStart = (event: DragStartEvent) => {
+    setActiveDragProviderId(String(event.active.id));
+    // If a previous dragEnd's pulse is still ticking, cancel it so it
+    // doesn't fight with the new drag's visuals.
+    if (providerPulseTimerRef.current !== null) {
+      window.clearTimeout(providerPulseTimerRef.current);
+      providerPulseTimerRef.current = null;
+    }
+    setPulsingProviderIds(new Set());
+    // Synchronous addEventListener in handleDragStart (no React effect delay).
+    // Apple-style exponential auto-scroll: softer near center, exponential ramp near edge.
+    const onMove = (ev: MouseEvent) => {
+      if (providerDragRafRef.current !== null) return; // already a frame scheduled
+      providerDragRafRef.current = requestAnimationFrame(() => {
+        providerDragRafRef.current = null;
+        const sc = providerScrollRef.current;
+        if (!sc) return;
+        const r = sc.getBoundingClientRect();
+        const EDGE = 56;
+        const MAX_SPEED = 14;
+        const py = ev.clientY;
+        if (py < r.top + EDGE) {
+          const distance = Math.max(0, r.top + EDGE - py);
+          const k = Math.pow(distance / EDGE, 1.6);
+          sc.scrollTop -= Math.max(1, Math.round(MAX_SPEED * k));
+        } else if (py > r.bottom - EDGE) {
+          const distance = Math.max(0, py - (r.bottom - EDGE));
+          const k = Math.pow(distance / EDGE, 1.6);
+          sc.scrollTop += Math.max(1, Math.round(MAX_SPEED * k));
+        }
+      });
+    };
+    providerDragMoveHandlerRef.current = onMove;
+    window.addEventListener('mousemove', onMove);
+
+    // Block horizontal wheel events (Mac trackpad two-finger horizontal swipe)
+    // from being misinterpreted as vertical scroll while dragging.
+    const onWheel = (ev: WheelEvent) => {
+      if (Math.abs(ev.deltaX) > Math.abs(ev.deltaY) * 1.5) {
+        ev.preventDefault();
+      }
+    };
+    providerWheelHandlerRef.current = onWheel;
+    providerScrollRef.current?.addEventListener('wheel', onWheel, { passive: false });
+  };
+
+  const handleProviderDragCancel = () => {
+    setActiveDragProviderId(null);
+    setOverProviderId(null);
+    if (providerDragMoveHandlerRef.current) {
+      window.removeEventListener('mousemove', providerDragMoveHandlerRef.current);
+      providerDragMoveHandlerRef.current = null;
+    }
+    if (providerWheelHandlerRef.current) {
+      providerScrollRef.current?.removeEventListener('wheel', providerWheelHandlerRef.current);
+      providerWheelHandlerRef.current = null;
+    }
+    if (providerDragRafRef.current !== null) {
+      cancelAnimationFrame(providerDragRafRef.current);
+      providerDragRafRef.current = null;
+    }
+    // Defensive: cancel any in-flight pulse from a prior dragEnd that
+    // might still be ticking when the user starts a new drag.
+    if (providerPulseTimerRef.current !== null) {
+      window.clearTimeout(providerPulseTimerRef.current);
+      providerPulseTimerRef.current = null;
+    }
+    setPulsingProviderIds(new Set());
+  };
+
+  React.useEffect(() => {
+    return () => {
+      if (providerDragMoveHandlerRef.current) {
+        window.removeEventListener('mousemove', providerDragMoveHandlerRef.current);
+        providerDragMoveHandlerRef.current = null;
+      }
+      if (providerWheelHandlerRef.current) {
+        providerScrollRef.current?.removeEventListener('wheel', providerWheelHandlerRef.current);
+        providerWheelHandlerRef.current = null;
+      }
+      if (providerDragRafRef.current !== null) {
+        cancelAnimationFrame(providerDragRafRef.current);
+        providerDragRafRef.current = null;
+      }
+      if (providerPulseTimerRef.current !== null) {
+        window.clearTimeout(providerPulseTimerRef.current);
+        providerPulseTimerRef.current = null;
+      }
+    };
   }, []);
 
   const addCustomModel = (providerId: string) => {
@@ -1347,27 +1585,27 @@ export default function SettingsModal({
                   <DndContext
                     sensors={providerSensors}
                     collisionDetection={closestCenter}
-                    modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+                    modifiers={[restrictToVerticalAxis, restrictToParentElement, providerLockAboveFirst]}
                     onDragStart={handleProviderDragStart}
+                    onDragOver={handleProviderDragOver}
                     onDragEnd={handleProviderDragEnd}
                     onDragCancel={handleProviderDragCancel}
                   >
                   <div className="flex-1 flex min-h-0 bg-[var(--color-bg)]/60 border border-[var(--color-outline)]/20 rounded-2xl overflow-visible">
-                    
+
                     {/* Left Sidebar: Provider Cards Selection */}
                     <div className="w-[200px] border-r border-[var(--color-outline)]/15 bg-[var(--color-bg)]/80 flex flex-col shrink-0">
                       {/* Fixed: Title */}
                       <div className="px-5 py-3 text-[10px] text-on-surface/40 font-bold tracking-wider border-b border-[var(--color-outline)]/10 shrink-0">
                         模型服务商列表
                       </div>
-                      
+
                       {/* Scrollable: Provider list only */}
                       <div
                         ref={providerScrollRef}
-                        className="flex-1 min-h-0 overflow-y-auto p-2.5 select-none relative [&::-webkit-scrollbar]:hidden"
+                        className={`sf-scroll-contain sf-drag-context flex-1 min-h-0 overflow-y-auto p-2.5 select-none relative [&::-webkit-scrollbar]:hidden ${activeDragProviderId ? 'is-dimming' : ''}`}
                         style={{
                           overscrollBehavior: 'contain',
-                          contain: 'layout paint',
                           willChange: activeDragProviderId ? 'scroll-position' : 'auto',
                           scrollbarWidth: 'none',
                           msOverflowStyle: 'none',
@@ -1380,6 +1618,9 @@ export default function SettingsModal({
                                 key={p.id}
                                 provider={p}
                                 isSelected={activeProvider.id === p.id}
+                                itemTransition={providerItemTransition}
+                                isOverTarget={overProviderId === p.id && activeDragProviderId !== p.id}
+                                isPulsing={pulsingProviderIds.has(p.id)}
                                 onSelect={(id) => {
                                   setActiveProviderId(id);
                                   setCustomModelVal('');
@@ -1765,32 +2006,38 @@ export default function SettingsModal({
                     </div>
 
                     <DragOverlay
-                      dropAnimation={{
-                        duration: 140,
-                        easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
-                      }}
+                      dropAnimation={providerDropAnimation}
+                      zIndex={9999}
                     >
-                      {activeDragProvider ? (
-                        <div
-                          className="rounded-xl"
-                          style={{
-                            isolation: 'isolate',
-                            willChange: 'transform',
-                            transform: 'translateZ(0)',
-                            backfaceVisibility: 'hidden',
-                            WebkitBackfaceVisibility: 'hidden',
-                            contain: 'layout paint style',
-                            pointerEvents: 'none',
-                          }}
-                        >
-                          <ProviderCard
-                            provider={activeDragProvider}
-                            isSelected={activeProvider.id === activeDragProvider.id}
-                            onSelect={() => {}}
-                            onDelete={removeCustomProvider}
-                          />
-                        </div>
-                      ) : null}
+                      {activeDragProvider ? (() => {
+                        // Measure the actual source card width so the overlay
+                        // clone is exactly the same width (not the natural
+                        // 0-width of detached DOM). Re-read on every render
+                        // so layout changes (font load, theme swap) are honoured.
+                        const sourceEl = providerScrollRef.current?.querySelector<HTMLElement>(
+                          `[data-provider-id="${CSS.escape(activeDragProvider.id)}"]`
+                        );
+                        const measuredWidth = sourceEl
+                          ? sourceEl.getBoundingClientRect().width
+                          : 0;
+                        return (
+                          <div
+                            className="sf-drag-overlay"
+                            style={{
+                              width: measuredWidth > 0 ? `${measuredWidth}px` : 'var(--sf-overlay-w, auto)',
+                            }}
+                          >
+                            <ProviderCard
+                              provider={activeDragProvider}
+                              isSelected={activeProvider.id === activeDragProvider.id}
+                              itemTransition={providerItemTransition}
+                              isOverlayClone
+                              onSelect={() => {}}
+                              onDelete={removeCustomProvider}
+                            />
+                          </div>
+                        );
+                      })() : null}
                     </DragOverlay>
 
                   </div>
