@@ -2659,7 +2659,6 @@ export default function SettingsModal({
                 </div>
               </div>
             )}
-            </div>
           </div>
         </div>
       </div>
