@@ -557,6 +557,39 @@ async function startServer() {
   app.use(gitServiceProxy);
   console.log(`[proxy] Git API /api/git/* → ${GIT_SERVICE_URL}（go-git 后端）`);
 
+  // ============================================================
+  // MARL Python /sync/reputation HTTP 接收端 (audit B2 修复)
+  // 8766 端口独立于 3001 backend, 不走 P9 outbox 路径
+  // 前端通过 3000/api/marl/reputation/* 间接访问, 主要用于:
+  //   - 健康检查 (启动 / preflight)
+  //   - 测试时手动 push 测试事件
+  // ============================================================
+  const MARL_REPUTATION_HTTP = process.env.SOLOFORGE_MARL_REPUTATION_URL
+    || "http://127.0.0.1:8766";
+  const marlReputationProxy = createProxyMiddleware({
+    target: MARL_REPUTATION_HTTP,
+    changeOrigin: true,
+    pathRewrite: { "^/api/marl/reputation": "/sync/reputation" },
+    logger: console,
+    on: {
+      error: (err, _req, res) => {
+        console.error(`[proxy→8766] error: ${err.message}`);
+        if (res && 'writeHead' in res) {
+          try {
+            (res as any).writeHead(502, { "Content-Type": "application/json" });
+            (res as any).end(JSON.stringify({
+              success: false,
+              error: `MARL 8766 不可达: ${err.message}`,
+              target: MARL_REPUTATION_HTTP,
+            }));
+          } catch { /* response already sent */ }
+        }
+      },
+    },
+  });
+  app.use("/api/marl/reputation", marlReputationProxy);
+  console.log(`[proxy] MARL Reputation API /api/marl/reputation/* → ${MARL_REPUTATION_HTTP}/sync/reputation (P9 端, audit B2 修复)`);
+
   // GET custom rules markdown content
   app.get("/api/custom-rules", (req, res) => {
     try {

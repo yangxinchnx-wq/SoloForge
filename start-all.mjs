@@ -13,7 +13,9 @@
 //       ⚠️ 3001 是后端管理界面: http://localhost:3001/admin
 //       依赖 Garnet(6379) + SurrealDB(嵌入式) + MARL(8765)
 //   4. UI dev server (3000)          UI/server.ts (tsx)
-//   5. MARL Python 服务 (8765)       python -m marl_service.server_prod
+//   5. MARL Python 服务 (8765 + 8766) python -m marl_service.server_prod
+//      8765 = gRPC 推理 (audit B1 修复后接 reputation-outbox-bridge)
+//      8766 = HTTP /sync/reputation 接收端 (audit B2 修复后接 outbox worker, M2 幂等键)
 //   6. Electron 桌面壳 (可选)
 // ─────────────────────────────────────────────────────────────────
 
@@ -70,7 +72,8 @@ const PORTS = {
   3001: "SoloForge API Server (主内核)",
   3002: "Go git-service (go-git)",
   6379: "Garnet 缓存 (Redis 协议)",
-  8765: "MARL Python 服务",
+  8765: "MARL Python gRPC 推理",
+  8766: "MARL Python /sync/reputation HTTP (P9 接收端, audit B2 修复)",
   9090: "Prometheus 指标导出",
 };
 
@@ -316,6 +319,10 @@ async function main() {
   const ge = await waitPort("127.0.0.1", 8765, "marl", 15000);
   log("WAIT", `marl=${ge ? "OK" : "TIMEOUT"}`);
 
+  log("WAIT", "等 MARL 8766 /sync/reputation HTTP 接收端就绪(最多 10s)...");
+  const gr = await waitPort("127.0.0.1", 8766, "marl-http", 10000);
+  log("WAIT", `marl-http=${gr ? "OK" : "TIMEOUT"} (audit B2 修复)`);
+
   if (!NO_ELECTRON) {
     procs.push({ name: "electron", p: await startElectron() });
   }
@@ -328,6 +335,7 @@ async function main() {
   console.log(`  ${BOLD("主内核 API")}   ${INFO("http://localhost:3001")}  Admin: ${INFO("http://localhost:3001/admin")}`);
   console.log(`  ${BOLD("Git 服务")}     ${INFO(`http://localhost:${GIT_PORT}`)}`);
   console.log(`  ${BOLD("MARL 推理")}    ${INFO("http://localhost:8765")}`);
+  console.log(`  ${BOLD("MARL Reputation Sync")} ${INFO("http://localhost:8766/sync/reputation")}`);
   console.log(`  ${BOLD("Garnet 缓存")}  ${INFO(`127.0.0.1:${GARNET_PORT}`)}`);
   console.log(`  ${BOLD("Prometheus")}   ${INFO("http://localhost:9090/metrics")}`);
   console.log(`  ${BOLD("SSE 事件流")}  ${INFO("http://localhost:3001/api/events/stream")}`);
