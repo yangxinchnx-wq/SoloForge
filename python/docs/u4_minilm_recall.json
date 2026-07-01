@@ -1,0 +1,13 @@
+{
+  "date": "2026-07-01",
+  "embedder": "MiniLMEmbedder",
+  "dim": 384,
+  "samples": 50,
+  "recall_at_1": 0.74,
+  "recall_at_3": 0.74,
+  "recall_at_5": 0.74,
+  "cross_lingual_r1": 0.6,
+  "biz_r1": 0.9091,
+  "near_avg_cos": 0.5725,
+  "far_avg_cos": 0.1001
+}

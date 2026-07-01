@@ -1,0 +1,71 @@
+{
+  "timestamp": 1782828012.5317698,
+  "config": {
+    "scenario": "all",
+    "total": 5000,
+    "batch_size": 200,
+    "value_size": 256,
+    "writer_threshold": 500,
+    "writer_interval_ms": 50.0,
+    "base_url": "http://127.0.0.1:7001",
+    "out": "C:\\Users\\yangx\\Desktop\\SoloForge\\python\\docs\\p5_writebatch_bench.json"
+  },
+  "results": [
+    {
+      "scenario": "A_single_put",
+      "total": 5000,
+      "elapsed_sec": 8.643,
+      "qps": 578.5,
+      "latency_ms": {
+        "p50": 1.638,
+        "p95": 2.407,
+        "p99": 2.815,
+        "max": 4.888
+      }
+    },
+    {
+      "scenario": "B_manual_batch_200",
+      "total": 5000,
+      "n_batches": 25,
+      "batch_size": 200,
+      "elapsed_sec": 0.098,
+      "qps": 51265.5,
+      "batch_qps": 256.3,
+      "latency_ms": {
+        "p50": 3.76,
+        "p95": 4.393,
+        "p99": 4.449,
+        "max": 4.466
+      }
+    },
+    {
+      "scenario": "C_batched_writer_500_50ms",
+      "total": 5000,
+      "enqueue_elapsed_sec": 0.024,
+      "enqueue_qps": 212640.2,
+      "total_elapsed_sec": 0.077,
+      "total_qps": 64533.1,
+      "enqueue_latency_us": {
+        "p50": 1.8,
+        "p95": 2.0,
+        "p99": 3.6
+      },
+      "writer_stats": {
+        "current_queue_size": 0,
+        "peak_queue_size": 4192,
+        "total_enqueued": 5000,
+        "total_flushed": 5000,
+        "total_batches": 2,
+        "total_errors": 0,
+        "avg_batch_size": 2500.0,
+        "last_batch_size": 808,
+        "last_flush_at": 1782828012.5306525,
+        "config": {
+          "size_threshold": 500,
+          "flush_interval_ms": 50.0,
+          "max_queue_size": 100000
+        }
+      }
+    }
+  ]
+}
