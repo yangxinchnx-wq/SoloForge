@@ -22,15 +22,6 @@ msgpack>=1.0.0
 # 3.13 兼容: 0.61.0+ (llvmlite 0.44+)
 numba>=0.61.0
 
-# Vector Database - LanceDB (AI 社会专用向量存储)
-# Social Memory 语义检索，与主项目 SurrealDB 完全隔离
-# 3.13 兼容: 0.20.0+ (依赖 pyarrow 17+)
-lancedb>=0.20.0,<1.0.0
-
-# PyArrow - LanceDB 依赖
-# 3.13 兼容: 17.0.0+ 官方 cp313 wheel
-pyarrow>=17.0.0,<20.0.0
-
 # Development Dependencies
 pytest>=8.0.0
 pytest-asyncio>=0.23.0

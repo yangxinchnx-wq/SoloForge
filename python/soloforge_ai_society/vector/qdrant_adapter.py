@@ -6,9 +6,8 @@ Date: 2026-06-30
 
 把现有 AI Society 事件 embedding 工作流无缝切换到 Qdrant。
 零破坏：
-  - 不修改 vector/search.py (LanceDB 路径)
-  - 不修改 vector/embedder.py (TFIDF 路径)
-  - 调用方可选择 VectorSearch (LanceDB) 或 QdrantVectorSearch (本类)
+  - 仅做 adapter, 不修改其它文件
+  - 调用方统一使用 QdrantVectorSearch (本类) 替代旧的 LanceDB VectorSearch
 """
 
 from __future__ import annotations

@@ -35,8 +35,6 @@ def main() -> int:
     print(f"[2] 向量维度: {dim}")
     if cls_name == "MiniLMEmbedder":
         dim_ok = dim == 384
-    elif cls_name == "TFIDFEmbedder":
-        dim_ok = dim == 128
     elif cls_name == "HeuristicEmbedder":
         dim_ok = dim > 0
     else:

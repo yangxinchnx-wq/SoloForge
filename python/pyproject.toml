@@ -10,7 +10,6 @@ version = "1.0.0"
 description = "AI Society Core Module for SoloForge - Social Memory, Reputation, Governance"
 requires-python = ">=3.12"
 dependencies = [
-    "lancedb>=0.10.0,<1.0.0",
     "numpy>=1.26.0,<2.0.0",
 ]
 

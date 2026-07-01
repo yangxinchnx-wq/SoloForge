@@ -5,7 +5,7 @@ Path: python/soloforge_ai_society/vector/minilm_embedder.py
 Date: 2026-06-30
 
 paraphrase-multilingual-MiniLM-L12-v2 嵌入器（sentence_transformers 实现）。
-零破坏：新文件，不动 embedder.py 现有 TFIDFEmbedder。
+零破坏：新文件, 走 factory 即可热切换。
 """
 
 from __future__ import annotations

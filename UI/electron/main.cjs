@@ -178,6 +178,129 @@ function execPs(script) {
   });
 }
 
+// ── 2026 关闭 DWM 在窗口上的 chrome(消除 Windows 11 snap layout 的尺寸说明 tooltip) ──
+// frame:false + transparent:true 都不能阻止 DWM 在用户拖动/缩放窗口时画
+// "1234 × 567" 尺寸 tooltip,这是 DWM 在 explorer.exe 进程里画的,必须调
+// DwmSetWindowAttribute 把 DWMWA_NCRENDERING_POLICY 设为 DWMNCRP_DISABLED
+// (DWM 完全不参与此窗口的非客户区渲染 → snap tooltip 不再画)。
+// 用 PowerShell + EncodedCommand 调,严格只动这一个 attribute,不动窗口位置/尺寸/样式。
+function disableDwmNonClientRender(window) {
+  if (process.platform !== 'win32') return;
+  if (!window || window.isDestroyed()) return;
+
+  let hwnd;
+  try {
+    const hwndBuf = window.getNativeWindowHandle();
+    // Electron 返回 Buffer:64-bit 进程 8 字节,32-bit 进程 4 字节
+    // PowerShell [IntPtr] 在 64-bit 系统上 8 字节,转 Int64 即可
+    if (hwndBuf.length >= 8) {
+      hwnd = hwndBuf.readBigInt64LE(0).toString();
+    } else {
+      hwnd = hwndBuf.readInt32LE(0).toString();
+    }
+  } catch (e) {
+    console.warn('[dwm] get hwnd failed:', e?.message);
+    return;
+  }
+
+  // 严格只设 DWMWA_NCRENDERING_POLICY = DWMNCRP_DISABLED,不动窗口
+  //   DWMWA_NCRENDERING_POLICY = 2
+  //   DWMNCRP_DISABLED        = 1
+  const psScript = `
+$src = @'
+using System;
+using System.Runtime.InteropServices;
+public class W {
+  [DllImport("dwmapi.dll", PreserveSig=true)]
+  public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+}
+'@
+Add-Type -TypeDefinition $src -Language CSharp
+$hwnd = [IntPtr]::new([Int64]${hwnd})
+$policy = 1
+$ret = [W]::DwmSetWindowAttribute($hwnd, 2, [ref]$policy, 4)
+Write-Output "DWM_RET=$ret"
+`;
+
+  // 用 EncodedCommand 避免嵌套引号/反引号转义问题
+  const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
+  const { exec } = require('child_process');
+  exec(
+    `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}`,
+    { timeout: 8000, windowsHide: true, encoding: 'utf-8' },
+    (err, stdout) => {
+      if (err) {
+        console.warn('[dwm] disable non-client render failed:', err.message);
+      } else {
+        console.log('[dwm] disable non-client render:', (stdout || '').trim());
+      }
+    }
+  );
+}
+
+// ── 2026 把窗口标记为"工具窗口" → explorer.exe 不再画 snap layout tooltip ──
+// frame:false + transparent:true + DWMNCRP_DISABLED 都拦不住,Windows 11
+// 的 snap layout tooltip 是 explorer.exe 在它自己的进程里画的(独立 overlay
+// 顶层窗口),针对所有 explorer 认定的"顶层应用窗口"。
+// WS_EX_TOOLWINDOW 让 explorer 把它当工具窗口 → 不参与 snap → tooltip 不再画
+// WS_EX_APPWINDOW  对冲 TOOLWINDOW 的"不出现在任务栏"副作用,强制出现
+function applyNoSnapExStyles(window) {
+  if (process.platform !== 'win32') return;
+  if (!window || window.isDestroyed()) return;
+
+  let hwnd;
+  try {
+    const hwndBuf = window.getNativeWindowHandle();
+    if (hwndBuf.length >= 8) {
+      hwnd = hwndBuf.readBigInt64LE(0).toString();
+    } else {
+      hwnd = hwndBuf.readInt32LE(0).toString();
+    }
+  } catch (e) {
+    console.warn('[exstyle] get hwnd failed:', e?.message);
+    return;
+  }
+
+  // GWL_EXSTYLE = -20
+  //   WS_EX_TOOLWINDOW = 0x00000080
+  //   WS_EX_APPWINDOW  = 0x00040000
+  // 直接 OR 进去,不动其他 bit
+  const psScript = `
+$src = @'
+using System;
+using System.Runtime.InteropServices;
+public class W {
+  [DllImport("user32.dll")]
+  public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+  [DllImport("user32.dll")]
+  public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+}
+'@
+Add-Type -TypeDefinition $src -Language CSharp
+$hwnd = [IntPtr]::new([Int64]${hwnd})
+$TOOL = 0x80
+$APP  = 0x40000
+$old = [W]::GetWindowLong($hwnd, -20)
+$new = $old -bor $TOOL -bor $APP
+[W]::SetWindowLong($hwnd, -20, $new) | Out-Null
+Write-Output "EXSTYLE_OLD=$old,NEW=$new"
+`;
+
+  const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
+  const { exec } = require('child_process');
+  exec(
+    `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}`,
+    { timeout: 8000, windowsHide: true, encoding: 'utf-8' },
+    (err, stdout) => {
+      if (err) {
+        console.warn('[exstyle] apply failed:', err.message);
+      } else {
+        console.log('[exstyle]', (stdout || '').trim());
+      }
+    }
+  );
+}
+
 const PS_WIN32 = `
 Add-Type -TypeDefinition @'
 using System;
@@ -486,18 +609,95 @@ function registerIpc() {
   });
   // 查询画布宿主窗口是否已就绪（renderer 用来判断能否启动）
   ipcMain.handle('canvas:host-info', async () => ({ ok: true, bounds: hostBounds }));
+
+  // ── 2026 自定义窗口控制按钮(替代 titleBarOverlay,因为 DWM 暗 tint 无法消除) ──
+  // 由 UI/src/components/WindowControls.tsx 调用
+  ipcMain.handle('window:minimize', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize();
+  });
+  ipcMain.handle('window:toggle-maximize', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    if (mainWindow.isMaximized()) mainWindow.unmaximize();
+    else mainWindow.maximize();
+    return mainWindow.isMaximized();
+  });
+  ipcMain.handle('window:close', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+  });
+  ipcMain.handle('window:is-maximized', () => {
+    return mainWindow && !mainWindow.isDestroyed() ? mainWindow.isMaximized() : false;
+  });
+  ipcMain.handle('window:maximize-state', (event) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.on('maximize', () => event.sender.send('window:maximize-state-changed', true));
+      mainWindow.on('unmaximize', () => event.sender.send('window:maximize-state-changed', false));
+    }
+  });
+
+  // ── 2026 自定义 resize 边框(替代 frame:true 的 OS 边框,消除 Windows resize 时的白色 sizing box) ──
+  // 由 UI/src/components/EdgeResize.tsx 调用
+  ipcMain.handle('window:resize-by', (_e, { edge, deltaX, deltaY }) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    if (mainWindow.isMaximized() || mainWindow.isMinimized() || mainWindow.isFullScreen()) return false;
+    const b = mainWindow.getBounds();
+    const minW = 1024;
+    const minH = 640;
+    let { x, y, width, height } = b;
+
+    if (edge.includes('e')) width = Math.max(minW, width + deltaX);
+    if (edge.includes('s')) height = Math.max(minH, height + deltaY);
+    if (edge.includes('w')) {
+      const newW = Math.max(minW, width - deltaX);
+      if (newW !== width) { x = x + (width - newW); width = newW; }
+    }
+    if (edge.includes('n')) {
+      const newH = Math.max(minH, height - deltaY);
+      if (newH !== height) { y = y + (height - newH); height = newH; }
+    }
+
+    mainWindow.setBounds({
+      x: Math.round(x), y: Math.round(y),
+      width: Math.round(width), height: Math.round(height),
+    });
+    return true;
+  });
+
+  // ── 2026 自定义窗口拖动(替代 -webkit-app-region: drag,消除 Win11 snap layout tooltip) ──
+  // 由 UI/src/components/Header.tsx 的 onMouseDown 调
+  // deltaX/deltaY: 本次相对上次的鼠标位移(像素)
+  ipcMain.handle('window:move-by', (_e, { deltaX, deltaY }) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    if (mainWindow.isMaximized() || mainWindow.isMinimized() || mainWindow.isFullScreen()) return false;
+    const [x, y] = mainWindow.getPosition();
+    mainWindow.setPosition(Math.round(x + deltaX), Math.round(y + deltaY));
+    return true;
+  });
 }
 
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
-    minWidth: 1024,
-    minHeight: 640,
-    title: 'SoloForge',
-    backgroundColor: '#121414',
     show: false,
-    autoHideMenuBar: true,
+    // ── 2026 完全自定义窗口(DWM 不画任何 chrome) ──
+    // frame: false                → 完全去掉 OS 边框 / 标题栏 / resize sizing box
+    // transparent: true           → 关键!窗口变成 WS_EX_LAYERED layered window,
+    //                              DWM 不再绘制任何非客户区(包括 resize 时的 size box / drag preview)
+    //                              这是 VS Code/Discord 完整隐藏 OS chrome 的官方做法
+    //   - 替代实现:
+    //     - 顶部 drag 区域由 .soloforge-drag-header CSS class 提供(WebkitAppRegion: drag)
+    //     - "−/□/×" 按钮由 UI/src/components/WindowControls.tsx 用 React 画(走 IPC)
+    //     - resize 由 UI/src/components/EdgeResize.tsx 在 4 边 + 4 角提供透明 handle(走 IPC)
+    //   - 注意:body 必须有 solid 背景(见 index.css),否则 resize 时会看到桌面透出
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',  // transparent:true 时 backgroundColor 必须 #00000000
+    hasShadow: false,
+    minimizable: true,
+    maximizable: true,
+    resizable: true,         // frame:false 时 OS 不画 drag box,但这个 flag 影响 cursor 反馈
+    fullscreenable: true,
+    paintWhenInitiallyHidden: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -513,7 +713,8 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
 
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  // ready-to-show:页面首次渲染完成后才显示窗口(避免闪烁)
+  // 实际 show 逻辑放到 app.whenReady 里(包含 DWM 关闭非客户区渲染的副作用)
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
@@ -538,12 +739,25 @@ function buildMenu() {
 }
 
 app.whenReady().then(() => {
-  isDev = !app.isPackaged;
+  // 2026 修复:Electron 在未打包项目里用 node_modules/.bin/electron 直接运行时,
+  // app.isPackaged 仍然返回 true(已知 Electron 怪癖,见 electronjs docs)。
+  // 正确判断:isDev = process.defaultApp || !app.isPackaged
+  isDev = process.defaultApp || !app.isPackaged;
   applyCsp();
   setupApiProxy();
   buildMenu();
   createWindow();                  // 先创建主窗口
   createCanvasHostWindow(mainWindow); // 再以主窗口为 parent 创建画布宿主 → OS 自动管 z-order
+  // 2026:关掉 DWM 在主窗口的非客户区渲染 + 标记为工具窗口
+  // 两者结合才能彻底消除 Windows 11 snap layout 的尺寸说明 tooltip
+  // (在 ready-to-show 之后调,确保 HWND 已绑定)
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+    setTimeout(() => {
+      disableDwmNonClientRender(mainWindow);
+      applyNoSnapExStyles(mainWindow);
+    }, 100);
+  });
   registerIpc();
 
   app.on('activate', () => {

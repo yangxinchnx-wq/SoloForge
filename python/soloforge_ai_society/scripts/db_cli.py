@@ -47,7 +47,7 @@ def cmd_status(args):
 
     print(f"\n[*] 数据目录: {config.data_dir}")
     print(f"[*] SQLite: {config.sqlite_path}")
-    print(f"[*] LanceDB: {config.lancedb_path}")
+    print(f"[*] Qdrant: {config.qdrant_host}:{config.qdrant_http_port} (collection: {config.qdrant_collection})")
 
     # 迁移状态
     print("\n[*] 迁移状态:")
@@ -65,10 +65,6 @@ def cmd_status(args):
     if config.sqlite_path.exists():
         size = config.sqlite_path.stat().st_size
         print(f"   SQLite: {size / 1024 / 1024:.2f} MB")
-
-    if config.lancedb_path.exists():
-        size = config.lancedb_path.stat().st_size
-        print(f"   LanceDB: {size / 1024 / 1024:.2f} MB")
 
 
 def cmd_migrate(args):

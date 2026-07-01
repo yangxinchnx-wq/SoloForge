@@ -16,6 +16,7 @@ import AgentSettingsModal from './components/AgentSettingsModal';
 import { SecondaryModel } from './types';
 import { useTheme, THEME_PRESETS } from './context/ThemeContext';
 import { MountTransition } from './components/MountTransition';
+import { EdgeResize } from './components/EdgeResize';
 import { X } from 'lucide-react';
 
 export default function App() {
@@ -515,12 +516,19 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen w-screen bg-bg text-on-surface overflow-hidden select-none">
-      {/* Top Controls Header Bar */}
-      <div className="relative z-[60]" style={{ '--color-primary': primaryColorTargets.header ? 'var(--color-main-primary)' : activeTheme.primary } as React.CSSProperties}>
-        <Header 
-          mainModel={mainModel} 
-          setMainModel={setMainModel} 
-          secModels={secModels} 
+      {/* 2026: 4 边 + 4 角的 resize 手柄(替代 frame:true 的 OS 边框,消除 Windows resize 时的白色 sizing box)
+          顶边不放(Header 区域已有 drag-to-move,放 resize handle 会冲突) */}
+      <EdgeResize />
+      <div
+        className="relative z-[60]"
+        style={{
+          '--color-primary': primaryColorTargets.header ? 'var(--color-main-primary)' : activeTheme.primary,
+        } as React.CSSProperties}
+      >
+        <Header
+          mainModel={mainModel}
+          setMainModel={setMainModel}
+          secModels={secModels}
           setSecModels={setSecModels}
           mixedTasks={mixedTasks}
           setMixedTasks={setMixedTasks}

@@ -1,42 +1,37 @@
 # -*- coding: utf-8 -*-
 """
-SoloForge AI Society - Memory Service
+SoloForge AI Society - Memory Service (Qdrant 后端)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️  AI 社会专用服务 ⚠️
+升级 (2026-07-01): 从 LanceDB + TFIDF 切换到 Qdrant + MiniLM 384-dim
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-社会记忆服务 - 核心服务
 
 数据存储：
 - SQLite：social_memory 表（结构化数据）
-- LanceDB：social_memory 向量表（语义搜索）
+- Qdrant：ai_society_events collection（向量 + 语义搜索）
 
-注意：Social Memory 同时使用 SQLite 和 LanceDB
-- SQLite 存储完整记录（可关联查询）
-- LanceDB 存储向量（语义相似度搜索）
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+兼容：
+- 旧 API (search / create / get_by_id / get_lessons / count) 保持不变
+- 内部用 QdrantVectorSearch 替换 VectorSearch (LanceDB)
+- VectorSearch.count() 不再支持，已被 SQLite 直接 COUNT 替代
 """
 
-import json
 import logging
 from datetime import datetime
 from typing import List, Optional
 
-import sqlite3
-
 from ..database.manager import DatabaseManager
 from ..models.social_memory import SocialMemory, MemorySeverity, MemoryImpact
-from ..vector.embedder import TFIDFEmbedder, get_embedder
-from ..vector.search import VectorSearch
+from ..vector.qdrant_adapter import QdrantVectorSearch
+from ..vector.factory import get_embedder
+from soloforge_ai_society.services.qdrant_client import QdrantUnavailable
 
 logger = logging.getLogger(__name__)
 
 
 class MemoryService:
     """
-    社会记忆服务
+    社会记忆服务（Qdrant 后端）
 
     管理 Social Memory 的创建、搜索和删除
     """
@@ -44,21 +39,22 @@ class MemoryService:
     def __init__(
         self,
         db_manager: DatabaseManager,
-        embedder: Optional[TFIDFEmbedder] = None,
+        embedder=None,
     ):
         """
-        初始化
-
         Args:
-            db_manager: 数据库管理器
-            embedder: 向量生成器
+            db_manager: 数据库管理器 (SQLite)
+            embedder: 可选嵌入器（默认走 factory.get_embedder() — MiniLM）
         """
         self.db_manager = db_manager
         self.embedder = embedder or get_embedder()
-        self.vector_search = VectorSearch(
-            db=db_manager.get_lancedb(),
-            embedder=self.embedder,
-        )
+        try:
+            self.vector_search = QdrantVectorSearch(embedder=self.embedder)
+            self._qdrant_available = True
+        except QdrantUnavailable as e:
+            logger.warning(f"[MemoryService] Qdrant unavailable, semantic search disabled: {e}")
+            self.vector_search = None
+            self._qdrant_available = False
         self._init_memory_table()
 
     def _init_memory_table(self) -> None:
@@ -76,22 +72,7 @@ class MemoryService:
         domain: Optional[str] = None,
         outcome: Optional[str] = None,
     ) -> SocialMemory:
-        """
-        创建社会记忆
-
-        Args:
-            event: 事件描述
-            impact: 影响类型
-            severity: 严重度
-            participants: 参与者
-            lessons: 经验教训
-            task_id: 任务 ID
-            domain: 领域
-            outcome: 结果
-
-        Returns:
-            创建的记忆
-        """
+        """创建社会记忆（同时写 SQLite 结构化 + Qdrant 向量）"""
         memory = SocialMemory(
             event=event,
             impact=MemoryImpact(impact),
@@ -103,7 +84,6 @@ class MemoryService:
             outcome=outcome,
         )
 
-        # 保存到 SQLite
         conn = self.db_manager.get_sqlite_connection()
         cursor = conn.cursor()
         cursor.execute(
@@ -126,21 +106,24 @@ class MemoryService:
         )
         conn.commit()
 
-        # 保存到向量数据库
-        vector = self.embedder.embed(event).tolist()
-        self.vector_search.add(
-            id=memory.id,
-            event=memory.event,
-            vector=vector,
-            impact=memory.impact.value,
-            severity=memory.severity.value,
-            participants=",".join(memory.participants),
-            lessons=",".join(memory.lessons),
-            task_id=memory.task_id or "",
-            domain=memory.domain or "",
-            outcome=memory.outcome or "",
-            created_at=int(memory.created_at.timestamp()),
-        )
+        if self._qdrant_available and self.vector_search is not None:
+            try:
+                self.vector_search.upsert(
+                    text=memory.event,
+                    payload={
+                        "memory_id": memory.id,
+                        "impact": memory.impact.value,
+                        "severity": memory.severity.value,
+                        "participants": ",".join(memory.participants),
+                        "lessons": ",".join(memory.lessons),
+                        "task_id": memory.task_id or "",
+                        "domain": memory.domain or "",
+                        "outcome": memory.outcome or "",
+                        "created_at": int(memory.created_at.timestamp()),
+                    },
+                )
+            except Exception as e:
+                logger.warning(f"[MemoryService] Qdrant upsert failed: {e}")
 
         logger.info(f"Created social memory: {memory.id}")
         return memory
@@ -152,40 +135,37 @@ class MemoryService:
         severity: Optional[List[str]] = None,
         since_days: Optional[int] = None,
     ) -> List[SocialMemory]:
-        """
-        搜索相似记忆
+        """搜索相似记忆"""
+        if not self._qdrant_available or self.vector_search is None:
+            logger.warning("[MemoryService] Qdrant unavailable, search returns empty")
+            return []
 
-        Args:
-            query: 查询文本
-            top_k: 返回数量
-            severity: 严重度过滤
-            since_days: 时间过滤（天数）
+        try:
+            hits = self.vector_search.search(query, limit=top_k)
+        except Exception as e:
+            logger.warning(f"[MemoryService] Qdrant search failed: {e}")
+            return []
 
-        Returns:
-            匹配的记录
-        """
-        since = None
+        since_ts = None
         if since_days:
             import time
-            since = int(time.time()) - since_days * 86400
+            since_ts = int(time.time()) - since_days * 86400
 
-        results = self.vector_search.search(
-            query=query,
-            top_k=top_k,
-            severity_filter=severity,
-            since=since,
-        )
-
-        memories = []
-        for r in results:
-            memory = self.get_by_id(r["id"])
+        memories: List[SocialMemory] = []
+        for h in hits:
+            pl = h.get("payload", {}) or {}
+            mid = pl.get("memory_id") or h.get("id")
+            if severity and pl.get("severity") not in severity:
+                continue
+            if since_ts is not None and pl.get("created_at", 0) < since_ts:
+                continue
+            memory = self.get_by_id(mid) if mid else None
             if memory:
                 memories.append(memory)
-
         return memories
 
     def get_by_id(self, memory_id: str) -> Optional[SocialMemory]:
-        """根据 ID 获取记忆"""
+        """根据 ID 获取记忆（仅查 SQLite）"""
         conn = self.db_manager.get_sqlite_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM social_memory WHERE id = ?", (memory_id,))
@@ -208,15 +188,7 @@ class MemoryService:
         )
 
     def get_lessons(self, domain: Optional[str] = None) -> List[str]:
-        """
-        获取所有经验教训
-
-        Args:
-            domain: 领域过滤
-
-        Returns:
-            经验教训列表
-        """
+        """获取所有经验教训（仅 SQLite）"""
         conn = self.db_manager.get_sqlite_connection()
         cursor = conn.cursor()
 
@@ -238,5 +210,8 @@ class MemoryService:
         return list(lessons)
 
     def count(self) -> int:
-        """获取记忆总数"""
-        return self.vector_search.count()
+        """获取记忆总数（直接查 SQLite）"""
+        conn = self.db_manager.get_sqlite_connection()
+        cursor = conn.cursor()
+        row = cursor.execute("SELECT COUNT(*) AS c FROM social_memory").fetchone()
+        return row["c"] if row else 0

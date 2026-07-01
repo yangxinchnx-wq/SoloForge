@@ -25,4 +25,28 @@ contextBridge.exposeInMainWorld('soloforge', {
     reportBounds: (bounds) => ipcRenderer.invoke('canvas:report-bounds', bounds),
     hostInfo: () => ipcRenderer.invoke('canvas:host-info'),
   },
+  // ── 2026 自定义窗口控件(替代 Electron 的 titleBarOverlay,因为 Windows 11 22H2+ DWM 暗 tint) ──
+  // 由 UI/src/components/WindowControls.tsx 调用
+  window: {
+    minimize: () => ipcRenderer.invoke('window:minimize'),
+    toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
+    close: () => ipcRenderer.invoke('window:close'),
+    isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
+    onMaximizeStateChange: (callback) => {
+      const handler = (_e, isMax) => callback(isMax);
+      ipcRenderer.on('window:maximize-state-changed', handler);
+      // 订阅一次,main 端开始向该 renderer 推送
+      ipcRenderer.invoke('window:maximize-state').catch(() => {});
+      return () => ipcRenderer.removeListener('window:maximize-state-changed', handler);
+    },
+  },
+  // ── 2026 自定义 resize 边框(替代 frame:true 的 OS 边框,消除 Windows resize 时的白色 sizing box) ──
+  // 由 UI/src/components/EdgeResize.tsx 调用
+  // edge: 'n'|'s'|'e'|'w'|'ne'|'nw'|'se'|'sw'; deltaX/deltaY: 本次相对上次的鼠标位移(像素)
+  resizeWindow: (edge, deltaX, deltaY) =>
+    ipcRenderer.invoke('window:resize-by', { edge, deltaX, deltaY }),
+  // ── 2026 自定义窗口拖动(替代 -webkit-app-region: drag,消除 Win11 snap layout tooltip) ──
+  // 由 UI/src/components/Header.tsx 的 onMouseDown 调
+  // deltaX/deltaY: 本次相对上次的鼠标位移(像素)
+  moveWindow: (deltaX, deltaY) => ipcRenderer.invoke('window:move-by', { deltaX, deltaY }),
 });

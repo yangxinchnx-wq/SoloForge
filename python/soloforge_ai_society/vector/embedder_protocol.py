@@ -5,7 +5,7 @@ Path: python/soloforge_ai_society/vector/embedder_protocol.py
 Date: 2026-06-30
 
 IEmbedder 抽象接口（Protocol），零破坏。
-兼容：旧 TFIDFEmbedder 没有 model_name 属性，也视为 embedder（duck-type）。
+所有实现（MiniLMEmbedder / HeuristicEmbedder）都满足该 duck-type。
 """
 
 from __future__ import annotations

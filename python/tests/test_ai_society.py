@@ -17,7 +17,7 @@ from soloforge_ai_society.services.governance_service import GovernanceService
 from soloforge_ai_society.services.economy_service import EconomyService
 from soloforge_ai_society.services.law_service import LawService
 from soloforge_ai_society.services.coalition_service import CoalitionService
-from soloforge_ai_society.vector.embedder import TFIDFEmbedder
+from soloforge_ai_society.vector.factory import get_embedder
 
 
 @pytest.fixture
@@ -33,7 +33,6 @@ def config(temp_dir):
     cfg = AISocietyConfig(
         data_dir=temp_dir / "ai_society",
         sqlite_db_name="test.db",
-        lancedb_name="test.lance",
     )
     set_config(cfg)
     return cfg
@@ -50,18 +49,8 @@ def db_manager(config):
 
 @pytest.fixture
 def embedder():
-    """嵌入器"""
-    # 训练嵌入器（使用 128 维，与 schema 一致）
-    sample_texts = [
-        "Browser 插件故障导致文件被误删",
-        "代码审查发现严重安全问题",
-        "模型调用超时导致任务失败",
-        "成功完成代码重构",
-        "数据库连接池耗尽",
-    ]
-    emb = TFIDFEmbedder(dim=128)
-    emb.fit(sample_texts)
-    return emb
+    """嵌入器（用 factory 默认 MiniLM/Heuristic）"""
+    return get_embedder()
 
 
 @pytest.fixture

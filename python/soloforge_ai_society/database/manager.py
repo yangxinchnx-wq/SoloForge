@@ -17,7 +17,7 @@ SoloForge AI Society - Database Manager
 │   │                                                                          │
 │   └── AI 社会模块（独立）                                                    │
 │       ├── SQLite (ai_society.db)     ← 制度/信誉/经济/法律/联盟            │
-│       └── LanceDB (social_memory)    ← 社会记忆向量搜索                    │
+│       └── Qdrant (6333/6334)         ← 社会记忆向量搜索 (MiniLM 384-dim)  │
 │                                                                             │
 │   隔离原则：                                                                 │
 │   • AI 社会数据库禁止被主项目直接访问                                         │
@@ -28,7 +28,7 @@ SoloForge AI Society - Database Manager
 
 技术选型理由：
 - SQLite + ConnectionPool：嵌入式 OLTP，零配置，高可靠，适合结构化业务数据
-- LanceDB：嵌入式向量数据库，支持语义搜索，适合社会记忆检索
+- Qdrant：生产级向量数据库（外置进程 6333/6334），支持 int8 量化 (P7)，适合语义检索社会记忆
 
 新特性：
 - 连接池：多连接复用，提升并发性能
@@ -36,14 +36,16 @@ SoloForge AI Society - Database Manager
 - 健康检查：数据库状态监控
 - 自动备份：定时备份机制
 
+升级 2026-07-01: 移除 LanceDB / TF-IDF 全部代码
+- 旧 import lancedb / get_lancedb() / _init_lancedb() / _lancedb 已删除
+- 向量检索改用 QdrantVectorSearch (services/qdrant_client.py + vector/qdrant_adapter.py)
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
 
 import logging
 from pathlib import Path
 from typing import Optional
-
-import lancedb
 
 from ..config import AISocietyConfig, get_config
 from ..models.institution import Institution, PRESET_INSTITUTIONS
@@ -61,7 +63,6 @@ class DatabaseManager:
 
     统一管理：
     - SQLite：结构化数据（Institution/Governance/Reputation/Culture/Economy/Law/Coalition）
-    - LanceDB：向量数据（Social Memory）
     - ConnectionPool：连接池管理
     - Migration：Schema 迁移
     """
@@ -69,7 +70,6 @@ class DatabaseManager:
     def __init__(self, config: Optional[AISocietyConfig] = None):
         self.config = config or get_config()
         self._pool: Optional[ConnectionPool] = None
-        self._lancedb: Optional[lancedb.LanceDBConnection] = None
 
     # =========================================================================
     # 连接池管理
@@ -337,22 +337,6 @@ class DatabaseManager:
             conn.commit()
 
     # =========================================================================
-    # LanceDB 管理
-    # =========================================================================
-
-    def get_lancedb(self) -> lancedb.LanceDBConnection:
-        """获取 LanceDB 实例"""
-        if self._lancedb is None:
-            self._init_lancedb()
-        return self._lancedb
-
-    def _init_lancedb(self) -> None:
-        """初始化 LanceDB 数据库"""
-        db = lancedb.connect(str(self.config.lancedb_path))
-        self._lancedb = db
-        logger.info(f"LanceDB initialized: {self.config.lancedb_path}")
-
-    # =========================================================================
     # 初始化
     # =========================================================================
 
@@ -375,8 +359,8 @@ class DatabaseManager:
         # 4. 初始化预设数据
         self._init_preset_data()
 
-        # 5. 初始化 LanceDB
-        self.get_lancedb()
+        # 5. 向量检索由 QdrantVectorSearch (services/qdrant_client.py) 懒初始化
+        #    AI Society 进程启动时已通过独立初始化保证 Qdrant 可用, 此处不重复连接
 
         logger.info("All databases initialized successfully")
 
@@ -389,9 +373,6 @@ class DatabaseManager:
         if self._pool:
             self._pool.close_all()
             self._pool = None
-
-        if self._lancedb:
-            self._lancedb = None
 
         logger.info("Databases closed")
 
