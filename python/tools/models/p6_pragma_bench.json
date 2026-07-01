@@ -1,0 +1,14 @@
+{
+  "P6_ON": {
+    "seq_write_sec": 0.005,
+    "seq_read_sec": 0.008,
+    "conc_write_sec": 0.346,
+    "conc_read_sec": 0.281
+  },
+  "P6_OFF": {
+    "seq_write_sec": 0.059,
+    "seq_read_sec": 0.061,
+    "conc_write_sec": -1,
+    "conc_read_sec": -1
+  }
+}
