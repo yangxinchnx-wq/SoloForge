@@ -22,6 +22,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+# M1 修复 (2026-07-01, audit P1): raw sqlite3.connect 后调 apply_p6_baseline
+from soloforge_ai_society.database.pool import apply_p6_baseline
+
 logger = logging.getLogger(__name__)
 
 

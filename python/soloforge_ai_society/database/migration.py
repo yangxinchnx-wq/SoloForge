@@ -18,6 +18,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 
+# M1 修复 (2026-07-01, audit P1): raw sqlite3.connect 后调 apply_p6_baseline
+# 7 个 PRAGMA 一次性到位, 与 ConnectionPool 同源. 避免散落 5-PRAGMA 模式
+from soloforge_ai_society.database.pool import apply_p6_baseline
+
 logger = logging.getLogger(__name__)
 
 # 当前 Schema 版本
