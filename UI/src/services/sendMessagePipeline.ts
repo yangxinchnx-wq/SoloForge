@@ -114,7 +114,7 @@ export function buildUserMessage(
     time: new Date().toLocaleTimeString([], {
       hour: '2-digit', minute: '2-digit', second: '2-digit',
     }),
-    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&fit=crop&q=80',
+    avatar: '',
   };
   if (pendingAttachment) {
     userMsg.attachment = {

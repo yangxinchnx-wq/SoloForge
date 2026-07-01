@@ -295,23 +295,23 @@ const defaultChatDetails: Record<string, { title: string; icon: any }> = {
 
 const defaultConversations: Record<string, ChatMessage[]> = {
   '1': [
-    { sender: 'user', content: '帮我创建一个博客系统，包含文章列表、文章详情、评论功能，使用Vue3 + Node.js', time: '11:59:58', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&fit=crop&q=80' }
+    { sender: 'user', content: '帮我创建一个博客系统，包含文章列表、文章详情、评论功能，使用Vue3 + Node.js', time: '11:59:58', avatar: '' }
   ],
   '2': [
-    { sender: 'user', content: '我们需要设计一套鲁棒的基于 JWT 和 HttpOnly Cookies 的双令牌认证系统，包含 Refresh Token 手段。', time: '09:12:00', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&fit=crop&q=80' },
+    { sender: 'user', content: '我们需要设计一套鲁棒的基于 JWT 和 HttpOnly Cookies 的双令牌认证系统，包含 Refresh Token 手段。', time: '09:12:00', avatar: '' },
     { sender: 'assistant', content: '已经为您储备好了安全双令牌机制。RefreshToken 保存于严格的 HttpOnly 专属 Cookie，AccessToken 在内存中临时维持 (过载失效15分钟)，完美匹配安全合规守则。', time: '09:13:00', avatar: '' }
   ],
   '3': [
-    { sender: 'user', content: '能帮我针对核心逻辑生成一份 API 文档并一键注释吗？', time: '16:04:22', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&fit=crop&q=80' }
+    { sender: 'user', content: '能帮我针对核心逻辑生成一份 API 文档并一键注释吗？', time: '16:04:22', avatar: '' }
   ],
   '4': [
-    { sender: 'user', content: '设计一个支持项目分类、多对多标签数据库表关联。', time: '昨天', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&fit=crop&q=80' }
+    { sender: 'user', content: '设计一个支持项目分类、多对多标签数据库表关联。', time: '昨天', avatar: '' }
   ],
   '5': [
-    { sender: 'user', content: '看一下中国主流 H5 调起以及三方支付模块对接思路。', time: '前天', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&fit=crop&q=80' }
+    { sender: 'user', content: '看一下中国主流 H5 调起以及三方支付模块对接思路。', time: '前天', avatar: '' }
   ],
   '6': [
-    { sender: 'user', content: '有哪些前端极端性能优化、极致首屏指标项需要注意？', time: '三天前', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&fit=crop&q=80' }
+    { sender: 'user', content: '有哪些前端极端性能优化、极致首屏指标项需要注意？', time: '三天前', avatar: '' }
   ]
 };
 
@@ -806,7 +806,7 @@ export default function ChatPanel({
       ];
     }
     return [
-      { sender: 'user', content: '创建全新对话！请给予我一些重构意见。', time: '刚才', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&fit=crop&q=80' }
+      { sender: 'user', content: '创建全新对话！请给予我一些重构意见。', time: '刚才', avatar: '' }
     ];
   };
 
@@ -1385,7 +1385,7 @@ export default function ChatPanel({
       sender: 'user',
       content: finalContent,
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&fit=crop&q=80',
+      avatar: '',
     };
 
     if (pendingAttachment) {
@@ -1842,14 +1842,23 @@ export default function ChatPanel({
               >
                 {/* Header Row: Avatar + Info */}
                 <div className={`flex gap-3 items-center mb-1 ${isUser ? 'flex-row-reverse' : ''}`}>
-                  {/* Avatar block */}
+                  {/* Avatar block — 始终使用本地兜底，不加载外链头像 (CSP 安全) */}
                   {isUser ? (
-                    <img 
-                      src={msg.avatar} 
-                      alt="User" 
-                      className="w-11 h-11 rounded-full object-cover shrink-0 border border-primary/25 shadow-sm"
-                      referrerPolicy="no-referrer"
-                    />
+                    <div
+                      role="img"
+                      aria-label="User"
+                      className="w-11 h-11 rounded-full shrink-0 border border-primary/25 shadow-sm flex items-center justify-center"
+                      style={{
+                        background:
+                          'linear-gradient(135deg, #ffde82 0%, #f5b461 50%, #c97f3a 100%)',
+                        color: '#121414',
+                        fontSize: 20,
+                        fontWeight: 700,
+                        lineHeight: 1,
+                      }}
+                    >
+                      U
+                    </div>
                   ) : (
                     <div className="w-11 h-11 rounded-full bg-on-surface/5 border border-on-surface/10 flex items-center justify-center shrink-0">
                       <ModelIcon modelName={mainModel || 'GPT-4o'} size={32} className="shrink-0" />

@@ -815,12 +815,21 @@ export default function Header({
         {/* User profile avatar info with online indicator */}
         <div className="flex items-center gap-2 border-r border-outline/50 pr-4 py-1">
           <div className="relative">
-            <img
-              src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=80&fit=crop&q=80"
-              alt="SoloDev"
-              className="w-6 h-6 rounded-full border border-primary/40 object-cover"
-              referrerPolicy="no-referrer"
-            />
+            <div
+              role="img"
+              aria-label="SoloDev"
+              className="w-6 h-6 rounded-full border border-primary/40 flex items-center justify-center"
+              style={{
+                background:
+                  'linear-gradient(135deg, #ffde82 0%, #f5b461 50%, #c97f3a 100%)',
+                color: '#121414',
+                fontSize: 11,
+                fontWeight: 700,
+                lineHeight: 1,
+              }}
+            >
+              S
+            </div>
             <span className="absolute bottom-0 right-0 w-1.5 h-1.5 bg-green-500 rounded-full border border-black" />
           </div>
           <div className="flex flex-col text-left">
