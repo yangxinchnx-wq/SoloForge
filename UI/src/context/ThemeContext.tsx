@@ -1,16 +1,56 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useMemo } from 'react';
 import { ThemePreset } from '../types';
 
+// ── 自托管字体 ───────────────────────────────────────────────
+// 6 个中文字体放在 src/assets/fonts/，Vite 通过 ?url 让浏览器运行时加载
+// 不打进 JS bundle（每个文件 2-28MB，不能 inline）
+import OPPOSansUrl from '../assets/fonts/OPPOSans-Medium.otf?url';
+import SourceHanSansSCUrl from '../assets/fonts/SourceHanSansSC-Regular-2.otf?url';
+import LXGWWenKaiMonoUrl from '../assets/fonts/LXGWWenKaiMono-Light.ttf?url';
+import SmileySansUrl from '../assets/fonts/SmileySans-Oblique.ttf?url';
+import DinglieXidaUrl from '../assets/fonts/dingliexidafont-20250329V2)-2.ttf?url';
+import DinglieZhuHaiUrl from '../assets/fonts/dingliezhuhaifont-20240831GengXinBan)-2.ttf?url';
+
+interface PresetFontMeta {
+  /** Settings UI 显示名（必须是合法的 font-family 字符串）*/
+  name: string;
+  /** 唯一 css font-family 名（实际用于 @font-face）*/
+  cssFamily: string;
+  url: string;
+  /** 文件格式（用于 CSS src format hint）*/
+  format: 'truetype' | 'opentype';
+  /** Settings UI 上展示的副标题/说明 */
+  desc: string;
+}
+
+const PRESET_FONT_META: PresetFontMeta[] = [
+  { name: 'OPPO Sans (默认)', cssFamily: 'OPPOSans', url: OPPOSansUrl, format: 'opentype',
+    desc: 'OPPO 手机系统中文，默认字体' },
+  { name: '思源黑体 SC',     cssFamily: 'SourceHanSansSC', url: SourceHanSansSCUrl, format: 'opentype',
+    desc: 'Adobe/Google 开源黑体，覆盖最完整' },
+  { name: '霞鹜文楷等宽', cssFamily: 'LXGWWenKaiMono', url: LXGWWenKaiMonoUrl, format: 'truetype',
+    desc: '霞鹜文楷等宽版，轻量阅读友好' },
+  { name: '得意黑 SmileySans', cssFamily: 'SmileySans', url: SmileySansUrl, format: 'truetype',
+    desc: '得意黑，标题用黑体' },
+  { name: '丁列西达', cssFamily: 'DinglieXida', url: DinglieXidaUrl, format: 'truetype',
+    desc: '手写装饰' },
+  { name: '丁列筑海', cssFamily: 'DinglieZhuHai', url: DinglieZhuHaiUrl, format: 'truetype',
+    desc: '手写装饰' },
+];
+
+/** 默认值 —— “加载第一个”就是 OPPOSans */
+const DEFAULT_FONT_NAME = PRESET_FONT_META[0].name;
+
 export const THEME_PRESETS: ThemePreset[] = [
   {
     id: 'light',
-    name: '护眼浅色 (Warm Light)',
-    bg: '#f1ede4',         // 科学滤蓝光温润米白底色
-    surface: '#fbf9f5',    // 视网膜减眩光抗疲劳象牙白
-    surfaceBright: '#e4decb', // 舒适柔和分割过渡色
-    primary: '#0d5d91',    // 降荧光高 legible 专业深蓝
-    onSurface: '#1f2022',  // 漫反射低发光度墨炭黑
-    outline: '#d8cfbe'     // 护眼低反差柔和边框
+    name: '纯净浅色 (Clean Light)',
+    bg: '#fafafa',         // 极淡灰白底色
+    surface: '#ffffff',    // 纯白卡面
+    surfaceBright: '#f4f4f5', // 浅灰白过渡
+    primary: '#6366f1',    // 靛蓝紫
+    onSurface: '#18181b',  // 深炭黑文字
+    outline: '#e4e4e7'     // 极浅灰边
   },
   {
     id: 'dark',
@@ -94,13 +134,13 @@ export const SYNTAX_THEMES: SyntaxThemePreset[] = [
   },
   {
     id: 'light',
-    name: '护眼温和浅色 (Warm Light)',
+    name: '纯净浅色 (Clean Light)',
     isDark: false,
-    bg: '#fbf9f5',
-    surface: '#f1ede4',
-    surfaceBright: '#e4decb',
-    onSurface: '#1f2022',
-    outline: '#d8cfbe',
+    bg: '#ffffff',
+    surface: '#fafafa',
+    surfaceBright: '#f4f4f5',
+    onSurface: '#18181b',
+    outline: '#e4e4e7',
     syntaxString: '#a31515',
     syntaxType: '#267f99',
     syntaxNumber: '#098658'

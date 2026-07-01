@@ -1,10 +1,10 @@
-@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@600;700&family=Inter:wght@400;600&family=JetBrains+Mono:wght@400;700&display=swap');
 @import "tailwindcss";
+@import "./styles/animations.css";
 
 @theme {
-  --font-sans: "Inter", sans-serif;
-  --font-display: "Hanken Grotesk", sans-serif;
-  --font-mono: "JetBrains Mono", monospace;
+  --font-sans: "Inter", "Segoe UI", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  --font-display: "Hanken Grotesk", "Segoe UI", "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", "Consolas", "SFMono Regular", monospace;
 
   /* Obsidian Gold Palette */
   --color-bg: #050505;
