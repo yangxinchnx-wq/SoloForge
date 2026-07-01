@@ -6,6 +6,7 @@ import TerminalPanel from './TerminalPanel';
 import { AndroidIcon, WindowsIcon, HarmonyOSIcon, DefaultChatIcon } from './HistoryAndEditorPanel';
 import { ModelIcon } from './ModelIcon';
 import { ToolCallCard } from './ToolCallCard';
+import { sanitizeConversations } from '../utils/chatMessageSanitizer';
 
 export const NormalIcon = ({ className = "w-4 h-4" }: { className?: string }) => (
   <svg className={`${className} text-emerald-400 group-hover:text-emerald-300 transition-all duration-300 filter drop-shadow-[0_0_4px_rgba(16,185,129,0.35)]`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -598,7 +599,7 @@ export default function ChatPanel({
       const saved = localStorage.getItem('soloforge_conversations');
       if (saved) {
         try {
-          return JSON.parse(saved);
+          return sanitizeConversations(JSON.parse(saved));
         } catch (e) {
           console.error(e);
         }
