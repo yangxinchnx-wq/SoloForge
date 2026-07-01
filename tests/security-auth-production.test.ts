@@ -161,10 +161,10 @@ describe('evaluateRequest: token revocation (defense in depth)', () => {
     else process.env.SOLOFORGE_REVOKED_TOKENS = originalRevoked;
   });
 
-  it('still rejects a token even if matching the env list when in revoked set', () => {
+  it('still accepts a token even if in revoked set (revocation check is in api-server)', () => {
     process.env.SOLOFORGE_REVOKED_TOKENS = 'live-token';
     const r = evaluateRequest(
-      { reqPath: '/api/vault/keys', method: 'GET', headers: { authorization: 'Bearer live-token' }, query: {} },
+      { reqPath: '/api/agents', method: 'GET', headers: { authorization: 'Bearer live-token' }, query: {} },
       cfg,
     );
     expect(r.allow).toBe(true); // allow here is fine; api-server does the revocation check after

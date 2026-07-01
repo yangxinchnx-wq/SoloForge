@@ -9,6 +9,17 @@ import * as nodePath from 'path';
 
 export type Role = 'admin' | 'operator' | 'agent' | 'public';
 
+const ROLE_RANK: Record<Role, number> = {
+  admin: 3,
+  operator: 2,
+  agent: 1,
+  public: 0,
+};
+
+function roleSufficient(principalRole: Role, requiredRole: Role): boolean {
+  return ROLE_RANK[principalRole] >= ROLE_RANK[requiredRole];
+}
+
 export interface Principal {
   id: string;
   role: Role;
@@ -98,38 +109,55 @@ export interface RouteGuardResult {
   reason?: string;
 }
 
+function getRequiredRole(reqPath: string): Role {
+  let requiredRole: Role = 'public';
+  for (const r of ROLE_BY_ROUTE) {
+    if (reqPath === r.prefix || reqPath.startsWith(r.prefix + '/')) {
+      requiredRole = r.role;
+      break;
+    }
+  }
+  return requiredRole;
+}
+
 export function evaluateRequest(input: RouteGuardInput, cfg: AuthConfig = defaultAuthConfig): RouteGuardResult {
   const { reqPath, method, headers, query, remoteAddress } = input;
 
+  const origin = typeof headers['origin'] === 'string' ? headers['origin'] : '';
+  const corsOrigin = cfg.allowedOrigins.includes(origin) ? origin : null;
+
   if (method === 'OPTIONS') {
-    const origin = typeof headers['origin'] === 'string' ? headers['origin'] : '';
     return {
       allow: true,
       status: 204,
-      corsOrigin: cfg.allowedOrigins.includes(origin) ? origin : null,
+      corsOrigin,
     };
   }
 
   for (const pub of cfg.publicRoutes) {
-    // Match exact path, or for longer directory prefixes (pub.length > 1 + ends with /), match the prefix.
     if (reqPath === pub || (pub.length > 1 && pub.endsWith('/') && reqPath.startsWith(pub))) {
-      const origin = typeof headers['origin'] === 'string' ? headers['origin'] : '';
       return {
         allow: true,
         status: 200,
         principal: { id: 'anonymous', role: 'public', source: 'anonymous' },
-        corsOrigin: cfg.allowedOrigins.includes(origin) ? origin : null,
+        corsOrigin,
       };
     }
   }
 
+  const requiredRole = getRequiredRole(reqPath);
+
   if (cfg.trustLoopback && isLoopback(remoteAddress)) {
-    const origin = typeof headers['origin'] === 'string' ? headers['origin'] : '';
+    const principal: Principal = { id: 'loopback', role: 'admin', source: 'loopback' };
+    if (roleSufficient(principal.role, requiredRole)) {
+      return { allow: true, status: 200, principal, corsOrigin };
+    }
     return {
-      allow: true,
-      status: 200,
-      principal: { id: 'loopback', role: 'admin', source: 'loopback' },
-      corsOrigin: cfg.allowedOrigins.includes(origin) ? origin : null,
+      allow: false,
+      status: 403,
+      principal,
+      corsOrigin: null,
+      reason: 'insufficient_role',
     };
   }
 
@@ -140,22 +168,18 @@ export function evaluateRequest(input: RouteGuardInput, cfg: AuthConfig = defaul
   if (candidate) {
     for (const t of cfg.apiTokens) {
       if (safeEqual(candidate, t)) {
-        const origin = typeof headers['origin'] === 'string' ? headers['origin'] : '';
+        const principal: Principal = { id: 'token', role: 'operator', source: bearer ? 'bearer' : 'env-token' };
+        if (roleSufficient(principal.role, requiredRole)) {
+          return { allow: true, status: 200, principal, corsOrigin };
+        }
         return {
-          allow: true,
-          status: 200,
-          principal: { id: 'token', role: 'operator', source: bearer ? 'bearer' : 'env-token' },
-          corsOrigin: cfg.allowedOrigins.includes(origin) ? origin : null,
+          allow: false,
+          status: 403,
+          principal,
+          corsOrigin: null,
+          reason: 'insufficient_role',
         };
       }
-    }
-  }
-
-  let requiredRole: Role = 'public';
-  for (const r of ROLE_BY_ROUTE) {
-    if (reqPath === r.prefix || reqPath.startsWith(r.prefix + '/') || reqPath.startsWith(r.prefix)) {
-      requiredRole = r.role;
-      break;
     }
   }
 

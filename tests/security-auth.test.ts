@@ -58,13 +58,33 @@ describe('auth.evaluateRequest', () => {
     expect(r.status).toBe(401);
   });
 
-  it('accepts a valid bearer token for vault', () => {
+  it('denies operator bearer token access to admin-only vault routes (role enforcement)', () => {
     const r = evaluateRequest(
       { reqPath: '/api/vault/keys', method: 'GET', headers: h(undefined, 'Bearer secret-token-1'), query: {} },
       cfg,
     );
+    expect(r.allow).toBe(false);
+    expect(r.status).toBe(403);
+    expect(r.principal?.role).toBe('operator');
+    expect(r.reason).toBe('insufficient_role');
+  });
+
+  it('allows operator bearer token access to operator-level routes', () => {
+    const r = evaluateRequest(
+      { reqPath: '/api/agents', method: 'GET', headers: h(undefined, 'Bearer secret-token-1'), query: {} },
+      cfg,
+    );
     expect(r.allow).toBe(true);
     expect(r.principal?.role).toBe('operator');
+  });
+
+  it('allows loopback admin access to vault routes', () => {
+    const r = evaluateRequest(
+      { reqPath: '/api/vault/keys', method: 'GET', headers: {}, query: {}, remoteAddress: '127.0.0.1' },
+      cfg,
+    );
+    expect(r.allow).toBe(true);
+    expect(r.principal?.role).toBe('admin');
   });
 
   it('rejects an invalid bearer token', () => {
@@ -75,12 +95,48 @@ describe('auth.evaluateRequest', () => {
     expect(r.allow).toBe(false);
   });
 
-  it('accepts ?token= query for SSE', () => {
+  it('accepts ?token= query for SSE on operator routes', () => {
+    const r = evaluateRequest(
+      { reqPath: '/api/agents', method: 'GET', headers: {}, query: { token: 'secret-token-2' } },
+      cfg,
+    );
+    expect(r.allow).toBe(true);
+  });
+
+  it('denies ?token= query on admin-only vault routes (role enforcement)', () => {
     const r = evaluateRequest(
       { reqPath: '/api/vault/keys', method: 'GET', headers: {}, query: { token: 'secret-token-2' } },
       cfg,
     );
+    expect(r.allow).toBe(false);
+    expect(r.status).toBe(403);
+  });
+
+  it('does not grant admin role to paths that only share a prefix (prefix collision defense)', () => {
+    const r = evaluateRequest(
+      { reqPath: '/api/vaultxxx', method: 'GET', headers: h(undefined, 'Bearer secret-token-1'), query: {} },
+      cfg,
+    );
     expect(r.allow).toBe(true);
+    expect(r.principal?.role).toBe('operator');
+  });
+
+  it('denies unauthenticated access to admin-prefixed routes (boundary check)', () => {
+    const r = evaluateRequest(
+      { reqPath: '/api/vault/keys', method: 'GET', headers: {}, query: {} },
+      cfg,
+    );
+    expect(r.allow).toBe(false);
+    expect(r.status).toBe(401);
+  });
+
+  it('matches exact route prefix with trailing slash', () => {
+    const r = evaluateRequest(
+      { reqPath: '/api/vault/keys/some-id', method: 'GET', headers: {}, query: {}, remoteAddress: '127.0.0.1' },
+      cfg,
+    );
+    expect(r.allow).toBe(true);
+    expect(r.principal?.role).toBe('admin');
   });
 
   it('trusts loopback as admin when enabled', () => {
