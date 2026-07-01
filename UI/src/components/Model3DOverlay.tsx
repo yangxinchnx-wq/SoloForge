@@ -11,7 +11,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { MountTransition } from './MountTransition';
 import { Box, Trash2, Copy, ClipboardPaste } from 'lucide-react';
 import type { DeviceInstance } from '../services/canvas/types';
 import {
@@ -642,119 +642,112 @@ export default function Model3DOverlay({
         </div>
       )}
 
-      <AnimatePresence>
-        {devices.map((device) => {
-          const isSel = device.id === selectedId;
-          const isHover = device.id === hoverDeviceId;
-          const color = device.highlightColor;
-          const left = device.xRatio * canvasWidth;
-          const top = device.yRatio * canvasHeight;
+      {devices.map((device) => {
+        const isSel = device.id === selectedId;
+        const isHover = device.id === hoverDeviceId;
+        const color = device.highlightColor;
+        const left = device.xRatio * canvasWidth;
+        const top = device.yRatio * canvasHeight;
 
-          return (
-            <motion.div
-              key={device.id}
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.8 }}
-              transition={{ duration: 0.15 }}
-              className="absolute pointer-events-auto"
+        return (
+          <div
+            key={device.id}
+            className="sf-anim sf-anim-fade-scale absolute pointer-events-auto"
+            style={{
+              left: `${left}px`,
+              top: `${top}px`,
+              transform: 'translate(-50%, -50%)',
+              cursor: isMoving ? 'grabbing' : isRotating ? 'ew-resize' : 'pointer',
+              zIndex: isSel ? 50 : 10,
+            }}
+            onMouseDown={(e) => handleMouseDown(e, device)}
+            onMouseEnter={() => setHoverDeviceId(device.id)}
+            onMouseLeave={() => setHoverDeviceId(null)}
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            <div
+              className="relative"
               style={{
-                left: `${left}px`,
-                top: `${top}px`,
-                transform: 'translate(-50%, -50%)',
-                cursor: isMoving ? 'grabbing' : isRotating ? 'ew-resize' : 'pointer',
-                zIndex: isSel ? 50 : 10,
+                width: '200px',
+                height: '200px',
+                background: 'rgba(40, 40, 60, 0.7)',
+                borderRadius: '16px',
+                border: `2px solid ${isSel ? color : 'rgba(255,255,255,0.15)'}`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                backdropFilter: 'blur(8px)',
+                boxShadow: isSel ? `0 0 24px ${color}88, 0 4px 16px rgba(0,0,0,0.3)` : '0 2px 8px rgba(0,0,0,0.2)',
+                transition: 'box-shadow 150ms ease',
               }}
-              onMouseDown={(e) => handleMouseDown(e, device)}
-              onMouseEnter={() => setHoverDeviceId(device.id)}
-              onMouseLeave={() => setHoverDeviceId(null)}
-              onContextMenu={(e) => e.preventDefault()}
             >
+              <Box
+                className="w-12 h-12"
+                style={{ color: isSel ? color : 'rgba(255,255,255,0.4)' }}
+              />
               <div
-                className="relative"
-                style={{
-                  width: '200px',
-                  height: '200px',
-                  background: 'rgba(40, 40, 60, 0.7)',
-                  borderRadius: '16px',
-                  border: `2px solid ${isSel ? color : 'rgba(255,255,255,0.15)'}`,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backdropFilter: 'blur(8px)',
-                  boxShadow: isSel ? `0 0 24px ${color}88, 0 4px 16px rgba(0,0,0,0.3)` : '0 2px 8px rgba(0,0,0,0.2)',
-                  transition: 'box-shadow 150ms ease',
-                }}
+                className="absolute bottom-2 left-2 right-2 text-center text-[10px] font-mono truncate"
+                style={{ color: isSel ? color : 'rgba(255,255,255,0.6)' }}
               >
-                <Box
-                  className="w-12 h-12"
-                  style={{ color: isSel ? color : 'rgba(255,255,255,0.4)' }}
-                />
-                <div
-                  className="absolute bottom-2 left-2 right-2 text-center text-[10px] font-mono truncate"
-                  style={{ color: isSel ? color : 'rgba(255,255,255,0.6)' }}
-                >
-                  {device.modelKey}
-                </div>
-
-                {/* 选中状态: 渐变流动描边 */}
-                {isSel && (
-                  <motion.div
-                    className="absolute inset-0 rounded-2xl pointer-events-none"
-                    style={{
-                      background: `conic-gradient(from 0deg, ${color}00, ${color}ff, ${color}00, ${color}88, ${color}00)`,
-                      WebkitMask: 'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
-                      WebkitMaskComposite: 'xor',
-                      maskComposite: 'exclude',
-                      padding: '2px',
-                    }}
-                    animate={{ rotate: 360 }}
-                    transition={{ duration: 2.5, repeat: Infinity, ease: 'linear' }}
-                  />
-                )}
-
-                {/* 悬浮/选中时显示的操作按钮组 */}
-                {(isSel || isHover) && (
-                  <div className="absolute -top-3 -right-3 flex gap-1">
-                    {isSel && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          copiedDeviceRef.current = { ...device };
-                        }}
-                        className="w-7 h-7 rounded-full bg-primary hover:bg-primary/80 text-on-surface flex items-center justify-center shadow-lg transition-colors"
-                        title="复制 (Ctrl+C)"
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                    {isSel && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onRequestDelete(device.id, device.modelKey);
-                        }}
-                        className="w-7 h-7 rounded-full bg-red-500 hover:bg-red-600 text-on-surface flex items-center justify-center shadow-lg transition-colors"
-                        title="删除 (Delete)"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {/* 粘贴提示 - 仅当选中后第一次按 Ctrl+V 时短暂显示 */}
-                {isSel && copiedDeviceRef.current?.id === device.id && (
-                  <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 px-2 py-1 rounded bg-primary/90 text-on-surface text-[10px] font-mono whitespace-nowrap flex items-center gap-1">
-                    <ClipboardPaste className="w-3 h-3" />
-                    已复制
-                  </div>
-                )}
+                {device.modelKey}
               </div>
-            </motion.div>
-          );
-        })}
-      </AnimatePresence>
+
+              {/* 选中状态: 渐变流动描边 */}
+              {isSel && (
+                <div
+                  className="absolute inset-0 rounded-2xl pointer-events-none animate-spin"
+                  style={{
+                    background: `conic-gradient(from 0deg, ${color}00, ${color}ff, ${color}00, ${color}88, ${color}00)`,
+                    WebkitMask: 'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
+                    WebkitMaskComposite: 'xor',
+                    maskComposite: 'exclude',
+                    padding: '2px',
+                    animationDuration: '2.5s',
+                  }}
+                />
+              )}
+
+              {/* 悬浮/选中时显示的操作按钮组 */}
+              {(isSel || isHover) && (
+                <div className="absolute -top-3 -right-3 flex gap-1">
+                  {isSel && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        copiedDeviceRef.current = { ...device };
+                      }}
+                      className="w-7 h-7 rounded-full bg-primary hover:bg-primary/80 text-on-surface flex items-center justify-center shadow-lg transition-colors"
+                      title="复制 (Ctrl+C)"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  {isSel && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRequestDelete(device.id, device.modelKey);
+                      }}
+                      className="w-7 h-7 rounded-full bg-red-500 hover:bg-red-600 text-on-surface flex items-center justify-center shadow-lg transition-colors"
+                      title="删除 (Delete)"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* 粘贴提示 - 仅当选中后第一次按 Ctrl+V 时短暂显示 */}
+              {isSel && copiedDeviceRef.current?.id === device.id && (
+                <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 px-2 py-1 rounded bg-primary/90 text-on-surface text-[10px] font-mono whitespace-nowrap flex items-center gap-1">
+                  <ClipboardPaste className="w-3 h-3" />
+                  已复制
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

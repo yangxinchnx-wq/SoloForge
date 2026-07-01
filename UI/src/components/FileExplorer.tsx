@@ -25,7 +25,7 @@ import {
   Search,
   FileText
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { MountTransition } from './MountTransition';
 
 interface FileNode {
   name: string;
@@ -946,18 +946,14 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
       <div className="p-3 border-b border-outline/50 flex items-center justify-between shrink-0">
         <span className="font-display font-bold text-[12px] text-on-surface">资源管理</span>
         <div className="flex items-center gap-1.5">
-          <motion.button 
+          <button 
             type="button"
             onClick={handleRefresh}
-            className="p-1 hover:bg-surface-bright rounded text-on-surface/50 hover:text-primary transition-colors cursor-pointer flex items-center justify-center animate-none"
+            className={`p-1 hover:bg-surface-bright rounded text-on-surface/50 hover:text-primary transition-colors cursor-pointer flex items-center justify-center sf-press-lg ${isRefreshing ? 'animate-spin' : ''}`}
             title="刷新工作区"
-            animate={{ rotate: isRefreshing ? 360 : 0 }}
-            transition={{ duration: 0.5, ease: "easeInOut" }}
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
           >
             <RefreshCw className="w-3.5 h-3.5" />
-          </motion.button>
+          </button>
 
           {onClose && (
             <button
@@ -1013,24 +1009,17 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
         onContextMenu={(e) => openCustomMenu(e, 'BlogSystem', 'root_blank')}
         className="flex-1 overflow-y-auto p-1.5 space-y-0.5 scrollbar-thin scrollbar-thumb-[#2c2f33] relative min-h-[150px]"
       >
-        <motion.div
+        <div
           key={refreshKey}
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+          className="sf-anim sf-anim-slide-up"
         >
           {renderNode(tree)}
-        </motion.div>
+        </div>
       </div>
 
       {/* Context Menu Overlay Option Cards */}
-      <AnimatePresence>
-        {contextMenu.visible && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            transition={{ duration: 0.12 }}
+      <MountTransition show={contextMenu.visible} variant="fade-scale" duration={120}>
+          <div
             style={{ 
               position: 'fixed',
               left: `${contextMenu.x}px`,
@@ -1130,18 +1119,13 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
               <MessageSquarePlus className="w-3.5 h-3.5 shrink-0 text-primary" />
               <span>添加到对话</span>
             </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          </div>
+      </MountTransition>
 
       {/* Interactive Beautiful Prompt Modal Dialogs */}
-      <AnimatePresence>
-        {dialog.type && (
+      <MountTransition show={!!dialog.type} variant="fade-scale" duration={150}>
           <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
+            <div
               className="w-full max-w-sm bg-[#111214] border border-[#2c2f33] rounded-xl shadow-2xl p-4 font-sans text-white"
             >
               {dialog.type === 'show_explorer' ? (
@@ -1209,25 +1193,19 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
                   </div>
                 </div>
               )}
-            </motion.div>
+            </div>
           </div>
-        )}
-      </AnimatePresence>
+      </MountTransition>
 
       {/* Floating system Feedback Toasts */}
-      <AnimatePresence>
-        {toast.show && (
-          <motion.div
-            initial={{ opacity: 0, y: 15, x: '-50%' }}
-            animate={{ opacity: 1, y: 0, x: '-50%' }}
-            exit={{ opacity: 0, y: 15, x: '-50%' }}
+      <MountTransition show={toast.show} variant="slide-up" duration={180}>
+          <div
             className="absolute bottom-4 left-1/2 bg-[#1b5e20] text-white text-[10px] md:text-[11px] px-3.5 py-1.5 rounded-full shadow-2xl border border-emerald-500/20 font-medium flex items-center gap-1.5 z-40 pointer-events-none whitespace-nowrap"
           >
             <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
             <span>{toast.message}</span>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          </div>
+      </MountTransition>
     </div>
   );
 }

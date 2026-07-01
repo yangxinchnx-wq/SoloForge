@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
 import Header from './components/Header';
 import ActivityBar from './components/ActivityBar';
 import FileExplorer from './components/FileExplorer';
@@ -16,6 +15,7 @@ import FloatingEditorWindow from './components/FloatingEditorWindow';
 import AgentSettingsModal from './components/AgentSettingsModal';
 import { SecondaryModel } from './types';
 import { useTheme, THEME_PRESETS } from './context/ThemeContext';
+import { MountTransition } from './components/MountTransition';
 import { X } from 'lucide-react';
 
 export default function App() {
@@ -729,53 +729,54 @@ export default function App() {
       )}
 
       {/* Geek Settings Modal (13 Core Modules) */}
-      <AnimatePresence>
+      <MountTransition show={showSettingsModal} variant="fade">
         {showSettingsModal && (
-          <SettingsModal 
+          <SettingsModal
             onClose={() => setShowSettingsModal(false)}
             permissionMode={currentPermissionMode}
           />
         )}
-      </AnimatePresence>
+      </MountTransition>
 
       {/* AI & Token Audit statistics popup */}
-      {showStatsModal && (
-        <StatsModal 
-          onClose={() => setShowStatsModal(false)}
-        />
-      )}
+      <MountTransition show={showStatsModal} variant="fade-scale">
+        {showStatsModal && (
+          <StatsModal
+            onClose={() => setShowStatsModal(false)}
+          />
+        )}
+      </MountTransition>
 
       {/* Floating Draggable & Pinnable Code Editor Window */}
-      {showFloatingEditor && (
-        <FloatingEditorWindow
-          selectedFile={selectedFile}
-          editorContent={editorContent}
-          setEditorContent={handleEditorChange}
-          onClose={() => setShowFloatingEditor(false)}
-        />
-      )}
+      <MountTransition show={showFloatingEditor} variant="fade-scale" duration={220}>
+        {showFloatingEditor && (
+          <FloatingEditorWindow
+            selectedFile={selectedFile}
+            editorContent={editorContent}
+            setEditorContent={handleEditorChange}
+            onClose={() => setShowFloatingEditor(false)}
+          />
+        )}
+      </MountTransition>
 
       {/* Global Exclusive Agent Settings Customizer Overlay */}
-      {activeSettingsChat && (
-        <AgentSettingsModal
-          chatId={activeSettingsChat.id}
-          chatTitle={activeSettingsChat.title}
-          onClose={() => setActiveSettingsChat(null)}
-        />
-      )}
+      <MountTransition show={!!activeSettingsChat} variant="fade-scale">
+        {activeSettingsChat && (
+          <AgentSettingsModal
+            chatId={activeSettingsChat.id}
+            chatTitle={activeSettingsChat.title}
+            onClose={() => setActiveSettingsChat(null)}
+          />
+        )}
+      </MountTransition>
 
       {/* Premium Toast Notification Banner */}
-      <AnimatePresence>
+      <MountTransition show={!!toastMsg} variant="slide-up" duration={250}>
         {toastMsg && (
-          <motion.div
-            initial={{ opacity: 0, y: -20, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -10, scale: 0.95 }}
-            transition={{ duration: 0.25, ease: 'easeOut' }}
-            style={{ left: '50%', x: '-50%' }}
+          <div
+            style={{ left: '50%', transform: 'translateX(-50%)' }}
             className="fixed top-6 z-[9999] bg-[#17181c] border border-[var(--color-primary)]/30 rounded-xl px-4 py-3 shadow-[0_12px_40px_rgba(0,0,0,0.5)] flex items-center gap-3 max-w-md w-max"
           >
-
             <div className="flex flex-col min-w-0 pr-1 select-text">
               <span className="text-[11px] font-bold text-white tracking-wide">工作区跳转定位通知</span>
               <p className="text-[10px] text-on-surface/75 leading-relaxed">{toastMsg}</p>
@@ -786,9 +787,9 @@ export default function App() {
             >
               <X className="w-3.5 h-3.5" />
             </button>
-          </motion.div>
+          </div>
         )}
-      </AnimatePresence>
+      </MountTransition>
     </div>
   );
 }

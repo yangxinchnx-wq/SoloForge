@@ -8,7 +8,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { MountTransition } from './MountTransition';
 import { X, AlertTriangle, Trash2 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 
@@ -144,31 +144,26 @@ export default function DeleteConfirmModal({
   }, [isDragging, isResizing]);
 
   return (
-    <AnimatePresence>
-      {open && (
-        <>
-          <motion.div
-            className="fixed inset-0 z-[199] bg-black/40"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={onCancel}
-          />
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            style={{
-              position: 'fixed',
-              left: `${position.x}px`,
-              top: `${position.y}px`,
-              width: `${size.width}px`,
-              height: `${size.height}px`,
-              backgroundColor: activeTheme.surface,
-              borderColor: activeTheme.outline,
-            }}
-            className="z-[200] border rounded-xl shadow-2xl select-none flex flex-col"
-          >
+    <>
+      <MountTransition show={open} variant="fade" duration={180}>
+        <div
+          className="fixed inset-0 z-[199] bg-black/40"
+          onClick={onCancel}
+        />
+      </MountTransition>
+      <MountTransition show={open} variant="fade-scale" duration={180}>
+        <div
+          style={{
+            position: 'fixed',
+            left: `${position.x}px`,
+            top: `${position.y}px`,
+            width: `${size.width}px`,
+            height: `${size.height}px`,
+            backgroundColor: activeTheme.surface,
+            borderColor: activeTheme.outline,
+          }}
+          className="z-[200] border rounded-xl shadow-2xl select-none flex flex-col"
+        >
             {/* Title bar (draggable) */}
             <div
               onMouseDown={handleDragStart}
@@ -247,9 +242,8 @@ export default function DeleteConfirmModal({
                 />
               );
             })}
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
+        </div>
+      </MountTransition>
+    </>
   );
 }

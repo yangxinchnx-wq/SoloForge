@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { motion } from 'motion/react';
 import { Pin, X, Code, Maximize2, Minimize2 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import SourceCodeEditor from './SourceCodeEditor';
@@ -161,10 +160,7 @@ export default function FloatingEditorWindow({
       className="fixed inset-0 pointer-events-none select-none overflow-hidden animate-fadeIn"
       style={{ zIndex: isPinned ? 200 : 95 }}
     >
-      <motion.div
-        initial={{ opacity: 0, scale: 0.98, y: 15 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.98, y: 15 }}
+      <div
         style={{
           position: 'absolute',
           left: `${position.x}px`,
@@ -174,7 +170,7 @@ export default function FloatingEditorWindow({
           backgroundColor: activeTheme.surface,
           borderColor: activeTheme.outline,
         }}
-        className="pointer-events-auto border rounded-xl shadow-[0_24px_60px_rgba(0,0,0,0.85)] overflow-hidden flex flex-col cursor-default relative backdrop-blur bg-opacity-95"
+        className="sf-anim sf-anim-fade-scale pointer-events-auto border rounded-xl shadow-[0_24px_60px_rgba(0,0,0,0.85)] overflow-hidden flex flex-col cursor-default relative backdrop-blur bg-opacity-95"
         onMouseDown={handleMouseDown}
       >
         {/* Resize Handlers */}
@@ -249,7 +245,7 @@ export default function FloatingEditorWindow({
             isPopoutView={true}
           />
         </div>
-      </motion.div>
+      </div>
     </div>
   );
 }

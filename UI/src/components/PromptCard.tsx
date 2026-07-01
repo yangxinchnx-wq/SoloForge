@@ -4,7 +4,7 @@
  * 大模型可自由扩展 type='custom'
  */
 import React from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { MountTransition } from './MountTransition';
 import { HelpCircle, Wrench, Shield, Zap, Globe, AlertTriangle, CheckCircle2, Clock, X } from 'lucide-react';
 import { useCountdownTimer } from '../hooks/useCountdownTimer';
 import type { PromptCardInstance, PromptCardType, PromptAction } from '../types/streaming';
@@ -97,26 +97,21 @@ export function PromptCard({ instance, onResolve, onTimeout, onDismiss }: Prompt
   if (autoResolved) {
     const actionLabel = spec.options.find(o => o.isRecommended)?.label ?? spec.options[0]?.label ?? '默认方案';
     return (
-      <motion.div
-        initial={{ opacity: 0, y: -8 }}
-        animate={{ opacity: 1, y: 0 }}
-        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-[11px] ${meta.bg} ${meta.border}`}
+      <div
+        className={`sf-anim sf-anim-slide-up flex items-center gap-2 px-3 py-1.5 rounded-lg border text-[11px] ${meta.bg} ${meta.border}`}
       >
         <CheckCircle2 className="w-3.5 h-3.5 text-green-400 shrink-0" />
         <span className="text-on-surface/60">全自动模式：已自动选择「{actionLabel}」</span>
         <span className="text-on-surface/30 ml-auto">→ 继续执行</span>
-      </motion.div>
+      </div>
     );
   }
 
   return (
-    <AnimatePresence>
-      <motion.div
-        initial={{ opacity: 0, y: -8, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: -8, scale: 0.98 }}
+    <MountTransition show={true} variant="slide-up" duration={180}>
+      <div
         style={{ boxShadow: `-4px 0 0 0 ${borderClassToColor(meta.border)}` }}
-        className={`rounded-lg overflow-hidden ${meta.bg}`}
+        className={`sf-anim sf-anim-fade-scale rounded-lg overflow-hidden ${meta.bg}`}
       >
         {/* Header */}
         <div className="flex items-center gap-2 px-3 py-2 border-b border-outline/10">
@@ -158,7 +153,7 @@ export function PromptCard({ instance, onResolve, onTimeout, onDismiss }: Prompt
             超时后自动{spec.options.find(o => o.isRecommended)?.label ?? spec.options[0]?.label ?? '跳过'}
           </span>
         </div>
-      </motion.div>
-    </AnimatePresence>
+      </div>
+    </MountTransition>
   );
 }

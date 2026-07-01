@@ -15,7 +15,7 @@
 
 import React, { memo, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { MountTransition } from '../MountTransition';
 import { ModelIcon } from '../ModelIcon';
 import { computeAvailableModels, pickModel } from './mainModelSelectorLogic';
 export { computeAvailableModels, pickModel } from './mainModelSelectorLogic';
@@ -127,37 +127,23 @@ function MainModelSelectorImpl({
       >
         <ModelIcon modelName={safeMainModel} size={20} className="shrink-0" />
         <div className="h-4 overflow-hidden relative flex items-center justify-center min-w-[84px]">
-          <AnimatePresence mode="popLayout" initial={false}>
-            <motion.span
-              key={safeMainModel}
-              initial={{ y: -12, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: 12, opacity: 0 }}
-              transition={{ duration: 0.18, ease: 'easeOut' }}
-              className="inline-block whitespace-nowrap text-primary"
-            >
-              {safeMainModel}
-            </motion.span>
-          </AnimatePresence>
+          <span
+            key={safeMainModel}
+            className="sf-anim sf-anim-slide-right inline-block whitespace-nowrap text-primary"
+          >
+            {safeMainModel}
+          </span>
         </div>
-        <motion.div
-          animate={{ rotate: open ? 180 : 0 }}
-          transition={{ duration: 0.2 }}
-          className="flex items-center justify-center shrink-0"
-        >
+        <div className={`flex items-center justify-center shrink-0 transition-transform duration-200 ${open ? 'rotate-180' : 'rotate-0'}`}>
           <ChevronDown className="w-3.5 h-3.5 text-on-surface/40" />
-        </motion.div>
+        </div>
       </button>
 
-      <AnimatePresence>
+      <MountTransition show={open} variant="fade-scale" duration={140}>
         {open && (
-          <motion.div
+          <div
             role="listbox"
             aria-labelledby={buttonId}
-            initial={{ opacity: 0, y: -6, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -6, scale: 0.96 }}
-            transition={{ duration: 0.12, ease: 'easeOut' }}
             className="absolute left-0 mt-3.5 w-64 bg-[var(--color-surface)] border border-[var(--color-outline)]/25 rounded-xl shadow-[0_8px_32px_rgba(0,0,0,0.10)] z-50 p-1 flex flex-col gap-0.5"
           >
             {list.length === 0 ? (
@@ -188,19 +174,17 @@ function MainModelSelectorImpl({
                       <span>{m}</span>
                     </span>
                     {isSelected && (
-                      <motion.span
-                        layoutId="active-model-indicator"
-                        className="relative z-10 w-1.5 h-1.5 rounded-full bg-primary"
-                        transition={{ type: 'spring', stiffness: 400, damping: 28 }}
+                      <span
+                        className="sf-anim sf-anim-fade-scale relative z-10 w-1.5 h-1.5 rounded-full bg-primary"
                       />
                     )}
                   </button>
                 );
               })
             )}
-          </motion.div>
+          </div>
         )}
-      </AnimatePresence>
+      </MountTransition>
     </div>
   );
 }

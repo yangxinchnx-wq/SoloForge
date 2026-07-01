@@ -4,7 +4,7 @@ import {
   CircleDot, AlertCircle, Monitor, Smartphone, Tablet, Watch,
   Palette, MonitorSmartphone, Info, ChevronDown, Check, Maximize2
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { MountTransition } from './MountTransition';
 
 interface PreviewPanelProps {
   width?: number;
@@ -389,49 +389,44 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
               />
               <span className="text-on-surface/70">{bgColor}</span>
             </button>
-            <AnimatePresence>
-              {showColorPicker && (
-                <motion.div
-                  initial={{ opacity: 0, y: -4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -4 }}
-                  className="absolute top-full left-0 mt-1 z-50 bg-surface border border-outline rounded-lg shadow-2xl p-2 min-w-[200px]"
-                >
-                  <div className="grid grid-cols-3 gap-1.5 mb-2">
-                    {BG_PRESETS.map(p => (
-                      <button
-                        key={p.value}
-                        onClick={() => handlePickColor(p.value)}
-                        className={`flex flex-col items-center gap-0.5 p-1.5 rounded border transition-all ${bgColor.toLowerCase() === p.value.toLowerCase() ? 'border-primary ring-1 ring-primary/40' : 'border-outline/50 hover:border-outline'}`}
-                      >
-                        <span className="w-9 h-6 rounded" style={{ background: p.value, border: '1px solid rgba(0,0,0,0.1)' }} />
-                        <span className="text-[9px] text-on-surface/70 font-mono">{p.name}</span>
-                      </button>
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-1.5 pt-1.5 border-t border-outline/50">
-                    <input
-                      type="color"
-                      value={customColor}
-                      onChange={e => setCustomColor(e.target.value)}
-                      className="w-7 h-7 rounded cursor-pointer bg-transparent border-0 p-0"
-                    />
-                    <input
-                      type="text"
-                      value={customColor}
-                      onChange={e => setCustomColor(e.target.value)}
-                      className="flex-1 px-1.5 py-1 text-[10px] font-mono bg-bg border border-outline rounded text-on-surface"
-                    />
+            <MountTransition show={showColorPicker} variant="fade" duration={140}>
+              <div
+                className="absolute top-full left-0 mt-1 z-50 bg-surface border border-outline rounded-lg shadow-2xl p-2 min-w-[200px]"
+              >
+                <div className="grid grid-cols-3 gap-1.5 mb-2">
+                  {BG_PRESETS.map(p => (
                     <button
-                      onClick={handlePickCustom}
-                      className="px-2 py-1 text-[10px] font-mono bg-primary/15 hover:bg-primary/25 text-primary rounded"
+                      key={p.value}
+                      onClick={() => handlePickColor(p.value)}
+                      className={`flex flex-col items-center gap-0.5 p-1.5 rounded border transition-all ${bgColor.toLowerCase() === p.value.toLowerCase() ? 'border-primary ring-1 ring-primary/40' : 'border-outline/50 hover:border-outline'}`}
                     >
-                      应用
+                      <span className="w-9 h-6 rounded" style={{ background: p.value, border: '1px solid rgba(0,0,0,0.1)' }} />
+                      <span className="text-[9px] text-on-surface/70 font-mono">{p.name}</span>
                     </button>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+                  ))}
+                </div>
+                <div className="flex items-center gap-1.5 pt-1.5 border-t border-outline/50">
+                  <input
+                    type="color"
+                    value={customColor}
+                    onChange={e => setCustomColor(e.target.value)}
+                    className="w-7 h-7 rounded cursor-pointer bg-transparent border-0 p-0"
+                  />
+                  <input
+                    type="text"
+                    value={customColor}
+                    onChange={e => setCustomColor(e.target.value)}
+                    className="flex-1 px-1.5 py-1 text-[10px] font-mono bg-bg border border-outline rounded text-on-surface"
+                  />
+                  <button
+                    onClick={handlePickCustom}
+                    className="px-2 py-1 text-[10px] font-mono bg-primary/15 hover:bg-primary/25 text-primary rounded"
+                  >
+                    应用
+                  </button>
+                </div>
+              </div>
+            </MountTransition>
           </div>
 
           {canvasError && (
@@ -466,48 +461,43 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
                 <ChevronDown className={`w-3 h-3 transition-transform ${showSizeMenu ? 'rotate-180' : ''}`} />
               </button>
 
-              <AnimatePresence>
-                {showSizeMenu && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 4 }}
-                    className="absolute bottom-full right-0 mb-1.5 bg-surface border border-outline rounded-lg shadow-2xl min-w-[220px] max-h-[420px] overflow-y-auto"
-                  >
-                    {Object.entries(groupedSizes).map(([groupLabel, items]) => {
-                      const firstIcon = items[0].icon;
-                      const Icon = firstIcon;
-                      return (
-                        <div key={groupLabel} className="border-b border-outline/40 last:border-b-0">
-                          <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-bright/30 sticky top-0">
-                            <Icon className="w-3 h-3 text-on-surface/70" />
-                            <span className="text-[10px] font-display font-semibold text-on-surface/80 uppercase tracking-wider">{groupLabel}</span>
-                            <span className="text-[9px] text-on-surface/40 font-mono ml-auto">{items.length}</span>
-                          </div>
-                          {items.map(p => {
-                            const isSel = p.key === activeSizeKey;
-                            return (
-                              <button
-                                key={p.key}
-                                onClick={() => pickSize(p.key)}
-                                className={`w-full flex items-center gap-2 px-2.5 py-1.5 hover:bg-surface-bright/60 transition-colors text-left ${isSel ? 'bg-primary/10' : ''}`}
-                              >
-                                <span className="flex-1 min-w-0">
-                                  <span className="block text-[10px] text-on-surface truncate">{p.label}</span>
-                                  <span className="block text-[9px] text-on-surface/50 font-mono">
-                                    {p.w === 0 ? '与面板等宽' : `${p.w} × ${p.h}`}
-                                  </span>
-                                </span>
-                                {isSel && <Check className="w-3 h-3 text-primary shrink-0" />}
-                              </button>
-                            );
-                          })}
+              <MountTransition show={showSizeMenu} variant="fade" duration={140}>
+                <div
+                  className="absolute bottom-full right-0 mb-1.5 bg-surface border border-outline rounded-lg shadow-2xl min-w-[220px] max-h-[420px] overflow-y-auto"
+                >
+                  {Object.entries(groupedSizes).map(([groupLabel, items]) => {
+                    const firstIcon = items[0].icon;
+                    const Icon = firstIcon;
+                    return (
+                      <div key={groupLabel} className="border-b border-outline/40 last:border-b-0">
+                        <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-bright/30 sticky top-0">
+                          <Icon className="w-3 h-3 text-on-surface/70" />
+                          <span className="text-[10px] font-display font-semibold text-on-surface/80 uppercase tracking-wider">{groupLabel}</span>
+                          <span className="text-[9px] text-on-surface/40 font-mono ml-auto">{items.length}</span>
                         </div>
-                      );
-                    })}
-                  </motion.div>
-                )}
-              </AnimatePresence>
+                        {items.map(p => {
+                          const isSel = p.key === activeSizeKey;
+                          return (
+                            <button
+                              key={p.key}
+                              onClick={() => pickSize(p.key)}
+                              className={`w-full flex items-center gap-2 px-2.5 py-1.5 hover:bg-surface-bright/60 transition-colors text-left ${isSel ? 'bg-primary/10' : ''}`}
+                            >
+                              <span className="flex-1 min-w-0">
+                                <span className="block text-[10px] text-on-surface truncate">{p.label}</span>
+                                <span className="block text-[9px] text-on-surface/50 font-mono">
+                                  {p.w === 0 ? '与面板等宽' : `${p.w} × ${p.h}`}
+                                </span>
+                              </span>
+                              {isSel && <Check className="w-3 h-3 text-primary shrink-0" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
+              </MountTransition>
             </div>
           )}
         </div>

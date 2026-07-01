@@ -60,9 +60,11 @@ export default defineConfig(() => {
     },
     // 2026-06-24 性能优化:大依赖拆成独立 chunk
     //   - 之前:所有依赖打进 main bundle,启动时一次性加载 10-30MB JS,内存峰值很高
-    //   - 现在:按需加载,首屏只加载 react + 自己的代码,lobehub-icons / motion 走独立 chunk
+    //   - 现在:按需加载,首屏只加载 react + 自己的代码,lobehub-icons 走独立 chunk
     //   - 用户进入对应页面(预览/设置/统计)时再异步加载,稳态内存下降
     // 2026-06-24 清理:删除未使用依赖 antd / @lobehub/ui / @lobehub/fluent-emoji / recharts 的 chunk 规则
+    // 2026-07-01:删除 motion 依赖,所有动画改用 CSS transition + 自研 <MountTransition>。
+    //   因此移除 vendor-motion chunk 规则,所有运动相关的轻量类库已不存在。
     build: {
       // 2026-06-29 (Vite 6→8 升级): rollupOptions 在 Vite 8 中重命名为 rolldownOptions (Rolldown 迁移)。
       // 函数式 manualChunks 仍兼容 (deprecated,后续可迁移到 advancedChunks.groups)。
@@ -75,8 +77,6 @@ export default defineConfig(() => {
             if (id.includes('@lobehub/icons')) {
               return 'vendor-lobehub-icons';
             }
-            // Motion 动画库
-            if (id.includes('motion/') || id.includes('framer-motion')) return 'vendor-motion';
             // React-virtuoso 虚拟列表
             if (id.includes('react-virtuoso') || id.includes('react-window')) return 'vendor-virtuoso';
             // Lucide 图标

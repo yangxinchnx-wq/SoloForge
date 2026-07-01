@@ -1,6 +1,24 @@
 import React, { useState } from 'react';
 import { Search, ChevronDown, Check, GripVertical, Code, Database, Key, CreditCard, HelpCircle, X, Shield, Cpu, Zap, ShieldCheck, Flame, Brain, BadgeCheck, Gauge, Workflow, Rocket, Plus, MessageSquarePlus, SlidersHorizontal, Trash2, Smartphone, Monitor, Layers } from 'lucide-react';
-import { motion, Reorder, useDragControls } from 'motion/react';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { restrictToVerticalAxis, restrictToParentElement } from '@dnd-kit/modifiers';
+import { MountTransition } from './MountTransition';
 import { ChatHistoryItem } from '../types';
 
 // Custom dynamic SVG icon components for high-fidelity branding
@@ -98,6 +116,28 @@ const HistoryItem = React.forwardRef<any, HistoryItemProps>(({ chat, isActive, o
   const [editTitle, setEditTitle] = React.useState(chat.title);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
 
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging: isSortableDragging,
+  } = useSortable({ id: chat.id });
+
+  // Sync dnd-kit dragging state into local ref/state so click can skip work
+  React.useEffect(() => {
+    if (isSortableDragging) {
+      isDraggingRef.current = true;
+      setIsDragging(true);
+    } else {
+      setIsDragging(false);
+      setTimeout(() => {
+        isDraggingRef.current = false;
+      }, 100);
+    }
+  }, [isSortableDragging]);
+
   // Sync title prop changes to local state
   React.useEffect(() => {
     setEditTitle(chat.title);
@@ -113,41 +153,29 @@ const HistoryItem = React.forwardRef<any, HistoryItemProps>(({ chat, isActive, o
     setIsEditingTitle(false);
   };
 
+  // GPU-accelerated style: transform only, no opacity (spec: visibility hidden)
+  const dndStyle: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition: transition || 'transform 180ms cubic-bezier(0.22, 1, 0.36, 1)',
+    visibility: isSortableDragging ? 'hidden' : 'visible',
+    willChange: isSortableDragging ? 'transform' : 'auto',
+    backfaceVisibility: 'hidden',
+    WebkitBackfaceVisibility: 'hidden',
+  };
+
   return (
-    <Reorder.Item
-      value={chat}
-      ref={ref}
-      dragConstraints={containerRef}
-      dragElastic={0}
-      whileDrag={{
-        scale: 1.0, // Keep scale 1.0 to prevent swelling and bleeding out of the sidebar
-        zIndex: 100,
-        opacity: 1,
-        backgroundColor: 'var(--color-surface)',
-        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
-      }}
-      transition={{
-        type: 'spring',
-        stiffness: 500,
-        damping: 40,
-      }}
-      onDragStart={() => {
-        isDraggingRef.current = true;
-        setIsDragging(true);
-      }}
-      onDragEnd={() => {
-        setIsDragging(false);
-        setTimeout(() => {
-          isDraggingRef.current = false;
-        }, 100);
-      }}
+    <div
+      ref={setNodeRef}
+      style={dndStyle}
+      {...attributes}
+      {...listeners}
       onClick={(e) => {
         if (isDraggingRef.current) {
           e.preventDefault();
           e.stopPropagation();
           return;
         }
-        if (isEditingTitle) return; // Prevent selection changes when editing title
+        if (isEditingTitle) return;
         onSelect(chat.id);
       }}
       className="w-full relative select-none cursor-default touch-none box-border block focus:outline-none outline-none rounded-xl"
@@ -275,7 +303,7 @@ const HistoryItem = React.forwardRef<any, HistoryItemProps>(({ chat, isActive, o
           )}
         </div>
       </div>
-    </Reorder.Item>
+    </div>
   );
 });
 
@@ -416,6 +444,71 @@ export default function HistoryAndEditorPanel({
 
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
 
+  // ===== dnd-kit drag infra (replaces Reorder.Group) =====
+  const scrollContainerRef = React.useRef<HTMLDivElement>(null);
+  const dragMoveHandlerRef = React.useRef<((ev: MouseEvent) => void) | null>(null);
+  const [activeDragId, setActiveDragId] = React.useState<string | null>(null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      const oldIndex = chats.findIndex((c) => c.id === active.id);
+      const newIndex = chats.findIndex((c) => c.id === over.id);
+      if (oldIndex !== -1 && newIndex !== -1) {
+        setChats(arrayMove(chats, oldIndex, newIndex));
+      }
+    }
+    setActiveDragId(null);
+    if (dragMoveHandlerRef.current) {
+      window.removeEventListener('mousemove', dragMoveHandlerRef.current);
+      dragMoveHandlerRef.current = null;
+    }
+  };
+
+  const handleDragStart = (event: { active: { id: string | number } }) => {
+    setActiveDragId(String(event.active.id));
+    // Per spec: synchronous addEventListener in handleDragStart (no React effect delay)
+    const onMove = (ev: MouseEvent) => {
+      const sc = scrollContainerRef.current;
+      if (!sc) return;
+      const r = sc.getBoundingClientRect();
+      const EDGE = 48;
+      const MAX_SPEED = 12;
+      const py = ev.clientY;
+      if (py < r.top + EDGE) {
+        const k = 1 - Math.min(1, Math.max(0, (r.top + EDGE - py) / EDGE));
+        sc.scrollTop -= Math.max(1, Math.round(MAX_SPEED * k));
+      } else if (py > r.bottom - EDGE) {
+        const k = 1 - Math.min(1, Math.max(0, (py - (r.bottom - EDGE)) / EDGE));
+        sc.scrollTop += Math.max(1, Math.round(MAX_SPEED * k));
+      }
+    };
+    dragMoveHandlerRef.current = onMove;
+    window.addEventListener('mousemove', onMove);
+  };
+
+  const handleDragCancel = () => {
+    setActiveDragId(null);
+    if (dragMoveHandlerRef.current) {
+      window.removeEventListener('mousemove', dragMoveHandlerRef.current);
+      dragMoveHandlerRef.current = null;
+    }
+  };
+
+  React.useEffect(() => {
+    return () => {
+      if (dragMoveHandlerRef.current) {
+        window.removeEventListener('mousemove', dragMoveHandlerRef.current);
+        dragMoveHandlerRef.current = null;
+      }
+    };
+  }, []);
+
   const handleDeleteChat = (id: string, title: string) => {
     setDeleteTarget({ id, title });
   };
@@ -484,9 +577,6 @@ export default function HistoryAndEditorPanel({
     setSelectedChatId(nextId);
   };
 
-  const listContainerRef = React.useRef<HTMLDivElement>(null);
-  const scrollContainerRef = React.useRef<any>(null);
-
   const filteredChats = chats.filter((c) =>
     c.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -534,58 +624,63 @@ export default function HistoryAndEditorPanel({
             />
           </div>
 
-          {/* Draggable Tiles List */}
-          <Reorder.Group
+          {/* Draggable Tiles List (dnd-kit Sortable) */}
+          <div
             ref={scrollContainerRef}
-            axis="y"
-            values={chats}
-            onReorder={setChats}
             className="flex-1 overflow-y-auto space-y-2 pr-1.5 scrollbar-thin scrollbar-thumb-[#2c2f33] select-none relative"
+            style={{ contain: 'layout paint', willChange: activeDragId ? 'scroll-position' : 'auto' }}
           >
-            {filteredChats.map((c) => (
-              <HistoryItem
-                key={c.id}
-                chat={c}
-                isActive={selectedChatId === c.id}
-                onSelect={setSelectedChatId}
-                onDelete={handleDeleteChat}
-                onRename={handleRenameChat}
-                containerRef={scrollContainerRef}
-                onOpenSettings={(id, title) => window.dispatchEvent(new CustomEvent('soloforge-open-agent-settings', { detail: { id, title } }))}
-                isFloatingEditorOpen={isFloatingEditorOpen}
-              />
-            ))}
-          </Reorder.Group>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+              onDragCancel={handleDragCancel}
+            >
+              <SortableContext items={chats.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+                {filteredChats.map((c) => (
+                  <HistoryItem
+                    key={c.id}
+                    chat={c}
+                    isActive={selectedChatId === c.id}
+                    onSelect={setSelectedChatId}
+                    onDelete={handleDeleteChat}
+                    onRename={handleRenameChat}
+                    containerRef={scrollContainerRef}
+                    onOpenSettings={(id, title) => window.dispatchEvent(new CustomEvent('soloforge-open-agent-settings', { detail: { id, title } }))}
+                    isFloatingEditorOpen={isFloatingEditorOpen}
+                  />
+                ))}
+              </SortableContext>
+            </DndContext>
+          </div>
         </div>
       </div>
 
       {/* Elegant Second Confirmation Delete Dialog */}
-      {deleteTarget && (
+      <MountTransition show={!!deleteTarget} variant="fade">
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-[9999]">
-          <motion.div 
-            initial={{ scale: 0.95, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            className="bg-surface border border-outline/35 rounded-2xl p-5 max-w-xs w-full shadow-2xl flex flex-col gap-4 font-sans text-on-surface"
-          >
+          <div className="bg-surface border border-outline/35 rounded-2xl p-5 max-w-xs w-full shadow-2xl flex flex-col gap-4 font-sans text-on-surface">
             <div className="flex flex-col gap-2">
               <h3 className="text-[13px] font-bold text-red-400 flex items-center gap-2">
                 <Trash2 className="w-4 h-4" />
                 确认删除对话吗？
               </h3>
               <p className="text-[11px] text-on-surface/65 leading-relaxed">
-                您确定要彻底删除 <span className="font-bold text-on-surface text-primary">“{deleteTarget.title}”</span> 会话吗？删除后此会话的数据将不可恢复。
+                您确定要彻底删除 <span className="font-bold text-on-surface text-primary">“{deleteTarget?.title}”</span> 会话吗？删除后此会话的数据将不可恢复。
               </p>
             </div>
             <div className="flex items-center justify-end gap-2 text-[11px]">
-              <button 
+              <button
                 onClick={() => setDeleteTarget(null)}
                 className="px-3 py-1.5 rounded-lg border border-outline/20 hover:bg-surface-bright text-on-surface/75 hover:text-on-surface transition-colors cursor-pointer"
               >
                 取消
               </button>
-              <button 
+              <button
                 onClick={() => {
-                  executeDelete(deleteTarget.id);
+                  if (deleteTarget) executeDelete(deleteTarget.id);
                   setDeleteTarget(null);
                 }}
                 className="px-3 py-1.5 rounded-lg bg-red-500/20 border border-red-500/35 text-red-400 hover:bg-red-500/40 hover:text-white transition-colors cursor-pointer font-bold"
@@ -593,9 +688,9 @@ export default function HistoryAndEditorPanel({
                 彻底删除
               </button>
             </div>
-          </motion.div>
+          </div>
         </div>
-      )}
+      </MountTransition>
     </div>
   );
 }

@@ -40,6 +40,42 @@ const PRESET_FONT_META: PresetFontMeta[] = [
 
 /** 默认值 —— “加载第一个”就是 OPPOSans */
 const DEFAULT_FONT_NAME = PRESET_FONT_META[0].name;
+const DEFAULT_FONT_URL = PRESET_FONT_META[0].url;
+export { DEFAULT_FONT_URL };
+
+/** display name -> css font-family */
+const FONT_NAME_TO_CSS: Record<string, string> = Object.fromEntries(
+  PRESET_FONT_META.map(p => [p.name, p.cssFamily])
+);
+
+/** module-level dedup set：preload 过的 URL 不重复创建 <link> */
+const preloadedFontUrls = new Set<string>();
+
+/**
+ * 通过 <link rel="preload" as="font"> 预取字体文件，浏览器在用户真正切换前就下载。
+ * - 用 Set 去重，避免 hover / focus 重复触发时反复插入 DOM
+ * - data: / blob: 不走预取（已经是内存对象）
+ */
+export function preloadFontByUrl(url: string): void {
+  if (typeof document === 'undefined') return;
+  if (!url || url.startsWith('data:') || url.startsWith('blob:')) return;
+  if (preloadedFontUrls.has(url)) return;
+  preloadedFontUrls.add(url);
+  const link = document.createElement('link');
+  link.rel = 'preload';
+  link.as = 'font';
+  link.href = url;
+  link.crossOrigin = 'anonymous';
+  document.head.appendChild(link);
+}
+
+/** 根据 display name 预取字体（支持预设 + 自定义导入的 local 字体） */
+export function preloadFontByName(name: string, customFonts: CustomFont[] = []): void {
+  const preset = PRESET_FONT_META.find(p => p.name === name);
+  if (preset) { preloadFontByUrl(preset.url); return; }
+  const custom = customFonts.find(f => f.name === name);
+  if (custom?.url) preloadFontByUrl(custom.url);
+}
 
 export const THEME_PRESETS: ThemePreset[] = [
   {
@@ -219,7 +255,8 @@ export interface CustomFont {
 }
 
 export const PRESET_FONTS: CustomFont[] = [
-  { name: '默认 (Default)', url: '', isPreset: true }
+  { name: '默认 (Default)', url: '', isPreset: true },
+  ...PRESET_FONT_META.map(p => ({ name: p.name, url: p.url, isPreset: true })),
 ];
 
 interface ThemeColorTargets {
@@ -380,20 +417,45 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [selectedFont, setSelectedFont] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem('soloforge_selectedFont');
-      if (stored) return stored;
+      if (stored) {
+        // 迁移老用户: "默认 (Default)" 之前指向 Inter，现已改为 OPPOSans
+        if (stored === '默认 (Default)') return DEFAULT_FONT_NAME;
+        return stored;
+      }
     }
-    return '默认 (Default)';
+    return DEFAULT_FONT_NAME;
   });
 
-  // Load dynamic google fonts and apply to root element
+  // ── 启动时注入 6 个预设字体的 @font-face（font-display: swap，
+  //    避免切换瞬间出现“未加载文字不可见”） ─────────────────────
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const styleId = 'preset-font-faces';
+    if (document.getElementById(styleId)) return;
+    const styleEl = document.createElement('style');
+    styleEl.id = styleId;
+    const rules = PRESET_FONT_META.map(p => `
+@font-face {
+  font-family: "${p.cssFamily}";
+  src: url("${p.url}") format("${p.format === 'opentype' ? 'opentype' : 'truetype'}");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}`).join('\n');
+    styleEl.textContent = rules;
+    document.head.appendChild(styleEl);
+  }, []);
+
+  // 选中字体后: 1) 对自定义字体注入 <style>/<link>; 2) 写 --font-sans/--font-display
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    // Combine preset fonts and custom fonts
     const allFonts = [...PRESET_FONTS, ...customFonts];
     const activeF = allFonts.find(f => f.name === selectedFont);
+    const isPreset = activeF?.isPreset === true;
 
-    if (activeF && activeF.url) {
+    // 自定义字体（非预设）按需注入；预设字体已由启动 useEffect 注入，跳过
+    if (activeF && activeF.url && !isPreset) {
       if (activeF.url.startsWith('data:')) {
         const fontId = `dynamic-font-face-${encodeURIComponent(activeF.name)}`;
         let styleEl = document.getElementById(fontId) as HTMLStyleElement;
@@ -412,7 +474,6 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           document.head.appendChild(styleEl);
         }
       } else {
-        // Check if link is already loaded
         const existingLink = document.getElementById(`font-link-${encodeURIComponent(activeF.name)}`);
         if (!existingLink) {
           const link = document.createElement('link');
@@ -425,24 +486,28 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     // Apply selected font family globally!
-    if (selectedFont && selectedFont !== '默认 (Default)') {
-      let cssFontName = selectedFont;
-      // Strip brackets or descriptions from system presets
-      if (selectedFont === '系统默认 (System UI)') {
+    // 预设字体 -> 用 FONT_NAME_TO_CSS 表查 css family 名
+    // 自定义字体 -> 用 display name 作为 css family 名
+    // "默认 (Default)" -> 清除全局变量，回落到 index.css 的 Inter/系统字体
+    if (selectedFont === '默认 (Default)') {
+      document.documentElement.style.removeProperty('--font-sans');
+      document.documentElement.style.removeProperty('--font-display');
+    } else {
+      let cssFontName: string;
+      const fromMap = FONT_NAME_TO_CSS[selectedFont];
+      if (fromMap) {
+        cssFontName = fromMap;
+      } else if (selectedFont === '系统默认 (System UI)') {
         cssFontName = 'system-ui, -apple-system, sans-serif';
       } else if (selectedFont.includes('(')) {
         // e.g. "马山政体 (Ma Shan Zheng)" -> "Ma Shan Zheng"
         const match = selectedFont.match(/\(([^)]+)\)/);
-        if (match) {
-          cssFontName = match[1];
-        }
+        cssFontName = match ? match[1] : selectedFont;
+      } else {
+        cssFontName = selectedFont;
       }
-      
       document.documentElement.style.setProperty('--font-sans', `"${cssFontName}", "Inter", sans-serif`);
       document.documentElement.style.setProperty('--font-display', `"${cssFontName}", "Hanken Grotesk", sans-serif`);
-    } else {
-      document.documentElement.style.removeProperty('--font-sans');
-      document.documentElement.style.removeProperty('--font-display');
     }
 
     // Also persist
