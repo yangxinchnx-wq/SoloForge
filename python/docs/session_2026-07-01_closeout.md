@@ -76,4 +76,5 @@
 | 3 | 文档同步 | ✅ | MASTER_INDEX 第 6 节"后续可选方向" M3/M4/U4/D3/M1 全标 ✅ 2026-07-01 (之前是 ⏸️ 待做, 已过期) |
 | **2** | **UI / 前后端通信** | **✅** | **3000/api/marl/reputation → 8766/sync/reputation 代理修复完成 (audit B2): (1) server.ts 补 `fixRequestBody` hook 解决 express.json 消费 body 后 8766 收到空 body; (2) pathFilter 精确前缀匹配避免 HPM 截 prefix 后 pathRewrite 失效; (3) start-all.mjs 后端启动加 `SOLOFORGE_REQUIRE_TOKENS=0` 让 3001 启动 (旧报错 FATAL: No API tokens); (4) e2e test 验证 3 POST 全 200 + event_dedup 幂等屏障 + SQLite 累加 2.0** |
 | **4** | **CI/CD** | **✅** | **.github/workflows/test.yml 加 e2e-tools job, 跑 5 个本 session 关键验证工具 (M1/M2/M3/M4/U4/D17 v3), 15min 超时** |
+| **5** | **暂时收口** | **✅** | **commit `66b059e` 收口, 11 文件 / +2025 行 (handoff doc + closeout 表 + 8 个 e2e 验证脚本 + ui_proxy_e2e). 详见 [handoff_2026-07-01.md](file:///c:/Users/yangx/Desktop/SoloForge/python/docs/handoff_2026-07-01.md)** |
 

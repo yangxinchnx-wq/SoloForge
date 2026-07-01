@@ -1,0 +1,67 @@
+{
+  "mode": "canary_100",
+  "kind": "canary",
+  "duration_sec": 30.0,
+  "total_inferences": 160350,
+  "total_elapsed_sec": 30.0,
+  "qps": 5345.0,
+  "latency_ms": {
+    "p50": 0.1468,
+    "p99": 0.5436,
+    "p99.9": 1.1983,
+    "max": 4.9005
+  },
+  "errors": 0,
+  "error_rate": 0.0,
+  "mem_initial_mb": 201.75,
+  "mem_final_mb": 217.66,
+  "mem_growth_mb": 15.91,
+  "handles_initial": 219,
+  "handles_final": 218,
+  "handles_growth": -1,
+  "sla_p99_under_10ms": true,
+  "sla_mem_growth_under_50mb": true,
+  "sla_no_errors": true,
+  "time_series": [
+    {
+      "elapsed_sec": 5.0,
+      "mem_mb": 204.27,
+      "handles": 219,
+      "qps": 5747.3,
+      "p99_ms": 0.4392,
+      "errors": 0
+    },
+    {
+      "elapsed_sec": 10.0,
+      "mem_mb": 207.33,
+      "handles": 219,
+      "qps": 5401.3,
+      "p99_ms": 0.5008,
+      "errors": 0
+    },
+    {
+      "elapsed_sec": 15.0,
+      "mem_mb": 208.92,
+      "handles": 219,
+      "qps": 4749.2,
+      "p99_ms": 0.7685,
+      "errors": 0
+    },
+    {
+      "elapsed_sec": 20.0,
+      "mem_mb": 211.57,
+      "handles": 219,
+      "qps": 5008.5,
+      "p99_ms": 0.6104,
+      "errors": 0
+    },
+    {
+      "elapsed_sec": 25.0,
+      "mem_mb": 215.52,
+      "handles": 219,
+      "qps": 5646.7,
+      "p99_ms": 0.4492,
+      "errors": 0
+    }
+  ]
+}
