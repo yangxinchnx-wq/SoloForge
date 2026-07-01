@@ -73,9 +73,9 @@ def main() -> int:
             LocalDatabaseConnectionPool,
         )
         pool = LocalDatabaseConnectionPool(str(tmp_db), max_connections=2)
-        conn1 = pool._acquire_new_connection()
+        conn1 = pool.acquire_connection()
         total_count += 1
-        if verify_raw_alignment("LocalDatabaseConnectionPool._acquire_new_connection", conn1):
+        if verify_raw_alignment("LocalDatabaseConnectionPool.acquire_connection", conn1):
             pass_count += 1
         conn1.close()
 

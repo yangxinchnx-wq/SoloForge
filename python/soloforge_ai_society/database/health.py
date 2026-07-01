@@ -57,6 +57,7 @@ class HealthChecker:
         """
         try:
             conn = sqlite3.connect(str(self.db_path))
+            apply_p6_baseline(conn)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
@@ -312,6 +313,7 @@ class BackupManager:
 
             # 关闭当前连接
             conn = sqlite3.connect(str(self.db_path))
+            apply_p6_baseline(conn)
             conn.close()
 
             # 复制备份文件

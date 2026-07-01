@@ -191,6 +191,7 @@ class MigrationManager:
             迁移的版本数
         """
         conn = sqlite3.connect(str(self.db_path))
+        apply_p6_baseline(conn)
         conn.row_factory = sqlite3.Row
 
         try:
