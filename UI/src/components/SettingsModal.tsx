@@ -7,6 +7,14 @@ import {
   Mic, Wrench, Film, Type, Compass, Sliders, Flame
 } from 'lucide-react';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
+import * as DndKitCore from '@dnd-kit/core';
+import * as DndKitModifiers from '@dnd-kit/modifiers';
+import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+const { DndContext, DragOverlay, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors } = DndKitCore;
+const { restrictToVerticalAxis, restrictToParentElement } = DndKitModifiers;
+type DragEndEvent = DndKitCore.DragEndEvent;
+type DragStartEvent = DndKitCore.DragStartEvent;
 import { ModelIcon } from './ModelIcon';
 import { NormalIcon, PerformanceIcon, ExpertIcon, UltimateIcon } from './ChatPanel';
 import { useTheme, PRESET_FONTS } from '../context/ThemeContext';
@@ -49,6 +57,109 @@ const PROVIDER_MODEL_REGISTRY: Record<string, { id: string; name: string }[]> = 
   ],
   custom: []
 };
+
+// =====================================================
+// 【左面板可拖拽服务商卡片】
+// 与 HistoryAndEditorPanel 中 history 项使用同一套 dnd-kit 设计：
+//   1. visibility:hidden 隐藏源卡 → 仅 DragOverlay 克隆可见（绝不透明）
+//   2. outer / overlay / scroll container 三处 GPU 加速
+//   3. modifiers = [restrictToVerticalAxis, restrictToParentElement]
+//   4. window 'mousemove' 自定义 auto-scroll（ref 同步绑定，不依赖 React 调度）
+//   5. transform 180ms cubic-bezier(0.22,1,0.36,1)，drop animation 140ms
+// 不下阴影（用户要求）：
+//   - 完全移除 shadow-* / boxShadow / drop-shadow，仅保留主题色 border + bg-surface/bright 区分状态
+// =====================================================
+interface ProviderCardProps {
+  provider: ModelProvider;
+  isSelected: boolean;
+  onSelect: (id: string) => void;
+  onDelete?: (id: string) => void;
+}
+
+const ProviderCard = React.forwardRef<HTMLDivElement, ProviderCardProps>(
+  ({ provider, isSelected, onSelect, onDelete }, ref) => {
+    const { setNodeRef, attributes, listeners, transform, transition, isDragging } = useSortable({ id: provider.id });
+    const [showDelHint, setShowDelHint] = React.useState(false);
+    const isCustom = provider.id.startsWith('custom_');
+
+    const dndTransition = transition || 'transform 180ms cubic-bezier(0.22, 1, 0.36, 1)';
+    const style: React.CSSProperties = {
+      transform: CSS.Transform.toString(transform),
+      transition: dndTransition,
+      cursor: isDragging ? 'grabbing' : 'grab',
+      visibility: isDragging ? 'hidden' : 'visible',
+      willChange: isDragging ? 'transform' : 'auto',
+      backfaceVisibility: 'hidden',
+      WebkitBackfaceVisibility: 'hidden',
+    };
+
+    return (
+      <div
+        ref={(node) => {
+          setNodeRef(node);
+          if (typeof ref === 'function') ref(node);
+          else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node;
+        }}
+        style={style}
+        data-provider-id={provider.id}
+        {...attributes}
+        {...listeners}
+        onClick={(e) => {
+          if (isDragging) { e.preventDefault(); e.stopPropagation(); return; }
+          onSelect(provider.id);
+        }}
+        className="w-full relative select-none cursor-pointer touch-none box-border block focus:outline-none outline-none rounded-xl"
+      >
+        <div
+          onMouseEnter={() => setShowDelHint(true)}
+          onMouseLeave={() => setShowDelHint(false)}
+          className={`w-full flex items-center justify-between text-left px-3 py-3 rounded-xl text-xs font-semibold cursor-pointer active:cursor-grabbing border transition-colors duration-200 ${
+            isSelected
+              ? provider.enabled
+                ? 'bg-[var(--color-surface-bright)] border-[var(--color-primary)] text-[var(--color-primary)] font-black'
+                : 'bg-[var(--color-surface)] border-on-surface/30 text-on-surface/55 font-black'
+              : provider.enabled
+                ? 'bg-[var(--color-surface)] border-transparent text-[var(--color-on-surface)]/75 hover:bg-[var(--color-surface-bright)]/40 hover:text-[var(--color-on-surface)] hover:border-[var(--color-primary)]/30'
+                : 'bg-[var(--color-surface)] border-transparent text-[var(--color-on-surface)]/35 hover:text-[var(--color-on-surface)]/50'
+          }`}
+        >
+          <div className="flex items-center gap-2.5 truncate pointer-events-none">
+            {provider.id === 'custom' && !isCustom ? (
+              <Plus className="shrink-0 opacity-65" style={{ width: 22, height: 22 }} />
+            ) : (
+              <ModelIcon modelName={provider.id} size={22} className="shrink-0" />
+            )}
+            <span className="truncate">{provider.name}</span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0 pointer-events-none">
+            {provider.enabled && provider.status === 'success' && provider.delay && (
+              <span className="text-[10px] bg-emerald-500/10 text-emerald-400 font-mono px-1 rounded-sm scale-90 shrink-0">
+                {provider.delay}毫秒
+              </span>
+            )}
+            {isCustom && onDelete && showDelHint && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onDelete(provider.id);
+                }}
+                onPointerDown={(e) => { e.stopPropagation(); }}
+                onMouseDown={(e) => { e.stopPropagation(); }}
+                className="p-1 rounded-md text-on-surface/40 hover:text-rose-400 transition-colors cursor-pointer pointer-events-auto"
+                title="删除此自定义通道"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+);
+ProviderCard.displayName = 'ProviderCard';
 
 // 仅在文本溢出时接管滚轮,横向滚动,边界硬钳制,不影响行拖拽
 const ScrollableText: React.FC<{ children: React.ReactNode; className?: string; title?: string }> = ({ children, className, title }) => {
@@ -1244,7 +1355,15 @@ export default function SettingsModal({
                   </div>
 
                   {/* Main Twin Panel Construction */}
-                  <div className="flex-1 flex min-h-0 bg-[var(--color-bg)]/60 border border-[var(--color-outline)]/20 rounded-2xl shadow-xl overflow-visible">
+                  <DndContext
+                    sensors={providerSensors}
+                    collisionDetection={closestCenter}
+                    modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+                    onDragStart={handleProviderDragStart}
+                    onDragEnd={handleProviderDragEnd}
+                    onDragCancel={handleProviderDragCancel}
+                  >
+                  <div className="flex-1 flex min-h-0 bg-[var(--color-bg)]/60 border border-[var(--color-outline)]/20 rounded-2xl overflow-visible">
                     
                     {/* Left Sidebar: Provider Cards Selection */}
                     <div className="w-[200px] border-r border-[var(--color-outline)]/15 bg-[var(--color-bg)]/80 flex flex-col shrink-0">
@@ -1254,88 +1373,33 @@ export default function SettingsModal({
                       </div>
                       
                       {/* Scrollable: Provider list only */}
-                      <div className="flex-1 min-h-0 overflow-y-auto p-2.5" style={{ overscrollBehavior: 'contain' }}>
-                        <Reorder.Group
-                          ref={providerListRef}
-                          axis="y"
-                          values={providers}
-                          onReorder={reorderProviders}
-                          className="space-y-1"
-                        >
-                          {providers.map((p) => {
-                            const isSelected = activeProvider.id === p.id;
-                            return (
-                              <Reorder.Item
+                      <div
+                        ref={providerScrollRef}
+                        className="flex-1 min-h-0 overflow-y-auto p-2.5 select-none relative [&::-webkit-scrollbar]:hidden"
+                        style={{
+                          overscrollBehavior: 'contain',
+                          contain: 'layout paint',
+                          willChange: activeDragProviderId ? 'scroll-position' : 'auto',
+                          scrollbarWidth: 'none',
+                          msOverflowStyle: 'none',
+                        }}
+                      >
+                        <SortableContext items={providers.map((p) => p.id)} strategy={verticalListSortingStrategy}>
+                          <div className="space-y-1">
+                            {providers.map((p) => (
+                              <ProviderCard
                                 key={p.id}
-                                value={p}
-                                dragListener={true}
-                                dragElastic={0}
-                                whileDrag={{
-                                  zIndex: 50,
-                                  opacity: 1,
+                                provider={p}
+                                isSelected={activeProvider.id === p.id}
+                                onSelect={(id) => {
+                                  setActiveProviderId(id);
+                                  setCustomModelVal('');
                                 }}
-                                layout
-                                transition={{
-                                  layout: {
-                                    type: 'spring',
-                                    stiffness: 600,
-                                    damping: 35,
-                                    mass: 0.3,
-                                  },
-                                }}
-                                className="list-none select-none touch-none"
-                              >
-                                <div
-                                  onClick={() => {
-                                    setActiveProviderId(p.id);
-                                    setCustomModelVal('');
-                                  }}
-                                  className={`w-full flex items-center justify-between text-left px-3 py-3 rounded-xl text-xs font-semibold cursor-grab active:cursor-grabbing border transition-all duration-200 ${
-                                    isSelected
-                                      ? p.enabled
-                                        ? 'bg-[var(--color-primary)]/10 border-[var(--color-primary)]/40 text-[var(--color-primary)] font-black shadow-md opacity-100'
-                                        : 'bg-on-surface/5 border-on-surface/15 text-on-surface/40 font-black opacity-45 shadow-none'
-                                      : p.enabled
-                                        ? 'border-transparent text-[var(--color-on-surface)]/75 hover:bg-[var(--color-surface-bright)]/40 hover:text-[var(--color-on-surface)] opacity-100'
-                                        : 'border-transparent text-[var(--color-on-surface)]/35 hover:text-[var(--color-on-surface)]/50 opacity-40'
-                                  }`}
-                                >
-                                  <div className="flex items-center gap-2.5 truncate pointer-events-none">
-                                    {p.id === 'custom' ? (
-                                      <Plus className="w-5 h-5 shrink-0 opacity-65" style={{ width: 22, height: 22 }} />
-                                    ) : (
-                                      <ModelIcon modelName={p.id} size={22} className="shrink-0" />
-                                    )}
-                                    <span className="truncate">{p.name}</span>
-                                  </div>
-                                  <div className="flex items-center gap-1.5 shrink-0">
-                                    {p.enabled && p.status === 'success' && p.delay && (
-                                      <span className="text-[10px] bg-emerald-500/10 text-emerald-400 font-mono px-1 rounded-sm scale-90 shrink-0">
-                                        {p.delay}毫秒
-                                      </span>
-                                    )}
-                                    {p.id.startsWith('custom_') && (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setProviders(prev => prev.filter(prov => prov.id !== p.id));
-                                          if (activeProviderId === p.id) {
-                                            setActiveProviderId('custom');
-                                          }
-                                        }}
-                                        className="p-1 hover:bg-rose-500/20 rounded-md text-on-surface/40 hover:text-rose-400 transition-colors cursor-pointer"
-                                        title="删除此自定义通道"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                              </Reorder.Item>
-                            );
-                          })}
-                        </Reorder.Group>
+                                onDelete={removeCustomProvider}
+                              />
+                            ))}
+                          </div>
+                        </SortableContext>
                       </div>
 
                       {/* Fixed: Plus button */}
@@ -1769,7 +1833,37 @@ export default function SettingsModal({
                       </AnimatePresence>
                     </div>
 
+                    <DragOverlay
+                      dropAnimation={{
+                        duration: 140,
+                        easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+                      }}
+                    >
+                      {activeDragProvider ? (
+                        <div
+                          className="rounded-xl"
+                          style={{
+                            isolation: 'isolate',
+                            willChange: 'transform',
+                            transform: 'translateZ(0)',
+                            backfaceVisibility: 'hidden',
+                            WebkitBackfaceVisibility: 'hidden',
+                            contain: 'layout paint style',
+                            pointerEvents: 'none',
+                          }}
+                        >
+                          <ProviderCard
+                            provider={activeDragProvider}
+                            isSelected={activeProvider.id === activeDragProvider.id}
+                            onSelect={() => {}}
+                            onDelete={removeCustomProvider}
+                          />
+                        </div>
+                      ) : null}
+                    </DragOverlay>
+
                   </div>
+                  </DndContext>
                 </div>
             )}
 
