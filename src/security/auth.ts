@@ -6,6 +6,7 @@
 //   - RFC 6750 (Bearer Token Usage)
 import type { IncomingHttpHeaders } from 'http';
 import * as nodePath from 'path';
+import { checkTenantAccess, pickDefaultTenant } from './tenantContext';
 
 export type Role = 'admin' | 'operator' | 'agent' | 'public';
 
@@ -13,6 +14,15 @@ export interface Principal {
   id: string;
   role: Role;
   source: 'env-token' | 'bearer' | 'loopback' | 'anonymous';
+  /**
+   * 允许访问的租户 ID 列表 (multi-tenant isolation)
+   *   - 缺省 = ['*']      (admin, 跨租户访问)
+   *   - ['t1','t2']       (operator, 仅限指定租户)
+   *   - []                (无租户, 拒绝租户资源)
+   */
+  tenantIds?: string[];
+  /** 当前请求实际使用的 tenantId (从 header / path 解析) */
+  activeTenantId?: string;
 }
 
 export interface AuthConfig {
@@ -46,6 +56,7 @@ export const defaultAuthConfig: AuthConfig = {
 const ROLE_BY_ROUTE: Array<{ prefix: string; role: Role }> = [
   { prefix: '/api/vault', role: 'admin' },
   { prefix: '/api/admin', role: 'admin' },
+  { prefix: '/api/audit', role: 'admin' },
   { prefix: '/api/agents', role: 'operator' },
   { prefix: '/api/governor', role: 'operator' },
   { prefix: '/api/decisions', role: 'operator' },
@@ -88,6 +99,16 @@ export interface RouteGuardInput {
   headers: IncomingHttpHeaders;
   query: Record<string, string>;
   remoteAddress?: string;
+  /**
+   * 客户端声明的 tenantId (来自 header X-Tenant-Id 或 path /api/t/{id})
+   * 缺省由 caller 用 pickDefaultTenant() 兜底。
+   */
+  requestedTenantId?: string;
+  /**
+   * Token -> tenantIds 绑定 (从 env 加载)
+   * 留空 = ['*'] (全通)
+   */
+  tenantBindings?: Record<string, string[]>;
 }
 
 export interface RouteGuardResult {
@@ -165,6 +186,152 @@ export function evaluateRequest(input: RouteGuardInput, cfg: AuthConfig = defaul
     corsOrigin: null,
     reason: requiredRole === 'public' ? 'unauthenticated' : 'insufficient_credentials',
   };
+}
+
+/**
+ * 异步增强版鉴权:
+ *   - 在 evaluateRequest 基础上, 额外做 Token Family 复用检测
+ *   - 检测到 grace period 外的旧 token → 整族吊销 + 返回 401
+ *   - 检测到 grace period 内的旧 token → 仍允许 (网络抖动兼容)
+ *
+ * 协议:
+ *   - principal.kid:  命中的 token kid (供审计)
+ *   - principal.inGrace: true 表示命中的是 grace period 内的旧 token
+ *   - principal.tenantIds: 该 token 被允许访问的 tenant 集合
+ *   - principal.activeTenantId: 当前请求实际使用的 tenant (已通过 check)
+ *
+ * 多租户:
+ *   - 跨租户访问 → 返回 403 (区别于 401 unauthenticated)
+ *   - token 未绑定 tenantIds → 走 ['*'] (admin-like, 全通)
+ */
+export interface AsyncGuardResult extends RouteGuardResult {
+  principal?: Principal & { kid?: string; inGrace?: boolean };
+  reuseDetected?: boolean;
+  autoRevokedTokens?: number;
+  crossTenant?: boolean;
+}
+
+export async function evaluateRequestAsync(
+  input: RouteGuardInput,
+  cfg: AuthConfig = defaultAuthConfig,
+): Promise<AsyncGuardResult> {
+  // 先做基础同步判断
+  const base = evaluateRequest(input, cfg);
+  if (base.allow) {
+    // 同步允许的路径也要做 tenant 校验 (admin / loopback / public)
+    return finalizeTenant(base, input);
+  }
+
+  // 401/403 路径: 看是不是 bearer 在 vault 里 (但 kid 状态异常)
+  const bearer = extractBearerToken(input.headers, cfg.maxAuthHeaderLength);
+  if (!bearer) return base;
+
+  // 动态加载避免循环依赖 + 减少冷启动开销
+  let checkReuse: typeof import('./tokenFamily')['checkReuse'] | null = null;
+  let processBearerToken: typeof import('./tokenFamily')['processBearerToken'] | null = null;
+  try {
+    const mod = await import('./tokenFamily');
+    checkReuse = mod.checkReuse;
+    processBearerToken = mod.processBearerToken;
+  } catch {
+    return base; // tokenFamily 不可用, 退回 base 决定
+  }
+
+  const result = await (processBearerToken ?? checkReuse!)({ bearer });
+  const record = result.record;
+
+  // active / grace → 放行
+  if (result.decision === 'allow' || result.decision === 'allow_in_grace') {
+    const origin = typeof input.headers['origin'] === 'string' ? input.headers['origin'] : '';
+    const basePrincipal: Principal & { kid?: string; inGrace?: boolean } = {
+      id: record ? `token:${record.kid}` : 'token',
+      role: 'operator',
+      source: 'bearer',
+      kid: record?.kid,
+      inGrace: result.decision === 'allow_in_grace',
+    };
+    return finalizeTenant(
+      {
+        allow: true,
+        status: 200,
+        principal: basePrincipal,
+        corsOrigin: cfg.allowedOrigins.includes(origin) ? origin : null,
+      },
+      input,
+    );
+  }
+
+  // 复用检测命中: 整族已被自动吊销, 返回 401
+  if (result.decision === 'reuse_detected') {
+    return {
+      allow: false,
+      status: 401,
+      corsOrigin: null,
+      reason: 'token_reuse_detected',
+      principal: undefined,
+      reuseDetected: true,
+      autoRevokedTokens: result.autoRevokedTokens,
+    };
+  }
+
+  // revoked / unknown → 维持 base 401
+  return {
+    ...base,
+    reason: result.decision === 'revoked' ? 'token_revoked' : base.reason,
+  };
+}
+
+/**
+ * Tenant 校验后处理: 解析有效 tenantId, 检查跨租户, 设置 principal.activeTenantId
+ * 失败 → 返回 403 (区别于 401 unauthenticated)
+ *
+ * 注意: principal 类型用 AsyncGuardResult 的扩展形 (含 kid/inGrace)
+ */
+function finalizeTenant(
+  res: RouteGuardResult,
+  input: RouteGuardInput,
+): RouteGuardResult & { crossTenant?: boolean } {
+  if (!res.allow || !res.principal) return res;
+
+  const principal = res.principal as Principal & { kid?: string; inGrace?: boolean };
+
+  // 公共路由 (anonymous) 不强制 tenant
+  if (principal.source === 'anonymous') {
+    principal.activeTenantId = '_default';
+    return res;
+  }
+
+  // 决定该 principal 允许的 tenantIds
+  //   - 从 env bindings[kid] 查 (有 kid 时)
+  //   - 没 kid (admin/loopback) → ['*'] 全通
+  let principalTenants: string[] | undefined;
+  if (principal.kid && input.tenantBindings) {
+    principalTenants = input.tenantBindings[principal.kid];
+  }
+  if (principalTenants === undefined) {
+    principalTenants = principal.tenantIds;
+  }
+  principal.tenantIds = principalTenants;
+
+  // 决定 effective tenant
+  const requested = input.requestedTenantId;
+  const effective = requested && requested.length > 0
+    ? requested
+    : pickDefaultTenant(principalTenants, principal.role);
+
+  // 校验
+  const check = checkTenantAccess(principalTenants, effective);
+  if (!check.ok) {
+    return {
+      allow: false,
+      status: 403,
+      corsOrigin: res.corsOrigin,
+      reason: check.reason === 'invalid_id' ? 'invalid_tenant_id' : 'cross_tenant_access',
+      crossTenant: true,
+    };
+  }
+  principal.activeTenantId = check.tenantId;
+  return res;
 }
 
 export function corsHeadersFor(headers: IncomingHttpHeaders, cfg: AuthConfig = defaultAuthConfig): Record<string, string> {
@@ -329,9 +496,38 @@ export interface AuditEvent {
   userAgent?: string;
   reason?: string;
   requestId?: string;
+  /** 租户 ID (multi-tenant isolation), 缺省 = '_default' */
+  tenantId?: string;
 }
 
-export type AuditSink = (ev: AuditEvent) => void | Promise<void>;
+/**
+ * 审计事件 sink 接口 (扩展版 v2)。
+ *
+ *   - invoke(ev): 接收事件, 永不抛错 (内部 try/catch)
+ *   - start?():   启动后台任务 (timer / 持久连接)
+ *   - close?():   优雅关闭, flush 残留队列
+ *   - getStats?(): 返回监控指标
+ *
+ * 旧版: `type AuditSink = (ev) => void | Promise<void>` (函数式, 仍然兼容)
+ * 新版: `interface AuditSinkV2 { invoke; start?; close?; getStats? }`
+ */
+export type AuditSinkFn = (ev: AuditEvent) => void | Promise<void>;
+
+export interface AuditSinkV2 {
+  /** 必填, 接收审计事件 */
+  invoke(ev: AuditEvent): void | Promise<void>;
+  /** 可选, 启动后台 (timer, connection) */
+  start?(): void | Promise<void>;
+  /** 可选, 关闭 sink (flush 队列, 关连接) */
+  close?(): void | Promise<void>;
+  /** 可选, 返回监控指标 */
+  getStats?(): Record<string, any>;
+  /** 可选, 标识 (供 stats 输出) */
+  readonly name?: string;
+}
+
+/** 旧版函数式 sink 类型, 仍然保留兼容 */
+export type AuditSink = AuditSinkFn;
 
 /** Default no-op sink; replace in production with a DB/queue writer. */
 export const defaultAuditSink: AuditSink = (ev) => {
@@ -424,10 +620,15 @@ export function generateApiToken(): string {
 /**
  * 异步加载 API Token(启动期主入口)。
  *
+ * v2 升级 (2026-07):
+ *   - 不再读写 v1 纯字符串数组, 走 tokenStore.ts (Token Family + Grace Period)
+ *   - 启动时自动从 v1 迁移到 v2 (一次性, 不删除 v1)
+ *   - 返回的 token 列表 = 所有 active + rotating (rotating 在 grace period 内仍可用)
+ *
  * 三级回退解析顺序(找到第一处非空就返回):
  *   1) 环境变量 SOLOFORGE_API_TOKENS(逗号分隔多个,适合 CI/容器)
- *      示例: SOLOFORGE_API_TOKENS=tok1,tok2,tok3  ->  ['tok1','tok2','tok3']`n *   2) OS 钥匙串中的 vault(provider id = 'soloforge.api.tokens')
- *      存的是 base64url 编码的 JSON 数组,首次 init 后即由系统管理
+ *      示例: SOLOFORGE_API_TOKENS=tok1,tok2,tok3  ->  ['tok1','tok2','tok3']`n *   2) OS 钥匙串中的 vault(tokenStore, provider id = 'soloforge.api.tokens.v2')
+ *      存的是 base64url 编码的 JSON snapshot (version=2),首次 init 后即由系统管理
  *   3) 自动生成(仅当 SOLOFORGE_REQUIRE_TOKENS=0 时启用,默认 1 拒绝)
  *      单机软件(桌面版/本地开发)的标准做法,生成的 token 立即写回 vault
  *
@@ -438,16 +639,42 @@ export function generateApiToken(): string {
  *
  * 调用时机:在 pi-server.start() 开头同步等待(wait loadApiTokensAsync())。
  *
- * @returns 至少一个 token 的数组(单 token 模式通常只 1 个;轮换期可 2-3 个)
+ * @returns 至少一个 token 的数组(active + rotating 合并;rotating 仍可鉴权)
  */
 export async function loadApiTokensAsync(): Promise<string[]> {
+  // 1) env 优先 (CI / 容器场景)
   const envRaw = process.env.SOLOFORGE_API_TOKENS || '';
   const envTokens = envRaw.split(',').map((s: string) => s.trim()).filter(Boolean);
-  if (envTokens.length > 0) return envTokens;
+  if (envTokens.length > 0) {
+    // env 模式下不写 vault, 避免:
+    //   - 每次启动塞新 token, 数量爆炸
+    //   - 复制场景下 env 跟 vault 不一致
+    // 仅在 audit 日志中标记 source=env-token
+    return envTokens;
+  }
 
-  const fromVault = await readVaultTokens();
-  if (fromVault && fromVault.length > 0) return fromVault;
+  // 2) vault 优先 (v2 tokenStore)
+  try {
+    const store = await import('./tokenStore');
+    await store.tokenStoreInit();
+    const active = await store.getActiveTokens();
+    if (active.length > 0) return active;
+  } catch { /* vault 不可用, 兜底 v1 */ }
 
+  // 3) v1 兜底: 旧版 base64url 数组, 触发一次性迁移
+  const fromV1 = await readVaultTokens();
+  if (fromV1 && fromV1.length > 0) {
+    try {
+      const store = await import('./tokenStore');
+      await store.tokenStoreInit();
+      // migrateFromV1 已经在 tokenStoreInit 里跑了, 直接拿 v2 结果
+      const active = await store.getActiveTokens();
+      if (active.length > 0) return active;
+    } catch { /* 迁移失败, 退回 v1 数组直接返回 */ }
+    return fromV1;
+  }
+
+  // 4) 自动生成
   if ((process.env.SOLOFORGE_REQUIRE_TOKENS || '1') === '1') {
     throw new Error(
       'FATAL: No API tokens configured. Set SOLOFORGE_API_TOKENS=<hex,hex> ' +
@@ -455,9 +682,10 @@ export async function loadApiTokensAsync(): Promise<string[]> {
       '(Set SOLOFORGE_REQUIRE_TOKENS=0 to allow auto-generation on first run.)'
     );
   }
-  const fresh = generateApiToken();
-  await writeVaultTokens([fresh]);
-  return [fresh];
+  const store = await import('./tokenStore');
+  await store.tokenStoreInit();
+  const fresh = await store.createToken({ source: 'init' });
+  return [fresh.token];
 }
 
 /**

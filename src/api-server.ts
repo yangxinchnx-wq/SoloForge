@@ -49,6 +49,11 @@ import {
 import { AuditSinkSurreal, createAuditSinkFromSurreal } from './security/auditSinkSurreal';
 import { queryAuditLog, countAuditLog, type AuditQuery } from './security/auditQuery';
 import {
+  extractTenantId,
+  parseBindings,
+  type TenantContextConfig,
+} from './security/tenantContext';
+import {
   handleVaultList,
   handleVaultGet,
   handleVaultPut,
@@ -118,6 +123,18 @@ export class SoloForgeApiServer {
   public setAuditSink(sink: AuditSink): void { (this as any).audit = sink; }
   public setPiiSalt(s: string): void { (this as any).piiSalt = s; }
   private auditSinkSurreal: AuditSinkSurreal | null = null;
+  private auditChangeFeed: any = null;  // AuditChangeFeed, lazy import 避免循环
+
+  // 🏢 多租户配置 (从 env 加载, 启动后只读, 可通过 /api/audit/sinks/config 重载)
+  private tenantCtxConfig: TenantContextConfig = {
+    headerName: process.env.SOLOFORGE_TENANT_HEADER || 'X-Tenant-Id',
+    pathPrefix: process.env.SOLOFORGE_TENANT_PATH_PREFIX || '/api/t/',
+    defaultTenant: process.env.SOLOFORGE_TENANT_DEFAULT || '_default',
+    bindings: parseBindings(process.env.SOLOFORGE_TENANT_BINDINGS),
+  };
+  private getTenantBindings(): Record<string, string[]> {
+    return this.tenantCtxConfig.bindings ?? {};
+  }
 
   private observations: Array<{
     cycleId: number;
@@ -192,6 +209,33 @@ export class SoloForgeApiServer {
         });
         this.setAuditSink(this.auditSinkSurreal.asSink());
         logger.info('ApiServer', '🗃️  Audit sink -> SurrealDB httpAuditLog (stdout mirror on, fallback on)');
+
+        // 📤 Audit Change Feed → Kafka: 启动 poll worker 推送到告警 topic
+        //   - 默认启用, 除非 SOLOFORGE_CHANGE_FEED_DISABLED=1
+        //   - 需要 env: SOLOFORGE_KAFKA_BROKERS (逗号分隔), SOLOFORGE_KAFKA_TOPIC
+        if (process.env.SOLOFORGE_CHANGE_FEED_DISABLED !== '1') {
+          const brokers = (process.env.SOLOFORGE_KAFKA_BROKERS || '').split(',').map((s) => s.trim()).filter(Boolean);
+          const topic = process.env.SOLOFORGE_KAFKA_TOPIC || 'soloforge.audit';
+          if (brokers.length > 0) {
+            try {
+              const { KafkaAuditSink } = await import('./security/auditSinkKafka');
+              const { AuditChangeFeed } = await import('./security/auditChangeFeed');
+              const kafka = new KafkaAuditSink({ brokers, topic, clientId: 'soloforge-api' });
+              const feed = new AuditChangeFeed(this.surrealPersistence as any, kafka, {
+                pollIntervalMs: parseInt(process.env.SOLOFORGE_CHANGE_FEED_INTERVAL_MS || '1000', 10),
+                batchSize: parseInt(process.env.SOLOFORGE_CHANGE_FEED_BATCH_SIZE || '200', 10),
+                lookbackMs: parseInt(process.env.SOLOFORGE_CHANGE_FEED_LOOKBACK_MS || '60000', 10),
+              });
+              feed.start();
+              this.auditChangeFeed = feed;
+              logger.info('ApiServer', `📤 Audit change feed -> Kafka brokers=[${brokers.join(',')}] topic=${topic}`);
+            } catch (e) {
+              logger.warn('ApiServer', `Change feed not started: ${(e as Error).message}`);
+            }
+          } else {
+            logger.info('ApiServer', '📤 Audit change feed disabled (no SOLOFORGE_KAFKA_BROKERS)');
+          }
+        }
       } catch (e) {
         logger.warn('ApiServer', `Audit sink surreal not mounted: ${(e as Error).message}`);
       }
@@ -251,6 +295,12 @@ export class SoloForgeApiServer {
       client.end();
     }
     this.sseClients.clear();
+
+    // 📤 Stop audit change feed
+    if (this.auditChangeFeed) {
+      try { this.auditChangeFeed.stop(); } catch { /* ignore */ }
+      this.auditChangeFeed = null;
+    }
 
     // 🗃️ Flush audit sink (best-effort, 5s 超时)
     if (this.auditSinkSurreal) {
@@ -323,6 +373,9 @@ export class SoloForgeApiServer {
     const remoteAddress = req.socket?.remoteAddress;
     const ipHash = remoteAddress ? hashPii(remoteAddress, this.piiSalt) : undefined;
 
+    // 🏢 解析请求的 tenantId (header X-Tenant-Id 或 path /api/t/{id})
+    const requestedTenantId = extractTenantId(reqPath, req.headers, this.tenantCtxConfig);
+
     const ipKey = `ip:${remoteAddress || 'unknown'}`;
     if (!this.rateLimiter.allow(ipKey)) {
       const ra = this.rateLimiter.retryAfterSec(ipKey);
@@ -330,6 +383,7 @@ export class SoloForgeApiServer {
         id: requestId, timestamp: Date.now(),
         action: 'rate.limit.ip', route: reqPath, method, status: 429,
         remoteAddress: ipHash, userAgent, reason: 'rate_limit_ip',
+        tenantId: requestedTenantId,
       });
       res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': String(ra) });
       res.end(JSON.stringify({ error: 'Too Many Requests', retryAfter: ra }));
@@ -350,6 +404,7 @@ export class SoloForgeApiServer {
           id: requestId, timestamp: Date.now(),
           action: 'body.too_large', route: reqPath, method, status: 413,
           remoteAddress: ipHash, userAgent,
+          tenantId: requestedTenantId,
         });
         res.writeHead(413, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Payload Too Large' }));
@@ -365,6 +420,7 @@ export class SoloForgeApiServer {
 
     const guard = await evaluateRequestAsync({
       reqPath, method, headers: req.headers, query: apiReq.query, remoteAddress,
+      requestedTenantId, tenantBindings: this.getTenantBindings(),
     }, this.authConfig);
 
     if (!guard.allow) {
@@ -376,21 +432,34 @@ export class SoloForgeApiServer {
           remoteAddress: ipHash, userAgent,
           reason: guard.reason,
           autoRevokedTokens: guard.autoRevokedTokens,
+          tenantId: requestedTenantId,
+        });
+      } else if (guard.crossTenant) {
+        this.audit({
+          id: requestId, timestamp: Date.now(),
+          action: 'tenant.cross', route: reqPath, method, status: guard.status,
+          remoteAddress: ipHash, userAgent,
+          reason: guard.reason,
+          tenantId: requestedTenantId,
         });
       } else {
         this.audit({
           id: requestId, timestamp: Date.now(),
           action: 'auth.fail', route: reqPath, method, status: guard.status,
           remoteAddress: ipHash, userAgent, reason: guard.reason,
+          tenantId: requestedTenantId,
         });
       }
-      const resBody: any = { error: 'Unauthorized', reason: guard.reason };
+      const resBody: any = { error: guard.status === 403 ? 'Forbidden' : 'Unauthorized', reason: guard.reason };
       if (guard.reuseDetected) resBody.reuseDetected = true;
+      if (guard.crossTenant) resBody.crossTenant = true;
       res.writeHead(guard.status, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(resBody));
       return;
     }
     apiReq.principal = guard.principal;
+    // 🏢 解析出的 effective tenant (跨租户已被拒, 这里一定有值)
+    const effectiveTenantId = guard.principal?.activeTenantId ?? requestedTenantId ?? '_default';
 
     const isSensitive = reqPath.startsWith('/api/vault') || reqPath.startsWith('/api/admin');
     if (isSensitive) {
@@ -402,6 +471,7 @@ export class SoloForgeApiServer {
           principal: guard.principal, action: 'rate.limit.sensitive',
           route: reqPath, method, status: 429,
           remoteAddress: ipHash, userAgent,
+          tenantId: effectiveTenantId,
         });
         res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': String(ra) });
         res.end(JSON.stringify({ error: 'Too Many Requests', retryAfter: ra }));
@@ -416,6 +486,7 @@ export class SoloForgeApiServer {
         principal: guard.principal, action: 'auth.revoked',
         route: reqPath, method, status: 401,
         remoteAddress: ipHash, userAgent, reason: 'token_revoked',
+        tenantId: effectiveTenantId,
       });
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Unauthorized', reason: 'token_revoked' }));
@@ -443,6 +514,7 @@ export class SoloForgeApiServer {
         principal: guard.principal, action: isSensitive ? 'sensitive.ok' : 'request.ok',
         route: reqPath, method, status: apiRes.status,
         remoteAddress: ipHash, userAgent,
+        tenantId: effectiveTenantId,
       });
     } catch (err: any) {
       logger.error('ApiServer', `Request error on ${reqPath}: ${err.message}`);
@@ -451,6 +523,7 @@ export class SoloForgeApiServer {
         principal: guard.principal, action: 'request.error',
         route: reqPath, method, status: 500,
         remoteAddress: ipHash, userAgent, reason: 'unhandled_exception',
+        tenantId: effectiveTenantId,
       });
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Internal Server Error' }));
@@ -688,7 +761,7 @@ export class SoloForgeApiServer {
       }
     }
 
-    // GET /api/audit/stats — sink 自身统计
+    // GET /api/audit/stats — SurrealDB sink 自身统计
     if (reqPath === '/api/audit/stats' && method === 'GET') {
       const stats = this.auditSinkSurreal?.getStats() ?? null;
       return {
@@ -697,6 +770,52 @@ export class SoloForgeApiServer {
         body: {
           sinkMounted: !!this.auditSinkSurreal,
           stats,
+        },
+      };
+    }
+
+    // GET /api/audit/sinks — 所有 audit sink 状态 (含 composite 子 sink)
+    if (reqPath === '/api/audit/sinks' && method === 'GET') {
+      return {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          surrealMounted: !!this.auditSinkSurreal,
+          surrealStats: this.auditSinkSurreal?.getStats?.() ?? null,
+          changeFeed: this.auditChangeFeed?.getStats?.() ?? null,
+          tenant: {
+            headerName: this.tenantCtxConfig.headerName,
+            pathPrefix: this.tenantCtxConfig.pathPrefix,
+            defaultTenant: this.tenantCtxConfig.defaultTenant,
+            bindingsCount: Object.keys(this.tenantCtxConfig.bindings ?? {}).length,
+          },
+        },
+      };
+    }
+
+    // POST /api/audit/sinks/config — 重载 tenant bindings (从最新 env)
+    //   body: { bindings?: 'kid1:t1,kid2:t1+t2', headerName?, pathPrefix?, defaultTenant? }
+    if (reqPath === '/api/audit/sinks/config' && method === 'POST') {
+      const b = (req.body as any) || {};
+      if (typeof b.bindings === 'string') {
+        this.tenantCtxConfig.bindings = parseBindings(b.bindings);
+      } else if (b.bindingsRaw) {
+        this.tenantCtxConfig.bindings = parseBindings(b.bindingsRaw);
+      }
+      if (typeof b.headerName === 'string') this.tenantCtxConfig.headerName = b.headerName;
+      if (typeof b.pathPrefix === 'string') this.tenantCtxConfig.pathPrefix = b.pathPrefix;
+      if (typeof b.defaultTenant === 'string') this.tenantCtxConfig.defaultTenant = b.defaultTenant;
+      return {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          ok: true,
+          tenant: {
+            headerName: this.tenantCtxConfig.headerName,
+            pathPrefix: this.tenantCtxConfig.pathPrefix,
+            defaultTenant: this.tenantCtxConfig.defaultTenant,
+            bindingsCount: Object.keys(this.tenantCtxConfig.bindings ?? {}).length,
+          },
         },
       };
     }

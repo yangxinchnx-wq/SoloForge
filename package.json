@@ -13,7 +13,12 @@
     "start:observe": "tsx scripts/long-term-observation.ts",
     "archiver:start": "tsx scripts/start-archiver.ts",
     "export:audit": "echo '导出审计报告 - 请先启动系统'",
-    "check:governance": "echo '治理检查 - 请先启动系统'"
+    "check:governance": "echo '治理检查 - 请先启动系统'",
+    "token:init": "tsx scripts/token-cli.ts init",
+    "token:rotate": "tsx scripts/token-cli.ts rotate",
+    "token:revoke": "tsx scripts/token-cli.ts revoke",
+    "token:list": "tsx scripts/token-cli.ts list",
+    "token:show": "tsx scripts/token-cli.ts show"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -27,6 +32,7 @@
     "@types/express": "^5.0.6",
     "express": "^5.2.1",
     "ioredis": "^5.11.0",
+    "kafkajs": "^2.2.4",
     "motion": "^12.40.0",
     "surrealdb": "^2.0.3",
     "ulid": "^3.0.2",
