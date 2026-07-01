@@ -8,6 +8,7 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { RuntimeKernel, RuntimeState } from './kernel/runtime-kernel';
@@ -632,6 +633,27 @@ export class SoloForgeApiServer {
     }
     if (reqPath === '/api/vault/verify-passphrase' && method === 'POST') {
       return this.vaultResultToApi(await handleVaultVerifyPassphrase(req.body));
+    }
+
+    // Analytics APIs (DuckDB OLAP, 2026-07-02)
+    if (reqPath === '/api/analytics/health' && method === 'GET') {
+      return this.handleAnalyticsHealth();
+    }
+    if (reqPath === '/api/analytics/queries' && method === 'GET') {
+      return this.handleAnalyticsQueries();
+    }
+    const analyticsRunMatch = reqPath.match(/^\/api\/analytics\/run\/([A-Za-z0-9_-]{1,64})$/);
+    if (analyticsRunMatch && method === 'GET') {
+      return this.handleAnalyticsRun(decodeURIComponent(analyticsRunMatch[1]));
+    }
+    if (reqPath === '/api/analytics/direct' && method === 'POST') {
+      return this.handleAnalyticsDirect(req.body);
+    }
+    if (reqPath === '/api/analytics/snapshot' && method === 'POST') {
+      return this.handleAnalyticsSnapshot(req.body);
+    }
+    if (reqPath === '/api/analytics/parquet' && method === 'POST') {
+      return this.handleAnalyticsParquet(req.body);
     }
 
     return { status: 404, headers: { 'Content-Type': 'application/json' }, body: { error: 'Not Found' } };
@@ -1531,6 +1553,294 @@ soloforge_kernel_version{state="${this.kernel['state'] || 'READY'}"} ${this.kern
         total: eventLog.length,
         connected: true
       }
+    };
+  }
+
+  // ============================================================
+  // DuckDB Analytics Handlers (2026-07-02)
+  //   /api/analytics/health     GET   — 探活 (duckdb.exe + sqlite)
+  //   /api/analytics/queries    GET   — 列出 4 个内置聚合查询模板
+  //   /api/analytics/run/:name  GET   — 跑指定查询 (read-only)
+  //   /api/analytics/direct     POST  — 任意 SQL (read-only 推荐)
+  //   /api/analytics/snapshot   POST  — 抽 SQLite → .duckdb
+  //   /api/analytics/parquet    POST  — 抽 SQLite → .parquet (训练数据)
+  //
+  // 直接 spawn duckdb.exe CLI（与 Python analytics.py 同一二进制），
+  // 跳过 Python 包装，零跨语言延迟。SQLite ATTACH 走 db.main.<table>。
+  // ============================================================
+
+  private static readonly ANALYTICS_QUERIES: Record<string, { description: string; sql: string }> = {
+    governance_summary: {
+      description: "治理合规记录按 action_taken 聚合（最近）",
+      sql: `SELECT action_taken, compliant, COUNT(*) AS cnt
+            FROM db.main.governance_record GROUP BY action_taken, compliant
+            ORDER BY cnt DESC LIMIT 20`,
+    },
+    top_institutions: {
+      description: "Top 机构 by 信誉分 (reputation)",
+      sql: `SELECT entity_id, entity_type, score, name
+            FROM db.main.reputation ORDER BY CAST(score AS DOUBLE) DESC NULLS LAST LIMIT 10`,
+    },
+    law_violation_by_type: {
+      description: "法律违规按 status 聚合 + 平均 ID 分布",
+      sql: `SELECT status, COUNT(*) AS cnt, COUNT(DISTINCT law_id) AS distinct_laws
+            FROM db.main.law_violation GROUP BY status
+            HAVING cnt > 0 ORDER BY cnt DESC LIMIT 20`,
+    },
+    memory_table_counts: {
+      description: "每个业务表的 DuckDB 视角行数",
+      sql: `SELECT 'coalition' AS table_name, COUNT(*) AS row_count FROM db.main.coalition
+            UNION ALL SELECT 'economy', COUNT(*) FROM db.main.economy
+            UNION ALL SELECT 'governance', COUNT(*) FROM db.main.governance
+            UNION ALL SELECT 'governance_record', COUNT(*) FROM db.main.governance_record
+            UNION ALL SELECT 'law', COUNT(*) FROM db.main.law
+            UNION ALL SELECT 'law_violation', COUNT(*) FROM db.main.law_violation
+            UNION ALL SELECT 'reputation', COUNT(*) FROM db.main.reputation
+            UNION ALL SELECT 'reputation_record', COUNT(*) FROM db.main.reputation_record
+            UNION ALL SELECT 'social_memory', COUNT(*) FROM db.main.social_memory
+            UNION ALL SELECT 'credit_transaction', COUNT(*) FROM db.main.credit_transaction
+            UNION ALL SELECT 'economy_record', COUNT(*) FROM db.main.economy_record
+            UNION ALL SELECT 'culture', COUNT(*) FROM db.main.culture
+            UNION ALL SELECT 'institution', COUNT(*) FROM db.main.institution
+            ORDER BY row_count DESC`,
+    },
+  };
+
+  private static readonly ANALYTICS_SNAPSHOT_TABLES: string[] = [
+    "agent", "cluster", "memory", "reputation", "reputation_record",
+    "event", "transaction", "credit_transaction", "coalition",
+    "governance_record", "law", "law_violation", "economy_record",
+  ];
+
+  private resolveDuckDbBinary(): string | null {
+    const candidates = [
+      path.resolve(process.cwd(), "bin", "duckdb", "duckdb.exe"),
+      "C:/Users/yangx/Desktop/SoloForge/bin/duckdb/duckdb.exe",
+    ];
+    for (const c of candidates) {
+      if (fs.existsSync(c)) return c;
+    }
+    return null;
+  }
+
+  private resolveAnalyticsSqlitePath(): string | null {
+    const candidates = [
+      path.resolve(process.cwd(), "python", "data", "ai_society", "ai_society.db"),
+      "C:/Users/yangx/Desktop/SoloForge/python/data/ai_society/ai_society.db",
+    ];
+    for (const c of candidates) {
+      if (fs.existsSync(c)) return c;
+    }
+    return null;
+  }
+
+  private runDuckDbQuery(sql: string, timeoutMs: number = 30000): { ok: boolean; csv: string; stderr: string; elapsedMs: number } {
+    const bin = this.resolveDuckDbBinary();
+    if (!bin) return { ok: false, csv: "", stderr: "duckdb.exe not found", elapsedMs: 0 };
+    const sqlite = this.resolveAnalyticsSqlitePath();
+    if (!sqlite) return { ok: false, csv: "", stderr: "ai_society.db not found", elapsedMs: 0 };
+    const attach = sqlite.replace(/\\/g, "/");
+    const fullSql = `INSTALL sqlite; LOAD sqlite; ATTACH '${attach}' AS db (TYPE sqlite, READ_ONLY); ${sql}`;
+    const t0 = Date.now();
+    const proc = spawnSync(bin, ["-csv", "-c", fullSql], { encoding: "utf8", timeout: timeoutMs, windowsHide: true });
+    return {
+      ok: proc.status === 0,
+      csv: proc.stdout || "",
+      stderr: proc.stderr || "",
+      elapsedMs: Date.now() - t0,
+    };
+  }
+
+  private parseCsv(csv: string): string[][] {
+    return csv.split("\n").filter((l) => l.length > 0).map((l) => l.split(","));
+  }
+
+  private handleAnalyticsHealth(): ApiResponse {
+    const bin = this.resolveDuckDbBinary();
+    const sqlite = this.resolveAnalyticsSqlitePath();
+    const versionProc = bin ? spawnSync(bin, ["-version"], { encoding: "utf8", timeout: 5000, windowsHide: true }) : null;
+    const version = versionProc?.status === 0 ? (versionProc.stdout || "").trim() : null;
+    return {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+      body: {
+        duckdb_available: !!bin,
+        duckdb_binary: bin,
+        duckdb_version: version,
+        sqlite_path: sqlite,
+        sqlite_exists: !!sqlite,
+        queries_defined: Object.keys(SoloForgeApiServer.ANALYTICS_QUERIES),
+        snapshot_tables: SoloForgeApiServer.ANALYTICS_SNAPSHOT_TABLES,
+      },
+    };
+  }
+
+  private handleAnalyticsQueries(): ApiResponse {
+    return {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+      body: {
+        queries: Object.entries(SoloForgeApiServer.ANALYTICS_QUERIES).map(([name, spec]) => ({
+          name,
+          description: spec.description,
+        })),
+      },
+    };
+  }
+
+  private handleAnalyticsRun(name: string): ApiResponse {
+    const spec = SoloForgeApiServer.ANALYTICS_QUERIES[name];
+    if (!spec) {
+      return { status: 404, headers: { "Content-Type": "application/json" }, body: { error: `Unknown query: ${name}`, available: Object.keys(SoloForgeApiServer.ANALYTICS_QUERIES) } };
+    }
+    const r = this.runDuckDbQuery(spec.sql);
+    if (!r.ok) {
+      return { status: 500, headers: { "Content-Type": "application/json" }, body: { error: "duckdb query failed", stderr: r.stderr, query: name } };
+    }
+    const rows = this.parseCsv(r.csv);
+    return {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+      body: {
+        query_name: name,
+        description: spec.description,
+        row_count: Math.max(0, rows.length - 1),
+        rows,
+        elapsed_ms: r.elapsedMs,
+      },
+    };
+  }
+
+  private handleAnalyticsDirect(body: any): ApiResponse {
+    const sql = String(body?.sql || "").trim();
+    if (!sql) {
+      return { status: 400, headers: { "Content-Type": "application/json" }, body: { error: "sql is required (POST body: { sql: 'SELECT ...' })" } };
+    }
+    // 防御：拦截明显破坏性语句（无 WHERE 的 DROP/TRUNCATE/DELETE/UPDATE）
+    const upper = sql.toUpperCase().replace(/\s+/g, " ");
+    if (/\b(DROP|TRUNCATE)\b/.test(upper) || (/\b(DELETE\s+FROM|UPDATE\s+\w+\s+SET)\b/.test(upper) && !upper.includes("WHERE"))) {
+      return { status: 403, headers: { "Content-Type": "application/json" }, body: { error: "destructive statement rejected" } };
+    }
+    const r = this.runDuckDbQuery(sql);
+    if (!r.ok) {
+      return { status: 500, headers: { "Content-Type": "application/json" }, body: { error: "duckdb query failed", stderr: r.stderr } };
+    }
+    const rows = this.parseCsv(r.csv);
+    return {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+      body: { row_count: Math.max(0, rows.length - 1), rows, elapsed_ms: r.elapsedMs },
+    };
+  }
+
+  private handleAnalyticsSnapshot(body: any): ApiResponse {
+    const outPathRaw = body?.out_path || path.resolve(process.cwd(), "python", "data", "ai_society", "analytics", "snapshot.duckdb");
+    const outPath = path.resolve(outPathRaw);
+    const tables: string[] = Array.isArray(body?.tables) && body.tables.length > 0
+      ? body.tables
+      : SoloForgeApiServer.ANALYTICS_SNAPSHOT_TABLES;
+
+    const allowed = new Set(SoloForgeApiServer.ANALYTICS_SNAPSHOT_TABLES);
+    for (const t of tables) {
+      if (!allowed.has(t)) {
+        return { status: 400, headers: { "Content-Type": "application/json" }, body: { error: `table not in whitelist: ${t}`, allowed: [...allowed] } };
+      }
+    }
+
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
+
+    const bin = this.resolveDuckDbBinary();
+    const sqlite = this.resolveAnalyticsSqlitePath();
+    if (!bin || !sqlite) {
+      return { status: 503, headers: { "Content-Type": "application/json" }, body: { error: "duckdb.exe or ai_society.db not available" } };
+    }
+    const attachSrc = sqlite.replace(/\\/g, "/");
+    const attachDst = outPath.replace(/\\/g, "/");
+    const prefix = `INSTALL sqlite; LOAD sqlite; ATTACH '${attachSrc}' AS src (TYPE sqlite, READ_ONLY); ATTACH '${attachDst}' AS dst; CREATE SCHEMA IF NOT EXISTS dst.main; `;
+
+    const t0 = Date.now();
+    const results: Array<{ table: string; row_count: number }> = [];
+    for (const table of tables) {
+      const r1 = spawnSync(bin, ["-c", prefix + `CREATE OR REPLACE TABLE dst.main.${table} AS SELECT * FROM src.main.${table} WHERE 0`], { encoding: "utf8", timeout: 30000, windowsHide: true });
+      if (r1.status !== 0) {
+        return { status: 500, headers: { "Content-Type": "application/json" }, body: { error: `schema copy failed for ${table}`, stderr: r1.stderr } };
+      }
+      const r2 = spawnSync(bin, ["-c", prefix + `INSERT INTO dst.main.${table} SELECT * FROM src.main.${table}`], { encoding: "utf8", timeout: 30000, windowsHide: true });
+      if (r2.status !== 0) {
+        return { status: 500, headers: { "Content-Type": "application/json" }, body: { error: `data copy failed for ${table}`, stderr: r2.stderr } };
+      }
+      const r3 = spawnSync(bin, ["-csv", "-c", prefix + `SELECT COUNT(*) FROM dst.main.${table}`], { encoding: "utf8", timeout: 10000, windowsHide: true });
+      const cnt = parseInt((r3.stdout || "").trim().split("\n").pop() || "0", 10) || 0;
+      results.push({ table, row_count: cnt });
+    }
+    const elapsedMs = Date.now() - t0;
+    const sizeBytes = fs.existsSync(outPath) ? fs.statSync(outPath).size : 0;
+    return {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+      body: {
+        out_path: outPath,
+        tables_exported: results,
+        total_rows: results.reduce((s, r) => s + r.row_count, 0),
+        size_bytes: sizeBytes,
+        elapsed_ms: elapsedMs,
+      },
+    };
+  }
+
+  private handleAnalyticsParquet(body: any): ApiResponse {
+    const outDirRaw = body?.out_dir || path.resolve(process.cwd(), "python", "data", "ai_society", "analytics", "parquet");
+    const outDir = path.resolve(outDirRaw);
+    const tables: string[] = Array.isArray(body?.tables) && body.tables.length > 0
+      ? body.tables
+      : SoloForgeApiServer.ANALYTICS_SNAPSHOT_TABLES;
+
+    const allowed = new Set(SoloForgeApiServer.ANALYTICS_SNAPSHOT_TABLES);
+    for (const t of tables) {
+      if (!allowed.has(t)) {
+        return { status: 400, headers: { "Content-Type": "application/json" }, body: { error: `table not in whitelist: ${t}`, allowed: [...allowed] } };
+      }
+    }
+
+    fs.mkdirSync(outDir, { recursive: true });
+    const bin = this.resolveDuckDbBinary();
+    if (!bin) {
+      return { status: 503, headers: { "Content-Type": "application/json" }, body: { error: "duckdb.exe not available" } };
+    }
+    const sqlite = this.resolveAnalyticsSqlitePath();
+    if (!sqlite) {
+      return { status: 503, headers: { "Content-Type": "application/json" }, body: { error: "ai_society.db not available" } };
+    }
+    const attachSrc = sqlite.replace(/\\/g, "/");
+    const tmpDuckDb = path.join(outDir, "_snapshot.duckdb");
+    if (fs.existsSync(tmpDuckDb)) fs.unlinkSync(tmpDuckDb);
+    const attachTmp = tmpDuckDb.replace(/\\/g, "/");
+    const prefix = `INSTALL sqlite; LOAD sqlite; ATTACH '${attachSrc}' AS src (TYPE sqlite, READ_ONLY); ATTACH '${attachTmp}' AS dst; `;
+
+    for (const table of tables) {
+      const r1 = spawnSync(bin, ["-c", prefix + `CREATE OR REPLACE TABLE dst.main.${table} AS SELECT * FROM src.main.${table}`], { encoding: "utf8", timeout: 30000, windowsHide: true });
+      if (r1.status !== 0) {
+        return { status: 500, headers: { "Content-Type": "application/json" }, body: { error: `snapshot copy failed for ${table}`, stderr: r1.stderr } };
+      }
+    }
+
+    const files: Array<{ table: string; path: string; size_bytes: number }> = [];
+    for (const table of tables) {
+      const parquetPath = path.join(outDir, `${table}.parquet`);
+      const r = spawnSync(bin, ["-c", prefix + `COPY dst.main.${table} TO '${parquetPath.replace(/\\/g, "/")}' (FORMAT PARQUET)`], { encoding: "utf8", timeout: 30000, windowsHide: true });
+      if (r.status !== 0) {
+        return { status: 500, headers: { "Content-Type": "application/json" }, body: { error: `parquet export failed for ${table}`, stderr: r.stderr } };
+      }
+      files.push({ table, path: parquetPath, size_bytes: fs.existsSync(parquetPath) ? fs.statSync(parquetPath).size : 0 });
+    }
+
+    try { fs.unlinkSync(tmpDuckDb); } catch { /* ignore */ }
+
+    return {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+      body: { out_dir: outDir, files },
     };
   }
 }
