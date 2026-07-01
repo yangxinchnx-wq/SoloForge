@@ -26,6 +26,46 @@ let canvasHostWindow = null;
 /** canvas sessionId -> { pid, port, hwnd, process } */
 const canvasSessions = new Map();
 
+// ── Content-Security-Policy ──
+// dev 模式允许 unsafe-eval（Vite HMR 需要 new Function / eval）
+// prod 模式严格：禁止 unsafe-eval、unsafe-inline（除 style）、只允许同源
+function buildCspHeader(isDev) {
+  if (isDev) {
+    return [
+      "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: ws: http://localhost:* http://127.0.0.1:*",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:* http://127.0.0.1:*",
+      "style-src 'self' 'unsafe-inline' http://localhost:* http://127.0.0.1:*",
+      "img-src 'self' data: blob: http://localhost:* http://127.0.0.1:*",
+      "font-src 'self' data: http://localhost:* http://127.0.0.1:*",
+      "connect-src 'self' ws: http://localhost:* http://127.0.0.1:*",
+    ].join('; ');
+  }
+  return [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "connect-src 'self' ws: wss: http://localhost:* http://127.0.0.1:*",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+  ].join('; ');
+}
+
+function applyCsp() {
+  const csp = buildCspHeader(isDev);
+  session.defaultSession.webRequest.onHeadersReceived((details, cb) => {
+    cb({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [csp],
+      },
+    });
+  });
+}
+
 // ── API 中间人网关 ──
 // 纯透传：拦截 UI 发的 /metrics/* /ui/*，把目标从 3000 重写到 3001（原后端）
 // 保留 /api/* 不重写（由 UI/server.ts 自身 Express 提供，优先级最高）
@@ -499,6 +539,7 @@ function buildMenu() {
 
 app.whenReady().then(() => {
   isDev = !app.isPackaged;
+  applyCsp();
   setupApiProxy();
   buildMenu();
   createWindow();                  // 先创建主窗口

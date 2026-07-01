@@ -26,6 +26,26 @@ import { AgentRegistry, AgentDispatchRequest } from './core/agent/agent-registry
 import { AgentDecisionOrchestrator } from './core/agent/agent-decision-orchestrator';
 import { AgentEventHub } from './core/agent/agent-event-hub';
 import {
+  evaluateRequest,
+  corsHeadersFor,
+  safeJoin,
+  defaultAuthConfig,
+  AuthConfig,
+  Principal,
+  RateLimiter,
+  defaultRateLimit,
+  strictRateLimit,
+  securityHeaders,
+  MAX_BODY_BYTES,
+  getOrAssignRequestId,
+  hashPii,
+  loadApiTokens,
+  loadRevokedTokens,
+  defaultAuditSink,
+  AuditEvent,
+  AuditSink,
+} from './security/auth';
+import {
   handleVaultList,
   handleVaultGet,
   handleVaultPut,
@@ -47,6 +67,8 @@ interface ApiRequest {
   query: Record<string, string>;
   body: any;
   headers: http.IncomingHttpHeaders;
+  remoteAddress?: string;
+  principal?: Principal;
 }
 
 interface ApiResponse {
@@ -70,6 +92,8 @@ export class SoloForgeApiServer {
   private agentRegistry: AgentRegistry | null = null;
   private agentOrchestrator: AgentDecisionOrchestrator | null = null;
   private agentEventHub: AgentEventHub | null = null;
+  // 🧰 P9 outbox bridge (B3 修复, audit 2026-06-30)
+  private reputationOutboxBridge: any = null;
   private startedAt: number = Date.now();
   private prevCpuTimes: { idle: number; total: number } | null = null;
   private bytesTransferred: { sent: number; received: number } = { sent: 0, received: 0 };
@@ -78,6 +102,19 @@ export class SoloForgeApiServer {
   private networkCacheMs = 1000; // 1ç§ç¼å­
   // è§æµç³»ç»ç¶æ
   private isObserving = false;
+  private authConfig: AuthConfig = defaultAuthConfig;
+  public setAuthConfig(cfg: AuthConfig): void { this.authConfig = cfg; }
+  public setAgentRegistry(registry: AgentRegistry): void { this.agentRegistry = registry; }
+  public setAgentOrchestrator(orchestrator: AgentDecisionOrchestrator): void { this.agentOrchestrator = orchestrator; }
+
+  // Production hardening
+  private readonly rateLimiter = new RateLimiter(defaultRateLimit);
+  private readonly strictRateLimiter = new RateLimiter(strictRateLimit);
+  private audit: AuditSink = defaultAuditSink;
+  private readonly piiSalt = process.env.SOLOFORGE_PII_SALT || 'soloforge-default-salt';
+  public setAuditSink(sink: AuditSink): void { (this as any).audit = sink; }
+  public setPiiSalt(s: string): void { (this as any).piiSalt = s; }
+
   private observations: Array<{
     cycleId: number;
     timestamp: string;
@@ -116,6 +153,13 @@ export class SoloForgeApiServer {
    * å¯å¨ API æå¡å¨
    */
   public async start(): Promise<void> {
+    // Production startup gate: refuse to start without API tokens unless explicitly disabled.
+    // Resolve tokens: env -> vault -> auto-generate (first-run / desktop mode).
+    // If REQUIRE_TOKENS=1 and nothing is available, loadApiTokensAsync throws.
+    const { loadApiTokensAsync } = await import('./security/auth');
+    const tokens = await loadApiTokensAsync();
+    this.authConfig = { ...this.authConfig, apiTokens: tokens };
+    logger.info("ApiServer", `[auth] ${tokens.length} API token(s) loaded (lengths: ${tokens.map((t) => t.length).join(",")})`);
     return new Promise((resolve, reject) => {
       this.server = http.createServer(async (req, res) => {
         await this.handleRequest(req, res);
@@ -127,7 +171,20 @@ export class SoloForgeApiServer {
         logger.info('ApiServer', `   SSE Events: http://localhost:${this.port}/api/events/stream`);
         logger.info('ApiServer', `   ð°ï¸  Agent WS: ws://localhost:${this.port}/ws/agents`);
 
-        // ð°ï¸ æè½½ agent äºä»¶å¹¿æ­ hub (Electron main ä¸»å¨è¿å¥)
+        // 🧰 P9 outbox bridge 启动 (B3 修复)
+        if (this.kernel && this.surrealPersistence && !this.reputationOutboxBridge) {
+          import('./kernel/orchestration/reputation-outbox-bridge').then(({ ReputationOutboxBridge }) => {
+            this.reputationOutboxBridge = new ReputationOutboxBridge(
+              this.kernel,
+              this.surrealPersistence,
+            );
+            this.reputationOutboxBridge.start().catch((e) => {
+              logger.error('ApiServer', `ReputationOutboxBridge start failed: ${e.message}`);
+            });
+          });
+        }
+
+        // 🧰 agent 事件广播 hub (Electron main 主动连入)
         if (this.kernel && !this.agentEventHub) {
           this.agentEventHub = new AgentEventHub(this.kernel);
           this.agentEventHub.attach(this.server);
@@ -193,9 +250,12 @@ export class SoloForgeApiServer {
   // ============================================================
 
   private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    const isHttps = (req.socket as any)?.encrypted === true;
+    const sec = securityHeaders({ isHttps });
+    for (const [k, v] of Object.entries(sec)) res.setHeader(k, v);
+    const cors = corsHeadersFor(req.headers, this.authConfig);
+    for (const [k, v] of Object.entries(cors)) res.setHeader(k, v);
+    res.setHeader('Access-Control-Allow-Credentials', 'false');
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
@@ -206,20 +266,97 @@ export class SoloForgeApiServer {
     const url = new URL(req.url || '/', `http://localhost:${this.port}`);
     const reqPath = url.pathname;
     const method = req.method || 'GET';
+    const requestId = getOrAssignRequestId(req.headers);
+    res.setHeader('X-Request-Id', requestId);
+    const userAgent = String(req.headers['user-agent'] || '').slice(0, 256);
+    const remoteAddress = req.socket?.remoteAddress;
+    const ipHash = remoteAddress ? hashPii(remoteAddress, this.piiSalt) : undefined;
+
+    const ipKey = `ip:${remoteAddress || 'unknown'}`;
+    if (!this.rateLimiter.allow(ipKey)) {
+      const ra = this.rateLimiter.retryAfterSec(ipKey);
+      this.audit({
+        id: requestId, timestamp: Date.now(),
+        action: 'rate.limit.ip', route: reqPath, method, status: 429,
+        remoteAddress: ipHash, userAgent, reason: 'rate_limit_ip',
+      });
+      res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': String(ra) });
+      res.end(JSON.stringify({ error: 'Too Many Requests', retryAfter: ra }));
+      return;
+    }
 
     let body: any = null;
-    if (method === 'POST') {
-      body = await this.parseBody(req);
+    if (method === 'POST' || method === 'PUT' || method === 'DELETE') {
+      const ct = String(req.headers['content-type'] || '').toLowerCase();
+      if (ct.length > 0 && !ct.includes('application/json')) {
+        res.writeHead(415, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unsupported Media Type' }));
+        return;
+      }
+      body = await this.parseBody(req, MAX_BODY_BYTES);
+      if (body === '__TOO_LARGE__') {
+        this.audit({
+          id: requestId, timestamp: Date.now(),
+          action: 'body.too_large', route: reqPath, method, status: 413,
+          remoteAddress: ipHash, userAgent,
+        });
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Payload Too Large' }));
+        return;
+      }
     }
 
     const apiReq: ApiRequest = {
-      method,
-      url: req.url || '/',
-      path: reqPath,
+      method, url: req.url || '/', path: reqPath,
       query: Object.fromEntries(url.searchParams),
-      body,
-      headers: req.headers
+      body, headers: req.headers, remoteAddress,
     };
+
+    const guard = evaluateRequest({
+      reqPath, method, headers: req.headers, query: apiReq.query, remoteAddress,
+    }, this.authConfig);
+
+    if (!guard.allow) {
+      this.audit({
+        id: requestId, timestamp: Date.now(),
+        action: 'auth.fail', route: reqPath, method, status: guard.status,
+        remoteAddress: ipHash, userAgent, reason: guard.reason,
+      });
+      res.writeHead(guard.status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unauthorized', reason: guard.reason }));
+      return;
+    }
+    apiReq.principal = guard.principal;
+
+    const isSensitive = reqPath.startsWith('/api/vault') || reqPath.startsWith('/api/admin');
+    if (isSensitive) {
+      const idKey = `id:${guard.principal?.id || ipKey}`;
+      if (!this.strictRateLimiter.allow(idKey)) {
+        const ra = this.strictRateLimiter.retryAfterSec(idKey);
+        this.audit({
+          id: requestId, timestamp: Date.now(),
+          principal: guard.principal, action: 'rate.limit.sensitive',
+          route: reqPath, method, status: 429,
+          remoteAddress: ipHash, userAgent,
+        });
+        res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': String(ra) });
+        res.end(JSON.stringify({ error: 'Too Many Requests', retryAfter: ra }));
+        return;
+      }
+    }
+
+    const bearer = String(req.headers['authorization'] || '').replace(/^Bearer\s+/i, '').trim();
+    if (bearer && loadRevokedTokens().has(bearer)) {
+      this.audit({
+        id: requestId, timestamp: Date.now(),
+        principal: guard.principal, action: 'auth.revoked',
+        route: reqPath, method, status: 401,
+        remoteAddress: ipHash, userAgent, reason: 'token_revoked',
+      });
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unauthorized', reason: 'token_revoked' }));
+      return;
+    }
 
     try {
       const apiRes = await this.route(apiReq);
@@ -228,35 +365,57 @@ export class SoloForgeApiServer {
         this.handleSSE(req, res);
         return;
       }
-
-      // è®¡ç®ååºå¤§å°
       const responseBody = typeof apiRes.body === 'string' ? apiRes.body : JSON.stringify(apiRes.body);
       this.bytesTransferred.sent += Buffer.byteLength(responseBody, 'utf8');
-      this.bytesTransferred.received += Buffer.byteLength(body || '', 'utf8');
-
+      this.bytesTransferred.received += Buffer.byteLength(typeof body === 'string' ? body : (body ? JSON.stringify(body) : ''), 'utf8');
       res.writeHead(apiRes.status, {
         'Content-Type': apiRes.headers['Content-Type'] || 'application/json',
-        ...apiRes.headers
+        ...apiRes.headers,
       });
       res.end(responseBody);
+
+      this.audit({
+        id: requestId, timestamp: Date.now(),
+        principal: guard.principal, action: isSensitive ? 'sensitive.ok' : 'request.ok',
+        route: reqPath, method, status: apiRes.status,
+        remoteAddress: ipHash, userAgent,
+      });
     } catch (err: any) {
-      logger.error('ApiServer', `Request error: ${err.message}`);
+      logger.error('ApiServer', `Request error on ${reqPath}: ${err.message}`);
+      this.audit({
+        id: requestId, timestamp: Date.now(),
+        principal: guard.principal, action: 'request.error',
+        route: reqPath, method, status: 500,
+        remoteAddress: ipHash, userAgent, reason: 'unhandled_exception',
+      });
       res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: err.message }));
+      res.end(JSON.stringify({ error: 'Internal Server Error' }));
     }
   }
-
-  private parseBody(req: http.IncomingMessage): Promise<any> {
+  private parseBody(req: http.IncomingMessage, maxBytes: number = MAX_BODY_BYTES): Promise<any> {
     return new Promise((resolve) => {
+      let size = 0;
       let data = '';
-      req.on('data', chunk => data += chunk);
+      let aborted = false;
+      req.on('data', (chunk: Buffer) => {
+        size += chunk.length;
+        if (size > maxBytes) {
+          aborted = true;
+          resolve('__TOO_LARGE__');
+          try { req.destroy(); } catch { /* ignore */ }
+          return;
+        }
+        data += chunk.toString('utf8');
+      });
       req.on('end', () => {
+        if (aborted) return;
         try {
           resolve(data ? JSON.parse(data) : null);
         } catch {
           resolve(null);
         }
       });
+      req.on('error', () => { if (!aborted) resolve(null); });
     });
   }
 
@@ -289,7 +448,8 @@ export class SoloForgeApiServer {
 
     // æµè¯é¡µé¢
     if (reqPath === '/test-nav' && method === 'GET') {
-      const testHtml = fs.readFileSync(path.join('C:/Users/yangx/Desktop/SoloForge/src/ui/test-nav.html'), 'utf-8');
+      const testPath = safeJoin(path.resolve(process.cwd(), 'src', 'ui'), 'test-nav.html');
+      const testHtml = testPath ? fs.readFileSync(testPath, 'utf-8') : '<h1>test-nav not found</h1>';
       return { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' }, body: testHtml };
     }
 
@@ -319,6 +479,44 @@ export class SoloForgeApiServer {
       return { status: 200, headers: { 'Content-Type': 'application/json' }, body: { status: 'ok', uptime: Date.now() - this.startedAt } };
     }
 
+    // =========================================================================
+    // GET /api/auth/bootstrap
+    // =========================================================================
+    // 作用:同机前端(Electron / Tauri / 本地浏览器)启动时,一次性获取当前生效的 API token。
+    //
+    // 安全保证:
+    //   - 硬性限定只能从 127.0.0.1(::1 / IPv4-mapped IPv6 loopback)访问,远程 IP 直接被鉴权层拒
+    //   - 不接受任何 query 参数(避免 XSS / header 注入风险)
+    //   - 不接受 POST/PUT/DELETE,只 GET(幂等)
+    //   - 不返回任何敏感信息(token 之外,只返回 count 和 source 标识)
+    //
+    // 响应:
+    //   {
+    //     "token":  "a3f7...",       // 当前主 token(64 字符 hex)
+    //     "count":  1,                // vault 中有效 token 总数
+    //     "source": "vault" | "env"   // 当前主 token 的来源
+    //   }
+    //
+    // 典型调用:
+    //   curl http://127.0.0.1:<port>/api/auth/bootstrap
+    //
+    // 前端使用建议:
+    //   1. 启动时调用一次,把 token 存到 sessionStorage / 内存
+    //   2. 后续所有 fetch / axios / EventSource 加上 Authorization 头
+    //   3. 收到 401 时重新调一次 bootstrap(应对 token 轮换)
+    // =========================================================================
+    if (reqPath === '/api/auth/bootstrap' && method === 'GET') {
+      return {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          token: this.authConfig.apiTokens[0] || null,
+          count: this.authConfig.apiTokens.length,
+          source: process.env.SOLOFORGE_API_TOKENS ? 'env' : 'vault',
+        },
+      };
+    }
+
     // Admin Dashboard APIs
     if (reqPath === '/api/status' && method === 'GET') {
       return this.handleSystemStatus();
@@ -338,6 +536,26 @@ export class SoloForgeApiServer {
     }
     if (reqPath === '/api/agents/dispute' && method === 'POST') {
       return await this.handleAgentDispute(req.body);
+    }
+    if (reqPath === '/api/agents/bindSubTask' && method === 'POST') {
+      return await this.handleAgentBindSubTask(req.body);
+    }
+    // P1.1 验证用: dev-only hook, 手工 enqueue 一条 ReputationIncrementRequested
+    // 让 outbox_sync + worker + fetch 8766 + SQLite 整条链路走通
+    // 仅当 SOLOFORGE_ENABLE_TEST_HOOK=1 环境变量开启时暴露
+    if (
+      reqPath === '/api/test/reputation-enqueue' &&
+      method === 'POST' &&
+      process.env.SOLOFORGE_ENABLE_TEST_HOOK === '1'
+    ) {
+      return await this.handleTestReputationEnqueue(req.body);
+    }
+    if (
+      reqPath === '/api/test/reputation-bridge-status' &&
+      method === 'GET' &&
+      process.env.SOLOFORGE_ENABLE_TEST_HOOK === '1'
+    ) {
+      return this.handleTestReputationBridgeStatus();
     }
     if (reqPath === '/api/archiver/check' && method === 'POST') {
       return await this.handleArchiverCheck();
@@ -423,11 +641,34 @@ export class SoloForgeApiServer {
    * æ vaultHandler è¿åç VaultRouteResult è½¬æ¢ä¸º API å±ç ApiResponse å½¢ç¶
    * (headers å¯é, é»è®¤ application/json; body éä¼ )
    */
+  // Allow-list of fields that may be returned from /api/vault/* to the browser.
+  // Even if PublicKeyInfo gains a new field in the future, this guard prevents
+  // accidental secret leakage to the front-end (defense-in-depth).
+  private static readonly VAULT_PUBLIC_FIELDS = new Set([
+    'id', 'baseUrl', 'hasKey', 'source', 'createdAt', 'updatedAt',
+    'items', 'count', 'item', 'error', 'verified', 'exported', 'imported' as any as never,
+  ]);
+
+  private redactVaultBody(body: any): any {
+    if (body === null || body === undefined) return body;
+    if (Array.isArray(body)) return body.map((b) => this.redactVaultBody(b));
+       if (typeof body !== 'object') return body;
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(body)) {
+      if (SoloForgeApiServer.VAULT_PUBLIC_FIELDS.has(k)) {
+        out[k] = v;
+      } else if (k === 'items' || k === 'item') {
+        out[k] = this.redactVaultBody(v);
+      }
+    }
+    return out;
+  }
+
   private vaultResultToApi(r: { status: number; headers?: Record<string, string>; body: any }): ApiResponse {
     return {
       status: r.status,
       headers: r.headers || { 'Content-Type': 'application/json' },
-      body: r.body,
+      body: this.redactVaultBody(r.body),
     };
   }
 
@@ -440,7 +681,7 @@ export class SoloForgeApiServer {
       path.join(process.cwd(), 'src', 'ui', 'index.html'),
       path.join(__dirname, 'ui', 'index.html'),
       path.join(process.cwd(), '..', 'src', 'ui', 'index.html'),
-      'C:/Users/yangx/Desktop/SoloForge/src/ui/index.html'
+      path.resolve(process.cwd(), 'src', 'ui', 'index.html')
     ];
 
     for (const uiPath of possiblePaths) {
@@ -666,7 +907,7 @@ export class SoloForgeApiServer {
       const { execSync } = require("child_process");
 
       // ä½¿ç¨ PowerShell èæ¬æä»¶è·åç½ç»æ¥å£æ¯ç§å­èæ°
-      const scriptPath = 'C:/Users/yangx/Desktop/SoloForge/get-network-speed.ps1';
+      const scriptPath = path.resolve(process.cwd(), 'get-network-speed.ps1');
       const psOutput = execSync(
         `powershell -ExecutionPolicy Bypass -File "${scriptPath}"`,
         { encoding: "utf8", timeout: 5000, windowsHide: true }
@@ -830,6 +1071,7 @@ export class SoloForgeApiServer {
       requiresDeepCognition: body?.requiresDeepCognition,
       globalConfidenceMetric: body?.globalConfidenceMetric,
       taskComplexityMetrics: body?.taskComplexityMetrics,
+      chatId: body?.chatId,  // 透传到 emit payload → 前端流送区路由
     };
     try {
       const result = await this.agentOrchestrator.dispatchPacket(req);
@@ -858,6 +1100,78 @@ export class SoloForgeApiServer {
     try {
       const verdict = await this.agentRegistry.raiseDispute(claim, traceId);
       return { status: 200, headers: { 'Content-Type': 'application/json' }, body: { claim, verdict, traceId } };
+    } catch (e: any) {
+      return { status: 500, headers: { 'Content-Type': 'application/json' }, body: { error: e.message } };
+    }
+  }
+
+  /**
+   * B+C 升级配套: 前端流送区在 phase0 阶段调用, 把 packetUuid:workerIdx 绑到
+   *   前端 subTaskId, 这样 executeOnAgent 时能精确构造 streamHook → 工具调用 emit
+   *   → SSE → 流送区 subTask.stepHistory
+   */
+  private async handleAgentBindSubTask(body: any): Promise<ApiResponse> {
+    if (!this.agentRegistry) {
+      return { status: 503, headers: { 'Content-Type': 'application/json' }, body: { error: 'AgentRegistry not initialized' } };
+    }
+    const { packetUuid, workerIdx, chatId, subTaskId, agentId } = body ?? {};
+    if (!packetUuid || workerIdx === undefined || !chatId || !subTaskId || !agentId) {
+      return { status: 400, headers: { 'Content-Type': 'application/json' }, body: { error: 'packetUuid, workerIdx, chatId, subTaskId, agentId are all required' } };
+    }
+    try {
+      const result = this.agentRegistry.bindSubTask({ packetUuid, workerIdx, chatId, subTaskId, agentId });
+      return { status: 200, headers: { 'Content-Type': 'application/json' }, body: result };
+    } catch (e: any) {
+      return { status: 500, headers: { 'Content-Type': 'application/json' }, body: { error: e.message } };
+    }
+  }
+
+  // ============================================================
+  // P1.1 dev-only test hook
+  // ============================================================
+  // 仅当 SOLOFORGE_ENABLE_TEST_HOOK=1 时才被路由调用。
+  // 作用: 手工 emit 一条 ReputationIncrementRequested, 让
+  //   outbox_sync → OutboxWorker → fetch 8766 → AI Society → SQLite
+  // 整条链路在生产进程上跑通。
+  // 字段名严格跟 reputation-bridge.ts:7-16 对齐 (P1.2 核对结果)。
+  private handleTestReputationBridgeStatus(): ApiResponse {
+    if (!this.reputationOutboxBridge) {
+      return { status: 503, headers: { 'Content-Type': 'application/json' }, body: { error: 'ReputationOutboxBridge not started' } };
+    }
+    try {
+      const status = this.reputationOutboxBridge.getStatus();
+      return { status: 200, headers: { 'Content-Type': 'application/json' }, body: status };
+    } catch (e: any) {
+      return { status: 500, headers: { 'Content-Type': 'application/json' }, body: { error: e.message } };
+    }
+  }
+
+  private async handleTestReputationEnqueue(body: any): Promise<ApiResponse> {
+    if (!this.reputationOutboxBridge) {
+      return { status: 503, headers: { 'Content-Type': 'application/json' }, body: { error: 'ReputationOutboxBridge not started' } };
+    }
+    if (!this.kernel || !this.kernel.eventBus) {
+      return { status: 503, headers: { 'Content-Type': 'application/json' }, body: { error: 'kernel/eventBus not ready' } };
+    }
+    const payload = {
+      commandId: body?.commandId ?? `test_cmd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      txId: body?.txId ?? `test_tx_${Date.now()}`,
+      traceId: body?.traceId ?? `test_trace_${Date.now()}`,
+      agentClusterId: body?.agentClusterId ?? 'test_cluster',
+      reputationIncrement: typeof body?.reputationIncrement === 'number' ? body.reputationIncrement : 1.0,
+      reasonCode: body?.reasonCode ?? 'TEST_HOOK_E2E',
+      kernelVersionSeal: body?.kernelVersionSeal ?? 1,
+      timestamp: Date.now(),
+    };
+    try {
+      // 关键: emit 而不是直接 enqueue, 走 bridge 订阅的真实路径
+      const { RuntimeEvent } = await import('./core/events/runtime-events');
+      this.kernel.eventBus.emit(RuntimeEvent.ReputationIncrementRequested, payload);
+      return {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: { ok: true, payload, note: 'emit 完成, outbox worker 100ms 内会推到 8766' },
+      };
     } catch (e: any) {
       return { status: 500, headers: { 'Content-Type': 'application/json' }, body: { error: e.message } };
     }
@@ -912,7 +1226,7 @@ export class SoloForgeApiServer {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*'
+      'Access-Control-Allow-Origin': (this.authConfig.allowedOrigins.includes(String(req.headers['origin'] || '')) ? String(req.headers['origin']) : (this.authConfig.allowedOrigins[0] || ''))
     });
 
     res.write(`data: ${JSON.stringify({ event: 'connected', timestamp: Date.now() })}\n\n`);

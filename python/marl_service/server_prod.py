@@ -21,6 +21,11 @@ if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
     sys.stderr.reconfigure(encoding='utf-8')
 
+# P0 修复 (2026-07-01, B2): 把 python/ 加到 sys.path, 让 `python -m marl_service.server_prod` 能找到 soloforge_ai_society.*
+_PROJECT_PY = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_PY not in sys.path:
+    sys.path.insert(0, _PROJECT_PY)
+
 from typing import Dict, Any, Optional
 
 # Optional torch import
@@ -435,6 +440,27 @@ async def main():
         print(f"✅ Critic warmed: variance={server.critic_variance:.6f}")
     else:
         print(f"⚠️  Critic not warmed (running in simulation mode)")
+
+    # P0 修复 (2026-07-01, B2): 启动 8766 HTTP server 接收 Node outbox push
+    try:
+        from soloforge_ai_society.services.reputation_sync_receiver import (
+            ReputationSyncReceiver, start_sync_http_server,
+        )
+        # 默认 DB 路径: python/data/ai_society/ai_society.db (production)
+        # 不存在会自动创建
+        default_db = os.path.join(_PROJECT_PY, "data", "ai_society", "ai_society.db")
+        os.makedirs(os.path.dirname(default_db), exist_ok=True)
+        receiver_cfg = {
+            "society.reputation.table_name": "reputation_sync_log",
+            "society.reputation.pool_max": 8,
+        }
+        receiver = ReputationSyncReceiver(default_db, receiver_cfg)
+        start_sync_http_server(receiver, host="127.0.0.1", port=8766)
+        print(f"✅ ReputationSync HTTP receiver listening on http://127.0.0.1:8766/sync/reputation (db={default_db})")
+    except Exception as e:
+        print(f"⚠️  Failed to start ReputationSync HTTP receiver: {e}")
+        import traceback
+        traceback.print_exc()
 
     print()
     print(f"Server binding to: tcp://{server.host}:{server.port}")
