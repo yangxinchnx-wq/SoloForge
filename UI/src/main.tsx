@@ -2,7 +2,7 @@ import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
-import { ThemeProvider } from './context/ThemeContext';
+import { ThemeProvider, DEFAULT_FONT_URL, preloadFontByUrl } from './context/ThemeContext';
 
 // Suppress harmless 'ResizeObserver loop completed with undelivered notifications' browser engine warnings
 if (typeof window !== 'undefined') {

@@ -445,6 +445,7 @@ export default function HistoryAndEditorPanel({
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
 
   // ===== dnd-kit drag infra (replaces Reorder.Group) =====
+  const listContainerRef = React.useRef<HTMLDivElement>(null);
   const scrollContainerRef = React.useRef<HTMLDivElement>(null);
   const dragMoveHandlerRef = React.useRef<((ev: MouseEvent) => void) | null>(null);
   const [activeDragId, setActiveDragId] = React.useState<string | null>(null);
