@@ -2,14 +2,15 @@
  * ToggleSwitch 组件结构测试
  *
  * 设计意图:
- *   v4 (2026-06-27) — 自绘 track + thumb, 圆球滑动动画, 细线大尺寸
+ *   v5 (2026-07-02) — 引入 framer-motion 弹簧动画驱动 thumb 滑动
  *   状态机靠 button[aria-checked] 属性选择器, 不依赖兄弟结构或 .peer
  *
  *   这里用 react-dom/server 静态渲染, 卡住关键不变量:
  *   - 单一 <button class="toggle-switch"> 节点, 不能误用 <label>+<input> 老结构
- *   - 内部恰好 2 个 span: 一个 toggle-switch-track, 一个 toggle-switch-thumb
+ *   - 内部 thumb 用 motion.span 渲染 (framer-motion SSR 会输出 <span style="transform:...">)
  *   - aria-checked 跟 checked prop 同步
  *   - disabled 透传, label/title 透传
+ *   - 颜色靠 var(--color-primary) / var(--color-outline) 主题 token, 不写死
  *
  *   选 server-side 渲染而不是 @testing-library/react, 因为项目 devDeps 没装 testing-library;
  *   这里只要看 HTML 结构, 不需要交互式 mount。
@@ -37,16 +38,14 @@ describe('ToggleSwitch — 结构防回归', () => {
     expect(html).not.toContain('<label');
   });
 
-  it('内部恰好 2 个 span: toggle-switch-track + toggle-switch-thumb', () => {
+  it('thumb 用 motion.span 渲染 (framer-motion SSR 输出含 transform inline style)', () => {
     const html = render({
       checked: false,
       onChange: () => {},
       label: '测试开关',
     });
-    const trackMatches = html.match(/toggle-switch-track/g) ?? [];
-    const thumbMatches = html.match(/toggle-switch-thumb/g) ?? [];
-    expect(trackMatches.length).toBeGreaterThanOrEqual(1);
-    expect(thumbMatches.length).toBeGreaterThanOrEqual(1);
+    // framer-motion SSR 会输出 style="transform: translateX(...); translateZ(0); ..."
+    expect(html).toMatch(/<span[^>]*style="[^"]*transform/);
   });
 
   it('不依赖老 .peer 兄弟选择器 (没有 peer sr-only input)', () => {
@@ -126,17 +125,21 @@ describe('ToggleSwitch — 结构防回归', () => {
     expect(html).toMatch(/<button[^>]*class="[^"]*ml-2 mr-3/);
   });
 
-  it('按钮本身具备固定尺寸 (track 44x24, thumb 16x16 由 CSS 决定)', () => {
-    // 组件本身只挂 .toggle-switch class, 真实尺寸由 index.css .toggle-switch { width:44px; height:24px } 给
+  it('track 颜色靠 var(--color-*) 主题 token (关闭时 outline, 开启时 primary)', () => {
+    const off = render({ checked: false, onChange: () => {}, label: '关' });
+    const on = render({ checked: true, onChange: () => {}, label: '开' });
+    expect(off).toContain('var(--color-outline)');
+    expect(on).toContain('var(--color-primary)');
+  });
+
+  it('按钮具备椭圆外观 (borderRadius:9999) + 固定尺寸 44x24', () => {
     const html = render({
       checked: false,
       onChange: () => {},
       label: '开关',
     });
-    // 通过 class 名可被 CSS 命中
-    expect(html).toContain('toggle-switch');
-    // 没有内联 style.width / style.height 强制覆盖
-    expect(html).not.toMatch(/style="[^"]*width:/);
-    expect(html).not.toMatch(/style="[^"]*height:/);
+    expect(html).toContain('border-radius:9999');
+    expect(html).toMatch(/width:44px/);
+    expect(html).toMatch(/height:24px/);
   });
 });
