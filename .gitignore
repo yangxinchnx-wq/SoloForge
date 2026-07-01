@@ -120,3 +120,10 @@ settings-cloud.png
 shots/
 _ui_diff*.txt
 .qdrant-initialized
+
+# Ad-hoc debugging screenshots, type-check dumps and settings diffs (never part of the product)
+diag-*.png
+diag-*.txt
+UI/settings.diff
+UI/typecheck.out
+UI/tc*.full
