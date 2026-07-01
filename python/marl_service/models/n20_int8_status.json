@@ -1,0 +1,9 @@
+{
+  "onnxruntime": "1.27.0",
+  "onnx": "1.22.0",
+  "fp32_onnx_size_b": 2521,
+  "d15_p99_ms": 0.0898,
+  "plan_sla_p99_ms": 5.0,
+  "ratio": 0.01796,
+  "status": "FP32 已达 N20 准终态 (INT8 blocked by ORT bug)"
+}

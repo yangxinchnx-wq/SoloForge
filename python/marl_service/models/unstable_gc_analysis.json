@@ -1,0 +1,104 @@
+{
+  "mode_a_keep_all": {
+    "keep_all_latencies": true,
+    "duration_sec": 60.0,
+    "n_total_inferences": 348001,
+    "mem_initial_mb": 201.73,
+    "mem_final_mb": 226.11,
+    "mem_growth_mb": 24.38,
+    "gc_objects_initial": 172440,
+    "gc_objects_final": 172442,
+    "gc_growth": 2,
+    "handles_initial": 219,
+    "handles_final": 216,
+    "handles_growth": -3,
+    "samples": [
+      {
+        "elapsed_sec": 10.0,
+        "mem_mb": 206.67,
+        "gc_objects": 172442,
+        "handles": 219,
+        "list_size": 46003
+      },
+      {
+        "elapsed_sec": 20.0,
+        "mem_mb": 209.38,
+        "gc_objects": 172442,
+        "handles": 219,
+        "list_size": 85686
+      },
+      {
+        "elapsed_sec": 30.0,
+        "mem_mb": 214.84,
+        "gc_objects": 172442,
+        "handles": 218,
+        "list_size": 134250
+      },
+      {
+        "elapsed_sec": 40.0,
+        "mem_mb": 218.8,
+        "gc_objects": 172442,
+        "handles": 218,
+        "list_size": 186772
+      },
+      {
+        "elapsed_sec": 50.0,
+        "mem_mb": 222.42,
+        "gc_objects": 172442,
+        "handles": 218,
+        "list_size": 233972
+      }
+    ]
+  },
+  "mode_b_no_keep": {
+    "keep_all_latencies": false,
+    "duration_sec": 60.0,
+    "n_total_inferences": 372001,
+    "mem_initial_mb": 210.75,
+    "mem_final_mb": 215.42,
+    "mem_growth_mb": 4.66,
+    "gc_objects_initial": 172430,
+    "gc_objects_final": 172432,
+    "gc_growth": 2,
+    "handles_initial": 216,
+    "handles_final": 212,
+    "handles_growth": -4,
+    "samples": [
+      {
+        "elapsed_sec": 10.0,
+        "mem_mb": 210.77,
+        "gc_objects": 172432,
+        "handles": 216,
+        "list_size": 0
+      },
+      {
+        "elapsed_sec": 20.0,
+        "mem_mb": 210.79,
+        "gc_objects": 172432,
+        "handles": 216,
+        "list_size": 0
+      },
+      {
+        "elapsed_sec": 30.0,
+        "mem_mb": 211.91,
+        "gc_objects": 172432,
+        "handles": 216,
+        "list_size": 0
+      },
+      {
+        "elapsed_sec": 40.0,
+        "mem_mb": 212.3,
+        "gc_objects": 172432,
+        "handles": 216,
+        "list_size": 0
+      },
+      {
+        "elapsed_sec": 50.0,
+        "mem_mb": 213.77,
+        "gc_objects": 172432,
+        "handles": 216,
+        "list_size": 0
+      }
+    ]
+  }
+}

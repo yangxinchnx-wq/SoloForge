@@ -1,0 +1,10 @@
+INPUT obs dims=['batch', 12]
+OUTPUT logits dims=['batch', 3]
+---nodes---
+Gemm in=['obs', 'shared_fc.0.weight', 'shared_fc.0.bias'] out=['linear']
+Tanh in=['linear'] out=['tanh']
+Gemm in=['tanh', 'shared_fc.2.weight', 'shared_fc.2.bias'] out=['linear_1']
+Tanh in=['linear_1'] out=['tanh_1']
+Gemm in=['tanh_1', 'actor_head.0.weight', 'actor_head.0.bias'] out=['linear_2']
+Tanh in=['linear_2'] out=['tanh_2']
+Gemm in=['tanh_2', 'actor_head.2.weight', 'actor_head.2.bias'] out=['logits']

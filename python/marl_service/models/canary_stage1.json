@@ -1,0 +1,37 @@
+{
+  "v4_pct_configured": 1,
+  "v3_path": "marl_service/models/policy.pt",
+  "v4_path": "marl_service/models/policy_v4_distilled.pt",
+  "backend": "torch",
+  "total_requests": 5000,
+  "v3_count": 4945,
+  "v4_count": 55,
+  "actual_v4_pct": 1.1,
+  "v3_latency": {
+    "mean_ms": 0.1614,
+    "p50_ms": 0.1344,
+    "p99_ms": 0.4589,
+    "n": 4945
+  },
+  "v4_latency": {
+    "mean_ms": 0.1698,
+    "p50_ms": 0.1431,
+    "p99_ms": 0.6608,
+    "n": 55
+  },
+  "v3_action_dist": {
+    "0": 0.8807,
+    "1": 0.0004,
+    "2": 0.1189
+  },
+  "v4_action_dist": {
+    "0": 0.6364,
+    "1": 0.0909,
+    "2": 0.2727
+  },
+  "consistency_test": {
+    "tested": 50,
+    "consistent": 50,
+    "ratio": 1.0
+  }
+}

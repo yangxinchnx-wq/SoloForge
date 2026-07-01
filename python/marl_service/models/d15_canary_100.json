@@ -1,0 +1,34 @@
+{
+  "mode": "canary_100",
+  "n_frames": 50000,
+  "obs_dim": 12,
+  "setup_elapsed_ms": 588.596,
+  "warmup_p99_ms": 2.4016,
+  "total_elapsed_sec": 8.579,
+  "qps": 5828.43,
+  "latency_ms": {
+    "mean": 0.1702,
+    "stdev": 0.1345,
+    "p50": 0.1358,
+    "p95": 0.272,
+    "p99": 0.6062,
+    "p99_9": 1.6723,
+    "max": 11.1971,
+    "min": 0.1306
+  },
+  "action_dist": {
+    "0": 0.5716,
+    "1": 0.0872,
+    "2": 0.3413
+  },
+  "mem_samples_mb": [
+    211.0,
+    212.0,
+    212.8,
+    214.1,
+    214.8
+  ],
+  "mem_peak_mb": 214.8,
+  "mem_growth_mb": 3.8,
+  "sla_p99_under_10ms": true
+}
