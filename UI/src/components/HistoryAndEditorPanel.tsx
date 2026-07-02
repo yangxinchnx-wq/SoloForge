@@ -8,7 +8,11 @@ import {
   useSensor,
   useSensors,
   DragEndEvent,
+  DragOverEvent,
+  DragOverlay,
+  Modifier,
 } from '@dnd-kit/core';
+import { useVirtualList } from '../hooks/useVirtualList';
 import {
   arrayMove,
   SortableContext,
@@ -99,6 +103,7 @@ interface DraggableChatHistoryItem extends ChatHistoryItem {
 interface HistoryItemProps {
   chat: DraggableChatHistoryItem;
   isActive: boolean;
+  itemTransition?: string;
   onSelect: (id: string) => void;
   onOpenSettings: (id: string, title: string) => void;
   onDelete: (id: string, title: string) => void;
@@ -106,9 +111,20 @@ interface HistoryItemProps {
   containerRef?: React.RefObject<any>;
   key?: React.Key;
   isFloatingEditorOpen?: boolean;
+  /** When true, this card is rendered inside <DragOverlay>: opaque clone,
+   *  no dnd listeners, no click handler, fixed transform=identity. */
+  isOverlayClone?: boolean;
+  /** When true, applies `content-visibility: auto` to skip off-screen paint. */
+  isVirtualized?: boolean;
+  /** When true, this card is the current dnd-kit `over` target. */
+  isOverTarget?: boolean;
+  /** When true, play the post-drop pulse highlight. */
+  isPulsing?: boolean;
+  /** When provided, the outer wrapper uses this absolute position (virtualised mode). */
+  outerStyle?: React.CSSProperties;
 }
 
-const HistoryItem = React.forwardRef<any, HistoryItemProps>(({ chat, isActive, onSelect, onOpenSettings, onDelete, onRename, containerRef, isFloatingEditorOpen }, ref) => {
+const HistoryItem = React.forwardRef<any, HistoryItemProps>(({ chat, isActive, itemTransition, onSelect, onOpenSettings, onDelete, onRename, containerRef, isFloatingEditorOpen, isOverlayClone, isVirtualized, isOverTarget, isPulsing, outerStyle }, ref) => {
   const [isDragging, setIsDragging] = React.useState(false);
   const isDraggingRef = React.useRef(false);
 
@@ -153,23 +169,43 @@ const HistoryItem = React.forwardRef<any, HistoryItemProps>(({ chat, isActive, o
     setIsEditingTitle(false);
   };
 
-  // GPU-accelerated style: transform only, no opacity (spec: visibility hidden)
-  const dndStyle: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition: transition || 'transform 180ms cubic-bezier(0.22, 1, 0.36, 1)',
-    visibility: isSortableDragging ? 'hidden' : 'visible',
-    willChange: isSortableDragging ? 'transform' : 'auto',
-    backfaceVisibility: 'hidden',
-    WebkitBackfaceVisibility: 'hidden',
-  };
+  // GPU-accelerated style: transform only, no opacity (spec: visibility hidden).
+  // Apple HIG spring curve for collision displacement — overshoot gives the
+  // "jelly" feel when items get pushed aside by the dragged card.
+  // Overlay clone: render at identity transform (dnd-kit positions it via
+  // top-level DragOverlay transform), and use the spring curve for drop-in.
+  const dndStyle: React.CSSProperties = isOverlayClone
+    ? {
+        transform: 'translate3d(0,0,0) scale(1)',
+        transition: 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)',
+        willChange: 'transform',
+        backfaceVisibility: 'hidden',
+        WebkitBackfaceVisibility: 'hidden',
+        contain: 'layout paint style',
+      }
+    : {
+        transform: CSS.Transform.toString(transform),
+        transition:
+          transition || itemTransition ||
+          'transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1)',
+        visibility: isSortableDragging ? 'hidden' : 'visible',
+        willChange: isSortableDragging ? 'transform' : 'auto',
+        backfaceVisibility: 'hidden',
+        WebkitBackfaceVisibility: 'hidden',
+        contain: 'layout paint style',
+      };
 
   return (
     <div
-      ref={setNodeRef}
-      style={dndStyle}
-      {...attributes}
-      {...listeners}
-      onClick={(e) => {
+      ref={isOverlayClone ? undefined : setNodeRef}
+      style={{
+        ...(outerStyle || null),
+        ...dndStyle,
+        ...(isVirtualized ? { contentVisibility: 'auto', containIntrinsicSize: '0 88px' } : null),
+      }}
+      {...(isOverlayClone ? {} : attributes)}
+      {...(isOverlayClone ? {} : listeners)}
+      onClick={isOverlayClone ? undefined : (e) => {
         if (isDraggingRef.current) {
           e.preventDefault();
           e.stopPropagation();
@@ -178,11 +214,11 @@ const HistoryItem = React.forwardRef<any, HistoryItemProps>(({ chat, isActive, o
         if (isEditingTitle) return;
         onSelect(chat.id);
       }}
-      className="w-full relative select-none cursor-default touch-none box-border block focus:outline-none outline-none rounded-xl"
+      className={`w-full relative select-none cursor-default touch-none box-border block focus:outline-none outline-none rounded-xl ${isOverTarget ? 'sf-drop-target' : ''} ${isPulsing ? 'sf-drop-pulse' : ''}`}
     >
-      {/* 
-        This nested wrapper isolates Tailwind background colors, border styles and 
-          transitions from Framer Motion's absolute inline translate positioning tags.
+      {/*
+        This nested wrapper isolates Tailwind background colors, border styles and
+          transitions from dnd-kit's inline translate transform tags.
       */}
       <div
         className={`group relative p-3 rounded-xl border flex flex-col gap-1.5 w-full max-w-full box-border overflow-hidden select-none outline-none focus:outline-none cursor-default transition-all duration-150 ${
@@ -444,16 +480,71 @@ export default function HistoryAndEditorPanel({
 
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
 
-  // ===== dnd-kit drag infra (replaces Reorder.Group) =====
+  // ===== dnd-kit drag infra (Apple HIG inspired) =====
   const listContainerRef = React.useRef<HTMLDivElement>(null);
   const scrollContainerRef = React.useRef<HTMLDivElement>(null);
   const dragMoveHandlerRef = React.useRef<((ev: MouseEvent) => void) | null>(null);
+  const wheelHandlerRef = React.useRef<((ev: WheelEvent) => void) | null>(null);
+  const dragRafRef = React.useRef<number | null>(null);
   const [activeDragId, setActiveDragId] = React.useState<string | null>(null);
+  const [overId, setOverId] = React.useState<string | null>(null);
+  const [pulsingIds, setPulsingIds] = React.useState<Set<string>>(new Set());
+  const pulseTimerRef = React.useRef<number | null>(null);
+
+  // Honour user OS-level motion preference (Apple HIG + WCAG 2.3.3).
+  // When reduced motion is requested, fall back to the legacy shorter curve
+  // and skip the spring overshoot.
+  const reducedMotion = React.useMemo(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return false;
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  }, []);
+  const itemTransition = reducedMotion
+    ? 'transform 180ms cubic-bezier(0.22, 1, 0.36, 1)'
+    : 'transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1)';
+  const dropAnimation = React.useMemo(
+    () => ({
+      duration: reducedMotion ? 140 : 260,
+      easing: 'cubic-bezier(0.22, 1, 0.36, 1)' as const,
+    }),
+    [reducedMotion],
+  );
+
+  // Hard-prevent the dragged card from crossing ABOVE the first item.
+  // dnd-kit only ships vertical-axis + parent-element modifiers, so we add
+  // a tiny custom one that clamps `transform.y` to >= 0 if the active item's
+  // original index is already 0. This is the "no out-of-top" guarantee.
+  const lockAboveFirst: Modifier = React.useCallback(
+    (args) => {
+      const { active, containerNodeRect, activeNodeRect, transform } = args;
+      if (!active || !activeNodeRect || !containerNodeRect) return transform;
+      const activeId = String(active.id);
+      const activeIndex = chats.findIndex((c) => c.id === activeId);
+      if (activeIndex <= 0) {
+        // dragged card is already the first one — never let y go negative
+        return { ...transform, y: Math.max(0, transform.y) };
+      }
+      // dragged card is below the first one — never let its TOP cross the
+      // container's TOP. If the active rect's top would be above the
+      // container, clamp the translation.
+      const projectedTop = activeNodeRect.top + transform.y;
+      if (projectedTop < containerNodeRect.top) {
+        const dy = containerNodeRect.top - activeNodeRect.top;
+        return { ...transform, y: dy };
+      }
+      return transform;
+    },
+    [chats],
+  );
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
+
+  const handleDragOver = (event: DragOverEvent) => {
+    const overIdStr = event.over ? String(event.over.id) : null;
+    if (overIdStr !== overId) setOverId(overIdStr);
+  };
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
@@ -462,42 +553,96 @@ export default function HistoryAndEditorPanel({
       const newIndex = chats.findIndex((c) => c.id === over.id);
       if (oldIndex !== -1 && newIndex !== -1) {
         setChats(arrayMove(chats, oldIndex, newIndex));
+        // Trigger drop-pulse on the impacted cards (the slot + 1-hop neighbours).
+        // Neighbours shift only when the drop actually displaced items.
+        const impacted = new Set<string>();
+        impacted.add(String(over.id));
+        const lower = Math.max(0, Math.min(oldIndex, newIndex) - 1);
+        const upper = Math.min(chats.length - 1, Math.max(oldIndex, newIndex) + 1);
+        for (let i = lower; i <= upper; i++) {
+          if (i !== oldIndex) impacted.add(chats[i].id);
+        }
+        setPulsingIds(impacted);
+        if (pulseTimerRef.current !== null) {
+          window.clearTimeout(pulseTimerRef.current);
+        }
+        pulseTimerRef.current = window.setTimeout(() => {
+          setPulsingIds(new Set());
+          pulseTimerRef.current = null;
+        }, 600);
       }
     }
     setActiveDragId(null);
+    setOverId(null);
     if (dragMoveHandlerRef.current) {
       window.removeEventListener('mousemove', dragMoveHandlerRef.current);
       dragMoveHandlerRef.current = null;
+    }
+    if (wheelHandlerRef.current) {
+      scrollContainerRef.current?.removeEventListener('wheel', wheelHandlerRef.current);
+      wheelHandlerRef.current = null;
+    }
+    if (dragRafRef.current !== null) {
+      cancelAnimationFrame(dragRafRef.current);
+      dragRafRef.current = null;
     }
   };
 
   const handleDragStart = (event: { active: { id: string | number } }) => {
     setActiveDragId(String(event.active.id));
-    // Per spec: synchronous addEventListener in handleDragStart (no React effect delay)
+    // Per spec: synchronous addEventListener in handleDragStart (no React effect delay).
+    // Acceleration curve: exponential (Apple style — softer near the centre,
+    // exponential ramp near the edge). Capped by MAX_SPEED.
     const onMove = (ev: MouseEvent) => {
-      const sc = scrollContainerRef.current;
-      if (!sc) return;
-      const r = sc.getBoundingClientRect();
-      const EDGE = 48;
-      const MAX_SPEED = 12;
-      const py = ev.clientY;
-      if (py < r.top + EDGE) {
-        const k = 1 - Math.min(1, Math.max(0, (r.top + EDGE - py) / EDGE));
-        sc.scrollTop -= Math.max(1, Math.round(MAX_SPEED * k));
-      } else if (py > r.bottom - EDGE) {
-        const k = 1 - Math.min(1, Math.max(0, (py - (r.bottom - EDGE)) / EDGE));
-        sc.scrollTop += Math.max(1, Math.round(MAX_SPEED * k));
-      }
+      if (dragRafRef.current !== null) return; // already a frame scheduled
+      dragRafRef.current = requestAnimationFrame(() => {
+        dragRafRef.current = null;
+        const sc = scrollContainerRef.current;
+        if (!sc) return;
+        const r = sc.getBoundingClientRect();
+        const EDGE = 56;
+        const MAX_SPEED = 14;
+        const py = ev.clientY;
+        if (py < r.top + EDGE) {
+          const distance = Math.max(0, r.top + EDGE - py);
+          const k = Math.pow(distance / EDGE, 1.6);
+          sc.scrollTop -= Math.max(1, Math.round(MAX_SPEED * k));
+        } else if (py > r.bottom - EDGE) {
+          const distance = Math.max(0, py - (r.bottom - EDGE));
+          const k = Math.pow(distance / EDGE, 1.6);
+          sc.scrollTop += Math.max(1, Math.round(MAX_SPEED * k));
+        }
+      });
     };
     dragMoveHandlerRef.current = onMove;
     window.addEventListener('mousemove', onMove);
+
+    // Wheel handler: while dragging, block purely-horizontal wheel events
+    // (e.g. two-finger horizontal swipe on a Mac trackpad) from being
+    // misinterpreted as vertical scroll. Vertical wheel still works.
+    const onWheel = (ev: WheelEvent) => {
+      if (Math.abs(ev.deltaX) > Math.abs(ev.deltaY) * 1.5) {
+        ev.preventDefault();
+      }
+    };
+    wheelHandlerRef.current = onWheel;
+    scrollContainerRef.current?.addEventListener('wheel', onWheel, { passive: false });
   };
 
   const handleDragCancel = () => {
     setActiveDragId(null);
+    setOverId(null);
     if (dragMoveHandlerRef.current) {
       window.removeEventListener('mousemove', dragMoveHandlerRef.current);
       dragMoveHandlerRef.current = null;
+    }
+    if (wheelHandlerRef.current) {
+      scrollContainerRef.current?.removeEventListener('wheel', wheelHandlerRef.current);
+      wheelHandlerRef.current = null;
+    }
+    if (dragRafRef.current !== null) {
+      cancelAnimationFrame(dragRafRef.current);
+      dragRafRef.current = null;
     }
   };
 
@@ -506,6 +651,18 @@ export default function HistoryAndEditorPanel({
       if (dragMoveHandlerRef.current) {
         window.removeEventListener('mousemove', dragMoveHandlerRef.current);
         dragMoveHandlerRef.current = null;
+      }
+      if (wheelHandlerRef.current) {
+        scrollContainerRef.current?.removeEventListener('wheel', wheelHandlerRef.current);
+        wheelHandlerRef.current = null;
+      }
+      if (dragRafRef.current !== null) {
+        cancelAnimationFrame(dragRafRef.current);
+        dragRafRef.current = null;
+      }
+      if (pulseTimerRef.current !== null) {
+        window.clearTimeout(pulseTimerRef.current);
+        pulseTimerRef.current = null;
       }
     };
   }, []);
@@ -582,6 +739,24 @@ export default function HistoryAndEditorPanel({
     c.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // ===== Virtual list (windowing) =====
+  // Only enabled when there are many items. During a drag we force-mount all
+  // items so dnd-kit's collision detection can measure every node.
+  // NOTE: 必须放在 filteredChats 之后 — 否则在生产 build 中会触发
+  // "Cannot access 'J' before initialization" TDZ 错误 (变量提升顺序差异)
+  const VIRT_THRESHOLD = 80;
+  const useWindowing = filteredChats.length >= VIRT_THRESHOLD;
+  // Estimate card height: typical HistoryItem with title+meta+tags ≈ 78-92px.
+  // We use 84px as a safe middle. Container gap is 8px (`space-y-2`).
+  const virt = useVirtualList({
+    count: filteredChats.length,
+    estimateSize: 84,
+    gap: 8,
+    scrollRef: scrollContainerRef as React.RefObject<HTMLElement>,
+    overscan: 600,
+    forceAll: !!activeDragId || !useWindowing,
+  });
+
   return (
     <div 
       className="w-full h-full bg-surface flex flex-col overflow-hidden font-sans select-none"
@@ -628,32 +803,80 @@ export default function HistoryAndEditorPanel({
           {/* Draggable Tiles List (dnd-kit Sortable) */}
           <div
             ref={scrollContainerRef}
-            className="flex-1 overflow-y-auto space-y-2 pr-1.5 scrollbar-thin scrollbar-thumb-[#2c2f33] select-none relative"
-            style={{ contain: 'layout paint', willChange: activeDragId ? 'scroll-position' : 'auto' }}
+            className={`sf-scroll-contain sf-drag-context flex-1 overflow-y-auto pr-1.5 scrollbar-thin scrollbar-thumb-[#2c2f33] select-none relative ${activeDragId ? 'is-dimming' : ''}`}
+            style={{ willChange: activeDragId ? 'scroll-position' : 'auto' }}
           >
             <DndContext
               sensors={sensors}
               collisionDetection={closestCenter}
-              modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+              modifiers={[restrictToVerticalAxis, restrictToParentElement, lockAboveFirst]}
               onDragStart={handleDragStart}
+              onDragOver={handleDragOver}
               onDragEnd={handleDragEnd}
               onDragCancel={handleDragCancel}
             >
               <SortableContext items={chats.map((c) => c.id)} strategy={verticalListSortingStrategy}>
-                {filteredChats.map((c) => (
-                  <HistoryItem
-                    key={c.id}
-                    chat={c}
-                    isActive={selectedChatId === c.id}
-                    onSelect={setSelectedChatId}
-                    onDelete={handleDeleteChat}
-                    onRename={handleRenameChat}
-                    containerRef={scrollContainerRef}
-                    onOpenSettings={(id, title) => window.dispatchEvent(new CustomEvent('soloforge-open-agent-settings', { detail: { id, title } }))}
-                    isFloatingEditorOpen={isFloatingEditorOpen}
-                  />
-                ))}
+                {/*
+                  Layout strategy:
+                  - Non-virtualized: render all items, natural flex layout with space-y-2.
+                  - Virtualized (>80 items): inner wrapper has fixed height = totalHeight,
+                    children are absolute-positioned by useVirtualList.
+                  DragOverlay stays out of the flow, so it doesn't disturb either layout.
+                */}
+                <div
+                  className={
+                    useWindowing
+                      ? 'relative w-full'
+                      : 'flex flex-col gap-2 w-full'
+                  }
+                  style={useWindowing ? { height: virt.totalHeight } : undefined}
+                >
+                  {(useWindowing ? virt.items : filteredChats.map((c, i) => ({ index: i, outerStyle: undefined, chat: c }))).map((entry) => {
+                    const c = entry.chat;
+                    return (
+                      <HistoryItem
+                        key={c.id}
+                        chat={c}
+                        isActive={selectedChatId === c.id}
+                        itemTransition={itemTransition}
+                        onSelect={setSelectedChatId}
+                        onDelete={handleDeleteChat}
+                        onRename={handleRenameChat}
+                        containerRef={scrollContainerRef}
+                        onOpenSettings={(id, title) => window.dispatchEvent(new CustomEvent('soloforge-open-agent-settings', { detail: { id, title } }))}
+                        isFloatingEditorOpen={isFloatingEditorOpen}
+                        isVirtualized={useWindowing || filteredChats.length >= 50}
+                        isOverTarget={overId === c.id && activeDragId !== c.id}
+                        isPulsing={pulsingIds.has(c.id)}
+                        outerStyle={(entry as any).outerStyle}
+                      />
+                    );
+                  })}
+                </div>
               </SortableContext>
+              <DragOverlay dropAnimation={dropAnimation} zIndex={9999}>
+                {activeDragId ? (
+                  <div className="sf-drag-overlay" style={{ width: 'var(--sf-overlay-w, auto)' }}>
+                    {(() => {
+                      const active = chats.find((c) => c.id === activeDragId);
+                      if (!active) return null;
+                      return (
+                        <HistoryItem
+                          chat={active}
+                          isActive={selectedChatId === active.id}
+                          itemTransition={itemTransition}
+                          onSelect={() => {}}
+                          onDelete={() => {}}
+                          onRename={() => {}}
+                          onOpenSettings={() => {}}
+                          isFloatingEditorOpen={isFloatingEditorOpen}
+                          isOverlayClone
+                        />
+                      );
+                    })()}
+                  </div>
+                ) : null}
+              </DragOverlay>
             </DndContext>
           </div>
         </div>

@@ -2,9 +2,10 @@ import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from '
 import { ChevronDown, Folder, FileCode, ChevronRight } from 'lucide-react';
 import { SecondaryModelSelector } from './header-bar';
 import { SecondaryModel } from '../types';
-import { useTheme } from '../context/ThemeContext';
+import { useHotTheme } from '../context/ThemeContext';
 import { ModelIcon } from './ModelIcon';
 import { WindowControls } from './WindowControls';
+import { MountTransition } from './MountTransition';
 
 interface HeaderProps {
   mainModel: string;
@@ -33,7 +34,7 @@ export default function Header({
   selectedFile,
   setSelectedFile,
 }: HeaderProps) {
-  const { currentThemeId } = useTheme();
+  const { currentThemeId } = useHotTheme();
   const [showModelMenu, setShowModelMenu] = useState(false);
   const [isSecModelSelectorOpen, setIsSecModelSelectorOpen] = useState(false);
   const [hoveredMenuItem, setHoveredMenuItem] = useState<string | null>(null);

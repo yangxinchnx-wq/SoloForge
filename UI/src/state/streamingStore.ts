@@ -3,6 +3,7 @@
  * 管理 RootTask 生命周期、子任务状态、进度计算、事件驱动推进
  */
 import { create } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
 import type {
   RootTask,
   SubTask,
@@ -605,23 +606,37 @@ export const useStreamingStore = create<StreamingState>((set, get) => ({
     const state = get();
     const task = state.tasks[event.chatId];
 
-    // D fix: 所有流送事件先入 eventBuffer, StreamPanel.events 从这里取
-    // 注意: 即使 task 不存在也入缓冲 (后端可能先发 phase0_skip 之类无 task 事件)
+    // R1.2 fix: 字典派发 + 穷尽性类型检查
+    // 加新 StreamEventKind 时, Record<StreamEventKind, Handler> 会编译报错, 强制补 handler
+    //
+    // 2026-07-02 性能优化:把 eventBuffer 入队 (D fix) 与 task dispatch 合并为 1 次 set(),
+    // 之前每次事件触发 2 次 set() → 2 次全订阅组件 render。
+    // 现在 1 次 set() 完成 (eventBuffer 入队 + 任务 dispatch),组件 render 次数减半。
+    const handler = EVENT_HANDLERS[event.kind];
     set(s => {
+      // 1) eventBuffer 入队 (D fix)
       const cur = s.eventBuffer[event.chatId] ?? [];
       const cap = getBufferCapacity();
       const next = cur.length >= cap
         ? [...cur.slice(cur.length - cap + 1), event]
         : [...cur, event];
-      return { eventBuffer: { ...s.eventBuffer, [event.chatId]: next } };
+      const nextEventBuffer = { ...s.eventBuffer, [event.chatId]: next };
+
+      // 2) task dispatch — 复制 handler 的副作用逻辑 (用同样 handler)
+      if (!task) {
+        return { eventBuffer: nextEventBuffer };
+      }
+      // 用临时 set 让 handler 内嵌套 set 与外部 set 互不干扰
+      // 关键点:handler 内部会读 task (旧值) 并 set(),所以先在 closure 中取出,而不是
+      // 让 handler 二次进入 set()
+      let taskPatch: Partial<StreamingState> | null = null;
+      handler(event, {
+        get: () => ({ ...(s as StreamingState), task }),
+        set: (fn) => { taskPatch = fn(s); },
+        task,
+      });
+      return taskPatch ? { ...taskPatch, eventBuffer: nextEventBuffer } : { eventBuffer: nextEventBuffer };
     });
-
-    if (!task) return;
-
-    // R1.2 fix: 字典派发 + 穷尽性类型检查
-    // 加新 StreamEventKind 时, Record<StreamEventKind, Handler> 会编译报错, 强制补 handler
-    const handler = EVENT_HANDLERS[event.kind];
-    handler(event, { get, set, task });
   },
 
   updateSubTaskProgress: (rootTaskId: string, subTaskId: string, step: SubTaskStep, stepInternal: number) => {
@@ -865,8 +880,35 @@ export function installStreamDevHooks(): void {
     getTask: (chatId: string) => useStreamingStore.getState().getTask(chatId),
     createTask: (chatId: string, input = 'dev task', mode: PermissionMode = 'normal') =>
       useStreamingStore.getState().createTask(chatId, input, mode),
+    applyEvent: (event: StreamEvent) => useStreamingStore.getState().applyEvent(event),
     __reset: () => useStreamingStore.getState().__reset(),
     setBufferCapacity,
     getBufferCapacity,
   };
 }
+
+// ==================== R3.5: 选择器 hooks (2026-07-02 性能优化) ====================
+// 之前:组件常常 `const tasks = useStreamingStore(s => s.tasks)` 一把选,任何 chat 的任务更新
+// 都会让该组件重建。下面这套 hooks 用 chatId 锚定选择器,让 StreamPanel / SubTaskNode
+// 等高频组件只在自己关心的 chatId 任务发生变化时才 re-render。
+//
+// 注意:RootTask 选择函数返回的是 *引用*,如果对象地址不变,Zustand 默认会跳过
+// (applyEvent 已保证每次 dispatch 后 tasks[chatId] 是新对象)。
+
+export const useTaskByChatId = (chatId: string | null | undefined) =>
+  useStreamingStore((s) => (chatId ? s.tasks[chatId] : undefined));
+
+export const useSubTasksByChatId = (chatId: string | null | undefined) =>
+  useStreamingStore(useShallow((s) => {
+    if (!chatId) return [] as SubTask[];
+    return s.tasks[chatId]?.subTasks ?? [];
+  }));
+
+export const useEventBufferForChat = (chatId: string | null | undefined) =>
+  useStreamingStore((s) => (chatId ? s.eventBuffer[chatId] : undefined));
+
+export const useAuditTaskByChatId = (chatId: string | null | undefined) =>
+  useStreamingStore((s) => (chatId ? s.tasks[chatId]?.auditTask : undefined));
+
+export const useAgentsByChatId = (chatId: string | null | undefined) =>
+  useStreamingStore(useShallow((s) => (chatId ? s.agentsMap[chatId] ?? [] : [])));

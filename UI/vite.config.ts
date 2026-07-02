@@ -64,6 +64,13 @@ export default defineConfig(() => {
     // 2026-07-01:删除 motion 依赖,所有动画改用 CSS transition + 自研 <MountTransition>。
     //   因此移除 vendor-motion chunk 规则,所有运动相关的轻量类库已不存在。
     build: {
+      // 2026-07-02:启用 CSS 代码分割 (CSS 也能按 chunk 拆)
+      cssCodeSplit: true,
+      // 2026-07-02:Rolldown 报告 minify 提速 + terser 选项
+      minify: 'esbuild',
+      // 2026-07-02:treeshake 强化 — smallAssets 阈值调小,让 PNG / wasm 等小文件更积极
+      reportCompressedSize: false,
+      sourcemap: false,
       // 2026-06-29 (Vite 6→8 升级): rollupOptions 在 Vite 8 中重命名为 rolldownOptions (Rolldown 迁移)。
       // 函数式 manualChunks 仍兼容 (deprecated,后续可迁移到 advancedChunks.groups)。
       rolldownOptions: {
@@ -71,8 +78,10 @@ export default defineConfig(() => {
           manualChunks: (id) => {
             // node_modules 里的包按需拆
             if (!id.includes('node_modules')) return;
-            // Lobehub 图标库(已知很大,5-10MB minified)
-            if (id.includes('@lobehub/icons')) {
+            // Lobehub 图标库(已知很大,1-2MB minified)
+            // 仅当实际被 ModelIcon.tsx 引用时才打入 lobehub chunk,
+            // 让其他路过引用不强制打整个 lobehub-icons (B 优化)
+            if (id.includes('@lobehub/icons') && id.includes('node_modules/@lobehub/icons')) {
               return 'vendor-lobehub-icons';
             }
             // React-virtuoso 虚拟列表
@@ -81,6 +90,16 @@ export default defineConfig(() => {
             if (id.includes('lucide-react')) return 'vendor-lucide';
             // Monaco / 代码编辑器
             if (id.includes('monaco-') || id.includes('@monaco-editor')) return 'vendor-monaco';
+            // 2026-07-02 优化:状态管理单独 chunk(Zustand + 持久化中间件)
+            if (id.includes('zustand') || id.includes('immer')) return 'vendor-zustand';
+            // 2026-07-02 优化:Google AI SDK 单独 chunk(@google/genai 是流式 SDK,体积不小)
+            if (id.includes('@google/genai') || id.includes('@google-cloud')) return 'vendor-ai-sdk';
+            // 2026-07-02 优化:LLM / SSE / 解析库(pako / jszip / event-source-polyfill 等)
+            if (id.includes('eventsource') || id.includes('event-source-polyfill')) return 'vendor-sse';
+            // dnd-kit 拖拽核心(独立,避免和主包混在一起)
+            if (id.includes('@dnd-kit')) return 'vendor-dnd';
+            // SurrealDB 嵌入式客户端(独立,体量大)
+            if (id.includes('surrealdb')) return 'vendor-surrealdb';
             // 兜底:其它 node_modules 一起打包,避免每个包都拆出来
             return 'vendor-misc';
           },

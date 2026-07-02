@@ -11,6 +11,8 @@ import SmileySansUrl from '../assets/fonts/SmileySans-Oblique.ttf?url';
 import DinglieXidaUrl from '../assets/fonts/dingliexidafont-20250329V2)-2.ttf?url';
 import DinglieZhuHaiUrl from '../assets/fonts/dingliezhuhaifont-20240831GengXinBan)-2.ttf?url';
 
+// 注：StaticThemeContext 在下方 ThemeContext 创建后定义
+
 interface PresetFontMeta {
   /** Settings UI 显示名（必须是合法的 font-family 字符串）*/
   name: string;
@@ -24,10 +26,10 @@ interface PresetFontMeta {
 }
 
 const PRESET_FONT_META: PresetFontMeta[] = [
-  { name: 'OPPO Sans (默认)', cssFamily: 'OPPOSans', url: OPPOSansUrl, format: 'opentype',
-    desc: 'OPPO 手机系统中文，默认字体' },
-  { name: '思源黑体 SC',     cssFamily: 'SourceHanSansSC', url: SourceHanSansSCUrl, format: 'opentype',
-    desc: 'Adobe/Google 开源黑体，覆盖最完整' },
+  { name: '思源黑体 SC (默认)', cssFamily: 'SourceHanSansSC', url: SourceHanSansSCUrl, format: 'opentype',
+    desc: 'Adobe/Google 开源黑体，覆盖最完整，默认字体' },
+  { name: 'OPPO Sans', cssFamily: 'OPPOSans', url: OPPOSansUrl, format: 'opentype',
+    desc: 'OPPO 手机系统中文' },
   { name: '霞鹜文楷等宽', cssFamily: 'LXGWWenKaiMono', url: LXGWWenKaiMonoUrl, format: 'truetype',
     desc: '霞鹜文楷等宽版，轻量阅读友好' },
   { name: '得意黑 SmileySans', cssFamily: 'SmileySans', url: SmileySansUrl, format: 'truetype',
@@ -38,7 +40,7 @@ const PRESET_FONT_META: PresetFontMeta[] = [
     desc: '手写装饰' },
 ];
 
-/** 默认值 —— “加载第一个”就是 OPPOSans */
+/** 默认值 —— “加载第一个”就是 SourceHanSansSC（思源黑体） */
 const DEFAULT_FONT_NAME = PRESET_FONT_META[0].name;
 const DEFAULT_FONT_URL = PRESET_FONT_META[0].url;
 export { DEFAULT_FONT_URL };
@@ -288,6 +290,17 @@ interface ThemeContextType {
 
 export const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
+// 静态上下文：字体 / syntax theme 等"极少变化"字段
+// 单独切出后,主色变化 (主色频繁) 不会让不订阅主色的组件重建。
+// 子集 + setter 类型,不再需要包含 hot 字段
+type StaticThemeContextType = Pick<
+  ThemeContextType,
+  'syntaxThemeId' | 'customFonts' | 'selectedFont' |
+  'setSyntaxThemeId' | 'addCustomFont' | 'deleteCustomFont' | 'setSelectedFont'
+>;
+
+export const StaticThemeContext = createContext<StaticThemeContextType | undefined>(undefined);
+
 const getRGBNumbers = (color: string): string => {
   let cleanHex = color.trim().replace('#', '');
   if (cleanHex.length === 3) {
@@ -418,8 +431,8 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem('soloforge_selectedFont');
       if (stored) {
-        // 迁移老用户: "默认 (Default)" 之前指向 Inter，现已改为 OPPOSans
-        if (stored === '默认 (Default)') return DEFAULT_FONT_NAME;
+        // 迁移老用户: "默认 (Default)" 之前指向 Inter，后改为 OPPOSans，现已改为 SourceHanSansSC（思源黑体）
+        if (stored === '默认 (Default)' || stored === 'OPPO Sans (默认)') return DEFAULT_FONT_NAME;
         return stored;
       }
     }
@@ -510,9 +523,17 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       document.documentElement.style.setProperty('--font-display', `"${cssFontName}", "Hanken Grotesk", sans-serif`);
     }
 
-    // Also persist
-    localStorage.setItem('soloforge_selectedFont', selectedFont);
-    localStorage.setItem('soloforge_customFonts', JSON.stringify(customFonts));
+    // Also persist — useIdle 写, 避免主线程长同步 cost
+    const persistFonts = () => {
+      if (typeof window === 'undefined') return;
+      localStorage.setItem('soloforge_selectedFont', selectedFont);
+      localStorage.setItem('soloforge_customFonts', JSON.stringify(customFonts));
+    };
+    const ric: any = (typeof (window as any).requestIdleCallback === 'function')
+      ? (window as any).requestIdleCallback
+      : null;
+    if (ric) ric(persistFonts, { timeout: 1000 });
+    else setTimeout(persistFonts, 200);
   }, [selectedFont, customFonts]);
 
   const addCustomFont = (name: string, url?: string) => {
@@ -685,35 +706,77 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
   }, [currentThemeId, primaryColor, primaryColorTargets, customColors, syntaxThemeId]);
 
-  const value: ThemeContextType = {
-    primaryColor,
-    primaryColorTargets,
-    currentThemeId,
-    activeTheme,
-    syntaxThemeId,
-    customFonts,
-    selectedFont,
-    setSyntaxThemeId,
+  // 1) Memo context value - 阻止 Provider 内子组件不必要的 re-render。
+  // 2) 拆分 hot / static 双 Context:
+  //    - HotContext 包含 color/theme (主色切换时变) — 仅订阅主色细节的组件重建
+  //    - StaticContext 包含 font/syntax (极少变化) — 多数组件挂这层,主色切换不影响它们
+  // 注:对象 Spread 来保证 hotValue/stableValue 引用在依赖未变时稳定。
+  // setPrimaryColor 等 setState setter 被 useState 直接返回,引用稳定。
+  const hotSetterRef = useRef({
     setPrimaryColor,
     setPrimaryColorTargets,
     setCurrentThemeId,
     syncTheme,
+  });
+  hotSetterRef.current = { setPrimaryColor, setPrimaryColorTargets, setCurrentThemeId, syncTheme };
+
+  const staticSetterRef = useRef({
+    setSyntaxThemeId,
     addCustomFont,
     deleteCustomFont,
-    setSelectedFont
-  };
+    setSelectedFont,
+  });
+  staticSetterRef.current = { setSyntaxThemeId, addCustomFont, deleteCustomFont, setSelectedFont };
+
+  const hotValue = useMemo(() => ({
+    primaryColor,
+    primaryColorTargets,
+    currentThemeId,
+    activeTheme,
+    ...hotSetterRef.current,
+  }), [primaryColor, primaryColorTargets, currentThemeId, activeTheme]);
+
+  const staticValue = useMemo(() => ({
+    syntaxThemeId,
+    customFonts,
+    selectedFont,
+    ...staticSetterRef.current,
+  }), [syntaxThemeId, customFonts, selectedFont]);
 
   return (
-    <ThemeContext.Provider value={value}>
-      {children}
+    <ThemeContext.Provider value={hotValue}>
+      <StaticThemeContext.Provider value={staticValue}>
+        {children}
+      </StaticThemeContext.Provider>
     </ThemeContext.Provider>
   );
 };
 
+// 旧 useTheme() — 合并 hot + static, 完全向后兼容 (老代码照样能调 setter / 取 static 字段)
+// 合并成本:仅当 hot/static 任一变化时才返回新对象(两 useMemo 都有 cross-memo 检查)
 export const useTheme = () => {
-  const context = useContext(ThemeContext);
-  if (!context) {
+  const hot = useContext(ThemeContext);
+  const st = useContext(StaticThemeContext);
+  if (!hot) {
     throw new Error('useTheme must be used within a ThemeProvider');
   }
-  return context;
+  return useMemo(() => ({ ...hot, ...st }), [hot, st]);
+};
+
+// 仅订阅静态资源 (字体 / syntax theme) — 在主色变化时不需要 re-render
+export const useStaticTheme = () => {
+  const ctx = useContext(StaticThemeContext);
+  if (!ctx) {
+    throw new Error('useStaticTheme must be used within a ThemeProvider');
+  }
+  return ctx;
+};
+
+// 仅订阅主色 / 主题 — 在字体变化时不需要 re-render
+export const useHotTheme = () => {
+  const ctx = useContext(ThemeContext);
+  if (!ctx) {
+    throw new Error('useHotTheme must be used within a ThemeProvider');
+  }
+  return ctx;
 };

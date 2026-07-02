@@ -10,7 +10,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MountTransition } from './MountTransition';
 import { X, AlertTriangle, Trash2 } from 'lucide-react';
-import { useTheme } from '../context/ThemeContext';
+import { useHotTheme } from '../context/ThemeContext';
 
 interface DeleteConfirmModalProps {
   open: boolean;
@@ -31,7 +31,7 @@ export default function DeleteConfirmModal({
   onConfirm,
   onCancel,
 }: DeleteConfirmModalProps) {
-  const { activeTheme } = useTheme();
+  const { activeTheme } = useHotTheme();
   const [size, setSize] = useState({ width: 380, height: 220 });
   // 关键:lazy initial state 直接计算居中位置,避免第一帧在 (0, 0) 闪烁
   const [position, setPosition] = useState(() => {

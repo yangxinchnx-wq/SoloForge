@@ -3,6 +3,13 @@ import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 import { ThemeProvider, DEFAULT_FONT_URL, preloadFontByUrl } from './context/ThemeContext';
+import { installStreamDevHooks } from './state/streamingStore';
+
+// 2026-07-02: 挂载 streaming dev hook 到 window (perf test / 控制台调试)
+// 始终启用, 体积小 (~几百字节), 暴露 applyEvent / getTask / createTask
+if (typeof window !== 'undefined') {
+  installStreamDevHooks();
+}
 
 // Suppress harmless 'ResizeObserver loop completed with undelivered notifications' browser engine warnings
 if (typeof window !== 'undefined') {

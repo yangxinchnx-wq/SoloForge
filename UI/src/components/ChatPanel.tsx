@@ -7,6 +7,7 @@ import { AndroidIcon, WindowsIcon, HarmonyOSIcon, DefaultChatIcon } from './Hist
 import { ModelIcon } from './ModelIcon';
 import { ToolCallCard } from './ToolCallCard';
 import { sanitizeConversations } from '../utils/chatMessageSanitizer';
+import { startChat, ChatStreamEvent } from '../services/aiBackend';
 
 export const NormalIcon = ({ className = "w-4 h-4" }: { className?: string }) => (
   <svg className={`${className} text-emerald-400 group-hover:text-emerald-300 transition-all duration-300 filter drop-shadow-[0_0_4px_rgba(16,185,129,0.35)]`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -665,16 +666,41 @@ export default function ChatPanel({
     toolCalls: [],
   });
 
-  // Update lists and cache to localStorage
+  // Update lists and cache to localStorage — debounced via idle callback + cancel-prev
+  // 避免每次 conversations / configs 微小变更都同步阻塞写入,大体积对象 JSON.stringify 时尤其明显
+  // 加上 cancelIdleCallback: 连续 60 次 reconcile 只触发一次 stringify,而不是 60 次
+  const persistIdleCancelRef = React.useRef<(() => void) | null>(null);
+  React.useEffect(() => () => { persistIdleCancelRef.current?.(); }, []);
+
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('soloforge_conversations', JSON.stringify(conversations));
+    persistIdleCancelRef.current?.();
+    const w = window as any;
+    if (w.requestIdleCallback && w.cancelIdleCallback) {
+      const handle = w.requestIdleCallback(() => {
+        try { localStorage.setItem('soloforge_conversations', JSON.stringify(conversations)); } catch {}
+      }, { timeout: 1000 });
+      persistIdleCancelRef.current = () => w.cancelIdleCallback(handle);
+    } else {
+      const handle = setTimeout(() => {
+        try { localStorage.setItem('soloforge_conversations', JSON.stringify(conversations)); } catch {}
+      }, 200);
+      persistIdleCancelRef.current = () => clearTimeout(handle);
     }
   }, [conversations]);
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('soloforge_chat_configs', JSON.stringify(configs));
+    persistIdleCancelRef.current?.();
+    const w = window as any;
+    if (w.requestIdleCallback && w.cancelIdleCallback) {
+      const handle = w.requestIdleCallback(() => {
+        try { localStorage.setItem('soloforge_chat_configs', JSON.stringify(configs)); } catch {}
+      }, { timeout: 1000 });
+      persistIdleCancelRef.current = () => w.cancelIdleCallback(handle);
+    } else {
+      const handle = setTimeout(() => {
+        try { localStorage.setItem('soloforge_chat_configs', JSON.stringify(configs)); } catch {}
+      }, 200);
+      persistIdleCancelRef.current = () => clearTimeout(handle);
     }
   }, [configs]);
 
@@ -1293,28 +1319,56 @@ export default function ChatPanel({
 3. 语言使用简体中文。
 4. **注意**：由于之后可能会插入至代码中，请直接输出生成的文档本体，确保可以用 /* ... */ 注释块进行包裹。`;
 
-      const response = await fetch('/api/ai/coding-assist', {
+      const response = await fetch('/api/llm/stream', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          file: selectedFileName || 'App.tsx',
-          content: selectedCode,
-          promptType: 'custom',
-          customPrompt: formatPrompt,
+          systemPrompt: formatPrompt,
+          userGoal: format === 'jsdoc'
+            ? `Code:\n\`\`\`\n${selectedCode}\n\`\`\``
+            : `Code:\n\`\`\`\n${selectedCode}\n\`\`\``,
+          model: 'main',
+          temperature: 0.3,
+          maxTokens: 2048,
         }),
       });
 
-      const data = await response.json();
-      if (data.success) {
-        let textResult = data.rawResponse || '';
-        // Clean out any outer markdown code blocks if the AI accidentally wrapped them
-        textResult = textResult.replace(/^```[a-zA-Z0-9]*\n/, '').replace(/\n```$/, '');
-        setGeneratedContent(textResult);
-      } else {
-        setErrorMsg(data.error || 'AI 智能体文档生成已禁用。');
+      if (!response.ok || !response.body) {
+        const errText = await response.text().catch(() => '');
+        setErrorMsg(`AI 智能体文档生成失败: HTTP ${response.status} ${errText}`);
+        return;
       }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+      let textResult = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          const payload = trimmed.slice(5).trim();
+          if (!payload || payload === '[DONE]') continue;
+          try {
+            const evt = JSON.parse(payload);
+            if (typeof evt.delta === 'string') textResult += evt.delta;
+            if (evt.error) throw new Error(evt.error);
+          } catch (e: any) {
+            if (e instanceof SyntaxError) continue;
+            throw e;
+          }
+        }
+      }
+
+      textResult = textResult.replace(/^```[a-zA-Z0-9]*\n/, '').replace(/\n```$/, '');
+      setGeneratedContent(textResult);
     } catch (err: any) {
       console.error(err);
       setErrorMsg(`服务请求故障，请稍后重试: ${err.message}`);
@@ -1462,114 +1516,73 @@ export default function ChatPanel({
     };
     setLastReqBody(reqBody);
 
-    fetch('/api/ai/chat', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
+    const assistantMsg: ChatMessage = {
+      sender: 'assistant',
+      content: '',
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      avatar: '',
+    };
+    setConversations((prev) => ({
+      ...prev,
+      [activeChatId]: [...currentChatMsgs, assistantMsg],
+    }));
+
+    startChat(
+      {
+        chatId: activeChatId,
         prompt: finalContent,
+        mode: permissionMode,
         history: activeMessages.map(m => ({ sender: m.sender, content: m.content })),
-        activeFile: selectedFile ? { name: selectedFile, content: editorContent } : null,
-        mainModel,
-        secModels,
-        mixedTasks,
-        activeSettings
-      })
-    })
-    .then(async (res) => {
-      if (!res.ok) {
-        const isJson = res.headers.get('content-type')?.includes('application/json');
-        const data = isJson ? await res.json() : null;
-        throw new Error(data?.error || `服务器响应错误: ${res.status}`);
-      }
-
-      const reader = res.body?.getReader();
-      if (!reader) {
-        throw new Error('无法读取响应流，请检查浏览器兼容性');
-      }
-
-      const decoder = new TextDecoder('utf-8');
-      let buffer = '';
-      let isFirstChunk = true;
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Buffer leftovers
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          if (trimmed.startsWith('data: ')) {
-            const dataStr = trimmed.slice(6);
-            if (dataStr === '[DONE]') {
-              continue;
+        fileContext: selectedFile ? { name: selectedFile, content: editorContent } : undefined,
+        mainProvider: {
+          baseUrl: mainEntry.baseUrl,
+          apiKey: mainEntry.apiKey,
+          model: mainEntry.model
+        },
+        subProviders: subEntries.map(e => ({ baseUrl: e.baseUrl, apiKey: e.apiKey, model: e.model })),
+        candidateProviders: candidateEntries.map(e => ({
+          displayName: e.model,
+          providerName: e.providerName,
+          modelName: e.model,
+          baseUrl: e.baseUrl
+        })),
+        ...(hashlineAgentEnabled ? { toolCallMode: 'hashline' } : {})
+      },
+      {
+        onDelta: (text: string) => {
+          setIsGenerating(false);
+          setConversations((prev) => {
+            const currentList = prev[activeChatId] || [];
+            if (currentList.length === 0) return prev;
+            const newList = [...currentList];
+            const lastMsg = { ...newList[newList.length - 1] };
+            if (lastMsg.sender === 'assistant') {
+              lastMsg.content += text;
+              newList[newList.length - 1] = lastMsg;
             }
-            try {
-              const parsed = JSON.parse(dataStr);
-              if (parsed.error) {
-                throw new Error(parsed.error);
-              }
-              const chunkText = parsed.text;
-              if (chunkText) {
-                if (isFirstChunk) {
-                  isFirstChunk = false;
-                  setIsGenerating(false); // Remove global centering loader bubble when first text block is received
-
-                  const assistantMsg: ChatMessage = {
-                    sender: 'assistant',
-                    content: chunkText,
-                    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-                    avatar: '',
-                  };
-                  setConversations((prev) => ({
-                    ...prev,
-                    [activeChatId]: [...currentChatMsgs, assistantMsg],
-                  }));
-                } else {
-                  setConversations((prev) => {
-                    const currentList = prev[activeChatId] || [];
-                    if (currentList.length === 0) return prev;
-                    const newList = [...currentList];
-                    const lastMsg = { ...newList[newList.length - 1] };
-                    if (lastMsg.sender === 'assistant') {
-                      lastMsg.content += chunkText;
-                      newList[newList.length - 1] = lastMsg;
-                    }
-                    return {
-                      ...prev,
-                      [activeChatId]: newList,
-                    };
-                  });
-                }
-              }
-            } catch (e) {
-              console.warn('解析流出错:', e);
+            return { ...prev, [activeChatId]: newList };
+          });
+        },
+        onEvent: (evt: ChatStreamEvent) => handlePhase(evt, currentChatMsgs),
+        onError: (err: Error) => {
+          console.error(err);
+          setConversations((prev) => {
+            const currentList = prev[activeChatId] || [];
+            if (currentList.length === 0) return prev;
+            const newList = [...currentList];
+            const lastMsg = { ...newList[newList.length - 1] };
+            if (lastMsg.sender === 'assistant') {
+              lastMsg.content = `❌ **AI 调用失败**：${err.message}\n\n请检查后端 /api/agents/dispatch 是否在运行。`;
+              newList[newList.length - 1] = lastMsg;
             }
-          }
+            return { ...prev, [activeChatId]: newList };
+          });
+        },
+        onDone: () => {
+          setIsGenerating(false);
         }
       }
-    })
-    .catch((err) => {
-      console.error(err);
-      const assistantMsg: ChatMessage = {
-        sender: 'assistant',
-        content: `❌ **AI 助手已禁用**：${err.name === 'TypeError' ? '无法连接到服务端。请检查服务端状态及网络联通性。' : err.message}\n\n*(提示：AI 助手模块已从本项目移除。若发生报错，请使用其他代码生成工具)*`,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        avatar: '',
-      };
-      setConversations((prev) => ({
-        ...prev,
-        [activeChatId]: [...currentChatMsgs, assistantMsg],
-      }));
-    })
-    .finally(() => {
-      setIsGenerating(false);
-    });
+    );
   };
 
   // ==========================================
@@ -1590,14 +1603,23 @@ export default function ChatPanel({
     };
     setStreamState({ workerOutputs: [], reply: '', scores: [], judgeChosen: [], judgeReasoning: '', auditFindings: [], deliver: '', suggestEnables: [], toolCalls: [] });
     setIsGenerating(true);
-    fetch('/api/ai/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newReqBody)
-    })
-    .then(res => res.ok && res.body ? streamSse(res.body, (evt) => handlePhase(evt, activeMessages)) : Promise.reject(res.status))
-    .catch(err => console.error('[handleAcceptEnable]', err))
-    .finally(() => setIsGenerating(false));
+    startChat(
+      {
+        chatId: activeChatId,
+        prompt: '',
+        mode: lastReqBody.mode,
+        history: [],
+        mainProvider: (lastReqBody.mainProvider as any),
+        subProviders: newSub ? [...(lastReqBody.subProviders as any[]), newSub] : (lastReqBody.subProviders as any[]),
+        candidateProviders: (lastReqBody.candidateProviders as any[]).filter((c: any) => c.modelName !== candidateName)
+      },
+      {
+        onDelta: () => undefined,
+        onEvent: (evt: ChatStreamEvent) => handlePhase(evt, activeMessages),
+        onError: (err) => console.error('[handleAcceptEnable]', err),
+        onDone: () => setIsGenerating(false)
+      }
+    );
   };
 
   // ==========================================
