@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { X, Palette, Check, Sun, Moon, Zap, CloudSnow, Heart, RefreshCw, PanelBottom, Menu, Wand2, Sliders, MessageSquare, FileCode, Settings } from 'lucide-react';
-import { THEME_PRESETS, SYNTAX_THEMES, useTheme } from '../context/ThemeContext';
+import { THEME_PRESETS, SYNTAX_THEMES, useStaticTheme } from '../context/ThemeContext';
 
 interface ThemeModalProps {
   onClose: () => void;
@@ -196,7 +196,7 @@ export default function ThemeModal({
       [key]: !prev[key]
     }));
   };
-  const { syntaxThemeId, setSyntaxThemeId } = useTheme();
+  const { syntaxThemeId, setSyntaxThemeId } = useStaticTheme();
   const activeTheme = THEME_PRESETS.find(t => t.id === currentThemeId) || THEME_PRESETS[0];
   
   // 3. Local colors are updated instantly for reactive UI & fast CSS update, 

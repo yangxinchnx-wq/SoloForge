@@ -6,7 +6,7 @@ import {
   Rocket, Workflow, FileText, Save, FolderOpen,
   ZoomIn, ZoomOut
 } from 'lucide-react';
-import { useTheme } from '../context/ThemeContext';
+import { useHotTheme } from '../context/ThemeContext';
 
 export interface ChatSettingsItem {
   enabledSkills: string[];
@@ -38,7 +38,7 @@ function getSettingsSummary(s: ChatSettingsItem): string {
 }
 
 export default function AgentSettingsModal({ chatId, chatTitle, onClose }: AgentSettingsModalProps) {
-  const { activeTheme } = useTheme();
+  const { activeTheme } = useHotTheme();
 
   // Load configs
   // ==========================================

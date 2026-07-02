@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import Header from './components/Header';
 import ActivityBar from './components/ActivityBar';
 import FileExplorer from './components/FileExplorer';
@@ -8,16 +8,26 @@ import SourceCodeEditor from './components/SourceCodeEditor';
 import ChatPanel from './components/ChatPanel';
 import PreviewPanel from './components/PreviewPanel';
 import StatusBar from './components/StatusBar';
-import ThemeModal from './components/ThemeModal';
-import SettingsModal from './components/SettingsModal';
-import StatsModal from './components/StatsModal';
-import FloatingEditorWindow from './components/FloatingEditorWindow';
-import AgentSettingsModal from './components/AgentSettingsModal';
+// Heavy modals → lazy loaded:
+// 首屏只打开 Editor + Chat,ThemeModal/SettingsModal/StatsModal/AgentSettingsModal/FloatingEditor
+// 每个都用单独的 chunk,主线程只在用户第一次点击时才下载,降低 TTI
+const ThemeModal = lazy(() => import('./components/ThemeModal').then(m => ({ default: m.default })));
+const SettingsModal = lazy(() => import('./components/SettingsModal').then(m => ({ default: m.default })));
+const StatsModal = lazy(() => import('./components/StatsModal').then(m => ({ default: m.default })));
+const FloatingEditorWindow = lazy(() => import('./components/FloatingEditorWindow').then(m => ({ default: m.default })));
+const AgentSettingsModal = lazy(() => import('./components/AgentSettingsModal').then(m => ({ default: m.default })));
 import { SecondaryModel } from './types';
-import { useTheme, THEME_PRESETS } from './context/ThemeContext';
+import { useHotTheme, useStaticTheme, THEME_PRESETS } from './context/ThemeContext';
 import { MountTransition } from './components/MountTransition';
 import { EdgeResize } from './components/EdgeResize';
 import { X } from 'lucide-react';
+import { useChatClickCanvasBridge } from './hooks/useChatClickCanvasBridge';
+
+const ModalFallback = () => (
+  <div className="fixed inset-0 z-[200] flex items-center justify-center pointer-events-none">
+    <div className="w-8 h-8 rounded-full border-2 border-[var(--color-primary)]/30 border-t-[var(--color-primary)] animate-spin" />
+  </div>
+);
 
 export default function App() {
   // Model Settings State
@@ -80,6 +90,17 @@ export default function App() {
   // Active Chats history state
   const [selectedChatId, setSelectedChatId] = useState('1');
 
+  // P0: 画布 → chat 自动桥接
+  //   - 监听 selectedChatId 变化 → 拉取该 chat 上次访问的画布
+  //   - 若从未访问过, 自动建一个 (走最小可用序号)
+  //   - 把解析出的 canvasId 传给 PreviewPanel, 替换旧 "canvas-${chatId}" 派生逻辑
+  const bridge = useChatClickCanvasBridge({
+    chatId: selectedChatId,
+    allowCreate: true,
+    defaultDescription: '默认画布',
+  });
+  const activeCanvasId = bridge.canvasId;
+
   // Sidebar navigation toggled tab (explorer/search/git/plugin tabs)
   const [activeTab, setActiveTab] = useState('explorer');
 
@@ -104,9 +125,8 @@ export default function App() {
     setPrimaryColorTargets,
     setCurrentThemeId,
     syncTheme,
-    addCustomFont,
-    setSelectedFont
-  } = useTheme();
+  } = useHotTheme();
+  const { addCustomFont, setSelectedFont } = useStaticTheme();
 
   // Unique stable state tracking references to avoid stale closures and infinite loop triggers
   const selectedFileRef = useRef(selectedFile);
@@ -125,6 +145,11 @@ export default function App() {
 
   // Ref for the debouncing auto-save timer
   const saveTimeoutRef = useRef<any>(null);
+
+  // 稳定的 setter 引用 — 让 memo 过的子组件 (ActivityBar 等) 不被频繁重建
+  const onOpenThemeCustomizer = useCallback(() => setShowThemeCustomizer(true), []);
+  const onOpenSettingsModal = useCallback(() => setShowSettingsModal(true), []);
+  const onOpenStatsModal = useCallback(() => setShowStatsModal(true), []);
 
   // Clear timeout on unmount
   useEffect(() => {
@@ -543,16 +568,16 @@ export default function App() {
       <div className="flex flex-1 overflow-hidden relative">
         {/* Column 1: Vertical Narrow Activity Bar */}
         <div style={{ '--color-primary': primaryColorTargets.activityBar ? 'var(--color-main-primary)' : '#8c8c8c' } as React.CSSProperties} className="h-full flex shrink-0">
-          <ActivityBar 
-            activeTab={activeTab} 
-            setActiveTab={setActiveTab} 
+          <ActivityBar
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
             showHistory={showHistory}
             setShowHistory={setShowHistory}
             showCodeEditor={showCodeEditor}
             setShowCodeEditor={setShowCodeEditor}
-            onOpenThemeCustomizer={() => setShowThemeCustomizer(true)}
-            onOpenSettingsModal={() => setShowSettingsModal(true)}
-            onOpenStatsModal={() => setShowStatsModal(true)}
+            onOpenThemeCustomizer={onOpenThemeCustomizer}
+            onOpenSettingsModal={onOpenSettingsModal}
+            onOpenStatsModal={onOpenStatsModal}
           />
         </div>
 
@@ -704,11 +729,18 @@ export default function App() {
         </div>
 
         {/* Column 5: Right Column Interactive Preview Web Application */}
-        <PreviewPanel 
-          width={previewWidth} 
-          isResizing={isResizingPreview} 
+        <PreviewPanel
+          width={previewWidth}
+          isResizing={isResizingPreview}
           dragStartWidth={dragStartPreviewWidth}
           selectedChatId={selectedChatId}
+          canvasId={activeCanvasId}
+          canvasReady={bridge.ready}
+          canvases={bridge.canvases}
+          maxCanvases={bridge.maxCanvases}
+          onSelectCanvas={(id) => bridge.selectCanvas(id)}
+          onCreateCanvas={() => bridge.createCanvasForChat()}
+          onRenameCanvas={(id, desc) => bridge.renameCanvas(id, desc)}
         />
       </div>
 
@@ -724,58 +756,68 @@ export default function App() {
       </div>
 
       {/* Theme Customizer modal pop-over */}
-      {showThemeCustomizer && (
-        <ThemeModal 
-          onClose={() => setShowThemeCustomizer(false)} 
-          primaryColor={primaryColor}
-          setPrimaryColor={setPrimaryColor}
-          currentThemeId={currentThemeId}
-          setCurrentThemeId={setCurrentThemeId}
-          primaryColorTargets={primaryColorTargets}
-          setPrimaryColorTargets={setPrimaryColorTargets}
-        />
-      )}
+      <Suspense fallback={<ModalFallback />}>
+        {showThemeCustomizer && (
+          <ThemeModal
+            onClose={() => setShowThemeCustomizer(false)}
+            primaryColor={primaryColor}
+            setPrimaryColor={setPrimaryColor}
+            currentThemeId={currentThemeId}
+            setCurrentThemeId={setCurrentThemeId}
+            primaryColorTargets={primaryColorTargets}
+            setPrimaryColorTargets={setPrimaryColorTargets}
+          />
+        )}
+      </Suspense>
 
       {/* Geek Settings Modal (13 Core Modules) */}
       <MountTransition show={showSettingsModal} variant="fade">
-        {showSettingsModal && (
-          <SettingsModal
-            onClose={() => setShowSettingsModal(false)}
-            permissionMode={currentPermissionMode}
-          />
-        )}
+        <Suspense fallback={<ModalFallback />}>
+          {showSettingsModal && (
+            <SettingsModal
+              onClose={() => setShowSettingsModal(false)}
+              permissionMode={currentPermissionMode}
+            />
+          )}
+        </Suspense>
       </MountTransition>
 
       {/* AI & Token Audit statistics popup */}
       <MountTransition show={showStatsModal} variant="fade-scale">
-        {showStatsModal && (
-          <StatsModal
-            onClose={() => setShowStatsModal(false)}
-          />
-        )}
+        <Suspense fallback={<ModalFallback />}>
+          {showStatsModal && (
+            <StatsModal
+              onClose={() => setShowStatsModal(false)}
+            />
+          )}
+        </Suspense>
       </MountTransition>
 
       {/* Floating Draggable & Pinnable Code Editor Window */}
       <MountTransition show={showFloatingEditor} variant="fade-scale" duration={220}>
-        {showFloatingEditor && (
-          <FloatingEditorWindow
-            selectedFile={selectedFile}
-            editorContent={editorContent}
-            setEditorContent={handleEditorChange}
-            onClose={() => setShowFloatingEditor(false)}
-          />
-        )}
+        <Suspense fallback={<ModalFallback />}>
+          {showFloatingEditor && (
+            <FloatingEditorWindow
+              selectedFile={selectedFile}
+              editorContent={editorContent}
+              setEditorContent={handleEditorChange}
+              onClose={() => setShowFloatingEditor(false)}
+            />
+          )}
+        </Suspense>
       </MountTransition>
 
       {/* Global Exclusive Agent Settings Customizer Overlay */}
       <MountTransition show={!!activeSettingsChat} variant="fade-scale">
-        {activeSettingsChat && (
-          <AgentSettingsModal
-            chatId={activeSettingsChat.id}
-            chatTitle={activeSettingsChat.title}
-            onClose={() => setActiveSettingsChat(null)}
-          />
-        )}
+        <Suspense fallback={<ModalFallback />}>
+          {activeSettingsChat && (
+            <AgentSettingsModal
+              chatId={activeSettingsChat.id}
+              chatTitle={activeSettingsChat.title}
+              onClose={() => setActiveSettingsChat(null)}
+            />
+          )}
+        </Suspense>
       </MountTransition>
 
       {/* Premium Toast Notification Banner */}

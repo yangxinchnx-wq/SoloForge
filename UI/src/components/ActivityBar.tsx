@@ -1,3 +1,4 @@
+import React from 'react';
 import { FolderOpen, GitBranch, MessageSquare, FileCode, Search, Puzzle, Settings, HelpCircle, Palette, BarChart3 } from 'lucide-react';
 
 interface ActivityBarProps {
@@ -12,11 +13,13 @@ interface ActivityBarProps {
   onOpenStatsModal: () => void;
 }
 
-export default function ActivityBar({ 
-  activeTab, 
-  setActiveTab, 
-  showHistory, 
-  setShowHistory, 
+// 默认每个 activity bar tab 状态 memo,避免父组件任何 state 变更导致整列重建
+// 父组件应传稳定的 setter (useCallback)
+const ActivityBar = React.memo(function ActivityBar({
+  activeTab,
+  setActiveTab,
+  showHistory,
+  setShowHistory,
   showCodeEditor,
   setShowCodeEditor,
   onOpenThemeCustomizer,
@@ -120,4 +123,6 @@ export default function ActivityBar({
       </div>
     </div>
   );
-}
+});
+
+export default ActivityBar;

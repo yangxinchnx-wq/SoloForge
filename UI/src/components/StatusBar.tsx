@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { GitBranch, Terminal, HardDrive, Sun, Moon, Zap } from 'lucide-react';
-import { useTheme } from '../context/ThemeContext';
+import { useHotTheme } from '../context/ThemeContext';
 
 interface StatusBarProps {
   currentThemeId?: string;
@@ -8,7 +8,7 @@ interface StatusBarProps {
 }
 
 export default function StatusBar({ currentThemeId = 'gruvbox', setCurrentThemeId }: StatusBarProps) {
-  const { primaryColorTargets } = useTheme();
+  const { primaryColorTargets } = useHotTheme();
   const applyThemeColor = !!primaryColorTargets?.statusBar;
   const [isTerminalCollapsed, setIsTerminalCollapsed] = useState(false);
   const [isDriveMenuOpen, setIsDriveMenuOpen] = useState(false);

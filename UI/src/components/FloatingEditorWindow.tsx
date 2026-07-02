@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Pin, X, Code, Maximize2, Minimize2 } from 'lucide-react';
-import { useTheme } from '../context/ThemeContext';
+import { useHotTheme } from '../context/ThemeContext';
 import SourceCodeEditor from './SourceCodeEditor';
 
 interface FloatingEditorWindowProps {
@@ -16,7 +16,7 @@ export default function FloatingEditorWindow({
   setEditorContent,
   onClose,
 }: FloatingEditorWindowProps) {
-  const { activeTheme } = useTheme();
+  const { activeTheme } = useHotTheme();
 
   // Settings: Pinned (always on top) and isMaximized
   const [isPinned, setIsPinned] = useState(false);

@@ -16,6 +16,7 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { useShallow } from 'zustand/react/shallow';
 
 // ============================================================
 // 类型定义
@@ -287,30 +288,36 @@ export const useEditorContent = () => useAppStore((s) => s.editorContent);
 /** 只订阅 toast 变化 */
 export const useToast = () => useAppStore((s) => s.toast);
 
-/** 只订阅面板可见性 */
+/** 只订阅面板可见性 — 用 useShallow 让对象字段级 shallow 比较避免无效重建 */
 export const usePanelVisibility = () =>
-  useAppStore((s) => ({
-    showHistory: s.showHistory,
-    showCodeEditor: s.showCodeEditor,
-    activeTab: s.activeTab,
-  }));
+  useAppStore(
+    useShallow((s) => ({
+      showHistory: s.showHistory,
+      showCodeEditor: s.showCodeEditor,
+      activeTab: s.activeTab,
+    })),
+  );
 
-/** 只订阅弹窗开关 */
+/** 只订阅弹窗开关 — useShallow 防止对象引用每次都新 */
 export const useModalVisibility = () =>
-  useAppStore((s) => ({
-    showThemeCustomizer: s.showThemeCustomizer,
-    showSettingsModal: s.showSettingsModal,
-    showStatsModal: s.showStatsModal,
-    showFloatingEditor: s.showFloatingEditor,
-    activeSettingsChat: s.activeSettingsChat,
-  }));
+  useAppStore(
+    useShallow((s) => ({
+      showThemeCustomizer: s.showThemeCustomizer,
+      showSettingsModal: s.showSettingsModal,
+      showStatsModal: s.showStatsModal,
+      showFloatingEditor: s.showFloatingEditor,
+      activeSettingsChat: s.activeSettingsChat,
+    })),
+  );
 
-/** 只订阅模型配置 */
+/** 只订阅模型配置 — useShallow 同理 */
 export const useModelConfig = () =>
-  useAppStore((s) => ({
-    mainModel: s.mainModel,
-    secModels: s.secModels,
-    mixedTasks: s.mixedTasks,
-    smartRoute: s.smartRoute,
-    currentPermissionMode: s.currentPermissionMode,
-  }));
+  useAppStore(
+    useShallow((s) => ({
+      mainModel: s.mainModel,
+      secModels: s.secModels,
+      mixedTasks: s.mixedTasks,
+      smartRoute: s.smartRoute,
+      currentPermissionMode: s.currentPermissionMode,
+    })),
+  );

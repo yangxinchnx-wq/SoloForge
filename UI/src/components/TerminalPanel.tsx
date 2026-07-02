@@ -3,7 +3,7 @@ import {
   Play, Trash2, Lock, Unlock, ChevronDown, ChevronUp,
   MessageSquarePlus, Check, Plus, X,
 } from 'lucide-react';
-import { useTheme } from '../context/ThemeContext';
+import { useHotTheme } from '../context/ThemeContext';
 
 interface LogItem {
   time: string;
@@ -62,7 +62,7 @@ const PROBLEM_MSG_LIGHT = { error: '#991b1b', warn: '#92400e' };
 
 export default function TerminalPanel({ permissionMode = 'normal' }: TerminalPanelProps) {
   const accent = ACCENT_BY_MODE[permissionMode] ?? ACCENT_BY_MODE.normal;
-  const { activeTheme, currentThemeId } = useTheme();
+  const { activeTheme, currentThemeId } = useHotTheme();
   const isLight = currentThemeId === 'light';
   const logColor = isLight ? LOG_COLOR_LIGHT : LOG_COLOR_DARK;
   const problemMsg = isLight ? PROBLEM_MSG_LIGHT : PROBLEM_MSG_DARK;

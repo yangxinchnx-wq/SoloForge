@@ -13,7 +13,7 @@ import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrate
 import { CSS } from '@dnd-kit/utilities';
 import { ModelIcon } from './ModelIcon';
 import { NormalIcon, PerformanceIcon, ExpertIcon, UltimateIcon } from './ChatPanel';
-import { useTheme, PRESET_FONTS, preloadFontByName } from '../context/ThemeContext';
+import { useStaticTheme, PRESET_FONTS, preloadFontByName } from '../context/ThemeContext';
 
 const { DndContext, DragOverlay, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors } = DndKitCore;
 const { restrictToVerticalAxis, restrictToParentElement } = DndKitModifiers;
@@ -43,11 +43,6 @@ const PROVIDER_MODEL_REGISTRY: Record<string, { id: string; name: string }[]> = 
     { id: 'claude-3-5-sonnet', name: 'claude-3-5-sonnet' },
     { id: 'claude-3-5-haiku', name: 'claude-3-5-haiku' },
     { id: 'claude-3-opus', name: 'claude-3-opus' }
-  ],
-  gemini: [
-    { id: 'gemini-1.5-pro', name: 'gemini-1.5-pro' },
-    { id: 'gemini-1.5-flash', name: 'gemini-1.5-flash' },
-    { id: 'gemini-2.0-flash-exp', name: 'gemini-2.0-flash-exp' }
   ],
   siliconflow: [
     { id: 'Qwen/Qwen2.5-72B-Instruct', name: 'Qwen/Qwen2.5-72B-Instruct' },
@@ -283,7 +278,7 @@ export default function SettingsModal({
     }
   };
 
-  const { customFonts, selectedFont, addCustomFont, deleteCustomFont, setSelectedFont } = useTheme();
+  const { customFonts, selectedFont, addCustomFont, deleteCustomFont, setSelectedFont } = useStaticTheme();
   const fontInputRef = React.useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -383,20 +378,6 @@ export default function SettingsModal({
         customModels: [],
         status: 'idle' as const,
         color: '#d97706'
-      },
-      {
-        id: 'gemini',
-        name: 'Google Gemini',
-        desc: 'Google 顶尖多模态智能体基础模型系列',
-        enabled: true,
-        apiKey: '',
-        baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-        defaultUrl: 'https://generativelanguage.googleapis.com/v1beta',
-        models: [],
-        customModels: [],
-        status: 'idle' as const,
-        delay: undefined,
-        color: '#1a73e8'
       },
       {
         id: 'siliconflow',

@@ -53,6 +53,14 @@ class SseBackend {
   private reconnectAttempts = 0;
   private maxReconnectDelay = 30_000;
 
+  // 2026-07-02 性能优化:事件批处理
+  // LLM 高频流会一次推上百个 phase 事件,如果直接同步分发,每个事件触发 1 次 store set
+  // + 1 次 React 重渲染。改成 16ms (1 帧) rAF 合并:每帧最多 dispatch 1 次 batch,
+  // 单批次串行调用 handler,React commit 后 update 集中、调度更稳。
+  // 类型合集:batchQueue<{eventName,payload,timestamp}>
+  private batchQueue: Array<{ eventName: string; payload: any; timestamp: number }> = [];
+  private batchRafId: number | null = null;
+
   /**
    * 订阅本 chatId 的 phase 事件.
    * 多次调用同一 chatId 会覆盖 handler (新 task 替代旧 task).
@@ -75,6 +83,9 @@ class SseBackend {
   /** 强制断开 (整个 App 关闭时) */
   shutdown(): void {
     this.subscribers = [];
+    this.batchQueue = [];
+    if (this.batchRafId !== null) cancelAnimationFrame(this.batchRafId);
+    this.batchRafId = null;
     this.disconnect();
   }
 
@@ -146,6 +157,9 @@ class SseBackend {
   /**
    * 事件总线 → ChatStreamEvent 翻译 + chatId 路由
    * 命中规则: payload.chatId 匹配 subscriber.chatId
+   *
+   * v3.1 流程: 入队 batchQueue + schedule rAF 一次 drain
+   * v3.2 性能: rAF 16ms 合并,避开 LLM 流式事件高峰导致 React 长任务
    */
   private dispatchEvent(eventName: string, payload: any, timestamp: number): void {
     // 1) 只关心 phase 事件
@@ -155,18 +169,43 @@ class SseBackend {
     const evtChatId = payload?.chatId;
     if (!evtChatId) return;
 
-    // 3) 找到订阅本 chatId 的 subscriber, 转交事件
-    for (const sub of this.subscribers) {
-      if (sub.chatId !== evtChatId) continue;
-      const taskId = payload.packetUuid ?? `phase-${timestamp}`;
-      sub.handler({
-        kind: 'phase',
-        phase: eventName,
-        taskId,
-        ...payload,
-        // 不暴露 chatId 给 handler (handler 不需要关心)
-        chatId: undefined,
-      });
+    // 入队 → schedule rAF
+    this.batchQueue.push({ eventName, payload, timestamp });
+    if (this.batchRafId === null) {
+      const raf = typeof requestAnimationFrame !== 'undefined'
+        ? requestAnimationFrame.bind(typeof window !== 'undefined' ? window : globalThis)
+        : (cb: FrameRequestCallback) => setTimeout(() => cb(Date.now()), 16) as unknown as typeof requestAnimationFrame;
+      this.batchRafId = raf(() => this.flushBatch());
+    }
+  }
+
+  private flushBatch(): void {
+    this.batchRafId = null;
+    if (this.batchQueue.length === 0) return;
+    // drain 队列引用,避免 flush 期间新事件入队再被本批消费
+    const drained = this.batchQueue;
+    this.batchQueue = [];
+    // 拷贝 subscribers — handler 内部可能 subscribe/unsubscribe, 改了原数组会破坏迭代
+    const subsSnapshot = this.subscribers.slice();
+    for (const { eventName, payload, timestamp } of drained) {
+      const evtChatId = payload.chatId;
+      if (!evtChatId) continue;
+      for (const sub of subsSnapshot) {
+        if (sub.chatId !== evtChatId) continue;
+        const taskId = payload.packetUuid ?? `phase-${timestamp}`;
+        // handler 抛错不能让整批 batch 中断
+        try {
+          sub.handler({
+            kind: 'phase',
+            phase: eventName,
+            taskId,
+            ...payload,
+            chatId: undefined,
+          });
+        } catch (err) {
+          console.error('[sseBackend] handler threw, continuing batch', err);
+        }
+      }
     }
   }
 }
