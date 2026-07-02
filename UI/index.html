@@ -1,59 +1,40 @@
 <!doctype html>
+<!--
+  SoloForge UI 入口 HTML
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │ 重要: 此文件不应包含主题预设（THEME_PRESETS）的任何副本     │
+  ├─────────────────────────────────────────────────────────────┤
+  │ 历史(2026-07-02 之前):                                    │
+  │   此处曾有一段 56 行 inline <script>,手写 6 个主题的       │
+  │   bg / surface / primary 等 CSS 变量,用于 React mount      │
+  │   之前给 <html> 注入底色(防 FOUC)。                       │
+  │                                                             │
+  │ 问题:                                                       │
+  │   inline script 与 src/context/ThemeContext.tsx 的          │
+  │   THEME_PRESETS 是双份 source-of-truth,改一份忘改另一份    │
+  │   时,React mount 之前的 CSS 变量是旧值,导致用户看到         │
+  │   "主体色调不一致"的旧版 UI。                              │
+  │                                                             │
+  │ 当前方案(Electron-only):                                   │
+  │   1. 删除 inline script,只保留 HTML 骨架                   │
+  │   2. THEME_PRESETS 只有一份,在 ThemeContext.tsx           │
+  │   3. FOUC 防护交给 Electron 主进程:                        │
+  │      - mainWindow 用 transparent: true(必须 #00000000 底色)│
+  │      - mainWindow.once('ready-to-show') 推迟显示,         │
+  │        等 React mount + ThemeContext useEffect 跑完        │
+  │   4. 用户看不到任何"透明/桌面背景"一闪而过                │
+  │                                                             │
+  │ 如果未来要支持纯浏览器部署(非 Electron),                  │
+  │ 需重新评估 FOUC,届时用 Vite transformIndexHtml 注入       │
+  │ THEME_PRESETS,而不是手写 inline script。                  │
+  └─────────────────────────────────────────────────────────────┘
+-->
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SoloForge</title>
-    <script>
-      (function() {
-        var presets = {
-          light: { bg: '#f1ede4', surface: '#fbf9f5', surfaceBright: '#e4decb', primary: '#0d5d91', onSurface: '#1f2022', outline: '#d8cfbe' },
-          dark: { bg: '#1e1e1e', surface: '#252526', surfaceBright: '#2d2d30', primary: '#007acc', onSurface: '#d4d4d4', outline: '#3c3c3c' },
-          gruvbox: { bg: '#141617', surface: '#1d2021', surfaceBright: '#2c2927', primary: '#fabd2f', onSurface: '#ebdbb2', outline: '#504945' },
-          cyberpunk: { bg: '#0a0512', surface: '#120b24', surfaceBright: '#1d123a', primary: '#ff007f', onSurface: '#e2e0e7', outline: '#361b5c' },
-          nord: { bg: '#232831', surface: '#2e3440', surfaceBright: '#3b4252', primary: '#88c0d0', onSurface: '#eceff4', outline: '#434c5e' },
-          sakura: { bg: '#1c1316', surface: '#261b20', surfaceBright: '#35252c', primary: '#ff79c6', onSurface: '#faeff3', outline: '#4a2b37' }
-        };
-        var stored = localStorage.getItem('soloforge_themeId');
-        if (!stored) {
-          try {
-            var prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
-            stored = prefersLight ? 'light' : 'gruvbox';
-          } catch(e) {
-            stored = 'gruvbox';
-          }
-        }
-        var active = presets[stored] || presets.gruvbox;
-        var doc = document.documentElement;
-        doc.style.setProperty('--color-bg', active.bg);
-        doc.style.setProperty('--color-surface', active.surface);
-        doc.style.setProperty('--color-surface-bright', active.surfaceBright);
-        doc.style.setProperty('--color-on-surface', active.onSurface);
-        doc.style.setProperty('--color-outline', active.outline);
-        
-        var primaryColor = active.primary;
-        try {
-          var customColors = JSON.parse(localStorage.getItem('soloforge_customColors') || '{}');
-          if (customColors && customColors[stored]) {
-            primaryColor = customColors[stored];
-          }
-        } catch(e) {}
-        doc.style.setProperty('--color-primary', primaryColor);
-        doc.style.setProperty('--color-main-primary', primaryColor);
-        
-        var hex = primaryColor.trim().replace('#', '');
-        if (hex.length === 3) {
-          hex = hex.split('').map(function(c){return c+c;}).join('');
-        }
-        if (hex.length === 6) {
-          var num = parseInt(hex, 16);
-          var rgb = ((num >> 16) & 255) + ', ' + ((num >> 8) & 255) + ', ' + (num & 255);
-          doc.style.setProperty('--color-primary-rgb', rgb);
-          doc.style.setProperty('--theme-card-border-color', 'rgba(' + rgb + ', 0.15)');
-          doc.style.setProperty('--theme-active-glow-shadow', '0 0 16px rgba(' + rgb + ', 0.3)');
-        }
-      })();
-    </script>
   </head>
   <body>
     <div id="root"></div>
