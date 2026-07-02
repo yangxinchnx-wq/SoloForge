@@ -30,6 +30,7 @@
 
 import type { ServerResponse } from 'http';
 import { streamOpenAIChat } from './openaiStreamClient';
+import { callOpenAIChat } from './openaiSyncClient';
 import { getLLMProxyConfig, isLLMProxyReady, describeLLMProxyConfig } from './llmConfig';
 import { apiKeyVault } from '../security/apiKeyVault';
 import { logger } from '../core/logger';
@@ -243,4 +244,103 @@ function parseRequestBody(body: any): LLMProxyRequest | { error: string } {
  */
 export function handleLLMConfigGet(): HandleResult {
   return { status: 200, headers: {}, body: describeLLMProxyConfig() };
+}
+
+/**
+ * GET /api/llm/health — 探测下游 LLM 端点真实可达性
+ *
+ * 用途:
+ *   - /admin 诊断页 "Test connection" 按钮
+ *   - CI 烟测后端 LLM 通路是否通(走 Node fetch,避开 Windows schannel OCSP 墙)
+ *   - 三路优先级与 /api/llm/stream 一致: providerId → 内联 baseUrl/apiKey → env
+ *
+ * 响应:
+ *   200 { ok: true,  model, content, usage, provider, latencyMs }
+ *   400 { ok: false, error }                 参数问题
+ *   503 { ok: false, error, config }         proxy 未配置
+ *   502 { ok: false, error, provider }       下游 LLM 调用失败
+ *
+ * **故意不缓存**：此路由每次都真打一发 1-token 补全,
+ * 命中失败时返回错误体,不会污染生产 LLM 配额(只发 max_tokens=1)。
+ */
+export async function handleLLMHealth(req: {
+  headers: Record<string, string | string[] | undefined>;
+}): Promise<HandleResult> {
+  const cfg = getLLMProxyConfig();
+
+  // 同样接受 token 校验
+  if (cfg.apiToken.length > 0) {
+    const provided = String(req.headers['x-soloforge-token'] ?? '');
+    if (provided !== cfg.apiToken) {
+      return { status: 401, headers: {}, body: { error: 'Invalid X-SoloForge-Token' } };
+    }
+  }
+
+  const providerId =
+    typeof req.headers['x-soloforge-provider-id'] === 'string'
+      ? String(req.headers['x-soloforge-provider-id'])
+      : undefined;
+
+  let resolvedBaseUrl = '';
+  let resolvedApiKey = '';
+  let resolvedProvider = 'env';
+  let resolvedModel = '';
+
+  if (providerId) {
+    const got = await apiKeyVault.getKey(providerId);
+    if (!got) {
+      return {
+        status: 404,
+        headers: {},
+        body: { ok: false, error: `provider '${providerId}' not in vault` },
+      };
+    }
+    resolvedBaseUrl = got.baseUrl;
+    resolvedApiKey = got.apiKey;
+    resolvedProvider = `${got.source}:${providerId}`;
+    resolvedModel = got.defaultModel ?? '';
+  } else if (isLLMProxyReady()) {
+    resolvedBaseUrl = cfg.baseUrl;
+    resolvedApiKey = cfg.apiKey;
+    resolvedProvider = `env:${cfg.provider}`;
+    resolvedModel = cfg.defaultModel;
+  } else {
+    return {
+      status: 503,
+      headers: {},
+      body: { ok: false, error: 'LLM proxy not configured', config: describeLLMProxyConfig() },
+    };
+  }
+
+  const t0 = Date.now();
+  try {
+    const result = await callOpenAIChat({
+      baseUrl: resolvedBaseUrl,
+      apiKey: resolvedApiKey,
+      model: resolvedModel || undefined,
+      messages: [{ role: 'user', content: 'ping' }],
+      maxTokens: 1,
+      timeoutMs: 15_000,
+    });
+    return {
+      status: 200,
+      headers: {},
+      body: {
+        ok: true,
+        provider: resolvedProvider,
+        model: result.model,
+        content: result.content,
+        usage: result.usage,
+        latencyMs: Date.now() - t0,
+      },
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error('LLMHealth', `health probe failed [${resolvedProvider}]: ${msg}`);
+    return {
+      status: 502,
+      headers: {},
+      body: { ok: false, error: msg, provider: resolvedProvider },
+    };
+  }
 }

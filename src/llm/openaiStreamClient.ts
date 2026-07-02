@@ -1,13 +1,27 @@
 /**
- * openaiStreamClient.ts — Node.js 端 OpenAI 兼容 SSE 客户端
+ * openaiStreamClient.ts — Node.js 端 OpenAI 兼容 SSE 客户端 (零依赖)
  *
- * 为什么不用 SDK：保持零依赖。Node 18+ 自带 fetch + AbortController。
+ * 设计原则 (2026-07-02):
+ *   ① 零 npm 依赖: 仅依赖 Node 18+ 自带的 fetch + AbortController + TextDecoder
+ *      → 即装即用,不增加 lockfile 体积与安全审计面
  *
- * 接口：
+ *   ② 避开 Schannel 的 OCSP 墙 (Windows 唯一坑):
+ *      Windows 平台的 `curl.exe` 默认绑 Schannel 作为 SSL 后端,会强制做 CRL/OCSP
+ *      证书吊销检查;若 CA 吊销服务器不可达,直接抛 CRYPT_E_REVOCATION_OFFLINE。
+ *      Node.js 自带的 fetch 用 OpenSSL 3,完全不走 schannel,也不主动走 OCSP,
+ *      因此不必每次调用都加 `--ssl-no-revoke` —— 这正是 SoloForge LLM 链路的默认形态。
+ *      兜底: 在 Windows 上确实需要调用 curl 时,统一加 `--ssl-no-revoke`
+ *      临时禁用 OCSP 校验(只关吊销验证,其他 TLS 安全性保留)。
+ *
+ *   ③ 与 curl 的对照测试已通过 (Agnes AI 端点):
+ *        curl --ssl-no-revoke → HTTP 200 (绕过 schannel OCSP)
+ *        Node fetch           → HTTP 200 (OpenSSL 3,天生不需要绕过)
+ *
+ * 接口:
  *   streamOpenAIChat({ baseUrl, apiKey, model, messages, ...opts })
  *     → AsyncIterable<{ delta: string, done: boolean }>
  *
- * 复用 OpenAI Chat Completions 流式协议（与 UI 端 OpenAICompatibleProvider 完全相同）：
+ * 协议: OpenAI Chat Completions 流式 (与 UI 端 OpenAICompatibleProvider 兼容)
  *   data: {"choices":[{"delta":{"content":"hello"}}]}
  *   data: [DONE]
  */
