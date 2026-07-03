@@ -49,4 +49,11 @@ contextBridge.exposeInMainWorld('soloforge', {
   // 由 UI/src/components/Header.tsx 的 onMouseDown 调
   // deltaX/deltaY: 本次相对上次的鼠标位移(像素)
   moveWindow: (deltaX, deltaY) => ipcRenderer.invoke('window:move-by', { deltaX, deltaY }),
+  // ── 2026 设置持久化(通过主进程 settingsStorage.cjs 写入磁盘) ──
+  // 由 UI/src/state/settings/adapters/electronStore.ts 调用
+  settings: {
+    readStore: (args) => ipcRenderer.invoke('settings:read-store', args),
+    writeStore: (args) => ipcRenderer.invoke('settings:write-store', args),
+    deleteStoreKey: (args) => ipcRenderer.invoke('settings:delete-store-key', args),
+  },
 });

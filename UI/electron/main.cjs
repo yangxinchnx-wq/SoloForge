@@ -11,6 +11,11 @@ const { spawn } = require('child_process');
 const net = require('net');
 const http = require('http');
 const fs = require('fs');
+const { createSettingsStorage } = require('./settingsStorage.cjs');
+
+const settingsStorage = createSettingsStorage(
+  path.join(app.getPath('userData'), 'settings-store.json'),
+);
 
 // 2026 改造：UI server.ts 在 3000 端口（含 Vite middleware + Gemini 代理）
 // 原 SoloForge 后端在 3001 端口（SurrealDB/Garnet/AI 社会系统）
@@ -771,6 +776,29 @@ function registerIpc() {
     }
     return true;
   });
+
+  ipcMain.handle('settings:read-store', async (_e, { storeName }) => {
+    const sanitized = settingsStorage.sanitizeStoreName(storeName, 'default');
+    return settingsStorage.getStore(sanitized);
+  });
+
+  ipcMain.handle('settings:write-store', async (_e, { storeName, key, value }) => {
+    const sanitized = settingsStorage.sanitizeStoreName(storeName, 'default');
+    const store = settingsStorage.getStore(sanitized);
+    if (value === undefined) {
+      delete store[key];
+    } else {
+      store[key] = value;
+    }
+    settingsStorage.scheduleWrite();
+  });
+
+  ipcMain.handle('settings:delete-store-key', async (_e, { storeName, key }) => {
+    const sanitized = settingsStorage.sanitizeStoreName(storeName, 'default');
+    const store = settingsStorage.getStore(sanitized);
+    delete store[key];
+    settingsStorage.scheduleWrite();
+  });
 }
 
 // ────────────────────────────────────────────
@@ -1163,23 +1191,22 @@ app.whenReady().then(() => {
     console.log('[electron] ✓ session 缓存已清');
   });
 
-  // ★ 直接删 user-data-dir 里的所有持久化数据 (绕过 session API 限制)
-  //   session.clearCache() / clearStorageData() 都不删 localStorage / IndexedDB
-  //   (它们用的是不同的 storage backend),必须用 fs.rm 直接删 user-data-dir
+  // ★ 直接删 user-data-dir 里的缓存数据 (绕过 session API 限制)
+  //   session.clearCache() / clearStorageData() 都不删 Code Cache
+  //   (那是 V8 字节码缓存,Chromium 不在 session API 里暴露),必须用 fs.rm 直接删
+  //   注意: 保留 Local Storage / Session Storage (ElectronStorePersist 降级方案),
+  //   保留 settings-store.json (新设置持久化文件)
   //   这里包括:
   //   - Code Cache / Cache / GPUCache: V8 字节码 / HTTP 缓存
-  //   - Local Storage / Session Storage: React zustand persist 用,旧 store 数据锁住 UI
   //   - IndexedDB: 大对象持久化(canvas session / chats / 历史)
   //   - WebStorage: 同 Local Storage 的另一种存储
-  //   - settings-store.json: 如果有 Electron 主进程写入的设置
   try {
     const userDataDir = app.getPath('userData');
     const targets = [
       'Code Cache', 'Cache', 'GPUCache', 'DawnGraphiteCache', 'DawnWebGPUCache',
-      'Local Storage', 'Session Storage', 'IndexedDB', 'WebStorage',
+      'IndexedDB', 'WebStorage',
       'Service Worker', 'Service Worker Database', 'Shared Dictionary',
       'File System', 'blob_storage', 'Network',
-      'settings-store.json',
     ];
     let deletedCount = 0;
     for (const sub of targets) {
@@ -1195,7 +1222,7 @@ app.whenReady().then(() => {
       }
     }
     if (deletedCount > 0) {
-      console.log(`[electron] ✓ 已删 ${deletedCount} 个 user-data-dir 目录(Code Cache / Local Storage / IndexedDB ...)`);
+      console.log(`[electron] ✓ 已删 ${deletedCount} 个 user-data-dir 目录(Code Cache / IndexedDB ...)`);
     } else {
       console.log(`[electron] user-data-dir 无缓存需清`);
     }
