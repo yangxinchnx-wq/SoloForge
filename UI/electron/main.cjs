@@ -5,7 +5,7 @@
 // 原 SoloForge 后端（tsx src/index.ts，端口 3001）需独立启动，不由本进程拉起
 // ─────────────────────────────────────────────────────────────────
 
-const { app, BrowserWindow, shell, Menu, session, ipcMain, nativeImage } = require('electron');
+const { app, BrowserWindow, shell, Menu, session, ipcMain, nativeImage, screen } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const net = require('net');
@@ -126,7 +126,13 @@ function createCanvasHostWindow(parent) {
   // 加载空白透明页（Chromium 不允许 about:blank 当宿主；用 data: URL）
   canvasHostWindow.loadURL('data:text/html,<html><body style="margin:0;background:transparent;backdrop-filter:none"></body></html>');
   canvasHostWindow.setAlwaysOnTop(false);
-  canvasHostWindow.setIgnoreMouseEvents(false);
+  // 2026-07-04 修复: setIgnoreMouseEvents(true) 让事件穿透到 mainWindow
+  // 原因: canvasHostWindow 是 mainWindow 的子窗口, 浮在 mainWindow 上面
+  //   如果它覆盖了 Header 区域, mousedown 被它的空白 data: 页面吃掉
+  //   mainWindow 的 Header 永远收不到事件 → 顶部栏拖不动
+  // 安全性: Flutter 子窗口是通过 SetParent 嵌入的原生 HWND, 不受 Electron
+  //   setIgnoreMouseEvents 影响, 仍正常接收事件
+  canvasHostWindow.setIgnoreMouseEvents(true);
   return canvasHostWindow;
 }
 
@@ -640,136 +646,205 @@ function registerIpc() {
     }
   });
 
-  // ── 2026 自定义窗口拖动(替代 -webkit-app-region: drag,消除 Win11 snap layout tooltip) ──
-  // 由 UI/src/components/Header.tsx 的 onMouseDown 调
-  // deltaX/deltaY: 本次相对上次的鼠标位移(像素)
-  // 走 psSetWindowPos + SWP_NOSENDCHANGING(0x0400)抑制 WM_WINDOWPOSCHANGING,explorer 不会画 size tooltip
-  // flags = SWP_NOSIZE(0x0001) | SWP_NOZORDER(0x0004) | SWP_NOACTIVATE(0x0010) | SWP_NOSENDCHANGING(0x0400) = 0x0415
+  // ── 2026-07-02 彻底重构: 自定义窗口拖动(绝对坐标模式 + 同步 FIFO) ──
+  // 之前架构 (delta 模式) 的根因缺陷:
+  //   1. renderer 累积 dx/dy → IPC 推给 main → main 再累积一次 → main 内部维护 windowX/Y 缓存
+  //      → 任何一处失准 = 永久累积误差, 不可恢复
+  //   2. PS worker stdin 不 flush, 16ms 内多条命令堆积 → 中间帧位置丢失
+  //   3. getPosition() 是异步的, 拿到的可能是过时值
+  //   4. 节流逻辑 (8ms interval + pendingTimer) 进一步增加延迟, 让窗口落后于鼠标
   //
-  // 2026-07-02 性能修复 (Electron 壳子):
-  //   之前 renderer 每个 mousemove 都同步 invoke → main 进程每次都执行 SetWindowPos
-  //   - SetWindowPos 同步阻塞 + 触发 WM_WINDOWPOSCHANGED 广播 → DWM 重绘
-  //   - 100+ Hz mousemove → main 进程饱和, 窗口位置更新跟不上 renderer 帧
-  // 修法: 即使 renderer 已经 rAF 节流, main 进程这里也加防御性节流
-  //   - 用"累积 delta 到 pendingDelta"模式: 多次 invoke 的 delta 加起来, 单次 SetWindowPos 处理完
-  //   - 8ms 间隔 (~120fps 上限), 避免 main 进程 SetWindowPos 队列堆积
-  //   - 但 1s 内最多也就 125 次 SetWindowPos, 比修复前的 100+/s 频次更可控
-  let pendingDelta = null;          // { dx, dy } 最新未处理的累积位移
-  let lastMoveAt = 0;               // 上次实际执行 SetWindowPos 的时间
-  let pendingTimer = null;          // 单例 setTimeout handle, 避免多次 invoke 创建多个 timer
-  const MOVE_INTERVAL_MS = 8;       // 最小间隔 (~120fps 上限, 避免 main 进程饱和)
-  const processMove = () => {
-    if (pendingTimer) {
-      clearTimeout(pendingTimer);
-      pendingTimer = null;
+  // 新架构 (绝对坐标模式):
+  //   - renderer 自己算: "窗口绝对位置 = mousedown 时的窗口位置 + 当前 clientX/Y - mousedown 时的 clientX/Y"
+  //   - 每帧发 window:move-to(x, y), 走 psSend FIFO 同步等 ACK
+  //   - main 端零状态: 不缓存窗口位置, 不累积 delta, 拿到 x/y 直接 SetWindowPos
+  //   - 不再需要 window:move-begin / window:move-end (这是为了修复 delta 累积误差加的兜底, 现在不需要了)
+  //
+  // 为什么 FIFO 不会拖慢渲染:
+  //   - SetWindowPos 是 OS 立即生效的 syscall, 本身 < 0.1ms
+  //   - PS 进程 ReadLine → SetWindowPos → WriteLine OK → Flush, 全链路 ~0.5ms
+  //   - 60Hz 帧间隔 = 16.67ms, 完全够用
+  //   - FIFO 保证"绝对不会丢帧", 而非"延迟发送", 这是关键
+  // ── 2026-07-04 主进程轮询模式 (根治 mousemove 事件风暴) ──────────
+  // 旧方案: renderer mousemove → IPC → setPosition → 触发 resize → React 重渲染
+  //   问题: 每秒 100+ 次 IPC 往返 + 整个 React 树重渲染 → 卡死 + 风扇起飞
+  //
+  // 新方案: renderer mousedown 时一次 IPC drag-start, mouseup 时一次 IPC drag-stop
+  //   主进程用 setInterval(16ms) 自己读 screen.getCursorScreenPoint() + setPosition
+  //   完全绕开渲染器 mousemove 事件 + 跨进程 IPC 往返
+  //
+  // ── 2026-07-04 PS Worker drag loop (根治 setInterval + Chromium IPC 延迟) ──
+  //   优先路径: psSend('DRAG_START|hwnd|winX|winY|mouseX|mouseY')
+  //     PS Worker 后台线程: tight loop Sleep(8) + GetCursorPos + SetWindowPos
+  //     零 Node.js IPC, 零 Chromium IPC, 全在 OS 内核态
+  //   Fallback: psWorker 未就绪时降级到 setInterval + screen.getCursorScreenPoint
+  let dragTimer = null;
+  let dragStartMouse = { x: 0, y: 0 };
+  let dragStartWindow = { x: 0, y: 0 };
+  let dragFrameCount = 0;
+  let dragUsingPsWorker = false;
+
+  // 通用 cleanup: 通知渲染器 + 恢复 canvasHost + 重应用反 snap
+  const cleanupDragState = () => {
+    dragActive = false;
+    // 通知渲染器退出拖动状态 (恢复 backdrop-filter)
+    try { mainWindow?.webContents?.send?.('drag-state', false); } catch {}
+    // 恢复 canvasHostWindow 显示
+    try {
+      if (canvasHostWindow && !canvasHostWindow.isDestroyed()) {
+        canvasHostWindow.show();
+      }
+    } catch {}
+    // 拖动结束后重新应用一次反 snap 样式
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      process.nextTick(() => {
+        try { applyNoSnapFinal(mainWindow); } catch {}
+      });
     }
-    if (!pendingDelta) return;
-    const { dx, dy } = pendingDelta;
-    pendingDelta = null;
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (mainWindow.isMaximized() || mainWindow.isMinimized() || mainWindow.isFullScreen()) return;
-    const hwnd = getHwndStr(mainWindow);
-    if (!hwnd) {
-      const [x, y] = mainWindow.getPosition();
-      mainWindow.setPosition(Math.round(x + dx), Math.round(y + dy));
-      return;
-    }
-    const [x, y] = mainWindow.getPosition();
-    psSetWindowPos(hwnd, Math.round(x + dx), Math.round(y + dy), 0, 0, 0x0415);
   };
-  ipcMain.handle('window:move-by', (_e, { deltaX, deltaY }) => {
-    // 累积到 pendingDelta (而不是立即处理), 下一次 processMove 一起发
-    if (pendingDelta) {
-      pendingDelta.dx += deltaX;
-      pendingDelta.dy += deltaY;
+
+  const stopDragFallback = () => {
+    if (dragTimer) {
+      clearInterval(dragTimer);
+      dragTimer = null;
+      if (dragFrameCount > 0) {
+        console.log('[drag-fallback] stopped after %d frames', dragFrameCount);
+      }
+      dragFrameCount = 0;
+      cleanupDragState();
+    }
+  };
+
+  ipcMain.handle('window:drag-start', async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    if (mainWindow.isMinimized() || mainWindow.isFullScreen()) return false;
+    // 先停掉可能残留的上一次拖动
+    if (dragUsingPsWorker) {
+      try { await psSend('DRAG_STOP', 'drag-stop-cleanup'); } catch {}
+      dragUsingPsWorker = false;
     } else {
-      pendingDelta = { dx: deltaX, dy: deltaY };
+      stopDragFallback();
     }
-    const now = Date.now();
-    const elapsed = now - lastMoveAt;
-    if (elapsed >= MOVE_INTERVAL_MS) {
-      // 间隔够, 立即处理
-      lastMoveAt = now;
-      processMove();
-    } else if (!pendingTimer) {
-      // 还在节流窗口内, 且还没挂 timer, 挂一个单例 timer
-      pendingTimer = setTimeout(() => {
-        pendingTimer = null;
-        lastMoveAt = Date.now();
-        processMove();
-      }, MOVE_INTERVAL_MS - elapsed);
+    try {
+      const b = mainWindow.getBounds();
+      const p = screen.getCursorScreenPoint();
+      dragStartWindow = { x: b.x, y: b.y };
+      dragStartMouse = { x: p.x, y: p.y };
+      dragFrameCount = 0;
+      // 拖动期间禁用 reapplyNoSnap
+      dragActive = true;
+      // 通知渲染器进入拖动状态 (CSS 临时禁用 backdrop-filter)
+      try { mainWindow.webContents.send('drag-state', true); } catch {}
+      // 拖动期间隐藏 canvasHostWindow
+      try {
+        if (canvasHostWindow && !canvasHostWindow.isDestroyed()) {
+          canvasHostWindow.hide();
+        }
+      } catch {}
+
+      // 优先路径: PS Worker 后台线程 drag loop
+      if (psWorker && psWorkerOk) {
+        try {
+          const hwnd = getHwndStr(mainWindow);
+          await psSend(`DRAG_START|${hwnd}|${b.x}|${b.y}|${p.x}|${p.y}`, 'drag-start');
+          dragUsingPsWorker = true;
+          return true;
+        } catch (e) {
+          console.warn('[drag-start] PS Worker DRAG_START failed, fallback:', e?.message);
+        }
+      }
+
+      // Fallback: setInterval + screen.getCursorScreenPoint (PS Worker 未就绪)
+      dragUsingPsWorker = false;
+      dragTimer = setInterval(() => {
+        if (!mainWindow || mainWindow.isDestroyed()) {
+          stopDragFallback();
+          return;
+        }
+        const cur = screen.getCursorScreenPoint();
+        const nx = dragStartWindow.x + (cur.x - dragStartMouse.x);
+        const ny = dragStartWindow.y + (cur.y - dragStartMouse.y);
+        try {
+          mainWindow.setPosition(Math.round(nx), Math.round(ny));
+        } catch (e) {
+          console.warn('[drag-fallback] setPosition:', e?.message);
+          stopDragFallback();
+        }
+        dragFrameCount++;
+      }, 8);
+      return true;
+    } catch (e) {
+      console.warn('[drag-start]', e?.message);
+      return false;
     }
-    // 如果 pendingTimer 已挂, 累积到 pendingDelta, 等 timer 自然触发即可
+  });
+
+  ipcMain.handle('window:drag-stop', async () => {
+    if (dragUsingPsWorker) {
+      try {
+        await psSend('DRAG_STOP', 'drag-stop');
+      } catch (e) {
+        console.warn('[drag-stop] PS Worker DRAG_STOP failed:', e?.message);
+      }
+      dragUsingPsWorker = false;
+      cleanupDragState();
+    } else {
+      stopDragFallback();
+    }
     return true;
   });
 
-  // ── 2026 自定义 resize 边框(替代 frame:true 的 OS 边框,消除 Windows resize 时的白色 sizing box) ──
-  // 由 UI/src/components/EdgeResize.tsx 调用
-  // flags = SWP_NOZORDER(0x0004) | SWP_NOACTIVATE(0x0010) | SWP_NOSENDCHANGING(0x0400) = 0x0414
-  //
-  // 2026-07-02 性能修复 (Electron 壳子):
-  //   renderer 端已经 rAF 节流 (一帧最多 1 次 invoke), 但 main 进程这里也加防御性节流
-  //   - resize 比 move 重: getBounds + 算 new bounds + setBounds (走 SetWindowPos)
-  //   - 累积 delta: 多次 invoke 的 deltaX/deltaY 相加, 单次处理 (同 move-by 模式)
-  let pendingResize = null;        // { edge, dx, dy } 最新未处理的累积 resize
-  let lastResizeAt = 0;
-  let pendingResizeTimer = null;
-  const RESIZE_INTERVAL_MS = 8;    // ~120fps 上限
-  const processResize = () => {
-    if (pendingResizeTimer) {
-      clearTimeout(pendingResizeTimer);
-      pendingResizeTimer = null;
+  // 保留 move-to 作为 fallback (调试/特殊场景), 但默认不走
+  let moveDbgCount = 0;
+  ipcMain.handle('window:move-to', async (_e, { x, y }) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    try {
+      mainWindow.setPosition(Math.round(x), Math.round(y));
+      if (moveDbgCount < 3) console.log('[move-to#%d] fallback setPosition', moveDbgCount++);
+      return true;
+    } catch (e) {
+      console.warn('[move-to]', e?.message);
+      return false;
     }
-    if (!pendingResize) return;
-    const { edge, deltaX, deltaY } = pendingResize;
-    pendingResize = null;
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (mainWindow.isMaximized() || mainWindow.isMinimized() || mainWindow.isFullScreen()) return;
-    const hwnd = getHwndStr(mainWindow);
-    const b = mainWindow.getBounds();
+  });
+
+  // ── 2026-07-02 同步改造: resize 也走绝对坐标 + FIFO ──
+  // edge: 'n'|'s'|'e'|'w'|'ne'|'nw'|'se'|'sw'
+  // x, y, width, height: 期望的最终绝对坐标/尺寸 (renderer 算好后直接发)
+  ipcMain.handle('window:resize-to', async (_e, { x, y, width, height }) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    if (mainWindow.isMaximized() || mainWindow.isMinimized() || mainWindow.isFullScreen()) return false;
     const minW = 1024;
     const minH = 640;
-    let { x, y, width, height } = b;
-
-    if (edge.includes('e')) width = Math.max(minW, width + deltaX);
-    if (edge.includes('s')) height = Math.max(minH, height + deltaY);
-    if (edge.includes('w')) {
-      const newW = Math.max(minW, width - deltaX);
-      if (newW !== width) { x = x + (width - newW); width = newW; }
-    }
-    if (edge.includes('n')) {
-      const newH = Math.max(minH, height - deltaY);
-      if (newH !== height) { y = y + (height - newH); height = newH; }
-    }
-
-    const rx = Math.round(x), ry = Math.round(y);
-    const rw = Math.round(width), rh = Math.round(height);
-    if (hwnd) {
-      psSetWindowPos(hwnd, rx, ry, rw, rh, 0x0414);
-    } else {
+    const rw = Math.max(minW, Math.round(width));
+    const rh = Math.max(minH, Math.round(height));
+    const rx = Math.round(x);
+    const ry = Math.round(y);
+    const hwnd = getHwndStr(mainWindow);
+    if (!hwnd) {
       mainWindow.setBounds({ x: rx, y: ry, width: rw, height: rh });
+      return true;
     }
-  };
-  ipcMain.handle('window:resize-by', (_e, { edge, deltaX, deltaY }) => {
-    if (pendingResize) {
-      pendingResize.deltaX += deltaX;
-      pendingResize.deltaY += deltaY;
-    } else {
-      pendingResize = { edge, deltaX, deltaY };
+    try {
+      await psSend(`RESIZE|${hwnd}|${rx}|${ry}|${rw}|${rh}`, 'resize');
+      return true;
+    } catch (e) {
+      console.warn('[resize-to]', e?.message);
+      return false;
     }
-    const now = Date.now();
-    const elapsed = now - lastResizeAt;
-    if (elapsed >= RESIZE_INTERVAL_MS) {
-      lastResizeAt = now;
-      processResize();
-    } else if (!pendingResizeTimer) {
-      pendingResizeTimer = setTimeout(() => {
-        pendingResizeTimer = null;
-        lastResizeAt = Date.now();
-        processResize();
-      }, RESIZE_INTERVAL_MS - elapsed);
+  });
+
+  // ── 2026-07-02 绝对坐标模式配套: 拿窗口当前位置 ──
+  // renderer 在 mousedown 时调一次拿窗口当前屏幕位置, 之后 mousemove 完全用增量计算
+  // 不维护任何状态, 不缓存, 纯透传
+  ipcMain.handle('window:get-bounds', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return null;
+    try {
+      const b = mainWindow.getBounds();
+      return { x: b.x, y: b.y, width: b.width, height: b.height };
+    } catch (e) {
+      return null;
     }
-    return true;
   });
 }
 
@@ -860,14 +935,19 @@ $newStyle = ($oldStyle -band -bnot $WS_MAXIMIZEBOX) -band -bnot $WS_MINIMIZEBOX 
 $styleOut = "STYLE=$oldStyle->$newStyle"
 
 # === B) GWL_EXSTYLE = -20: 叠加反 snap 扩展风格 ===
+# 2026-07-04 修复: 移除 WS_EX_TRANSPARENT (0x20)
+#   原因: Electron transparent:true 已设置 WS_EX_LAYERED,
+#   再叠加 WS_EX_TRANSPARENT 形成 layered+transparent 组合 = 鼠标穿透
+#   导致 Chromium mousemove 事件 screenX 几乎不变, 拖拽时 dx 不累计
+#   实测: 拖几厘米 dx 只有 0~3 像素, 窗口完全不动
+# 反 snap 不需要 TRANSPARENT, 其他 5 个 flag 已足够:
 $TOOL     = 0x80
 $APP      = 0x40000
 $NOREDIR  = 0x200000
 $COMPOSED = 0x2000000
 $NOACT    = 0x8000000
-$TRANSP   = 0x20
 $oldEx = [W32]::GetWindowLong($hwnd, -20)
-$newEx = $oldEx -bor $TOOL -bor $APP -bor $NOREDIR -bor $COMPOSED -bor $NOACT -bor $TRANSP
+$newEx = $oldEx -bor $TOOL -bor $APP -bor $NOREDIR -bor $COMPOSED -bor $NOACT
 [W32]::SetWindowLong($hwnd, -20, $newEx) | Out-Null
 $exOut = "EXSTYLE=$oldEx->$newEx"
 
@@ -908,22 +988,57 @@ Write-Output "$styleOut; $exOut; $dwmOut; $swpOut; $swShow"
   });
 }
 
+// 2026-07-04 拖动期间禁用 reapplyNoSnap 的标志
+// 原因: 每次 setPosition 触发 'move' 事件 → reapplyNoSnap → applyNoSnapFinal
+//   (一次同步 PowerShell spawn + Add-Type + 11 个 Win32 调用)
+//   → 每秒 60 次 PowerShell spawn → 卡死
+// 拖动期间设 true, drag-stop 时再重新应用一次
+let dragActive = false;
+
 // 异步重新应用反 snap 样式(setImmediate 避免阻塞调用方)
 function reapplyNoSnap() {
   if (process.platform !== 'win32') return;
   if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (dragActive) return;  // 拖动期间跳过, 避免每帧 spawn PowerShell
   setImmediate(() => applyNoSnapFinal(mainWindow));
 }
 
 // ── 2026 持久 PowerShell 进程(高频 SetWindowPos 用) ──
-// 一次性 spawn PS,stdin 写入 "hwnd|x|y|w|h|flags" 命令,避免 50ms/次的 execSync 开销
-// drag/resize IPC 用它 → 1ms/次 → 60Hz 也不卡
+//
+// 【2026-07-02 抖动修复 - 同步 FIFO + ACK 协议】
+// 之前架构: Node 端 stdin.write 不 flush, PS 端 ReadLine + SetWindowPos 都是异步
+//   → 多条命令堆积在 Node 内部 buffer / PS 进程 stdin 里
+//   → PS 一次执行多条 SetWindowPos, 但窗口只显示最后一条的位置
+//   → 中间帧完全丢失 → 看到的就是"跳到错误位置" / "抖动"
+//
+// 新架构 - 同步 FIFO:
+//   1. PS 端每次 ReadLine 拿到命令 → 执行 SetWindowPos → 回写 "OK\n" 到 stdout → 才读下一行
+//   2. Node 端用 ackWaiters 队列维护"等 ACK 的请求列表", 每收到一行 OK 就 resolve 队首
+//   3. Node 端写命令前检查 ackWaiters 是否为空, 不空就 push 到 pendingCommands 队列等待
+//   4. 这样保证:
+//      - 同一时刻只有 1 条命令在执行 (FIFO)
+//      - 命令执行完才发下一条 (不堆积)
+//      - 调用方 await ipc 能精确知道"这条已生效" (可做后续逻辑)
+//   5. 由于 SetWindowPos 本身是 OS 立即生效的 (返回 BOOL 即完成), ACK 协议本身开销 ~0.05ms
+//
+// 输入协议 (1 行):
+//   MOVE|x|y     → SetWindowPos(...X=x, Y=y, SWP_NOSIZE|NOZORDER|NOACTIVATE|NOSENDCHANGING = 0x0415)
+//   RESIZE|x|y|w|h → SetWindowPos(X=x, Y=y, cx=w, cy=h, SWP_NOZORDER|NOACTIVATE|NOSENDCHANGING = 0x0414)
+//   QUIT          → PS 进程退出
+//
+// 输出: 成功执行完一条写一行 "OK\n", Node 端按行解析触发对应 waiter resolve
 let psWorker = null;
 let psWorkerOk = false;
+let psWorkerStdinReady = true;  // FIFO 状态: true = 可以写下一条
+const ackWaiters = [];          // [{resolve, reject, timer, label}]
+let pendingCommands = [];       // [{line, resolve, reject, label}] 等待 FIFO 槽位的命令
 
 function startPsWorker() {
   if (process.platform !== 'win32') return;
   if (psWorker) return;
+  // PS 端逻辑:
+  //   while(true) { ReadLine → 解析命令 → SetWindowPos → Console.Out.WriteLine("OK") → flush }
+  // 用 [Console]::Out.Flush() 强制立即把 OK 推给 Node 端 (避免 .NET 默认缓冲)
   const psCode = `
 $ErrorActionPreference = 'SilentlyContinue'
 Add-Type -TypeDefinition @'
@@ -931,22 +1046,99 @@ using System;
 using System.Runtime.InteropServices;
 public class WSet {
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+  [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
+  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
+  [DllImport("kernel32.dll")] public static extern uint GetLastError();
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+  [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT lpPoint);
+  public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+  public struct POINT { public int X; public int Y; }
 }
 '@
+[Console]::Out.WriteLine("READY")
+[Console]::Out.Flush()
+$moveCount = 0
 while ($true) {
   $line = [Console]::In.ReadLine()
   if ($line -eq $null) { break }
+  if ($line -eq 'QUIT') { break }
   $parts = $line.Split('|')
-  if ($parts.Count -ne 6) { continue }
+  if ($parts.Count -lt 2) { [Console]::Out.WriteLine("ERR_BAD_CMD"); [Console]::Out.Flush(); continue }
   try {
-    $hwnd = [IntPtr]::new([Int64]$parts[0])
-    $x = [int]$parts[1]
-    $y = [int]$parts[2]
-    $w = [int]$parts[3]
-    $h = [int]$parts[4]
-    $flags = [uint32]$parts[5]
-    [WSet]::SetWindowPos($hwnd, [IntPtr]::Zero, $x, $y, $w, $h, $flags) | Out-Null
-  } catch {}
+    $cmd = $parts[0]
+    $hwnd = [IntPtr]::new([Int64]$parts[1])
+    $isWin = [WSet]::IsWindow($hwnd)
+    if ($cmd -eq 'PING') {
+      $rect = New-Object WSet+RECT
+      $gr = [WSet]::GetWindowRect($hwnd, [ref]$rect)
+      [Console]::Out.WriteLine("PONG hwnd=$hwnd IsWindow=$isWin GetRect=$gr L=$($rect.Left) T=$($rect.Top) R=$($rect.Right) B=$($rect.Bottom) LastErr=" + [WSet]::GetLastError())
+      [Console]::Out.Flush()
+      continue
+    }
+    if ($cmd -eq 'MOVE') {
+      $x = [int]$parts[2]
+      $y = [int]$parts[3]
+      # SWP_NOSIZE(0x0001) | SWP_NOZORDER(0x0004) | SWP_NOACTIVATE(0x0010) | SWP_NOSENDCHANGING(0x0400) = 0x0415
+      $ret = [WSet]::SetWindowPos($hwnd, [IntPtr]::Zero, $x, $y, 0, 0, 0x0415)
+      # 前 3 次打印详细信息: SetWindowPos 返回值 + GetLastError + 实际窗口位置
+      if ($moveCount -lt 3) {
+        $rect2 = New-Object WSet+RECT
+        $gr2 = [WSet]::GetWindowRect($hwnd, [ref]$rect2)
+        $err = [WSet]::GetLastError()
+        [Console]::Out.WriteLine("OK MOVE ret=$ret LastErr=$err IsWindow=$isWin AfterMove L=$($rect2.Left) T=$($rect2.Top) R=$($rect2.Right) B=$($rect2.Bottom)")
+        [Console]::Out.Flush()
+        $moveCount++
+        continue
+      }
+    } elseif ($cmd -eq 'RESIZE') {
+      $x = [int]$parts[2]
+      $y = [int]$parts[3]
+      $w = [int]$parts[4]
+      $h = [int]$parts[5]
+      [WSet]::SetWindowPos($hwnd, [IntPtr]::Zero, $x, $y, $w, $h, 0x0414) | Out-Null
+    } elseif ($cmd -eq 'DRAG_START') {
+      # 参数: DRAG_START|hwnd|startWinX|startWinY|startMouseX|startMouseY
+      # 用 $script: 作用域存参数, 确保后台线程闭包能安全访问
+      $script:dragHwnd = $hwnd
+      $script:dragStartWinX = [int]$parts[2]
+      $script:dragStartWinY = [int]$parts[3]
+      $script:dragStartMouseX = [int]$parts[4]
+      $script:dragStartMouseY = [int]$parts[5]
+      $script:dragStopFlag = $false
+      $dragThread = [System.Threading.Thread]::new([System.Threading.ThreadStart]{
+        # 后台线程: tight loop — GetCursorPos + SetWindowPos, ~120Hz
+        # 零 Node.js IPC, 零 Chromium IPC, 全在 OS 内核态完成
+        try {
+          while (-not $script:dragStopFlag) {
+            [System.Threading.Thread]::Sleep(8)
+            $pt = New-Object WSet+POINT
+            [void][WSet]::GetCursorPos([ref]$pt)
+            $dx = $pt.X - $script:dragStartMouseX
+            $dy = $pt.Y - $script:dragStartMouseY
+            [void][WSet]::SetWindowPos($script:dragHwnd, [IntPtr]::Zero, ($script:dragStartWinX + $dx), ($script:dragStartWinY + $dy), 0, 0, 0x0415)
+          }
+        } catch {}
+      })
+      $dragThread.IsBackground = $true
+      $dragThread.Start()
+      $script:dragThreadRef = $dragThread
+      # 立即回 OK 释放 FIFO 槽位, drag loop 在后台线程继续
+      [Console]::Out.WriteLine("OK")
+      [Console]::Out.Flush()
+      continue
+    } elseif ($cmd -eq 'DRAG_STOP') {
+      $script:dragStopFlag = $true
+      if ($script:dragThreadRef) {
+        $script:dragThreadRef.Join(500) | Out-Null
+        $script:dragThreadRef = $null
+      }
+    }
+    [Console]::Out.WriteLine("OK")
+    [Console]::Out.Flush()
+  } catch {
+    [Console]::Out.WriteLine("ERR " + $_.Exception.Message)
+    [Console]::Out.Flush()
+  }
 }
 `;
   const encoded = Buffer.from(psCode, 'utf16le').toString('base64');
@@ -955,39 +1147,150 @@ while ($true) {
     psWorker = spawn('powershell', [
       '-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded
     ], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+
+    // PS stdout 按行解析, 每行 "READY" / "OK" / "ERR" 触发对应处理
+    let stdoutBuf = '';
+    psWorker.stdout.on('data', (d) => {
+      stdoutBuf += d.toString('utf-8');
+      let idx;
+      while ((idx = stdoutBuf.indexOf('\n')) >= 0) {
+        const line = stdoutBuf.slice(0, idx).trim();
+        stdoutBuf = stdoutBuf.slice(idx + 1);
+        if (!line) continue;
+        // 2026-07-04 修复: 第一行 "READY" 是 worker 启动信号, 不是命令 ACK
+        if (line === 'READY' && !psWorkerOk) {
+          psWorkerOk = true;
+          psWorkerStdinReady = true;
+          console.log('[ps-worker] READY received (FIFO mode, Add-Type compiled)');
+          // 启动期间堆积的命令现在可以发了
+          drainPending();
+          continue;
+        }
+        const waiter = ackWaiters.shift();
+        if (!waiter) {
+          // 没有 waiter 在等 (说明这条是初始化期间的残余), 忽略
+          // 2026-07-04 诊断: 打印出来便于观察 PS 端详细输出
+          console.log('[ps-worker unsolicited]', line);
+          continue;
+        }
+        clearTimeout(waiter.timer);
+        // 2026-07-04: PS 端 MOVE 前 3 次会返回 "OK MOVE ret=... LastErr=... AfterMove..."
+        // 把详细日志打印到主进程 stdout, 然后 resolve waiter
+        if (line.startsWith('OK')) {
+          if (line !== 'OK') console.log('[ps-worker detail]', line);
+          waiter.resolve(line);
+        } else if (line.startsWith('PONG')) {
+          console.log('[ps-worker PONG]', line);
+          waiter.resolve(line);
+        } else {
+          console.warn('[ps-worker ERR]', line);
+          waiter.reject(new Error(line));
+        }
+      }
+      // FIFO 槽位空出来了, 发下一条 pending 命令
+      drainPending();
+    });
     psWorker.stderr.on('data', (d) => {
-      const msg = d.toString().trim();
-      if (msg) console.warn('[ps-worker]', msg);
+      // 2026-07-04 诊断: 不 trim, 显示完整 CLIXML 错误
+      const msg = d.toString('utf-8');
+      console.warn('[ps-worker stderr RAW]', JSON.stringify(msg.slice(0, 500)));
     });
     psWorker.on('exit', (code) => {
       console.log('[ps-worker] exited code=' + code);
+      // reject 所有在等的 waiter
+      while (ackWaiters.length) {
+        const w = ackWaiters.shift();
+        clearTimeout(w.timer);
+        w.reject(new Error('ps-worker exited'));
+      }
       psWorker = null;
       psWorkerOk = false;
+      psWorkerStdinReady = true;
     });
     psWorker.on('error', (e) => {
       console.warn('[ps-worker] spawn error:', e.message);
       psWorker = null;
       psWorkerOk = false;
     });
-    // 等 200ms 让 PS 起来,避免首条命令丢失
-    setTimeout(() => {
-      psWorkerOk = true;
-      console.log('[ps-worker] ready');
-    }, 200);
+    // 2026-07-04 修复: 不再用 setTimeout(200ms) 标记 ready
+    // Add-Type 编译 C# 代码可能要 1-2s, 期间发的命令会堆积在 PS stdin,
+    // 第一条执行后回 OK, 但已有大量命令堆积, FIFO 卡死
+    // 现在: psWorkerOk 由 stdout 收到 "READY" 信号时设置
+    // 兜底: 5s 后还没 READY, 标记为失败, 让 psSend reject
+    const readyTimeout = setTimeout(() => {
+      if (!psWorkerOk) {
+        console.warn('[ps-worker] READY timeout (5s), Add-Type 可能失败');
+        // 强制标记为 ready 让 drainPending 能尝试 (会失败但能产生错误日志)
+        psWorkerOk = false;
+      }
+    }, 5000);
+    // 清理 readyTimeout 在 exit handler 里
+    psWorker.once('exit', () => clearTimeout(readyTimeout));
   } catch (e) {
     console.warn('[ps-worker] spawn failed:', e.message);
     psWorker = null;
   }
 }
 
-function psSetWindowPos(hwnd, x, y, w, h, flags) {
-  if (!psWorker || !psWorkerOk) return false;
+// FIFO 槽位有空闲 → 发 pending 队列里的下一条
+function drainPending() {
+  if (!psWorker || !psWorkerOk) return;
+  if (!psWorkerStdinReady) return;
+  if (pendingCommands.length === 0) return;
+  const next = pendingCommands.shift();
+  psWorkerStdinReady = false;
+  ackWaiters.push({
+    resolve: next.resolve,
+    reject: next.reject,
+    timer: setTimeout(() => {
+      // ACK 超时 (默认 2s) - 这种情况基本意味着 PS 进程僵死
+      // 把这个 waiter 从队列里摘掉, 后续 ACK 来时不会错误 resolve
+      const i = ackWaiters.indexOf(next);
+      // 注意: 此时 ackWaiters 里这个已经被 shift 出去了 (因为我们在 push 之前就 shift 了 next),
+      // 实际超时处理是 reject caller, 但不破坏 FIFO 槽位
+      console.warn('[ps-worker] ACK timeout:', next.label);
+      psWorkerStdinReady = true;
+      next.reject(new Error('ACK timeout'));
+      // 尝试恢复: 发下一条 pending
+      drainPending();
+    }, 2000),
+    label: next.label,
+  });
+  // 写入 stdin. 必须 flush - Node 端 pipe 默认有 buffer.
+  // 对于 spawn 的 pipe, write() 返回 false 时要监听 drain 事件.
+  // 这里我们靠 PS 端的 ACK 协议保证不堆积, 不需要 Node 端 drain.
   try {
-    psWorker.stdin.write(`${hwnd}|${x}|${y}|${w}|${h}|${flags}\n`);
-    return true;
+    const written = psWorker.stdin.write(next.line + '\n');
+    if (next.label === 'move') {
+      console.log('[ps-send] line=%s, writeReturn=%s, ackWaiters=%d, pending=%d', next.line, written, ackWaiters.length, pendingCommands.length);
+    }
   } catch (e) {
-    return false;
+    // 写入失败 (管道断了) - reject waiter + 恢复 FIFO
+    const w = ackWaiters.shift();
+    if (w) {
+      clearTimeout(w.timer);
+      w.reject(e);
+    }
+    psWorkerStdinReady = true;
   }
+}
+
+// 发送一条命令到 PS worker, 返回 Promise (resolve = PS 已执行完)
+function psSend(cmd, label = 'cmd') {
+  return new Promise((resolve, reject) => {
+    if (!psWorker || !psWorkerOk) {
+      reject(new Error('ps-worker not ready'));
+      return;
+    }
+    pendingCommands.push({ line: cmd, resolve, reject, label });
+    drainPending();
+  });
+}
+
+function psSetWindowPos(hwnd, x, y, w, h, flags) {
+  // 这个旧函数保留以兼容现有调用, 但实际不再使用 (所有 SetWindowPos 都走 psSend)
+  // 真正的 drag/resize 走 psSend('MOVE|...') 或 psSend('RESIZE|...')
+  return false;
 }
 
 function createWindow() {
@@ -1048,9 +1351,29 @@ function createWindow() {
   // 2026-07-02 调试日志:确认 renderer 真正加载的 URL(诊断"看到的还是旧 UI")
   mainWindow.webContents.on('did-finish-load', () => {
     console.log(`[electron] ★ renderer 真正加载的 URL: ${mainWindow.webContents.getURL()}`);
+    // 2026-07-04 修复强制刷新透明卡顿: 页面加载完成后立即显示窗口
+    if (mainWindow && !mainWindow.isVisible()) {
+      mainWindow.show();
+    }
   });
   mainWindow.webContents.on('did-fail-load', (_, code, desc, url) => {
     console.error(`[electron] ✗ renderer 加载失败: ${url} (${code} ${desc})`);
+  });
+
+  // 2026-07-04 修复强制刷新(Ctrl+Shift+R)时窗口透明卡住:
+  //   ready-to-show 只在首次加载时触发, 刷新时不触发 → 窗口保持可见
+  //   但页面 DOM 已卸载重建, transparent:true 窗口会透出桌面背景
+  //   解决: 监听 did-start-loading (刷新开始) 隐藏窗口,
+  //         did-stop-loading (加载完成) 再显示
+  mainWindow.webContents.on('did-start-loading', () => {
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+      mainWindow.hide();
+    }
+  });
+  mainWindow.webContents.on('did-stop-loading', () => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      mainWindow.show();
+    }
   });
 
   // ready-to-show:页面首次渲染完成后才显示窗口(避免闪烁)

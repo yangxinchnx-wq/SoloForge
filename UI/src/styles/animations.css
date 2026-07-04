@@ -60,6 +60,36 @@
   to   { width: var(--sf-w, 0%); }
 }
 
+/* ---------- Canvas 通知气泡: 淡入 + 上滑 (250ms), 静置 (2700ms), 淡出 (300ms) ----------
+   总时长 = 3250ms (略大于 React 端 3000ms timeout, 让 fadeOut 完整播完)
+   注: 应用层把 React setTimeout 设 3000ms, 剩余 ~250ms 给 fade-out 动画完成
+*/
+@keyframes soloforge-canvas-bubble-in {
+  0%   { opacity: 0; transform: translate3d(-50%, 8px, 0); }
+  100% { opacity: 1; transform: translate3d(-50%, 0, 0); }
+}
+
+@keyframes soloforge-canvas-bubble-out {
+  0%   { opacity: 1; transform: translate3d(-50%, 0, 0); }
+  100% { opacity: 0; transform: translate3d(-50%, -8px, 0); }
+}
+
+.animate-canvas-bubble-in {
+  animation: soloforge-canvas-bubble-in 250ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform: translate3d(-50%, 0, 0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  will-change: transform, opacity;
+}
+
+.animate-canvas-bubble-out {
+  animation: soloforge-canvas-bubble-out 250ms cubic-bezier(0.4, 0, 1, 1) both;
+  transform: translate3d(-50%, 0, 0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  will-change: transform, opacity;
+}
+
 /* ---------- Mount / unmount transitions (CSS-driven, no JS timer) -------- */
 
 /* When parent toggles .sf-mount -> .sf-exit, run the exit animation. */
@@ -149,3 +179,53 @@
 }
 .sf-lift:hover { transform: translateZ(0) translateY(-1px); }
 .sf-lift:active { transform: translateZ(0) translateY(1px); }
+
+/* =============================================================================
+   Apple HIG inspired spring keyframes (drag/drop interactions)
+   ----------------------------------------------------------------------------
+   - soloforge-spring-jelly:    collision-spring for items pushed aside by drag
+                                (iOS Reminders / Files feel — slight overshoot)
+   - soloforge-lift-in:         card rises to DragOverlay, scale 1 -> 1.04
+   - soloforge-drop:            card settles back, scale 1.04 -> 1.0
+   - soloforge-rubber-band:     top-edge rubber band (small overshoot)
+   ============================================================================= */
+
+@keyframes soloforge-spring-jelly {
+  0%   { transform: translate3d(0, 0, 0); }
+  60%  { transform: translate3d(0, var(--sf-jelly-distance, 0), 0); }
+  78%  { transform: translate3d(0, calc(var(--sf-jelly-distance, 0) * 0.92), 0); }
+  90%  { transform: translate3d(0, calc(var(--sf-jelly-distance, 0) * 1.04), 0); }
+  100% { transform: translate3d(0, var(--sf-jelly-distance, 0), 0); }
+}
+
+@keyframes soloforge-spring-jelly-down {
+  0%   { transform: translate3d(0, 0, 0); }
+  60%  { transform: translate3d(0, var(--sf-jelly-distance, 0), 0); }
+  78%  { transform: translate3d(0, calc(var(--sf-jelly-distance, 0) * 0.92), 0); }
+  90%  { transform: translate3d(0, calc(var(--sf-jelly-distance, 0) * 1.04), 0); }
+  100% { transform: translate3d(0, var(--sf-jelly-distance, 0), 0); }
+}
+
+@keyframes soloforge-lift-in {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to   { transform: translate3d(0, -2px, 0) scale(1.04); }
+}
+
+@keyframes soloforge-drop {
+  from { transform: translate3d(0, -2px, 0) scale(1.04); }
+  to   { transform: translate3d(0, 0, 0) scale(1); }
+}
+
+/* (Complex drag CSS removed — now using simple inline transition in HistoryItem) */
+
+@keyframes soloforge-pulse-red {
+  0%   { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.55), 0 0 0 2px rgba(220, 38, 38, 0.18); }
+  70%  { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0),    0 0 0 2px rgba(220, 38, 38, 0.10); }
+  100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0),     0 0 0 2px rgba(220, 38, 38, 0.18); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @keyframes soloforge-pulse-red {
+    0%, 100% { box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.25); }
+  }
+}

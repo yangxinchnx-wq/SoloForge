@@ -5,12 +5,17 @@
    否则 resize 时窗口透明区域会透出桌面,看起来像"白色长方形"。
    用 --color-bg (深色) 而不是 #ffffff,跟主背景完全一致 */
 html, body {
-  background-color: var(--color-bg) !important;
+  background-color: var(--color-bg, #050505) !important;
   margin: 0;
   padding: 0;
   width: 100%;
   height: 100%;
   overflow: hidden;
+}
+
+#root {
+  background-color: var(--color-bg, #050505) !important;
+  min-height: 100vh;
 }
 
 @source not "./components/SettingsModal.tsx";
@@ -228,6 +233,54 @@ a {
 .settings-modal-card [class*="text-[#ffde82]"] {
   color: var(--color-primary) !important;
 }
+
+/* ==========================================================================
+   2026-07-03 主题区域着色：data-attr 驱动，脱离 React 渲染流
+   - 各列容器只加静态 data-theme-region 属性（不依赖 state，不重渲染）
+   - :root 的 data-theme-X 由 ThemeContext effect 直接写 DOM（不经 React）
+   - primaryColor/primaryColorTargets 变化时，CSS 变量自动级联，不触发 React 重渲染
+   - GPU 加速：CSS 变量变更走合成层，配合 contain: layout paint style
+   ========================================================================== */
+
+/* 默认 fallback：灰色区域（activityBar/editorAndExplorer/chatPanel/skillBar） */
+[data-theme-region="activity-bar"],
+[data-theme-region="editor-explorer"],
+[data-theme-region="chat-panel"],
+[data-theme-region="skill-bar"] {
+  --color-primary: #8c8c8c;
+}
+
+/* header/statusBar 不设默认 fallback，继承 :root --color-primary（= activeTheme.primary） */
+
+/* 启用主色时：:root data-attr 控制，覆盖 fallback */
+:root[data-theme-header="1"] [data-theme-region="header"],
+:root[data-theme-activity-bar="1"] [data-theme-region="activity-bar"],
+:root[data-theme-editor-explorer="1"] [data-theme-region="editor-explorer"],
+:root[data-theme-chat-panel="1"] [data-theme-region="chat-panel"],
+:root[data-theme-status-bar="1"] [data-theme-region="status-bar"],
+:root[data-theme-skill-bar="1"] [data-theme-region="skill-bar"] {
+  --color-primary: var(--color-main-primary);
+}
+
+/* ==========================================================================
+   2026-07-04 窗口拖动期间性能优化
+   主进程在 drag-start 时推送 drag-state:true, drag-stop 时推送 false
+   渲染器给 <html> 加 .is-dragging class, CSS 临时禁用所有合成昂贵的属性
+   原因: transparent:true 窗口移动时, backdrop-filter / filter / box-shadow
+     都会触发 Chromium 重新采样合成, 拖动期间临时禁用可大幅降低合成开销
+   ========================================================================== */
+html.is-dragging *,
+html.is-dragging *::before,
+html.is-dragging *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  filter: none !important;
+  animation: none !important;
+  transition: none !important;
+  will-change: auto !important;
+  contain: none !important;
+}
+
 
 
 
