@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { GitBranch, Terminal, HardDrive, Sun, Moon, Zap } from 'lucide-react';
+import { GitBranch, Terminal, HardDrive, Sun, Moon, Zap, ShieldAlert } from 'lucide-react';
 import { useHotTheme } from '../context/ThemeContext';
+import { usePendingConfirmBadge } from './terminal/hooks/usePendingConfirmBadge';
 
 interface StatusBarProps {
   currentThemeId?: string;
@@ -299,6 +300,16 @@ export default function StatusBar({ currentThemeId = 'gruvbox', setCurrentThemeI
     window.dispatchEvent(new CustomEvent('soloforge-toggle-terminal'));
   };
 
+  const { count: pendingCount, focusConfirmDock } = usePendingConfirmBadge();
+  const hasPending = pendingCount > 0;
+
+  const openTerminalAndFocus = () => {
+    if (isTerminalCollapsed) {
+      window.dispatchEvent(new CustomEvent('soloforge-toggle-terminal'));
+    }
+    requestAnimationFrame(() => focusConfirmDock());
+  };
+
 
 
   const renderItemContent = (itemId: string) => {
@@ -426,16 +437,11 @@ export default function StatusBar({ currentThemeId = 'gruvbox', setCurrentThemeI
 
       case 'terminal':
         return (
-          <button 
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              toggleTerminalPanel();
-            }}
-            className={`flex items-center gap-1 px-1.5 py-0.5 rounded transition-all cursor-pointer select-none border ${
-              isTerminalCollapsed 
-                ? (applyThemeColor 
-                    ? 'text-[var(--color-primary)]/75 border-transparent hover:text-[var(--color-primary)] hover:bg-[var(--color-primary)]/10' 
+          <div
+            className={`flex items-center gap-1 px-1.5 py-0.5 rounded transition-all select-none border ${
+              isTerminalCollapsed
+                ? (applyThemeColor
+                    ? 'text-[var(--color-primary)]/75 border-transparent hover:text-[var(--color-primary)] hover:bg-[var(--color-primary)]/10'
                     : 'text-on-surface/40 border-transparent hover:text-on-surface/70 hover:bg-[#ffffff09]')
                 : (applyThemeColor
                     ? 'text-[var(--color-primary)] bg-[var(--color-primary)]/15 border-[var(--color-primary)]/35 font-bold'
@@ -443,9 +449,54 @@ export default function StatusBar({ currentThemeId = 'gruvbox', setCurrentThemeI
             }`}
             title={isTerminalCollapsed ? "展开控制台" : "收起控制台"}
           >
-            <Terminal className="w-3 h-3 stroke-[1.5]" />
-            <span className="hidden sm:inline">控制台</span>
-          </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleTerminalPanel();
+              }}
+              className="flex items-center gap-1 cursor-pointer bg-transparent border-0 p-0"
+              aria-label={isTerminalCollapsed ? "展开控制台" : "收起控制台"}
+            >
+              <Terminal className="w-3 h-3 stroke-[1.5]" />
+              <span className="hidden sm:inline">控制台</span>
+            </button>
+            {hasPending && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openTerminalAndFocus();
+                }}
+                title={`${pendingCount} 个 AI 命令等待确认 — 点击展开并定位`}
+                aria-label={`${pendingCount} 个待确认`}
+                className="ml-1 inline-flex items-center gap-0.5 cursor-pointer bg-transparent border-0 p-0"
+              >
+                <span
+                  style={{
+                    position: 'relative',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    minWidth: 16,
+                    height: 16,
+                    padding: '0 4px',
+                    borderRadius: 8,
+                    background: isTerminalCollapsed ? '#dc2626' : '#f87171',
+                    color: '#fff',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    lineHeight: 1,
+                    boxShadow: '0 0 0 2px rgba(220,38,38,0.18)',
+                    animation: 'soloforge-pulse-red 1.4s ease-in-out infinite',
+                  }}
+                >
+                  {pendingCount}
+                </span>
+                <ShieldAlert className="w-3 h-3 stroke-[2]" style={{ color: '#f87171', marginLeft: 2 }} />
+              </button>
+            )}
+          </div>
         );
       case 'theme':
         return (

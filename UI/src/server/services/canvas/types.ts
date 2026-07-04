@@ -56,11 +56,16 @@ export interface DeviceInstance {
 
 export interface SessionState {
   sessionId: string;
-  /** s1.4: 用户自定义会话名 (可选, 默认从 selectedChatId 或 sessionId 推导) */
-  name?: string;
-  /** s1.4: 用户备注 (可选) */
+  /**
+   * 画布名称 (零填充 2 位序号, UI 不显示前导零)
+   * 例: "01", "02", ..., "10"
+   * 全 chat 全局最小可用 (删除后序号可复用)
+   * 由系统分配, 用户不能通过 PATCH 改名 (改名为禁用)
+   */
+  name: string;
+  /** 用户备注 (可选) */
   description?: string;
-  /** s1.4: 会话创建时间 (ms) */
+  /** 会话创建时间 (ms) */
   createdAt?: number;
   selectedDeviceKey: string;
   devices: DeviceInstance[];
@@ -76,6 +81,59 @@ export interface SessionState {
    */
   selectedDeviceIds: string[];
   lastUpdated: number;
+  /**
+   * P0: 归属字段 - 创建该画布的 chat session ID
+   * 决定写权限 (改设备/改名/删除) 仅 owner 可做
+   * 例: "chat-abc123"
+   */
+  ownerChatSessionId: string;
+  /**
+   * P0: 可见性
+   * 当前固定 'public' (所有 chat 默认可见, 仅写权限受 owner 限制)
+   */
+  visibility: 'public';
+  /**
+   * P0: 各 chat 最后访问时间戳 (ms), 用于自动切回
+   * key: chatSessionId, value: timestamp
+   */
+  lastAccessedBy?: Record<string, number>;
+}
+
+/**
+ * Canvas 全局配额
+ */
+export const CANVAS_LIMITS = {
+  /** 每个 chat 最多创建画布数 (全局共享, 1..N 序号) */
+  MAX_CANVASES: 10,
+  /** 序号零填充位数 (UI 显示时去掉前导零) */
+  NAME_PAD: 2,
+} as const;
+
+/**
+ * 把数字转成零填充的名称字符串
+ * 例: 1 -> "01", 10 -> "10"
+ */
+export function formatCanvasName(sequence: number): string {
+  return String(sequence).padStart(CANVAS_LIMITS.NAME_PAD, '0');
+}
+
+/**
+ * 把零填充名称转回数字 (用于排序/比较)
+ * 例: "01" -> 1, "10" -> 10
+ * 非法字符串返回 -1
+ */
+export function parseCanvasName(name: string | undefined | null): number {
+  if (!name || !/^\d+$/.test(name)) return -1;
+  return parseInt(name, 10);
+}
+
+/**
+ * UI 显示用: 去掉前导零
+ * 例: "01" -> "1", "10" -> "10"
+ */
+export function displayCanvasName(name: string | undefined | null): string {
+  const n = parseCanvasName(name);
+  return n > 0 ? String(n) : (name ?? '');
 }
 
 /**

@@ -7,6 +7,10 @@ export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
     resolve: {
+      // 2026-07-02: Vite 8 / Rolldown 不再自动补 .tsx 扩展名, .ts 文件里 import '../context/Foo'
+      //   (无扩展名) 会报 Module not found. 这里显式列出全部可能的扩展名, .ts 文件 import
+      //   .tsx 也算合法,避免每次写 .ts 时还要把 import 改成 '../context/Foo.tsx'
+      extensions: ['.mjs', '.js', '.mts', '.ts', '.jsx', '.tsx', '.json'],
       // 2026-06-29 (Vite 6→8 升级): Rolldown 不支持 optimizeDeps.rolldownOptions.alias (会触发
       //   "Expected never but received 'alias'" 警告)。所有别名统一收拢到 resolve.alias。
       //   用数组形式 + 显式子入口条目,确保 @lobehub/ui/icons 这种 directory + subentry 场景
@@ -33,6 +37,22 @@ export default defineConfig(() => {
         'antd-style',
         '@lobehub/fluent-emoji',
       ],
+      // 2026-07-05 加速 React mount:
+      // Vite 默认按需 pre-bundle (浏览器第一次 import 时才触发)。
+      // 列在这里的包会在 dev server 启动时就 pre-bundle,
+      // 浏览器请求时直接拿到打包好的单文件,不需要几百个 ESM 请求。
+      // 这是减少刷新黑屏时间最有效的手段。
+      include: [
+        'react',
+        'react-dom',
+        'react-dom/client',
+        'zustand',
+        'lucide-react',
+        '@dnd-kit/core',
+        '@dnd-kit/sortable',
+        '@dnd-kit/modifiers',
+        '@dnd-kit/utilities',
+      ],
     },
     server: {
       hmr: process.env.ENABLE_HMR === 'true',
@@ -53,6 +73,35 @@ export default defineConfig(() => {
           '**/.soloforge/**',
           path.resolve(__dirname, '..', '.soloforge').replace(/\\/g, '/'),
           path.resolve(__dirname, '..', '.soloforge').replace(/\\/g, '/') + '/**',
+        ],
+      },
+      // 2026-07-05 加速 React mount (强制刷新时减少黑屏时间):
+      // Vite dev server 按需转换文件 — 浏览器请求 main.tsx → Vite 转换 →
+      // 返回 → 浏览器解析 import → 请求下一个文件 → Vite 转换 → ...
+      // 这个 request waterfall 是刷新慢的根因 (几百个 ESM 请求串行)。
+      // warmup 让 Vite 在 dev server 启动后立刻预转换首屏关键路径文件,
+      // 浏览器请求时直接命中缓存,不等待转换。
+      warmup: {
+        clientFiles: [
+          './src/main.tsx',
+          './src/App.tsx',
+          './src/index.css',
+          './src/context/ThemeContext.tsx',
+          './src/context/LayoutContext.tsx',
+          './src/state/appStore.ts',
+          './src/components/Header.tsx',
+          './src/components/ChatPanel.tsx',
+          './src/components/HistoryAndEditorPanel.tsx',
+          './src/components/HistoryItem.tsx',
+          './src/components/FileExplorer.tsx',
+          './src/components/SourceCodeEditor.tsx',
+          './src/components/StatusBar.tsx',
+          './src/components/PreviewPanel.tsx',
+          './src/components/ActivityBar.tsx',
+          './src/components/MountTransition.tsx',
+          './src/styles/animations.css',
+          './src/data/defaultChats.ts',
+          './src/types.ts',
         ],
       },
     },

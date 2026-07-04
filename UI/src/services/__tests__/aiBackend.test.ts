@@ -15,7 +15,6 @@ describe('aiBackend — dev (fetch + SSE) path', () => {
   beforeEach(() => {
     originalFetch = globalThis.fetch;
     originalSoloforge = (globalThis as any).window?.soloforge;
-    // 确保 Electron IPC 不可用, 走 fetch 分支
     if (typeof globalThis.window !== 'undefined') {
       delete (globalThis as any).window.soloforge;
     }
@@ -32,12 +31,12 @@ describe('aiBackend — dev (fetch + SSE) path', () => {
     expect(isElectronIpcAvailable()).toBe(false);
   });
 
-  it('startChat fetches /api/ai/chat with body, parses SSE text chunks', async () => {
+  it('startChat fetches /api/agents/dispatch with body, parses SSE text chunks', async () => {
     const encoder = new TextEncoder();
     const chunks = [
-      encoder.encode('data: {"success":true,"text":"Hello"}\n\n'),
-      encoder.encode('data: {"success":true,"text":" world"}\n\n'),
-      encoder.encode('data: [DONE]\n\n'),
+      encoder.encode('data: {"phase":"text","delta":"Hello"}\n\n'),
+      encoder.encode('data: {"phase":"text","delta":" world"}\n\n'),
+      encoder.encode('data: {"phase":"deliver"}\n\n'),
     ];
     let consumed = 0;
     const stream = new ReadableStream<Uint8Array>({
@@ -57,10 +56,9 @@ describe('aiBackend — dev (fetch + SSE) path', () => {
     const events: any[] = [];
     const handle = await startChat({ prompt: 'hi' }, (e) => events.push(e));
 
-    // 等待 stream 解析完成
     await new Promise(r => setTimeout(r, 50));
 
-    expect(events.map(e => e.kind)).toEqual(['text', 'text', 'done']);
+    expect(events.map(e => e.kind)).toEqual(['text', 'text', 'event']);
     expect(events[0].text).toBe('Hello');
     expect(events[1].text).toBe(' world');
     expect(handle.taskId).toMatch(/^fetch-/);
@@ -70,8 +68,7 @@ describe('aiBackend — dev (fetch + SSE) path', () => {
   it('parses SSE error event into { kind: "error" }', async () => {
     const encoder = new TextEncoder();
     const chunks = [
-      encoder.encode('data: {"success":false,"error":"API key missing"}\n\n'),
-      encoder.encode('data: [DONE]\n\n'),
+      encoder.encode('data: {"phase":"error","error":"API key missing"}\n\n'),
     ];
     let consumed = 0;
     const stream = new ReadableStream<Uint8Array>({
@@ -108,7 +105,6 @@ describe('aiBackend — dev (fetch + SSE) path', () => {
   });
 
   it('abort() cancels in-flight stream', async () => {
-    // stream 永不结束, 直到 abort
     let cancelled = false;
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -118,7 +114,7 @@ describe('aiBackend — dev (fetch + SSE) path', () => {
             controller.close();
             return;
           }
-          controller.enqueue(new TextEncoder().encode('data: {"success":true,"text":"tick"}\n\n'));
+          controller.enqueue(new TextEncoder().encode('data: {"phase":"text","delta":"tick"}\n\n'));
         }, 5);
       },
     });
@@ -134,7 +130,6 @@ describe('aiBackend — dev (fetch + SSE) path', () => {
     cancelled = true;
     await new Promise(r => setTimeout(r, 30));
 
-    // 收到至少一条 text 后 abort, 不应再抛 unhandled rejection
     expect(events.length).toBeGreaterThan(0);
   });
 });

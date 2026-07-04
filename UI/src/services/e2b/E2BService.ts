@@ -15,6 +15,7 @@
  * UI 持久化：localStorage（同步） + server 镜像（setLocal，自动 PUT）
  */
 import { getDefaultStore } from '../../state/settings';
+import { useChatWorkdirStore } from '../../components/terminal';
 
 export interface SandboxState {
   sandboxId: string;
@@ -144,6 +145,33 @@ export async function executeSandboxCommand(
     exitCode: data.exit_code,
     executionTime: data.execution_time_ms,
   };
+}
+
+/**
+ * 智能 cwd 注入: 通过 chatId 自动取/建该 chat 的工作目录, 然后调用 executeSandboxCommand
+ * 这是 AI 工具调用 (sandbox.execute) 的统一起点 — 不要让 LLM 自己拼路径
+ *
+ * 用法:
+ *   await executeInChatWorkdir(chatId, sandboxId, 'npm install')
+ */
+export async function executeInChatWorkdir(
+  chatId: string,
+  sandboxId: string,
+  command: string,
+  opts?: { timeout?: number; /** 手动覆盖, 一般不需要 */ cwd?: string },
+): Promise<SandboxExecuteResult> {
+  let cwd: string | undefined = opts?.cwd;
+  if (!cwd) {
+    try {
+      const entry = useChatWorkdirStore.getState().resolveOrCreate(chatId);
+      cwd = entry.workdir;
+    } catch (err) {
+      if (typeof console !== 'undefined') {
+        console.warn('[e2b] resolveOrCreate failed, fallback to no-cwd:', err);
+      }
+    }
+  }
+  return executeSandboxCommand(sandboxId, command, cwd, opts?.timeout);
 }
 
 /** 销毁对话的沙箱 */

@@ -156,17 +156,28 @@ export default function FloatingEditorWindow({
   }, [onClose]);
 
   return (
-    <div 
+    <div
       className="fixed inset-0 pointer-events-none select-none overflow-hidden animate-fadeIn"
       style={{ zIndex: isPinned ? 200 : 95 }}
     >
       <div
         style={{
+          // 2026-07-02 性能修复: 拖动时用 transform: translate3d(x,y,0) 走 GPU 合成层,
+          //   而不是 left/top 触发 layout/paint (规范要求)
+          // - width/height 仍是物理尺寸 (符合规范第 1 条: 不要 scale)
+          // - willChange: transform 提示合成器提前分配独立层
+          // - contain: layout paint style 隔离回流
+          // - backfaceVisibility: hidden 强制创建合成层
           position: 'absolute',
-          left: `${position.x}px`,
-          top: `${position.y}px`,
+          left: 0,
+          top: 0,
           width: `${size.width}px`,
           height: `${size.height}px`,
+          transform: `translate3d(${position.x}px, ${position.y}px, 0)`,
+          willChange: 'transform',
+          contain: 'layout paint style',
+          backfaceVisibility: 'hidden',
+          WebkitBackfaceVisibility: 'hidden',
           backgroundColor: activeTheme.surface,
           borderColor: activeTheme.outline,
         }}

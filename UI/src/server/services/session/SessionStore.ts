@@ -6,6 +6,7 @@
  */
 
 import type { DeviceInstance, SessionState } from '../canvas/types';
+import { CANVAS_LIMITS, formatCanvasName, parseCanvasName } from '../canvas/types';
 import { getGarnetStore } from '../persistence/GarnetStore';
 import { getSurrealStore } from '../persistence/SurrealStore';
 
@@ -50,25 +51,149 @@ export class SessionStore {
 
   /**
    * 获取或创建会话
+   *
+   * 兼容模式: 不传 ownerChatSessionId 时, 用 'legacy' 占位
+   * (用于 restore-from-surreal / 旧数据恢复, 或 dev 早期调用)
    */
-  getOrCreate(sessionId: string): SessionState {
+  getOrCreate(sessionId: string, ownerChatSessionId?: string): SessionState {
     if (this.states.has(sessionId)) {
       return this.states.get(sessionId)!;
     }
 
     const state: SessionState = {
       sessionId,
+      name: '00',  // legacy fallback, 走恢复路径时此值会被覆盖
       selectedDeviceKey: 'fill',
       devices: [],
       bgColor: '#FFFFFF',
       selectedDeviceId: null,
-      // s2.2: 多选设备 ID 列表 (空 = 无选中)
       selectedDeviceIds: [],
       lastUpdated: Date.now(),
+      ownerChatSessionId: ownerChatSessionId || 'legacy',
+      visibility: 'public',
     };
     this.states.set(sessionId, state);
     this.dirty.add(sessionId);
     return state;
+  }
+
+  /**
+   * P0: 显式创建画布
+   * 序号策略: 全 chat 全局最小可用 (删除后复用)
+   * 满 10 个返回 null (调用方应返回 4xx error)
+   *
+   * @returns 新画布, 或 null 表示已达上限
+   */
+  createCanvas(ownerChatSessionId: string): SessionState | null {
+    const seq = this.findMinAvailableSequence();
+    if (seq <= 0) return null;  // 已满
+    const sessionId = `canvas_${seq}`;
+    // 防重复 (并发场景)
+    if (this.states.has(sessionId)) {
+      // 已经存在同名 canvas, 不重复创建
+      return null;
+    }
+    const state: SessionState = {
+      sessionId,
+      name: formatCanvasName(seq),
+      devices: [],
+      bgColor: '#FFFFFF',
+      selectedDeviceKey: 'fill',
+      selectedDeviceId: null,
+      selectedDeviceIds: [],
+      lastUpdated: Date.now(),
+      ownerChatSessionId,
+      visibility: 'public',
+    };
+    this.states.set(sessionId, state);
+    this.dirty.add(sessionId);
+    return state;
+  }
+
+  /**
+   * P0: 全 chat 全局最小可用序号
+   * 扫描所有现有画布的 name (01..99), 返回第一个不存在的
+   * 满 MAX_CANVASES 返回 -1
+   */
+  findMinAvailableSequence(): number {
+    const used = new Set<number>();
+    for (const s of this.states.values()) {
+      const n = parseCanvasName(s.name);
+      if (n > 0) used.add(n);
+    }
+    for (let i = 1; i <= CANVAS_LIMITS.MAX_CANVASES; i++) {
+      if (!used.has(i)) return i;
+    }
+    return -1;
+  }
+
+  /**
+   * P0: 列出所有画布 (按序号升序)
+   */
+  listCanvases(): SessionState[] {
+    const arr = Array.from(this.states.values());
+    arr.sort((a, b) => parseCanvasName(a.name) - parseCanvasName(b.name));
+    return arr;
+  }
+
+  /**
+   * 公开读: 任何人 (有 requester) 可读 public 画布
+   */
+  canRead(canvas: SessionState, requesterChatSessionId: string | undefined): boolean {
+    if (!requesterChatSessionId) return false;
+    return canvas.visibility === 'public';
+  }
+
+  /**
+   * 设备层写入: 任何人 (有 requester) 可写设备 (add/update/remove/transform)
+   * 这是协作画布的语义: 画布是公共资源, 任何 chat 都可以往里加/挪设备
+   * 通知机制 (NotificationBus) 会告诉 owner "谁动了你的画布"
+   */
+  canWriteDevice(canvas: SessionState, requesterChatSessionId: string | undefined): boolean {
+    if (!requesterChatSessionId) return false;
+    return canvas.visibility === 'public';
+  }
+
+  /**
+   * 资源管理 (改名/删除): 仅 owner
+   */
+  canManage(canvas: SessionState, requesterChatSessionId: string | undefined): boolean {
+    if (!requesterChatSessionId) return false;
+    return canvas.ownerChatSessionId === requesterChatSessionId;
+  }
+
+  /**
+   * 向后兼容: 原 canWrite 现在映射为 canManage (保持旧的语义不变)
+   */
+  canWrite(canvas: SessionState, requesterChatSessionId: string | undefined): boolean {
+    return this.canManage(canvas, requesterChatSessionId);
+  }
+
+  /**
+   * P0: 记录 chat 最后访问 canvas 的时间
+   * 用于自动切回
+   */
+  recordAccess(canvasSessionId: string, chatSessionId: string): void {
+    const state = this.states.get(canvasSessionId);
+    if (!state) return;
+    if (!state.lastAccessedBy) state.lastAccessedBy = {};
+    state.lastAccessedBy[chatSessionId] = Date.now();
+    this.dirty.add(canvasSessionId);
+  }
+
+  /**
+   * P0: 找出 chat 最近访问的 canvas
+   * 用于点击 chat 时自动切到该 canvas
+   */
+  getLastAccessedCanvas(chatSessionId: string): SessionState | null {
+    let best: { state: SessionState; ts: number } | null = null;
+    for (const state of this.states.values()) {
+      const ts = state.lastAccessedBy?.[chatSessionId] ?? 0;
+      if (ts > 0 && (!best || ts > best.ts)) {
+        best = { state, ts };
+      }
+    }
+    return best?.state ?? null;
   }
 
   /**
@@ -442,27 +567,37 @@ export class SessionStore {
    * SurrealStore 提供 listAllSessionIds?() 方法 (在 SurrealStore 里实现)
    * 没实现时返回空数组, 优雅降级
    */
-  async restoreAllFromSurreal(): Promise<{ restored: number; total: number }> {
+  async restoreAllFromSurreal(): Promise<{ restored: number; total: number; results: Array<{ sessionId: string; status: string }> }> {
     const surrealAny = this.surreal as ISessionPersistence & {
       listAllSessionIds?: () => Promise<string[]>;
     };
     if (typeof surrealAny.listAllSessionIds !== 'function') {
-      return { restored: 0, total: 0 };
+      return { restored: 0, total: 0, results: [] };
     }
     let ids: string[] = [];
     try {
       ids = await surrealAny.listAllSessionIds();
     } catch (e) {
       console.warn('[SessionStore] restoreAllFromSurreal list failed:', (e as Error).message);
-      return { restored: 0, total: 0 };
+      return { restored: 0, total: 0, results: [] };
     }
+    console.log(`[SessionStore] restoreAllFromSurreal found ids=${JSON.stringify(ids)}, inMemory=${JSON.stringify(Array.from(this.states.keys()))}`);
     let restored = 0;
+    const results: Array<{ sessionId: string; status: string }> = [];
     for (const sid of ids) {
-      if (this.states.has(sid)) continue; // 内存已有, 跳过
+      if (this.states.has(sid)) {
+        results.push({ sessionId: sid, status: 'in-memory' });
+        continue; // 内存已有, 跳过
+      }
       const st = await this.restoreFromSurreal(sid);
-      if (st) restored++;
+      if (st) {
+        restored++;
+        results.push({ sessionId: sid, status: 'restored' });
+      } else {
+        results.push({ sessionId: sid, status: 'failed' });
+      }
     }
-    return { restored, total: ids.length };
+    return { restored, total: ids.length, results };
   }
 
   /**
@@ -540,21 +675,15 @@ export class SessionStore {
    * - description: 0-200 字符
    * 返回修改后的 SessionState
    */
-  renameSession(sessionId: string, name?: string, description?: string): SessionState | null {
+  /**
+   * P0: 仅更新 description (备注)
+   * name 是系统分配的零填充序号, 不允许通过此方法改
+   * - description: 0-200 字符
+   * 返回修改后的 SessionState
+   */
+  updateCanvasDescription(sessionId: string, description?: string): SessionState | null {
     const state = this.states.get(sessionId);
     if (!state) return null;
-
-    if (name !== undefined) {
-      const trimmed = name.trim();
-      if (trimmed.length === 0) {
-        // 空字符串 = 清掉名字
-        delete state.name;
-      } else if (trimmed.length > 50) {
-        throw new Error(`session name too long (max 50 chars, got ${trimmed.length})`);
-      } else {
-        state.name = trimmed;
-      }
-    }
 
     if (description !== undefined) {
       if (description.length > 200) {
@@ -570,6 +699,34 @@ export class SessionStore {
     state.lastUpdated = Date.now();
     this.dirty.add(sessionId);
     return state;
+  }
+
+  /**
+   * P0: 从 Surreal 按 sessionId 加载一个 session 到内存
+   * 用于资源池 / 跨 chat 访问 — 内存可能没有, 但 DB 有
+   */
+  async loadFromSurrealById(sessionId: string): Promise<SessionState | null> {
+    // 内存已有
+    if (this.states.has(sessionId)) return this.states.get(sessionId)!;
+    try {
+      const surrealAny = this.surreal as ISessionPersistence & {
+        loadSessionSnapshot?: (sid: string) => Promise<SessionState | null>;
+      };
+      if (typeof surrealAny.loadSessionSnapshot !== 'function') return null;
+      const state = await surrealAny.loadSessionSnapshot(sessionId);
+      if (state) {
+        // 确保 name 字段存在 (老数据可能缺)
+        if (!state.name) state.name = '00';
+        if (!state.ownerChatSessionId) state.ownerChatSessionId = 'legacy';
+        if (!state.visibility) state.visibility = 'public';
+        this.states.set(sessionId, state);
+        this.dirty.add(sessionId);
+      }
+      return state;
+    } catch (e) {
+      console.warn('[SessionStore] loadFromSurrealById failed:', (e as Error).message);
+      return null;
+    }
   }
 
   /**

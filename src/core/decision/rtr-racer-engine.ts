@@ -5,7 +5,9 @@
 
 import { DecisionEvent } from '../events/decision-events';
 // ✅ 精准对齐物理寻址路径，引入高性能调度客户端
-import { GeminiRustSchedulerClient } from '../../kernel/scheduler-client';
+import { SoloForgeRustSchedulerClient } from '../../kernel/scheduler-client';
+// 🧠 引入训练调度器：用于在置信度计算后注入 MARL POLICY_QUERY 信号
+import { TrainingScheduler } from '../agent/evolution/training-scheduler';
 
 export interface RuntimeKernelInterface {
   verifyOwnership(domain: string, key: string): boolean;
@@ -25,9 +27,10 @@ export interface SystemAdaptiveContext {
   globalFailureRate: number; 
 }
 
-export class GeminiRTRRacerEngine {
+export class SoloForgeRTRRacerEngine {
   private kernel: RuntimeKernelInterface;
-  private schedulerClient?: GeminiRustSchedulerClient; // ✅ 挂载底层调度看门狗
+  private schedulerClient?: SoloForgeRustSchedulerClient;
+  private trainingScheduler?: TrainingScheduler;       // 🧠 可选：MARL 训练后的策略查询
   private readonly domainSignature = 'AIRuntime';
   private readonly weightQuality = 0.4;
   private readonly weightLatency = 0.2;
@@ -36,10 +39,20 @@ export class GeminiRTRRacerEngine {
   private readonly deepReasoningBonus = 0.15;
   private readonly analyticalStrategies: Set<string> = new Set(['chain_of_thought', 'decompose']);
 
-  // ✅ 允许可选注入客户端，完美向后兼容旧有绿灯集成测试桩
-  constructor(kernelInstance: RuntimeKernelInterface, schedulerClient?: GeminiRustSchedulerClient) {
+  // MARL POLICY_QUERY 决策：
+  //   action=2 (熔断) 且 confidence >= 0.55 时,将 aggregateConfidenceIndex 往下压 0.25
+  //   阈值低于 0.55 视为 MARL 自身不确定,不让它主导决策
+  private readonly marlCircuitConfidenceFloor = 0.55;
+  private readonly marlCircuitPenalty = 0.25;
+
+  constructor(
+    kernelInstance: RuntimeKernelInterface,
+    schedulerClient?: SoloForgeRustSchedulerClient,
+    trainingScheduler?: TrainingScheduler
+  ) {
     this.kernel = kernelInstance;
     this.schedulerClient = schedulerClient;
+    this.trainingScheduler = trainingScheduler;
   }
 
   public calculateJointScore(
@@ -117,7 +130,48 @@ export class GeminiRTRRacerEngine {
     // 3. 置信度区间划定
     const calculationGap = primaryScore - secondaryScore;
     const cleanCertaintyScore = 1.0 - taskComplexityMetrics;
-    const aggregateConfidenceIndex = (calculationGap * 0.4) + (globalConfidenceMetric * 0.4) + (cleanCertaintyScore * 0.2);
+    let aggregateConfidenceIndex = (calculationGap * 0.4) + (globalConfidenceMetric * 0.4) + (cleanCertaintyScore * 0.2);
+
+    // 3.5 🧠 MARL POLICY_QUERY 信号注入
+    //    把当前 context 转成 10 维观测,询问 8765 上训练好的策略;
+    //    仅当 MARL 给出高置信 CIRCUIT_BREAKER(action=2) 时,把置信度往下压,
+    //    强制把决策推进到"风险区间三"(多路并行探索)以应对异常路径。
+    //    同步等 ACK 超时 1000ms,失败/不可用时静默跳过,不阻塞主流程。
+    if (this.trainingScheduler) {
+      try {
+        const observation: number[] = [
+          Math.min(1.0, taskComplexityMetrics),                    // task_complexity
+          globalConfidenceMetric,                                  // global_confidence
+          cleanCertaintyScore,                                     // clean_certainty
+          Math.min(1.0, calculationGap),                           // calculation_gap
+          aggregateConfidenceIndex,                                // aggregate_confidence
+          Math.min(1.0, candidates.length / 5.0),                 // candidate_count_norm
+          adaptiveContext?.globalFailureRate ?? 0.0,              // global_failure_rate
+          (requiresDeepCognition ? 1.0 : 0.0),                     // requires_deep_cognition
+          (matrixScoringMap[0]?.instance.baseGenerationQuality ?? 0.5), // top_quality
+          (matrixScoringMap[0]?.instance.normalizedLatencyScore ?? 0.5), // top_latency
+        ];
+        const policyResult = await this.trainingScheduler.queryTrainedPolicy(observation);
+        if (
+          policyResult.source === 'trained_policy' &&
+          policyResult.action === 2 &&
+          policyResult.confidence >= this.marlCircuitConfidenceFloor
+        ) {
+          const original = aggregateConfidenceIndex;
+          aggregateConfidenceIndex = Math.max(0.0, aggregateConfidenceIndex - this.marlCircuitPenalty);
+          this.kernel.getEventBus().emit(DecisionEvent.MARL_POLICY_INJECTED, {
+            source: policyResult.source,
+            action: policyResult.action,
+            confidence: policyResult.confidence,
+            originalConfidence: original,
+            adjustedConfidence: aggregateConfidenceIndex,
+            adjustment: -this.marlCircuitPenalty,
+          });
+        }
+      } catch {
+        // MARL 不可用/超时:静默跳过,不影响 RTR/RACER 主流程
+      }
+    }
 
     this.kernel.getEventBus().emit(DecisionEvent.CONFIDENCE_CALCULATED, { confidence: aggregateConfidenceIndex });
 

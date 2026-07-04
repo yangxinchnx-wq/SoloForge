@@ -136,11 +136,9 @@ const PREFERENCES: Record<TaskType, ModelPreference[]> = {
   vision: [
     { providerPatterns: [/anthropic/i, /claude/i], modelPatterns: [/sonnet|opus|haiku/i], weight: 5, reason: "claude 多模态领先" },
     { providerPatterns: [/openai/i], modelPatterns: [/gpt-4o/i], weight: 5, reason: "gpt-4o vision 强" },
-    { providerPatterns: [/gemini/i], modelPatterns: [/pro|flash|vision/i], weight: 4, reason: "gemini 多模态" },
   ],
   long_context: [
     { providerPatterns: [/anthropic/i, /claude/i], modelPatterns: [/sonnet|opus/i], weight: 5, reason: "claude 200K 上下文" },
-    { providerPatterns: [/gemini/i], modelPatterns: [/pro|flash/i], weight: 5, reason: "gemini 1M 上下文" },
     { providerPatterns: [/moonshot|kimi/i], modelPatterns: [/.+/], weight: 4, reason: "kimi 长文本" },
   ],
   chat: [

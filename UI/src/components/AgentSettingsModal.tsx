@@ -1,21 +1,17 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { MountTransition } from './MountTransition';
-import { 
-  Bot, X, ShieldCheck, Hammer, Database, Shield, 
-  SlidersHorizontal, ChevronDown, Flame, Brain, 
+import {
+  Bot, X, ShieldCheck, Hammer, Database, Shield,
+  SlidersHorizontal, ChevronDown, Flame, Brain,
   Rocket, Workflow, FileText, Save, FolderOpen,
   ZoomIn, ZoomOut
 } from 'lucide-react';
 import { useHotTheme } from '../context/ThemeContext';
-
-export interface ChatSettingsItem {
-  enabledSkills: string[];
-  contextSize: number;
-  personality: 'professional' | 'sarcastic' | 'zen' | 'geek';
-  tone: 'detailed' | 'concise' | 'humorous';
-  emojiEnabled: boolean;
-  emojiType: 'standard' | 'kaomoji' | 'mixed';
-}
+// 2026-07-03 阶段3.1.A: ChatSettingsItem + getSettingsSummary 复用 types/chat.ts (与 ChatPanel 共享)
+import type { ChatSettingsItem } from '../types/chat';
+import { getSettingsSummary } from '../types/chat';
+// 重新导出保持外部 import 兼容 (老代码若有 from './AgentSettingsModal' 拿 ChatSettingsItem)
+export type { ChatSettingsItem } from '../types/chat';
 
 interface AgentSettingsModalProps {
   chatId: string;
@@ -23,19 +19,12 @@ interface AgentSettingsModalProps {
   onClose: () => void;
 }
 
-const pMapPlaceholder: Record<string, string> = { 
-  professional: "专业", 
-  sarcastic: "毒舌", 
-  zen: "禅意", 
-  geek: "极客" 
+const pMapPlaceholder: Record<string, string> = {
+  professional: "专业",
+  sarcastic: "毒舌",
+  zen: "禅意",
+  geek: "极客"
 };
-
-function getSettingsSummary(s: ChatSettingsItem): string {
-  const pMap = { professional: '专业', sarcastic: '毒舌', zen: '禅意', geek: '极客' };
-  const tMap = { detailed: '详尽', concise: '简短', humorous: '幽默' };
-  const em = s.emojiEnabled ? '表情开' : '表情关';
-  return `${pMap[s.personality]} | ${tMap[s.tone]} | ${em} (${s.enabledSkills.length} 技能)`;
-}
 
 export default function AgentSettingsModal({ chatId, chatTitle, onClose }: AgentSettingsModalProps) {
   const { activeTheme } = useHotTheme();
@@ -786,7 +775,7 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
               >
                 <option value="standard">经典 Emoji 🤖</option>
                 <option value="kaomoji">颜文字 (๑•̀ㅂ•́)و✧</option>
-                <option value="mixed">混合表现力 ✨</option>
+                <option value="mixed">混合表现力</option>
               </select>
             </div>
           </div>

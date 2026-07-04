@@ -61,7 +61,7 @@ export interface TraceCaseFile {
 /**
  * æä¹åç®¡çå¨æ¥å£
  */
-export interface GeminiPersistenceManager {
+export interface SoloForgePersistenceManager {
   commitDecision(payload: DecisionPayload): Promise<void>;
   updateDecisionWithOptimisticLock(id: string, expectedVersion: number, updates: Partial<UpdatePayload>): Promise<void>;
   queryTrace(traceId: string): Promise<TraceCaseFile>;
@@ -92,7 +92,7 @@ export interface ShadowDecisionPayload {
 // SurrealDB æä¹åç®¡çå¨å®ç°
 // ============================================================
 
-export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceManager {
+export class SurrealPersistence implements RuntimeComponent, SoloForgePersistenceManager {
   public readonly name = 'surreal';
 
   // åé¨å­å¨ï¼ç¨äºæµè¯ï¼
@@ -450,9 +450,10 @@ export class SurrealPersistence implements RuntimeComponent, GeminiPersistenceMa
 // ============================================================
 
 /**
- * @deprecated ä½¿ç¨ SurrealPersistence ä»£æ¿
+ * SoloForge 命名别名（2026-07-02 去 Gemini 前缀）
+ * @deprecated 请使用 SurrealPersistence
  */
-export const GeminiPersistenceManager = SurrealPersistence;
+export const SoloForgePersistenceManager = SurrealPersistence;
 
 /**
  * Global singleton instance for consumers that need persistence

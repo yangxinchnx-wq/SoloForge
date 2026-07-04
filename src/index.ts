@@ -99,8 +99,8 @@ async function mainSystemIgnitionEngine(): Promise<void> {
     // 🦀 Rust 物理调度器客户端: 优先 spawn bin/scheduler.exe,失败则用仿真桩
     let scheduler: any;
     try {
-      const { GeminiRustSchedulerClient } = await import('./kernel/scheduler-client');
-      const realScheduler = new GeminiRustSchedulerClient();
+      const { SoloForgeRustSchedulerClient } = await import('./kernel/scheduler-client');
+      const realScheduler = new SoloForgeRustSchedulerClient();
       realScheduler.initialize();
       scheduler = realScheduler;
       (kernel as any).schedulerClient = realScheduler;

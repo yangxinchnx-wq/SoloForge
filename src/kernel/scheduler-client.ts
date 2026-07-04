@@ -39,7 +39,7 @@ interface DaemonResponse {
  *
  * 仿真桩：仅在 Rust 进程不可用时启用，完整实现相同语义。
  */
-export class GeminiRustSchedulerClient {
+export class SoloForgeRustSchedulerClient {
   private process: ChildProcess | null = null;
   private rl: readline.Interface | null = null;
 
@@ -337,3 +337,4 @@ export class GeminiRustSchedulerClient {
     this.pendingRequests.clear();
   }
 }
+

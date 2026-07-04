@@ -77,10 +77,15 @@ export const MountTransition: React.FC<MountTransitionProps> = ({
     variant === 'height' ? 'sf-anim-height' :
     'sf-anim-fade-scale';
 
+  const containerStyle: React.CSSProperties = isExiting
+    ? { ...(style || {}), pointerEvents: 'none' }
+    : style || {};
+
   return (
     <div
-      className={`sf-anim ${variantClass} ${isExiting ? 'sf-exit' : ''} ${className}`}
-      style={style}
+      className={`${variantClass} ${isExiting ? 'sf-exit' : ''} ${className}`}
+      style={containerStyle}
+      aria-hidden={isExiting || undefined}
     >
       {children}
     </div>

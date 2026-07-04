@@ -145,8 +145,8 @@ export async function assembleSystem(kernel: RuntimeKernel): Promise<AssemblyCon
     if (transactionManagerModule?.TransactionManager) {
       transactionManager = new transactionManagerModule.TransactionManager(kernel);
     }
-    if (schedulerModule?.GeminiRustSchedulerClient) {
-      scheduler = new schedulerModule.GeminiRustSchedulerClient();
+    if (schedulerModule?.SoloForgeRustSchedulerClient) {
+      scheduler = new schedulerModule.SoloForgeRustSchedulerClient();
       scheduler.initialize?.();
       (kernel as any).schedulerClient = scheduler;
       logger.info('SystemAssembler', '🦀 [Rust Scheduler] spawn 完成,降级/直连已就位');

@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 // 导入 actor_queue 模块
-pub use crate::actor_queue::{ActorTask, GeminiActorQueue};
+pub use crate::actor_queue::{ActorTask, ActorQueue};
 
 use crate::task::{TaskState, TaskType};
 

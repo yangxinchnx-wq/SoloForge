@@ -75,8 +75,15 @@ export const WindowControls: React.FC = () => {
     <div
       data-window-controls
       className="flex items-stretch shrink-0 select-none"
-      // 整个控件条不参与拖动
-      style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+      // 2026: 关键 — 把整个控件条从屏幕绝对右上角挪开 ~12px
+      // OS 在 explorer.exe 里探测"最大化按钮区"用的就是右上角
+      // ~100×48 px 的矩形;我们自己的 React 按钮只要不贴边,explorer 就
+      // 不会把它当成 maximize button,snap layout popup 不会触发
+      style={{
+        WebkitAppRegion: 'no-drag',
+        paddingRight: 8,
+        marginRight: 4,
+      } as React.CSSProperties}
     >
       <button
         type="button"

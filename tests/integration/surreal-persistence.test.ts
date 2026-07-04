@@ -4,7 +4,7 @@
 // ─────────────────────────────────────────────────────────────────
 
 import { describe, it, expect } from 'vitest';
-import { GeminiPersistenceManager, SurrealDbDriverInterface } from '../../src/data/surreal_persistence';
+import { SoloForgePersistenceManager, SurrealDbDriverInterface } from '../../src/data/surreal_persistence';
 
 class MockSurrealLiveDriver implements SurrealDbDriverInterface {
   public memoryStore: Map<string, any> = new Map();
@@ -48,7 +48,7 @@ describe('SoloForge 持久层 Schema 约束与乐观并发锁集成验收测试�
 
   it('验收点 1：[Schema DDL 约束拦截] 录入违规大写枚举或未知字段，持久层必须拦截底层抛出的 DDL 报错', async () => {
     const mockDb = new MockSurrealLiveDriver();
-    const manager = new GeminiPersistenceManager(mockDb);
+    const manager = new SoloForgePersistenceManager(mockDb);
 
     const illegalPayload = {
       id: 'tx_uuid_999',
@@ -67,7 +67,7 @@ describe('SoloForge 持久层 Schema 约束与乐观并发锁集成验收测试�
 
   it('验收点 2：[Optimistic Lock 事务弹回] 模拟高并发下两条独立线程同时篡改同一记录，落后线程必须被物理硬拦截', async () => {
     const mockDb = new MockSurrealLiveDriver();
-    const manager = new GeminiPersistenceManager(mockDb);
+    const manager = new SoloForgePersistenceManager(mockDb);
 
     const basePayload = {
       id: 'tx_uuid_888',

@@ -1348,32 +1348,35 @@ function createWindow() {
   // 创建窗口时立即清一次缓存,把上一版本的 dist/ 残留从磁盘清掉
   try { mainWindow.webContents.session.clearCache(); } catch {}
 
+  // 2026-07-04 修复强制刷新(Ctrl+Shift+R)黑屏问题:
+  //   根因: transparent:true + backgroundColor:#00000000 → 窗口在页面卸载到
+  //   新页面到达之间没有任何 paint,透出桌面(看起来是黑屏)。
+  //   ready-to-show 只在首次创建窗口时触发,刷新时不触发。
+  //   index.html 里的内联 <style> 要等 Vite 服务器返回 HTML 才生效,
+  //   但在那之前已经有 1-3 秒的透明 gap。
+  //
+  //   修复: 在 did-start-loading(导航开始,旧页面还在)时:
+  //   1. setBackgroundColor('#050505') — 让 native 窗口在 gap 期间有深色底
+  //   2. executeJavaScript — 在旧页面上涂深色背景,让最后一帧 persist
+  //   did-finish-load 时恢复透明(setBackgroundColor('#00000000'))
+  mainWindow.webContents.on('did-start-loading', () => {
+    try { mainWindow.webContents.setBackgroundColor('#050505'); } catch {}
+    // 在旧页面上涂背景色 — Chromium 卸载页面后最后一帧会 persist 一小段时间
+    mainWindow.webContents.executeJavaScript(
+      `try{document.documentElement.style.setProperty('background','#050505','important');` +
+      `document.body&&document.body.style.setProperty('background','#050505','important');}catch(e){}`
+    ).catch(() => {});
+  });
+
   // 2026-07-02 调试日志:确认 renderer 真正加载的 URL(诊断"看到的还是旧 UI")
   mainWindow.webContents.on('did-finish-load', () => {
     console.log(`[electron] ★ renderer 真正加载的 URL: ${mainWindow.webContents.getURL()}`);
-    // 2026-07-04 修复强制刷新透明卡顿: 页面加载完成后立即显示窗口
-    if (mainWindow && !mainWindow.isVisible()) {
-      mainWindow.show();
-    }
+    // 恢复透明背景 — React mount + CSS 变量就位后,窗口可以回到 transparent 模式
+    try { mainWindow.webContents.setBackgroundColor('#00000000'); } catch {}
   });
   mainWindow.webContents.on('did-fail-load', (_, code, desc, url) => {
     console.error(`[electron] ✗ renderer 加载失败: ${url} (${code} ${desc})`);
-  });
-
-  // 2026-07-04 修复强制刷新(Ctrl+Shift+R)时窗口透明卡住:
-  //   ready-to-show 只在首次加载时触发, 刷新时不触发 → 窗口保持可见
-  //   但页面 DOM 已卸载重建, transparent:true 窗口会透出桌面背景
-  //   解决: 监听 did-start-loading (刷新开始) 隐藏窗口,
-  //         did-stop-loading (加载完成) 再显示
-  mainWindow.webContents.on('did-start-loading', () => {
-    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
-      mainWindow.hide();
-    }
-  });
-  mainWindow.webContents.on('did-stop-loading', () => {
-    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
-      mainWindow.show();
-    }
+    try { mainWindow.webContents.setBackgroundColor('#00000000'); } catch {}
   });
 
   // ready-to-show:页面首次渲染完成后才显示窗口(避免闪烁)

@@ -144,6 +144,133 @@ export const AGENT_TOOLS: ToolSchema[] = [
       },
     },
   },
+  // ── 画布工具（solo_canvas_*）──
+  // Schema 来自 UI 端 UI/src/server/routes/canvasTools.ts:47-162
+  // 通过 HTTP POST {SOLOFORGE_UI_BASE_URL}/api/canvas/tools/invoke 调用
+  {
+    type: 'function',
+    function: {
+      name: 'solo_canvas_list',
+      description: '列出所有可用画布（公开的 + 自己创建的）。返回 sessionId、displayName、description、ownerChatSessionId、设备数量。',
+      parameters: {
+        type: 'object',
+        properties: {
+          requesterChatSessionId: { type: 'string', description: '当前对话的 chat session ID（用于 ACL）' },
+        },
+        required: ['requesterChatSessionId'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'solo_canvas_get',
+      description: '获取画布完整状态：选中的设备、设备列表、背景色、备注等。',
+      parameters: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string', description: '画布 ID，如 canvas_1' },
+          requesterChatSessionId: { type: 'string' },
+        },
+        required: ['sessionId', 'requesterChatSessionId'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'solo_canvas_create',
+      description: '创建一个新画布。返回创建的画布 ID 和 displayName。',
+      parameters: {
+        type: 'object',
+        properties: {
+          description: { type: 'string', description: '画布备注（可选）' },
+          requesterChatSessionId: { type: 'string' },
+        },
+        required: ['requesterChatSessionId'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'solo_canvas_add_device',
+      description: '向画布添加一个 3D 设备（iPhone / iPad / MacBook 等）。',
+      parameters: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string' },
+          device: { type: 'string', description: '设备 JSON 对象（modelKey/xRatio/yRatio 等）' },
+          requesterChatSessionId: { type: 'string' },
+        },
+        required: ['sessionId', 'device', 'requesterChatSessionId'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'solo_canvas_update_device',
+      description: '更新画布上的某个设备（位置、颜色、UI session 等）。',
+      parameters: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string' },
+          deviceId: { type: 'string' },
+          updates: { type: 'string', description: '要更新的字段 JSON 字符串' },
+          requesterChatSessionId: { type: 'string' },
+        },
+        required: ['sessionId', 'deviceId', 'updates', 'requesterChatSessionId'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'solo_canvas_remove_device',
+      description: '从画布移除指定设备。',
+      parameters: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string' },
+          deviceId: { type: 'string' },
+          requesterChatSessionId: { type: 'string' },
+        },
+        required: ['sessionId', 'deviceId', 'requesterChatSessionId'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'solo_canvas_rename',
+      description: '修改画布的备注 / 描述（仅 owner 可调）。',
+      parameters: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string' },
+          description: { type: 'string' },
+          requesterChatSessionId: { type: 'string' },
+        },
+        required: ['sessionId', 'description', 'requesterChatSessionId'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'solo_canvas_delete',
+      description: '删除整个画布（仅 owner 可调，慎用）。',
+      parameters: {
+        type: 'object',
+        properties: {
+          sessionId: { type: 'string' },
+          requesterChatSessionId: { type: 'string' },
+        },
+        required: ['sessionId', 'requesterChatSessionId'],
+      },
+    },
+  },
 ];
 
 // ─── Tool 执行器 ────────────────────────────────────────────────────
@@ -172,6 +299,55 @@ const PROJECT_ROOT = path.resolve(
 function resolvePath(filePath: string): string {
   if (path.isAbsolute(filePath)) return filePath;
   return path.resolve(PROJECT_ROOT, filePath);
+}
+
+// ─── 画布 HTTP 转发 ────────────────────────────────────────────────
+// 后端 Agent 进程 → UI 进程 (跨进程 HTTP) → SessionStore
+// UI_BASE_URL 默认指向 Vite dev server；Electron 生产环境由主进程注入覆盖
+const UI_BASE_URL = process.env.SOLOFORGE_UI_BASE_URL || 'http://localhost:3000';
+
+async function invokeCanvasToolViaUI(
+  toolName: string,
+  args: Record<string, any>
+): Promise<string> {
+  const requesterChatSessionId = args.requesterChatSessionId;
+  if (!requesterChatSessionId) {
+    return `Error: ${toolName} requires 'requesterChatSessionId' arg`;
+  }
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'X-Requester-Chat-Session-Id': requesterChatSessionId,
+  };
+
+  try {
+    const res = await fetch(`${UI_BASE_URL}/api/canvas/tools/invoke`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ name: toolName, arguments: args }),
+    });
+
+    const data = (await res.json().catch(() => ({}))) as {
+      success?: boolean;
+      payload?: unknown;
+      error?: string;
+    };
+
+    if (!res.ok || data.success !== true) {
+      return `Error: ${data.error || `HTTP ${res.status}`}`;
+    }
+
+    if (data.payload === undefined || data.payload === null) {
+      return 'OK';
+    }
+    return typeof data.payload === 'string'
+      ? data.payload
+      : JSON.stringify(data.payload, null, 2);
+  } catch (err) {
+    return `Error: failed to call UI canvas endpoint (${UI_BASE_URL}): ${
+      err instanceof Error ? err.message : String(err)
+    }`;
+  }
 }
 
 export async function executeToolCall(request: ToolCallRequest): Promise<ToolCallResult> {
@@ -274,7 +450,15 @@ export async function executeToolCall(request: ToolCallRequest): Promise<ToolCal
         break;
       }
 
+      // ─── 画布工具（solo_canvas_*）──
+      // 转发到 UI 进程 UI/src/server/routes/canvasTools.ts 的 HTTP 端点
+      // UI_BASE_URL 默认 http://localhost:3000（Vite dev server），
+      // Electron 生产环境由主进程注入（见 electron/main.cjs）
       default:
+        if (request.name.startsWith('solo_canvas_')) {
+          output = await invokeCanvasToolViaUI(request.name, request.arguments);
+          break;
+        }
         output = `Unknown tool: ${request.name}`;
     }
 

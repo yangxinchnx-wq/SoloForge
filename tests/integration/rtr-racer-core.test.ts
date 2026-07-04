@@ -7,13 +7,13 @@ import { describe, it, expect } from 'vitest';
 import { SovereignRuntimeKernel } from '../../src/kernel/runtime-kernel';
 // ✅ 严格对齐：直接从你的核心事件总线导入 DecisionEvent 契约
 import { DecisionEvent } from '../../src/core/events/decision-events';
-import { GeminiRTRRacerEngine, ModelStrategyCandidate, SystemAdaptiveContext } from '../../src/core/decision/rtr-racer-engine';
+import { SoloForgeRTRRacerEngine, ModelStrategyCandidate, SystemAdaptiveContext } from '../../src/core/decision/rtr-racer-engine';
 
 describe('SoloForge Layer 1 核心决策引擎与内核所有权守卫集成测试套件', () => {
 
   it('验证点 1：[内核所有权硬拦截] 当智能体企图修改不属于当前域的受保护键时，流控引擎必须硬性抛出异常', async () => {
     const kernel = new SovereignRuntimeKernel();
-    const engine = new GeminiRTRRacerEngine(kernel);
+    const engine = new SoloForgeRTRRacerEngine(kernel);
 
     const dummyCandidates: ModelStrategyCandidate[] = [
       {
@@ -36,7 +36,7 @@ describe('SoloForge Layer 1 核心决策引擎与内核所有权守卫集成测�
 
   it('验证点 2：[RTR自适应环境平滑惩罚] 当全局错误率超过阈值时，候选节点的联合评分必须应用扣减项', () => {
     const kernel = new SovereignRuntimeKernel();
-    const engine = new GeminiRTRRacerEngine(kernel);
+    const engine = new SoloForgeRTRRacerEngine(kernel);
 
     const candidate: ModelStrategyCandidate = {
       modelName: 'deep-reasoning-model',
@@ -58,7 +58,7 @@ describe('SoloForge Layer 1 核心决策引擎与内核所有权守卫集成测�
 
   it('验证点 3：[RACER风险区间三路并行多数投票] 低置信度场景下必须同时唤醒前 3 个最优节点，并通过博弈归集输出得票最多的结果', async () => {
     const kernel = new SovereignRuntimeKernel();
-    const engine = new GeminiRTRRacerEngine(kernel);
+    const engine = new SoloForgeRTRRacerEngine(kernel);
 
     const candidates: ModelStrategyCandidate[] = [
       { modelName: 'node-alpha', reasoningStrategy: 'direct', baseGenerationQuality: 0.7, normalizedLatencyScore: 0.7, normalizedCostEfficiency: 0.7, historicalSuccessIndex: 0.7 },

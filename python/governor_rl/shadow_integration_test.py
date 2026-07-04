@@ -29,7 +29,7 @@ class TestShadowGovernor(unittest.TestCase):
     def setUpClass(cls):
         """启动 Shadow Server"""
         cls.host = '127.0.0.1'
-        cls.port = 18765  # 使用非标准端口避免冲突
+        cls.port = 18766  # 本地测试端口（避免与 8765 冲突）
         cls.server = ShadowGovernorServer(cls.host, cls.port)
         cls.server_thread = threading.Thread(target=cls.server.start)
         cls.server_thread.daemon = True

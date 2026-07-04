@@ -216,7 +216,217 @@
   to   { transform: translate3d(0, 0, 0) scale(1); }
 }
 
-/* (Complex drag CSS removed — now using simple inline transition in HistoryItem) */
+/* Item transitions driven by dnd-kit `transition` prop.
+   Applied via the HistoryItem inline style (replaces the old 180ms line). */
+.sf-spring-item {
+  transition:
+    transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+/* History card inner surface.
+   - Subtle 180ms transitions on bg/border/box-shadow so hover feels alive
+     without being noisy.
+   - transform is in the transition list so the `.is-lifted` state (scale +
+     rotate) can smoothly tween back to identity on drop. The lifted pose
+     itself is rendered without a transition (instant on/off when the
+     class is toggled) — only the OUT transition is animated.
+   - "Scale on press" via :active: tactile feedback before dnd-kit takes over.
+   - Pressed state is a 0.98 scale + slight shadow (NOT 0.96 — that's the
+     button rule. Cards need a softer press to feel "picked" not "pushed"). */
+.sf-history-card {
+  transition:
+    background-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* Pressed state: applied via :active so the user feels the click before
+   dnd-kit's PointerSensor activation distance (3px) fires the drag.
+   IMPORTANT: the rule is ONLY for source cards (no .is-overlay-clone child)
+   so the lifted overlay clone doesn't double-apply. We use the wrapper's
+   own :active for the source side, but pointer events on the clone are
+   none, so the rule never fires there. Safe. */
+.sf-history-card:active {
+  filter: brightness(0.92);
+}
+/* .is-lifted 已废弃 — overlay 克隆体改用 .sf-overlay-card 类。
+   保留空规则避免其他文件引用时报错。 */
+
+/* ===========================================================================
+   .sf-overlay-card — DragOverlay 内克隆体的专用样式。
+   绝对不能设置 transform — dnd-kit 通过 DragOverlay wrapper 的 inline
+   transform 控制位置跟随鼠标，如果内层元素也有 transform 会导致测量
+   错误、位置偏移、不跟鼠标。
+   只用 box-shadow + border-color 做「拾起」视觉区分。
+   =========================================================================== */
+.sf-overlay-card {
+  /* 必须显式设置不透明背景 — DragOverlay wrapper 本身没有背景,
+     如果 Tailwind 的 bg-surface / bg-surface-bright 因故没生效,
+     卡片就会透明,用户看到"拖动时对话是透明的"。 */
+  background-color: var(--color-surface, #121414);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.20),
+    0 8px 16px rgba(0, 0, 0, 0.28),
+    0 24px 48px rgba(0, 0, 0, 0.35),
+    0 0 48px rgba(var(--color-primary-rgb, 59, 130, 246), 0.28),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  border-color: rgba(var(--color-primary-rgb, 59, 130, 246), 0.55) !important;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* .sf-drag-overlay — 兼容 ModelAddTab.tsx 的旧引用。
+   注意：不设置 transform 和 contain（dnd-kit 通过 inline style 控制位置），
+   只保留基本视觉属性。 */
+.sf-drag-overlay {
+  will-change: transform;
+  pointer-events: none;
+  overflow: visible;
+  border-radius: 12px;
+  cursor: grabbing;
+}
+
+/* During the drop animation, dnd-kit animates the wrapper from its
+   dragged transform back to identity. The scale/rotate on the inner
+   card compose with the wrapper's translate during the keyframes. */
+
+/* Scroll container
+   注意：不能用 contain:paint — DragOverlay 是 DndContext 的子元素，
+   在滚动容器内部渲染，contain:paint 会把 DragOverlay 裁剪掉。 */
+.sf-scroll-contain {
+  position: relative;
+}
+
+/* =============================================================================
+   Drag focus / drop pulse (iOS Files & Reminders inspired)
+   ----------------------------------------------------------------------------
+   - sf-drag-context: list dims + desaturates while a card is being
+                              dragged, so the lifted card "pops" out visually.
+   - soloforge-drop-pulse:   short bright pulse on impacted cards after drop
+                              (the slot the card landed in + its 1-hop neighbours).
+   - soloforge-drop-ripple:  single radial ripple from drop point, fades out
+   - sf-drop-target:         "Drop here" hint on the over target during drag
+                              (mild scale + ring + top indicator line)
+   ============================================================================= */
+
+.sf-drag-context {
+  transition:
+    opacity 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  opacity: 1;
+  filter: none;
+}
+.sf-drag-context.is-dimming {
+  /* 2026-07-05 优化: 去掉 filter:blur+saturate — filter 属性在拖动时
+     每帧重新合成所有子元素,大量 item 时严重掉帧。
+     改用纯 opacity,只在合成层做 alpha 混合,开销极低。 */
+  opacity: 0.42;
+}
+
+/* Drop pulse: the card that just landed + its 1-hop neighbours get a
+   primary-tinted background flash that fades out. */
+@keyframes soloforge-drop-pulse {
+  0%   {
+    background-color: transparent;
+    box-shadow: 0 0 0 0 rgba(var(--color-primary-rgb, 59, 130, 246), 0);
+  }
+  20%  {
+    background-color: rgba(var(--color-primary-rgb, 59, 130, 246), 0.22);
+    box-shadow: 0 0 0 4px rgba(var(--color-primary-rgb, 59, 130, 246), 0.28);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 0 rgba(var(--color-primary-rgb, 59, 130, 246), 0);
+  }
+}
+.sf-drop-pulse {
+  animation: soloforge-drop-pulse 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  color: rgb(var(--color-primary-rgb, 59, 130, 246));
+}
+
+/* Drop ripple: a soft expanding ring emitted from the drop point. Uses
+   ::before pseudo so it doesn't interfere with the card's own paint.
+   Respects reduced-motion via the global media query at the bottom. */
+.sf-drop-ripple {
+  position: relative;
+}
+.sf-drop-ripple::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgba(var(--color-primary-rgb, 59, 130, 246), 0.32) 0%,
+    rgba(var(--color-primary-rgb, 59, 130, 246), 0.12) 40%,
+    transparent 70%
+  );
+  opacity: 0;
+  transform: scale(0.7);
+}
+.sf-drop-ripple.is-rippling::before {
+  animation: soloforge-drop-ripple 640ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes soloforge-drop-ripple {
+  0%   { opacity: 0;    transform: scale(0.7); }
+  35%  { opacity: 1;    transform: scale(1);   }
+  100% { opacity: 0;    transform: scale(1.5); }
+}
+
+/* "Drop here" hint on the over target during drag.
+   - Subtle scale-up (1.015) so the slot "opens" to receive the card
+   - Primary-tinted ring around the slot
+   - Thin top indicator line in primary color (iOS Files / Linear style)
+   - Background gets a hint of primary tint so the eye is drawn to it */
+.sf-drop-target {
+  position: relative;
+  z-index: 1;
+  box-shadow:
+    inset 0 0 0 2px rgba(var(--color-primary-rgb, 59, 130, 246), 0.85),
+    0 0 0 1px rgba(var(--color-primary-rgb, 59, 130, 246), 0.35);
+  transition:
+    box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 180ms cubic-bezier(0.22, 1, 0.36, 1);
+  background-color: rgba(var(--color-primary-rgb, 59, 130, 246), 0.06) !important;
+}
+.sf-drop-target::after {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 6px;
+  right: 6px;
+  height: 2px;
+  background: rgb(var(--color-primary-rgb, 59, 130, 246));
+  border-radius: 2px;
+  box-shadow: 0 0 8px rgba(var(--color-primary-rgb, 59, 130, 246), 0.6);
+  pointer-events: none;
+  animation: soloforge-drop-indicator-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes soloforge-drop-indicator-in {
+  from { transform: scaleX(0); opacity: 0; }
+  to   { transform: scaleX(1); opacity: 1; }
+}
+
+/* Reduced-motion: kill spring overshoot, instant transitions */
+@media (prefers-reduced-motion: reduce) {
+  .sf-spring-item,
+  .sf-overlay-card,
+  .sf-drag-context,
+  .sf-drop-target {
+    transition: none !important;
+    animation: none !important;
+    filter: none !important;
+  }
+  .sf-drag-context.is-dimming {
+    opacity: 0.7;
+  }
+}
 
 @keyframes soloforge-pulse-red {
   0%   { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.55), 0 0 0 2px rgba(220, 38, 38, 0.18); }

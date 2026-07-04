@@ -5,20 +5,14 @@
  * server.ts 负责读写宿主机真实磁盘文件
  */
 
+import type { FileNode } from '../shared/types/file';
+export type { FileNode } from '../shared/types/file';
+
 const API_BASE = '/api/files';
 
 // ============================================================
 // 类型
 // ============================================================
-
-export interface FileNode {
-  name: string;
-  type: 'file' | 'folder';
-  path: string;
-  children?: FileNode[];
-  size?: number;
-  mtime?: number;
-}
 
 export interface ReadFileResponse {
   success: boolean;

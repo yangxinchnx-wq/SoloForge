@@ -35,11 +35,11 @@ impl PartialOrd for ScoredTask {
     }
 }
 
-pub struct GeminiActorQueue {
+pub struct ActorQueue {
     heap: BinaryHeap<ScoredTask>,
 }
 
-impl GeminiActorQueue {
+impl ActorQueue {
     pub fn new() -> Self {
         Self { heap: BinaryHeap::new() }
     }
@@ -88,7 +88,7 @@ mod tests {
 
     #[test]
     fn test_base_priority_sorting_nominal() {
-        let mut queue = GeminiActorQueue::new();
+        let mut queue = ActorQueue::new();
         let now = Instant::now();
 
         let task_low = ActorTask {
@@ -116,7 +116,7 @@ mod tests {
 
     #[test]
     fn test_dynamic_aging_starvation_prevention() {
-        let mut queue = GeminiActorQueue::new();
+        let mut queue = ActorQueue::new();
         let now = Instant::now();
 
         let task_a = ActorTask {
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn test_empty_queue_graceful_none() {
-        let mut queue = GeminiActorQueue::new();
+        let mut queue = ActorQueue::new();
         assert!(queue.pop().is_none());
     }
 }

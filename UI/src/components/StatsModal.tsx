@@ -452,9 +452,10 @@ export default function StatsModal({ onClose }: StatsModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 bg-[#000000]/85 backdrop-blur-md flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-[#000000]/85 backdrop-blur-md flex items-center justify-center z-[1000] p-4 cursor-pointer" onClick={onClose}>
       <div
-        className="sf-anim sf-anim-fade-scale w-full max-w-5xl bg-[#0c0d10] border border-[#22242b] rounded-2xl shadow-2xl flex flex-col h-[82vh] md:h-[78vh] overflow-hidden select-none text-on-surface"
+        className="sf-anim sf-anim-fade-scale w-full max-w-5xl bg-[#0c0d10] border border-[#22242b] rounded-2xl shadow-2xl flex flex-col h-[82vh] md:h-[78vh] overflow-hidden select-none text-on-surface relative z-[1001] cursor-default"
+        onClick={(e) => e.stopPropagation()}
       >
         {/* Header container */}
         <div className="bg-[#0e0f12] border-b border-[#22242b] px-6 py-4.5 flex items-center justify-between shrink-0">

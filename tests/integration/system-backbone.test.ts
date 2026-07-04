@@ -6,8 +6,8 @@
 import { describe, it, expect, afterAll } from 'vitest';
 import { TransactionKernel, StatePatch } from '../../src/data/transaction_kernel';
 import { DeleteProtection, DeleteCommand } from '../../src/data/delete_protection';
-import { GeminiPersistenceManager, SurrealDbDriverInterface } from '../../src/data/surreal_persistence';
-import { GeminiMappoResourceGovernorClient } from '../../src/core/governor/mappo-client';
+import { SoloForgePersistenceManager, SurrealDbDriverInterface } from '../../src/data/surreal_persistence';
+import { MappoHeuristicGovernor } from '../../src/core/governor/mappo-client';
 
 // 内存高保真 SurrealDB 驱动，用于总装测试中的断言捕获
 class SystemIntegrationSurrealDriver implements SurrealDbDriverInterface {
@@ -25,9 +25,9 @@ class SystemIntegrationSurrealDriver implements SurrealDbDriverInterface {
 
 describe('SoloForge Layer 6 全链路跨语言总装主生命周期流验收测试套件', () => {
   // 1. 物理点火跨语言原生常驻子进程（唤醒 Python 核心）
-  const mappoClient = new GeminiMappoResourceGovernorClient();
+  const mappoClient = new MappoHeuristicGovernor();
   const mockDbDriver = new SystemIntegrationSurrealDriver();
-  const persistence = new GeminiPersistenceManager(mockDbDriver);
+  const persistence = new SoloForgePersistenceManager(mockDbDriver);
 
   afterAll(() => {
     // 物理释放，确保 Windows 操作系统中不残留任何孤儿进程

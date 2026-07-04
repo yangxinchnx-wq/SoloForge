@@ -79,6 +79,36 @@ export function preloadFontByName(name: string, customFonts: CustomFont[] = []):
   if (custom?.url) preloadFontByUrl(custom.url);
 }
 
+/**
+ * THEME_PRESETS —— 主题色配置的 **唯一 source-of-truth**
+ *
+ * ┌──────────────────────────────────────────────────────────────┐
+ * │ ⚠️  不要在别处再写一份主题预设(尤其 index.html)!            │
+ * ├──────────────────────────────────────────────────────────────┤
+ * │ 背景:                                                       │
+ * │   2026-07-02 之前 index.html 有 56 行 inline <script>,      │
+ * │   手抄了 6 个主题的 bg/surface/primary 等 CSS 变量,         │
+ * │   用于 React mount 之前给 <html> 注入底色(防 FOUC)。      │
+ * │   它与这里的 THEME_PRESETS 是双份 source-of-truth,         │
+ * │   改一份忘改另一份 → React mount 之前的 CSS 变量是旧值,  │
+ * │   用户看到"主体色调不一致"的旧版 UI。                      │
+ * │                                                              │
+ * │ 当前约定:                                                   │
+ * │   1. 所有主题颜色只在这里定义                               │
+ * │   2. index.html 不应包含任何主题预设副本                   │
+ * │   3. FOUC 防护交给 Electron 主进程(详见 index.html 注释)  │
+ * │                                                              │
+ * │ 添加/修改主题:                                              │
+ * │   - 只改这个数组                                            │
+ * │   - 任何下游消费者(useStaticTheme / ThemeModal /            │
+ * │     ThemeSwitchOverlay / useTheme 等)通过 THEME_PRESETS    │
+ * │     读取,无需单独改                                         │
+ * │                                                              │
+ * │ 如果未来要支持纯浏览器部署:                                 │
+ * │   用 Vite 的 transformIndexHtml 插件在 build 时把          │
+ * │   THEME_PRESETS 编译进 HTML(自动同步,绝不手抄)。          │
+ * └──────────────────────────────────────────────────────────────┘
+ */
 export const THEME_PRESETS: ThemePreset[] = [
   {
     id: 'light',
@@ -688,6 +718,20 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       } catch (e) {}
     }
   }, [currentThemeId, activeTheme, primaryColor, primaryColorTargets, syntaxThemeId]);
+
+  // 2026-07-03 主题区域着色：primaryColorTargets 变化时直接写 :root dataset
+  // 各列容器只有静态 data-theme-region 属性，CSS 选择器根据 :root data-attr 决定 --color-primary
+  // 这样 primaryColorTargets 变化不触发 React 重渲染，只走 DOM dataset + CSS 变量级联
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const root = document.documentElement;
+    root.dataset.themeHeader = primaryColorTargets.header ? '1' : '0';
+    root.dataset.themeActivityBar = primaryColorTargets.activityBar ? '1' : '0';
+    root.dataset.themeEditorExplorer = primaryColorTargets.editorAndExplorer ? '1' : '0';
+    root.dataset.themeChatPanel = primaryColorTargets.chatPanel ? '1' : '0';
+    root.dataset.themeStatusBar = primaryColorTargets.statusBar ? '1' : '0';
+    root.dataset.themeSkillBar = primaryColorTargets.skillBar ? '1' : '0';
+  }, [primaryColorTargets]);
 
   // Debounced write helper for localStorage to significantly minimize key-value I/O overhead on fast drags
   useEffect(() => {

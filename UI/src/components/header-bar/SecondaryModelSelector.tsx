@@ -33,7 +33,6 @@ const getProviderIdForModel = (modelName: string): string => {
     return 'deepseek';
   }
   if (lower.includes('claude')) return 'anthropic';
-  if (lower.includes('gemini')) return 'gemini';
   if (lower.includes('qwen') || lower.includes('siliconflow')) return 'siliconflow';
   if (lower.includes('moonshot') || lower.includes('kimi')) return 'moonshot';
   if (lower.includes('llama') || lower.includes('mixtral') || lower.includes('gemma')) return 'groq';

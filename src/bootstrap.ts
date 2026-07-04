@@ -85,8 +85,8 @@ export async function bootstrapSystemNetwork(
     if (transactionManagerModule?.TransactionManager) {
       transactionManager = new transactionManagerModule.TransactionManager(kernel);
     }
-    if (schedulerModule?.GeminiRustSchedulerClient) {
-      scheduler = new schedulerModule.GeminiRustSchedulerClient();
+    if (schedulerModule?.SoloForgeRustSchedulerClient) {
+      scheduler = new schedulerModule.SoloForgeRustSchedulerClient();
       scheduler.initialize?.();
     }
   } catch (e: any) {

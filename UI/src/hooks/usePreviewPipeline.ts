@@ -9,7 +9,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { preview as adapterPreview, type PreviewHandle } from '../services/canvas/IPCAdapter';
+// 2026-07-03 阶段5.C: IPCAdapter.ts 已删除 (层级倒置), preview() 入口合并到 chatStreamOrchestrator
+import { preview as adapterPreview, type PreviewHandle } from '../services/chatStreamOrchestrator';
 import { snapshotPipelineConfig } from '../services/canvas/pipelineConfig';
 import { usePreviewStreamStore } from '../state/previewStreamStore';
 

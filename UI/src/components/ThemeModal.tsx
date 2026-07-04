@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { X, Palette, Check, Sun, Moon, Zap, CloudSnow, Heart, RefreshCw, PanelBottom, Menu, Wand2, Sliders, MessageSquare, FileCode, Settings } from 'lucide-react';
+import { X, Palette, Check, Sun, Moon, Zap, CloudSnow, Heart, RefreshCw, PanelBottom, Menu, Sliders, MessageSquare, FileCode, Settings } from 'lucide-react';
 import { THEME_PRESETS, SYNTAX_THEMES, useStaticTheme } from '../context/ThemeContext';
 
 interface ThemeModalProps {
@@ -105,7 +105,8 @@ const PresetThemeList = React.memo(({
       case 'sakura':
         return <Heart className="w-4 h-4 text-[#ff79c6]" />;
       default:
-        return <Wand2 className="w-4 h-4 text-primary" />;
+        // 2026-07-03: Wand2 已禁用 (魔法/AI 装饰语义), 改用 Palette (调色板, 主题场景首选)
+        return <Palette className="w-4 h-4 text-primary" />;
     }
   };
 
@@ -411,7 +412,11 @@ export default function ThemeModal({
   }, [localColor]);
 
   return (
-    <div className="fixed inset-0 pointer-events-none z-[100] text-on-surface font-sans select-none overflow-hidden animate-fadeIn">
+    <div
+      className="fixed inset-0 z-[1000] text-on-surface font-sans select-none overflow-hidden animate-fadeIn cursor-pointer"
+      style={{ backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', backgroundColor: 'rgba(0, 0, 0, 0.45)' }}
+      onClick={onClose}
+    >
       <div
         style={{
           position: 'absolute',
@@ -422,8 +427,9 @@ export default function ThemeModal({
           backgroundColor: activeTheme.surface,
           borderColor: activeTheme.outline,
         }}
-        className="sf-anim sf-anim-fade-scale pointer-events-auto border rounded-2xl shadow-[0_16px_50px_rgba(0,0,0,0.85)] overflow-hidden flex flex-col cursor-default relative backdrop-blur-md bg-opacity-95"
+        className="sf-anim sf-anim-fade-scale pointer-events-auto border rounded-2xl shadow-[0_16px_50px_rgba(0,0,0,0.85)] overflow-hidden flex flex-col cursor-default relative backdrop-blur-md bg-opacity-95 z-[1001]"
         onMouseDown={handleMouseDown}
+        onClick={(e) => e.stopPropagation()}
       >
         {/* 4 Corner Resizers for Custom Size Manipulation */}
         <div 
@@ -679,7 +685,7 @@ export default function ThemeModal({
               <div className="flex items-center justify-between py-1 border-b border-outline/10 gap-4">
                 <div>
                   <span className="text-[11px] font-bold text-on-surface/90 flex items-center gap-1.5 min-w-0">
-                    <Wand2 className="w-3.5 h-3.5 opacity-70 shrink-0" />
+                    <Palette className="w-3.5 h-3.5 opacity-70 shrink-0" />
                     <span>快捷技能辅助栏</span>
                   </span>
                   <span className="text-[9px] text-on-surface/40 leading-normal block mt-0.5">同步 Chat 面板底部的技能、记忆、上传文件、工具、标签及知识库图标二极管色调</span>

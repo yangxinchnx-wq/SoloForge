@@ -280,3 +280,196 @@ export async function listSessions(): Promise<SessionSummary[]> {
   const r = await jsonRequest<{ sessions: SessionSummary[]; total: number }>(API_BASE);
   return r?.sessions || [];
 }
+
+// ─────────────────────────────────────────
+// P0: 画布作为公共资源 + ACL
+// ─────────────────────────────────────────
+
+/**
+ * 画布资源摘要 (公共资源池视图)
+ *
+ * sessionId: 画布 ID (canvas_1 ... canvas_10)
+ * displayName: UI 显示的序号 (1, 2, ..., 10)
+ * ownerChatSessionId: 创建该画布的 chat session
+ * isOwner: 当前请求方是否 owner (可写)
+ * lastAccessedAt: 请求方最近一次访问时间
+ */
+export interface CanvasResource {
+  sessionId: string;
+  name: string;
+  displayName: string;
+  description?: string;
+  ownerChatSessionId: string;
+  isOwner: boolean;
+  deviceCount: number;
+  lastUpdated: number;
+  lastAccessedAt: number | null;
+  visibility: 'public';
+  bgColor: string;
+  devices: DeviceInstance[];
+}
+
+export interface CanvasListResponse {
+  total: number;
+  canvases: CanvasResource[];
+  lastAccessedCanvasId: string | null;
+  maxCanvases: number;
+}
+
+/**
+ * 列出当前 chat 可访问的所有画布 (公共读)
+ *
+ * @param requesterChatSessionId 调用方 chat session id (header)
+ */
+export async function listCanvasResources(
+  requesterChatSessionId: string
+): Promise<CanvasListResponse | null> {
+  return jsonRequest<CanvasListResponse>('/api/canvas/resources', {
+    headers: { 'X-Requester-Chat-Session-Id': requesterChatSessionId },
+  });
+}
+
+/**
+ * 创建一个新画布 (系统自动分配最小可用序号)
+ */
+export async function createCanvas(
+  requesterChatSessionId: string,
+  description?: string
+): Promise<CanvasResource | null> {
+  return jsonRequest<CanvasResource>('/api/canvas/sessions', {
+    method: 'POST',
+    headers: { 'X-Requester-Chat-Session-Id': requesterChatSessionId },
+    body: JSON.stringify({ description }),
+  });
+}
+
+/**
+ * 读画布的完整状态 (public, 但必须带 requester)
+ */
+export async function fetchCanvas(
+  canvasId: string,
+  requesterChatSessionId: string
+): Promise<SessionState | null> {
+  return jsonRequest<SessionState>(`${API_BASE}/${encodeURIComponent(canvasId)}`, {
+    headers: { 'X-Requester-Chat-Session-Id': requesterChatSessionId },
+  });
+}
+
+/**
+ * 改画布描述 (仅 owner)
+ */
+export async function updateCanvasDescription(
+  canvasId: string,
+  description: string,
+  requesterChatSessionId: string
+): Promise<SessionState | null> {
+  return jsonRequest<SessionState>(`${API_BASE}/${encodeURIComponent(canvasId)}`, {
+    method: 'PATCH',
+    headers: { 'X-Requester-Chat-Session-Id': requesterChatSessionId },
+    body: JSON.stringify({ description }),
+  });
+}
+
+/**
+ * 删除画布 (仅 owner, 序号会被新画布复用)
+ */
+export async function deleteCanvas(
+  canvasId: string,
+  requesterChatSessionId: string
+): Promise<boolean> {
+  const r = await jsonRequest<{ deleted: string }>(
+    `${API_BASE}/${encodeURIComponent(canvasId)}`,
+    {
+      method: 'DELETE',
+      headers: { 'X-Requester-Chat-Session-Id': requesterChatSessionId },
+    }
+  );
+  return r !== null;
+}
+
+/**
+ * 取最近访问的画布 (用于点击 chat 时自动切换)
+ */
+export async function fetchLastAccessedCanvas(
+  requesterChatSessionId: string
+): Promise<CanvasListResponse | null> {
+  return jsonRequest<CanvasListResponse>('/api/canvas/resources', {
+    headers: { 'X-Requester-Chat-Session-Id': requesterChatSessionId },
+  });
+}
+
+// ─────────────────────────────────────────
+// P0: LLM MCP tool 调用
+// ─────────────────────────────────────────
+
+export interface MCPToolSchema {
+  name: string;
+  description: string;
+  input_schema: {
+    type: 'object';
+    properties: Record<string, unknown>;
+    required: string[];
+  };
+}
+
+export interface MCPInvokeResponse<T = unknown> {
+  success: boolean;
+  payload?: T;
+  error?: string;
+}
+
+// ─────────────────────────────────────────
+// P0: 画布修改通知 (owner 轮询)
+// ─────────────────────────────────────────
+
+export interface CanvasNotification {
+  id: string;
+  actorChatSessionId: string;
+  targetChatSessionId: string;
+  canvasId: string;
+  canvasDisplayName: string;
+  action: 'write_device' | 'remove_device' | 'rename' | 'delete';
+  ts: number;
+  message: string;
+}
+
+/**
+ * 拉取并 ack (consume) 当前 chat 作为 owner 的所有通知
+ *
+ * 客户端每 3s 调一次, 拿到的就 push 到气泡队列, 然后这些通知被服务端清掉
+ */
+export async function drainCanvasNotifications(
+  requesterChatSessionId: string,
+): Promise<CanvasNotification[]> {
+  try {
+    const r = await fetch(
+      `/api/canvas/notifications?requester=${encodeURIComponent(requesterChatSessionId)}`,
+      { headers: { 'X-Requester-Chat-Session-Id': requesterChatSessionId } },
+    );
+    if (!r.ok) return [];
+    const data = await r.json();
+    return (data?.payload?.notifications ?? []) as CanvasNotification[];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 仅 peek (不消费), 用于调试
+ */
+export async function peekCanvasNotifications(
+  requesterChatSessionId: string,
+): Promise<CanvasNotification[]> {
+  try {
+    const r = await fetch('/api/canvas/notifications/peek', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requester: requesterChatSessionId }),
+    });
+    if (!r.ok) return [];
+    const data = await r.json();
+    return (data?.payload?.notifications ?? []) as CanvasNotification[];
+  } catch {
+    return [];
+  }
+}

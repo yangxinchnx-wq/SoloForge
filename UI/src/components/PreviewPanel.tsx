@@ -5,12 +5,32 @@ import {
   Palette, MonitorSmartphone, Info, ChevronDown, Check, Maximize2
 } from 'lucide-react';
 import { MountTransition } from './MountTransition';
+import { CanvasResourceBar } from './CanvasResourceBar';
+import { CanvasNotificationStack } from './CanvasNotificationBubble';
+import {
+  drainCanvasNotifications,
+  type CanvasNotification,
+} from '../services/canvas/sessionApi';
 
 interface PreviewPanelProps {
   width?: number;
   isResizing?: boolean;
   dragStartWidth?: number;
   selectedChatId?: string;
+  /** P0: 由 useChatClickCanvasBridge 解析出的画布 ID (canvas_1 ... canvas_10) */
+  canvasId?: string | null;
+  /** P0: 画布 ID 是否已就绪 (首次进入 chat 时, 后台拉取+建画布可能耗时) */
+  canvasReady?: boolean;
+  /** P0: 当前 chat 可访问的所有画布 (用于顶部资源池条) */
+  canvases?: import('../services/canvas/sessionApi').CanvasResource[];
+  /** P0: 上限 (默认 10) */
+  maxCanvases?: number;
+  /** P0: 用户点 chip 切画布 */
+  onSelectCanvas?: (canvasId: string) => void;
+  /** P0: 用户点 + 新建画布 */
+  onCreateCanvas?: () => Promise<string | null>;
+  /** P0: 用户双击 chip 改名 */
+  onRenameCanvas?: (canvasId: string, description: string) => Promise<boolean>;
 }
 
 type CanvasState = 'idle' | 'starting' | 'running' | 'error';
@@ -86,10 +106,15 @@ function getSizePreset(key: string) {
   return SIZE_PRESETS.find(p => p.key === key);
 }
 
-export default function PreviewPanel({ width = 385, isResizing = false, dragStartWidth = 385, selectedChatId }: PreviewPanelProps) {
+export default function PreviewPanel({ width = 385, isResizing = false, dragStartWidth = 385, selectedChatId, canvasId, canvasReady, canvases = [], maxCanvases = 10, onSelectCanvas, onCreateCanvas, onRenameCanvas }: PreviewPanelProps) {
   const [canvasState, setCanvasState] = useState<CanvasState>('idle');
   const [canvasError, setCanvasError] = useState<string>('');
-  const sessionIdRef = useRef<string>(`canvas-${selectedChatId || 'default'}`);
+  // P0: 优先使用 App.tsx 解析出的画布 ID (canvas_1 ... canvas_10)
+  //   - 解析期间 fallback 到旧派生 ID 保证不会白屏
+  //   - canvasReady 后再切到真实 ID (canvas.stop 老 + canvas.start 新)
+  const fallbackId = `canvas-${selectedChatId || 'default'}`;
+  const effectiveCanvasId = canvasId || fallbackId;
+  const sessionIdRef = useRef<string>(effectiveCanvasId);
   const [canvasInfo, setCanvasInfo] = useState<{ port: number; pid: number } | null>(null);
   const [bgColor, setBgColor] = useState<string>(BG_PRESETS[0].value);
   const [customColor, setCustomColor] = useState<string>('#FFFFFF');
@@ -115,8 +140,48 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
   }, [showSizeMenu]);
 
   useEffect(() => {
-    sessionIdRef.current = `canvas-${selectedChatId || 'default'}`;
+    // P0: 仅在 canvasReady 后才切到真实画布 ID
+    //   - ready=false 时保留 fallback (旧 canvas-${chatId})
+    //   - ready=true 时切到 canvas_1 ... canvas_10
+    if (canvasReady && canvasId) {
+      sessionIdRef.current = canvasId;
+    } else {
+      sessionIdRef.current = fallbackId;
+    }
+  }, [canvasId, canvasReady, fallbackId]);
+
+  // ─────────────────────────────────────────
+  // P0: 画布修改通知 (owner 轮询拉取 + 气泡队列)
+  // ─────────────────────────────────────────
+  //   - 每 3s 拉一次 GET /api/canvas/notifications?requester=<chatId>
+  //   - 拿到的 push 到 queue, queue[0] 渲染气泡
+  //   - 子组件 3s 后回调 onExpire → queue.shift
+  //   - 当前 chat 没变 / 不在 owner chat 时停止轮询
+  const [notifQueue, setNotifQueue] = useState<CanvasNotification[]>([]);
+  useEffect(() => {
+    if (!selectedChatId) {
+      setNotifQueue([]);
+      return;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled) return;
+      const list = await drainCanvasNotifications(selectedChatId);
+      if (cancelled || !list || list.length === 0) return;
+      setNotifQueue((prev) => [...prev, ...list]);
+    };
+    // 立即拉一次, 然后每 3s
+    void tick();
+    const timer = window.setInterval(tick, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [selectedChatId]);
+
+  const handleNotifExpire = useCallback((id: string) => {
+    setNotifQueue((prev) => prev.filter((n) => n.id !== id));
+  }, []);
 
   // 上报 PreviewPanel 区域的位置和尺寸给主进程
   useEffect(() => {
@@ -328,7 +393,12 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
     <div
       ref={containerRef}
       style={{
-        width,
+        // 2026-07-02 性能修复: 拖动期间 width 锁在 dragStartWidth, 用 transform 偏移
+        //   - width 变化触发 PreviewPanel 内部 canvas 重新 layout, 大画布尤其卡
+        //   - transform 走 GPU 合成层, 不触发 layout
+        width: isResizing ? `${dragStartWidth}px` : `${width}px`,
+        transform: isResizing ? `translate3d(${width - dragStartWidth}px, 0, 0)` : undefined,
+        willChange: isResizing ? 'transform' : 'auto',
         transition: isResizing ? 'none' : 'width 250ms cubic-bezier(0.16, 1, 0.3, 1)'
       }}
       className="h-full bg-surface border-l border-outline/50 flex flex-col shrink-0 select-none z-10 overflow-hidden relative"
@@ -343,6 +413,17 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
           overflow: 'hidden'
         }}
       >
+        {/* P0: 画布资源池条 — 顶部独立 chip 栏 */}
+        <CanvasResourceBar
+          canvases={canvases}
+          activeCanvasId={canvasId ?? null}
+          maxCanvases={maxCanvases}
+          loading={!canvasReady}
+          onSelect={(id) => onSelectCanvas?.(id)}
+          onCreate={async () => (onCreateCanvas ? onCreateCanvas() : null)}
+          onRename={async (id, desc) => (onRenameCanvas ? onRenameCanvas(id, desc) : false)}
+        />
+
         {/* TOP BAR */}
         <div className="p-2.5 px-3 border-b border-outline/40 flex items-center justify-between bg-surface shrink-0">
           <div className="flex items-center gap-1.5">
@@ -502,6 +583,9 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
           )}
         </div>
       </div>
+
+      {/* P0: 画布修改通知气泡层 — 覆盖整个 PreviewPanel (排除 CanvasResourceBar 由 absolute top 控制) */}
+      <CanvasNotificationStack notes={notifQueue} onExpire={handleNotifExpire} />
     </div>
   );
 }

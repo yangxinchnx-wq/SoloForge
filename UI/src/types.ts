@@ -1,10 +1,5 @@
-export interface FileNode {
-  name: string;
-  type: 'file' | 'folder';
-  children?: FileNode[];
-  content?: string;
-  isOpen?: boolean;
-}
+// FileNode 已统一到 src/shared/types/file.ts，此处 re-export 保持向后兼容
+export type { FileNode } from './shared/types/file';
 
 export interface ChatMessage {
   id: string;

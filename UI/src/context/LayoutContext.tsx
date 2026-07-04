@@ -1,18 +1,52 @@
 /**
  * LayoutContext — 隔离侧栏/预览面板的拖拽状态
  *
- * 2026-06-24 性能优化:
- *   - 之前 sidebarWidth / previewWidth / isResizing* 全部在 App.tsx 顶层 useState
- *   - 拖动 1 秒 = 60 次 setState → App 整树重渲染 60 次
- *   - 现在隔离到独立 provider,只有消费这些状态的组件重渲染
+ * ─────────────────────────────────────────────────────────────
+ * 2026-07-02 重构: 拆分 4 个 Context (照搬 ThemeContext 的 hot/static 模式)
+ * ─────────────────────────────────────────────────────────────
+ * 之前的问题 (底层):
+ *   - 单一 LayoutContext, useMemo deps 包含 state
+ *   - 每次 dispatch 都返回新 state 对象 → useMemo 重算 → value 引用变化
+ *   - <Context.Provider value={value}> 引用变化 → 所有 useContext 消费者强制 re-render
+ *   - 即使消费者只关心 action (永不变化), 也会被强制 re-render
  *
- * 设计:
- *   - 单一 state + dispatch(用 useReducer 替代多个 useState)
- *   - mousemove / mouseup 监听器放 provider 内,只 set 自己的 state
- *   - 通过 Context 暴露给 Header / ChatPanel / PreviewPanel / 等
+ * 修复: 4 个独立 Context
+ *   1. LayoutStateContext    — 高频变 state (sidebarWidth, previewWidth)
+ *                             每次拖动都更新; 只让真正需要 width 数值的组件订阅
+ *   2. LayoutStatusContext   — 低频变 state (isResizing*, dragStart*)
+ *                             只在 mousedown/mouseup 切换; 列容器外的 handle / wrapper 用
+ *   3. LayoutActionsContext  — 永不变化的 action 集合 (useRef 镜像, 引用永稳定)
+ *                             mousedown 调 beginResizeSidebar 等
+ *   4. LayoutMetaContext     — 几乎不变 (previewMinWidth, previewWidthLoaded)
+ *                             整个 App 生命周期可能变 0-1 次
+ *
+ * 拆分 consumer hook:
+ *   - useLayout()         全部 (向后兼容, 包含 state + status + actions + meta)
+ *   - useLayoutState()    仅高频变 (MainLayout 根容器 / 列容器用)
+ *   - useLayoutStatus()   仅低频变 (handle / isResizing 监听用)
+ *   - useLayoutActions()  仅 actions (Header / ResizeHandles 用)
+ *   - useLayoutMeta()     仅 meta (PreviewPanel minWidth 用)
+ *
+ * ─────────────────────────────────────────────────────────────
+ * 2026-07-02 移除"幽灵拖动" (Ghost Drag) — 存在根本性设计缺陷
+ * ─────────────────────────────────────────────────────────────
+ * 之前方案: 拖动期间不调 IPC, 用 transform: translate3d 让 IDE 内容视觉跟随鼠标
+ * 问题: OS 窗口不动, 但 IDE 内容 transform 偏移到 OS 窗口外
+ *   - 用户看到的是 OS 窗口的空白背景 (深色主题 = 黑布)
+ *   - "画面只能在这个黑布里拖动" — 实际是 IDE 在 OS 窗口外
+ *   - mouseup 时 SetWindowPos 把 OS 窗口瞬移到目标位置
+ *   - 体验: 完全不可用, 用户看到的是"空框 + 框外的内容"
+ *
+ * 正确方案: 拖动期间 IPC moveWindow 让 OS 窗口跟随鼠标
+ *   - OS 窗口 = 用户视觉
+ *   - 1 帧最多 1 次 IPC (rAF 节流)
+ *   - main 进程 8ms 节流防御
+ *   - 这种方案没有"黑布"问题, OS 窗口本身在动
  */
 
 import React, { createContext, useContext, useReducer, useEffect, useRef, useMemo, useCallback } from 'react';
+
+// ── 1. State 类型定义 ─────────────────────────────────────────
 
 export interface LayoutState {
   sidebarWidth: number;
@@ -32,6 +66,8 @@ type Action =
   | { type: 'setPreviewMinWidth'; width: number }
   | { type: 'beginResizeSidebar'; startWidth: number }
   | { type: 'beginResizePreview'; startWidth: number }
+  | { type: 'endResizeSidebar'; width: number }
+  | { type: 'endResizePreview'; width: number }
   | { type: 'endResize' }
   | { type: 'loadPreviewWidth'; width: number }
   | { type: 'previewWidthLoaded' };
@@ -67,6 +103,21 @@ function reducer(state: LayoutState, action: Action): LayoutState {
         isResizingPreview: true,
         dragStartPreviewWidth: action.startWidth,
       };
+    case 'endResizeSidebar':
+      return {
+        ...state,
+        isResizingSidebar: false,
+        sidebarWidth: action.width,
+        dragStartSidebarWidth: action.width,
+      };
+    case 'endResizePreview':
+      return {
+        ...state,
+        isResizingPreview: false,
+        previewWidth: action.width,
+        dragStartPreviewWidth: action.width,
+        previewWidthLoaded: true,
+      };
     case 'endResize':
       return {
         ...state,
@@ -87,30 +138,85 @@ function reducer(state: LayoutState, action: Action): LayoutState {
   }
 }
 
-export interface LayoutContextValue {
-  state: LayoutState;
+// ── 2. 拆分 4 个 Context ──────────────────────────────────────
+
+// 高频变: sidebarWidth / previewWidth
+const LayoutStateContext = createContext<{
+  sidebarWidth: number;
+  previewWidth: number;
+} | null>(null);
+
+// 低频变: isResizing* / dragStart*
+const LayoutStatusContext = createContext<{
+  isResizingSidebar: boolean;
+  isResizingPreview: boolean;
+  dragStartSidebarWidth: number;
+  dragStartPreviewWidth: number;
+} | null>(null);
+
+// 永不变化: 全部 action (useRef 镜像, 引用稳定)
+export interface LayoutActions {
   beginResizeSidebar: () => void;
   beginResizePreview: () => void;
   endResize: () => void;
   onPreviewMinWidthChange: (width: number) => void;
 }
+const LayoutActionsContext = createContext<LayoutActions | null>(null);
 
-const LayoutContext = createContext<LayoutContextValue | undefined>(undefined);
+// 几乎不变: previewMinWidth, previewWidthLoaded
+const LayoutMetaContext = createContext<{
+  previewMinWidth: number;
+  previewWidthLoaded: boolean;
+} | null>(null);
 
-export const useLayout = (): LayoutContextValue => {
-  const ctx = useContext(LayoutContext);
-  if (!ctx) throw new Error('useLayout must be used within LayoutProvider');
+// ── 3. 拆分 consumer hook ────────────────────────────────────
+
+export const useLayoutState = () => {
+  const ctx = useContext(LayoutStateContext);
+  if (!ctx) throw new Error('useLayoutState must be used within LayoutProvider');
   return ctx;
 };
 
+export const useLayoutStatus = () => {
+  const ctx = useContext(LayoutStatusContext);
+  if (!ctx) throw new Error('useLayoutStatus must be used within LayoutProvider');
+  return ctx;
+};
+
+export const useLayoutActions = (): LayoutActions => {
+  const ctx = useContext(LayoutActionsContext);
+  if (!ctx) throw new Error('useLayoutActions must be used within LayoutProvider');
+  return ctx;
+};
+
+export const useLayoutMeta = () => {
+  const ctx = useContext(LayoutMetaContext);
+  if (!ctx) throw new Error('useLayoutMeta must be used within LayoutProvider');
+  return ctx;
+};
+
+// 向后兼容: useLayout() 合并 4 个 Context (用 useMemo 合批避免每次返回新对象)
+export const useLayout = () => {
+  const state = useLayoutState();
+  const status = useLayoutStatus();
+  const actions = useLayoutActions();
+  const meta = useLayoutMeta();
+  return useMemo(
+    () => ({ ...state, ...status, ...actions, ...meta }),
+    [state, status, actions, meta],
+  );
+};
+
+// ── 4. LayoutProvider ────────────────────────────────────────
+
 export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
-  // 用 ref 镜像 state,避免 mousemove 闭包陈旧
+  // 用 ref 镜像 state, 避免 mousemove 闭包陈旧
   const stateRef = useRef(state);
   stateRef.current = state;
 
-  // 4 个 callback 抽离为 useCallback,引用稳定,避免消费方 useEffect 因引用变化反复触发
-  // (例如 PreviewPanel 的 onMinWidthChange 依赖项陷阱会导致 Maximum update depth)
+  // ── 4.1 Action callbacks (useCallback 引用稳定) ──
+
   const beginResizeSidebar = useCallback(() => {
     dispatch({ type: 'beginResizeSidebar', startWidth: stateRef.current.sidebarWidth });
   }, []);
@@ -127,7 +233,23 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     dispatch({ type: 'setPreviewMinWidth', width });
   }, []);
 
-  // server 端回填 previewWidth
+  // ── 4.2 用 ref 镜像 actions, 让 LayoutActionsContext 的 value 引用永稳定 ──
+  // 这是关键: 即使 dispatch 触发了 useReducer state 变化, actions 对象引用也不变
+  // 订阅 actions 的组件 (Header / ResizeHandles) 0 re-render
+  const actionsRef = useRef<LayoutActions>({
+    beginResizeSidebar,
+    beginResizePreview,
+    endResize,
+    onPreviewMinWidthChange,
+  });
+  actionsRef.current = {
+    beginResizeSidebar,
+    beginResizePreview,
+    endResize,
+    onPreviewMinWidthChange,
+  };
+
+  // ── 4.3 server 回填 previewWidth (低优先级, 不影响拖动) ──
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -141,7 +263,6 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           dispatch({ type: 'loadPreviewWidth', width: w });
           return;
         }
-        // 没拿到有效值,只标记 loaded
         dispatch({ type: 'previewWidthLoaded' });
       } catch {
         dispatch({ type: 'previewWidthLoaded' });
@@ -151,8 +272,6 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, []);
 
   // 拖动期间保存到 server 的回调 (mouseup 时调)
-  // 用 ref 避免组件重渲染
-  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savePreviewWidth = useCallback((w: number) => {
     if (!stateRef.current.previewWidthLoaded) return;
     fetch('/api/settings/previewWidth', {
@@ -162,31 +281,66 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }).catch(() => {});
   }, []);
 
-  // mousemove / mouseup 全局监听 — 只 dispatch 自己的 state
-  //   不影响 App 树其他部分重渲染
+  // ── 4.4 侧栏 / 预览面板拖动 mousemove 监听器 ──
+  const dragRafRef = useRef<number | null>(null);
+  const latestPointerRef = useRef<{ x: number; y: number } | null>(null);
   useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
+    const flushPending = () => {
+      const p = latestPointerRef.current;
+      if (!p) return;
+      latestPointerRef.current = null;
       const s = stateRef.current;
       if (s.isResizingSidebar) {
-        // 左侧栏紧贴 48px ActivityBar
-        const newWidth = e.clientX - 48;
+        const newWidth = p.x - 48;
         if (newWidth >= 160 && newWidth <= 600) {
           dispatch({ type: 'setSidebarWidth', width: newWidth });
         }
       } else if (s.isResizingPreview) {
-        const newWidth = window.innerWidth - e.clientX;
+        const newWidth = window.innerWidth - p.x;
         if (newWidth >= s.previewMinWidth && newWidth <= 750) {
           dispatch({ type: 'setPreviewWidth', width: newWidth });
         }
       }
     };
+    const handleMouseMove = (e: MouseEvent) => {
+      latestPointerRef.current = { x: e.clientX, y: e.clientY };
+      if (dragRafRef.current != null) return;
+      dragRafRef.current = requestAnimationFrame(() => {
+        dragRafRef.current = null;
+        flushPending();
+      });
+    };
     const handleMouseUp = () => {
       const s = stateRef.current;
-      if (s.isResizingPreview) {
-        // mouseup 时持久化到 server,避免每帧 PUT
-        savePreviewWidth(s.previewWidth);
+      const p = latestPointerRef.current;
+      latestPointerRef.current = null;
+      if (dragRafRef.current != null) {
+        cancelAnimationFrame(dragRafRef.current);
+        dragRafRef.current = null;
       }
-      dispatch({ type: 'endResize' });
+      if (s.isResizingSidebar) {
+        if (p) {
+          const finalWidth = p.x - 48;
+          if (finalWidth >= 160 && finalWidth <= 600) {
+            dispatch({ type: 'endResizeSidebar', width: finalWidth });
+          } else {
+            dispatch({ type: 'endResize' });
+          }
+        } else {
+          dispatch({ type: 'endResize' });
+        }
+      } else if (s.isResizingPreview) {
+        const finalWidth = p ? (window.innerWidth - p.x) : s.previewWidth;
+        const clamped = Math.max(s.previewMinWidth, Math.min(750, finalWidth));
+        if (p && clamped !== s.previewWidth) {
+          dispatch({ type: 'endResizePreview', width: clamped });
+          savePreviewWidth(clamped);
+        } else {
+          dispatch({ type: 'endResize' });
+        }
+      } else {
+        dispatch({ type: 'endResize' });
+      }
     };
 
     if (state.isResizingSidebar || state.isResizingPreview) {
@@ -197,21 +351,27 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const iframes = document.querySelectorAll('iframe');
       iframes.forEach((f) => (f.style.pointerEvents = 'none'));
     } else {
-      // 还原 cursor / userSelect / iframe 状态
       if (document.body.style.cursor === 'col-resize') document.body.style.cursor = '';
       if (document.body.style.userSelect === 'none') document.body.style.userSelect = '';
+      // FIX: 复原所有 iframe 的 pointer-events（之前 resize 中被设为 none 但从来没还原）
+      document.querySelectorAll('iframe').forEach((f) => {
+        if (f.style.pointerEvents === 'none') f.style.pointerEvents = '';
+      });
     }
 
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      if (dragRafRef.current != null) {
+        cancelAnimationFrame(dragRafRef.current);
+        dragRafRef.current = null;
+      }
     };
   }, [state.isResizingSidebar, state.isResizingPreview, savePreviewWidth]);
 
   // 组件卸载时清理
   useEffect(() => {
     return () => {
-      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
       const iframes = document.querySelectorAll('iframe');
@@ -219,13 +379,55 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     };
   }, []);
 
-  const value = useMemo<LayoutContextValue>(() => ({
-    state,
-    beginResizeSidebar,
-    beginResizePreview,
-    endResize,
-    onPreviewMinWidthChange,
-  }), [state, beginResizeSidebar, beginResizePreview, endResize, onPreviewMinWidthChange]);
+  // ── 4.5 4 个 Context 的 value (每个独立 useMemo) ──
 
-  return <LayoutContext.Provider value={value}>{children}</LayoutContext.Provider>;
+  // 高频变: sidebarWidth, previewWidth
+  // 每次 dispatch 都重新计算, 但只让 useLayoutState 消费者 re-render
+  const stateValue = useMemo(
+    () => ({
+      sidebarWidth: state.sidebarWidth,
+      previewWidth: state.previewWidth,
+    }),
+    [state.sidebarWidth, state.previewWidth],
+  );
+
+  // 低频变: isResizing*, dragStart*
+  const statusValue = useMemo(
+    () => ({
+      isResizingSidebar: state.isResizingSidebar,
+      isResizingPreview: state.isResizingPreview,
+      dragStartSidebarWidth: state.dragStartSidebarWidth,
+      dragStartPreviewWidth: state.dragStartPreviewWidth,
+    }),
+    [
+      state.isResizingSidebar,
+      state.isResizingPreview,
+      state.dragStartSidebarWidth,
+      state.dragStartPreviewWidth,
+    ],
+  );
+
+  // 永不变化: actions (用 ref 镜像, 引用永稳定)
+  const actionsValue = actionsRef.current;
+
+  // 几乎不变: previewMinWidth, previewWidthLoaded
+  const metaValue = useMemo(
+    () => ({
+      previewMinWidth: state.previewMinWidth,
+      previewWidthLoaded: state.previewWidthLoaded,
+    }),
+    [state.previewMinWidth, state.previewWidthLoaded],
+  );
+
+  return (
+    <LayoutActionsContext.Provider value={actionsValue}>
+      <LayoutMetaContext.Provider value={metaValue}>
+        <LayoutStateContext.Provider value={stateValue}>
+          <LayoutStatusContext.Provider value={statusValue}>
+            {children}
+          </LayoutStatusContext.Provider>
+        </LayoutStateContext.Provider>
+      </LayoutMetaContext.Provider>
+    </LayoutActionsContext.Provider>
+  );
 };

@@ -1,10 +1,10 @@
 import { describe, it, expect, afterAll } from 'vitest';
-import { GeminiRustSchedulerClient } from '../../src/kernel/scheduler-client';
+import { SoloForgeRustSchedulerClient } from '../../src/kernel/scheduler-client';
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 describe('SoloForge Layer 4 Rust 高性能调度内核跨语言管道集成测试套件', () => {
-  const client = new GeminiRustSchedulerClient();
+  const client = new SoloForgeRustSchedulerClient();
   client.initialize();
 
   afterAll(() => {

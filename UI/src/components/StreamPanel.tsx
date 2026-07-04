@@ -7,7 +7,7 @@ import React, { useEffect, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import type { StreamEvent, PermissionMode } from '../types/streaming';
 import { useStreamingStore } from '../state/streamingStore';
-import { promptCardPool } from '../state/promptCardPool';
+import { promptCardPool } from '../services/promptCardPool';
 import { TaskTree } from './TaskTree';
 import { PromptCard } from './PromptCard';
 import { ModelIcon } from './ModelIcon';

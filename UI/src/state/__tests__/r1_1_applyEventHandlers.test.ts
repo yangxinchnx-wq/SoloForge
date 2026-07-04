@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useStreamingStore } from '../streamingStore';
-import { promptCardPool } from '../promptCardPool';
+import { promptCardPool } from '../../services/promptCardPool';
 import type { StreamEvent, StreamEventKind } from '../../types/streaming';
 
 function makeEvt(partial: Partial<StreamEvent>): StreamEvent {

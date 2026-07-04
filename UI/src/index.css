@@ -5,17 +5,12 @@
    否则 resize 时窗口透明区域会透出桌面,看起来像"白色长方形"。
    用 --color-bg (深色) 而不是 #ffffff,跟主背景完全一致 */
 html, body {
-  background-color: var(--color-bg, #050505) !important;
+  background-color: var(--color-bg) !important;
   margin: 0;
   padding: 0;
   width: 100%;
   height: 100%;
   overflow: hidden;
-}
-
-#root {
-  background-color: var(--color-bg, #050505) !important;
-  min-height: 100vh;
 }
 
 @source not "./components/SettingsModal.tsx";

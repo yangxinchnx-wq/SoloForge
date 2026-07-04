@@ -20,7 +20,7 @@ import type {
   PromptCardSpec,
 } from '../types/streaming';
 import { calcRootProgress, transitionPhase, STEP_PROGRESS } from '../types/streaming';
-import { promptCardPool } from './promptCardPool';
+import { promptCardPool } from '../services/promptCardPool';
 
 interface StreamingState {
   // 当前对话的任务映射

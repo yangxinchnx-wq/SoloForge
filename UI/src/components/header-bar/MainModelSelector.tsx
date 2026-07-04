@@ -14,6 +14,7 @@
 
 import React, { memo, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useThemedSurface } from './themeColors';
 import { ChevronDown } from 'lucide-react';
 import { ModelIcon } from '../ModelIcon';
 import { computeAvailableModels, pickModel } from './mainModelSelectorLogic';
@@ -89,6 +90,7 @@ function MainModelSelectorImpl({
   );
   const rootRef = useRef<HTMLDivElement | null>(null);
   const buttonId = useId();
+  const { glass, isDark, rgba } = useThemedSurface();
 
   const { list, fallback } = computeAvailableModels(availableModels);
   const safeMainModel = list.includes(mainModel) ? mainModel : (fallback ?? mainModel);
@@ -147,7 +149,22 @@ function MainModelSelectorImpl({
         onClick={toggle}
         whileTap={{ scale: 0.94 }}
         transition={{ type: 'spring', stiffness: 600, damping: 28 }}
-        className="flex items-center gap-1.5 bg-[var(--color-surface)]/60 hover:bg-[var(--color-surface)]/90 border-[3px] border-primary/45 hover:border-primary/75 px-3 h-[30px] rounded-full text-xs text-[var(--color-on-surface)] cursor-pointer font-bold select-none overflow-visible"
+        className="group flex items-center gap-1.5 h-[30px] px-3 rounded-full text-xs text-[var(--color-on-surface)] cursor-pointer font-bold select-none overflow-visible"
+        style={{
+          // ── Editorial Glass 触发按钮(主题色对齐) ──────────────
+          background: isDark
+            ? `linear-gradient(180deg, ${rgba('--color-surface-bright', 0.55)} 0%, ${rgba('--color-surface', 0.40)} 100%)`
+            : `linear-gradient(180deg, ${rgba('--color-surface', 0.75)} 0%, ${rgba('--color-surface-bright', 0.55)} 100%)`,
+          backdropFilter: 'blur(8px) saturate(140%)',
+          WebkitBackdropFilter: 'blur(8px) saturate(140%)',
+          border: `1px solid ${rgba('--color-primary-rgb', glass.hairlineAlpha)}`,
+          boxShadow: `inset 0 1px 0 ${isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.50)'}`,
+          transition: 'background 180ms ease, border-color 180ms ease, box-shadow 180ms ease',
+        }}
+        whileHover={{
+          borderColor: rgba('--color-primary-rgb', glass.hairlineHoverAlpha),
+          boxShadow: `inset 0 1px 0 ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.60)'}, 0 0 0 3px ${rgba('--color-primary-rgb', isDark ? 0.10 : 0.14)}`,
+        }}
       >
         <ModelIcon modelName={safeMainModel} size={20} className="shrink-0" />
         <div className="h-4 overflow-hidden relative flex items-center justify-center min-w-[84px]">
@@ -200,7 +217,15 @@ function MainModelSelectorImpl({
                 backfaceVisibility: 'hidden',
                 WebkitBackfaceVisibility: 'hidden',
               }}
-              className="absolute left-0 mt-3.5 w-64 bg-[var(--color-surface)] border border-[var(--color-outline)]/25 rounded-xl shadow-[0_8px_32px_rgba(0,0,0,0.10)] z-50 p-1 flex flex-col gap-0.5"
+              className="absolute left-0 mt-3.5 w-64 p-1 flex flex-col gap-0.5"
+              style={{
+                // ── 弹出面板(实色不透明, 主题色对齐) ──────────────────
+                background: isDark ? 'var(--color-surface-bright)' : 'var(--color-surface)',
+                border: `1px solid ${rgba('--color-primary-rgb', glass.hairlineAlpha)}`,
+                borderRadius: 14,
+                boxShadow: `${glass.ambientShadow}, ${glass.tightShadow}, inset 0 1px 0 ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.55)'}`,
+                zIndex: 50,
+              }}
             >
               {list.length === 0 ? (
                 <motion.div

@@ -1822,7 +1822,7 @@ data/
 | 设计文档描述 | 实际实现 | 原因 |
 |---|---|---|
 | **Dexie.js (浏览器 IndexedDB ORM)** | **SurrealDB 嵌入式模式** | Dexie.js 仅能运行在浏览器/Electron 渲染进程；项目同时需要 Node.js 服务端运行模式（Python IPC），SurrealDB 嵌入式 RocksDB 引擎更合适：10-50x 性能、原生图查询、事务支持 |
-| **LanceDB WASM** | **Python LanceDB** | AI 社会模块运行在 Python 进程中，通过 MessagePack TCP IPC (端口 18765) 与 Node.js 通信；WASM 版本无 Python 运行时支持 |
+| **LanceDB WASM** | **Python LanceDB** | AI 社会模块运行在 Python 进程中，通过 TCP IPC (端口 8765) 与 Node.js 通信；WASM 版本无 Python 运行时支持 |
 | **IndexManager (独立索引表)** | **SurrealDB 原生 `DEFINE INDEX`** | SurrealDB 内核层维护索引一致性；在应用层再加索引器是冗余双重写入，增加写入开销和一致性风险 |
 | **软删除回收站 (mockTrashDb, Map)** | **SurrealDB `trash` 表持久化** | 2026-05-31 已实现，见 `src/data/delete_protection.ts` + `migrations/20240101050000__v6_persistent_trash.surql` |
 | **Market 市场表 (supply/demand, pricing)** | **未实现，仅有 TokenEconomyEngine** | `economy.ts` 只实现了按角色分配 token 奖励的逻辑；`index.ts` 预留了 `MarketResource` 导出但无对应实现。Market 的供需定价/资源竞争机制需要单独开发 |
@@ -1845,7 +1845,7 @@ data/
 │  └── LanceDB (python/data/ai_society/social_memory)    │
 │      → 社会记忆向量检索                                  │
 ├─────────────────────────────────────────────────────────┤
-│  通信: MessagePack TCP IPC, 端口 18765                   │
+│  通信: TCP IPC (JSON 行分隔), 端口 8765                  │
 │  （Node.js ←→ Python MARL Service）                     │
 └─────────────────────────────────────────────────────────┘
 ```

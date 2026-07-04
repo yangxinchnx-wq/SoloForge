@@ -183,8 +183,21 @@ export function repairSessionState(v: unknown): SessionState | null {
 
   if (!isNonEmptyString(raw.sessionId)) return null;
 
+  // P0: ACL 字段缺失时软修复 (老数据兼容)
+  //   - ownerChatSessionId 缺 → 标 'legacy' (只读, 无写权限)
+  //   - name 缺 → 派生自 sessionId (兼容旧 canvas-{chatId} 命名)
+  //   - visibility 缺 → 默认 'public' (与新规则一致)
+  //   - lastAccessedBy 缺 → 空对象 (没人访问过)
+  const legacyName = String(raw.sessionId);  // 兜底字符串, parseCanvasName 返回 -1
+  const ownerFallback = isNonEmptyString(raw.ownerChatSessionId)
+    ? raw.ownerChatSessionId
+    : 'legacy';
+
   return {
     sessionId: raw.sessionId,
+    name: isNonEmptyString(raw.name) ? raw.name : legacyName,
+    description: typeof raw.description === 'string' ? raw.description : undefined,
+    createdAt: isFiniteNumber(raw.createdAt) ? raw.createdAt : undefined,
     selectedDeviceKey: typeof raw.selectedDeviceKey === 'string' ? raw.selectedDeviceKey : 'fill',
     devices: isDeviceInstanceArray(raw.devices) ? raw.devices : [],
     bgColor: isHexColor(raw.bgColor) ? raw.bgColor : '#FFFFFF',
@@ -204,5 +217,13 @@ export function repairSessionState(v: unknown): SessionState | null {
         })
       : (raw.selectedDeviceId ? [raw.selectedDeviceId as string] : []),
     lastUpdated: isFiniteNumber(raw.lastUpdated) ? raw.lastUpdated : Date.now(),
+    // P0: ACL 字段
+    ownerChatSessionId: ownerFallback,
+    visibility: raw.visibility === 'public' || raw.visibility === 'private'
+      ? raw.visibility
+      : 'public',
+    lastAccessedBy: raw.lastAccessedBy && typeof raw.lastAccessedBy === 'object'
+      ? (raw.lastAccessedBy as Record<string, number>)
+      : {},
   };
 }

@@ -22,8 +22,28 @@ class MAPPOTrainer:
             action_dim=self.action_dim,
             hidden_dim=self.hidden_dim
         ).to(self.device)
-        
+
         self.optimizer = optim.Adam(self.policy.parameters(), lr=self.lr, eps=self.adam_eps)
+
+    def load_checkpoint(self, checkpoint_path: str) -> bool:
+        """
+        从磁盘加载 policy state_dict。
+        启动时调用以恢复历史训练成果;server.py 启动时会自动调用,
+        避免覆盖之前累积的策略。
+        返回 True 表示成功加载,False 表示文件不存在或加载失败。
+        """
+        from pathlib import Path
+        path = Path(checkpoint_path)
+        if not path.exists():
+            return False
+        try:
+            state_dict = torch.load(str(path), map_location=self.device)
+            self.policy.load_state_dict(state_dict)
+            self.policy.eval()
+            return True
+        except Exception as e:
+            print(f"⚠️ load_checkpoint failed: {e}")
+            return False
 
     def load_constitutional_hyperparameters(self) -> None:
         """全参数中心化映射，归零一切硬编码魔术数字"""

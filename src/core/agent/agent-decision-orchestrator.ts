@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────────────
 
 import crypto from 'crypto';
-import { GeminiRTRRacerEngine, ModelStrategyCandidate, RacerFlowResult } from '../decision/rtr-racer-engine';
+import { SoloForgeRTRRacerEngine, ModelStrategyCandidate, RacerFlowResult } from '../decision/rtr-racer-engine';
 import { AgentRegistry, AgentDispatchRequest, AgentDispatchResult } from './agent-registry';
 import { RuntimeEvent } from '../events/runtime-events';
 import { logger } from '../logger';
@@ -15,14 +15,14 @@ import type { RuntimeKernel } from '../../kernel/runtime-kernel';
 
 export class AgentDecisionOrchestrator {
   private readonly moduleName = 'AgentDecisionOrchestrator';
-  private readonly racerEngine: GeminiRTRRacerEngine;
+  private readonly racerEngine: SoloForgeRTRRacerEngine;
   private readonly registry: AgentRegistry;
   private readonly kernel: RuntimeKernel;
 
   constructor(kernel: RuntimeKernel, registry: AgentRegistry) {
     this.kernel = kernel;
     this.registry = registry;
-    this.racerEngine = new GeminiRTRRacerEngine(kernel as any, (kernel as any).schedulerClient);
+    this.racerEngine = new SoloForgeRTRRacerEngine(kernel as any, (kernel as any).schedulerClient);
   }
 
   /**

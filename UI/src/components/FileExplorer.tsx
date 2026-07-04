@@ -26,13 +26,7 @@ import {
   FileText
 } from 'lucide-react';
 import { MountTransition } from './MountTransition';
-
-interface FileNode {
-  name: string;
-  type: 'file' | 'folder';
-  path: string;
-  children?: FileNode[];
-}
+import type { FileNode } from '../shared/types/file';
 
 interface FileExplorerProps {
   selectedFile: string;

@@ -16,7 +16,9 @@
 
 import type { Request, Response } from 'express';
 import type { DeviceInstance, SessionState } from '../services/canvas/types';
+import { displayCanvasName, parseCanvasName } from '../services/canvas/types';
 import { getSessionStore } from '../services/session/SessionStore';
+import { getNotificationBus } from '../services/canvas/NotificationBus';
 
 function err(res: Response, status: number, message: string): Response {
   return res.status(status).json({ success: false, error: message });
@@ -27,31 +29,199 @@ function ok(res: Response, payload?: unknown): Response {
 }
 
 /**
- * GET /api/canvas/sessions/:id
+ * P0: 从请求头解析 requesterChatSessionId
+ * 必填 — 缺失返回 undefined (调用方应返回 401)
  */
-export function handleGetSession(req: Request, res: Response): Response {
+function getRequesterChatSessionId(req: Request): string | undefined {
+  const h = req.headers['x-requester-chat-session-id'];
+  if (typeof h === 'string' && h.trim().length > 0) return h.trim();
+  // 也允许 body 里带 (兼容大模型 tool 调用)
+  const body = (req.body && typeof req.body === 'object') ? req.body : null;
+  if (body && typeof (body as { requesterChatSessionId?: unknown }).requesterChatSessionId === 'string') {
+    const v = (body as { requesterChatSessionId: string }).requesterChatSessionId.trim();
+    if (v.length > 0) return v;
+  }
+  return undefined;
+}
+
+/**
+ * P0: ACL 检查 - 读取 (所有 public 画布对任何 chat 可见)
+ */
+function ensureRead(req: Request, res: Response, canvas: SessionState): boolean {
+  const requester = getRequesterChatSessionId(req);
+  if (!requester) {
+    err(res, 401, 'X-Requester-Chat-Session-Id header required');
+    return false;
+  }
+  if (!getSessionStore().canRead(canvas, requester)) {
+    err(res, 403, 'forbidden: no read access to this canvas');
+    return false;
+  }
+  return true;
+}
+
+/**
+ * P0: ACL 检查 - 设备层写入 (任何 chat 可写设备, 协作画布语义)
+ * 触发通知: 非 owner 写时给 owner 发 notification
+ */
+function ensureWriteDevice(req: Request, res: Response, canvas: SessionState, action: 'write_device' | 'remove_device'): boolean {
+  const requester = getRequesterChatSessionId(req);
+  if (!requester) {
+    err(res, 401, 'X-Requester-Chat-Session-Id header required');
+    return false;
+  }
+  if (!getSessionStore().canWriteDevice(canvas, requester)) {
+    err(res, 403, 'forbidden: no device write access to this canvas');
+    return false;
+  }
+  return true;
+}
+
+/**
+ * P0: ACL 检查 - 资源管理 (改名/删除, 仅 owner)
+ */
+function ensureManage(req: Request, res: Response, canvas: SessionState): boolean {
+  const requester = getRequesterChatSessionId(req);
+  if (!requester) {
+    err(res, 401, 'X-Requester-Chat-Session-Id header required');
+    return false;
+  }
+  if (!getSessionStore().canManage(canvas, requester)) {
+    err(res, 403, 'forbidden: only owner can rename/delete this canvas');
+    return false;
+  }
+  return true;
+}
+
+/**
+ * 向后兼容: ensureWrite 保留, 等价于 ensureManage
+ */
+function ensureWrite(req: Request, res: Response, canvas: SessionState): boolean {
+  return ensureManage(req, res, canvas);
+}
+
+/**
+ * P0: 触发画布通知 (非 owner 写/删/改名时通知 owner)
+ * 60s cooldown 在 NotificationBus 内
+ */
+function emitCanvasChange(
+  canvas: SessionState,
+  actorChatSessionId: string,
+  action: 'write_device' | 'remove_device' | 'rename' | 'delete',
+): void {
+  getNotificationBus().emit({
+    actorChatSessionId,
+    ownerChatSessionId: canvas.ownerChatSessionId,
+    canvasId: canvas.sessionId,
+    canvasDisplayName: displayCanvasName(canvas.name),
+    action,
+  });
+}
+
+/**
+ * GET /api/canvas/sessions/:id
+ * 读取画布 (走恢复路径 — 内存没有时从 Surreal 拉取)
+ * 校验 read 权限 + 记录 access 时间
+ */
+export async function handleGetSession(req: Request, res: Response): Promise<Response> {
   const id = String(req.params.id || '');
   if (!id) return err(res, 400, 'session id required');
-  const state = getSessionStore().getOrCreate(id);
+  const store = getSessionStore();
+  // 先用 sync 看是否在内存
+  let state = store.listCanvases().find(c => c.sessionId === id);
+  if (!state) {
+    // 尝试从 Surreal 恢复
+    const loaded = await store.loadFromSurrealById(id);
+    if (!loaded) return err(res, 404, 'canvas not found');
+    state = loaded;
+  }
+  if (!ensureRead(req, res, state)) return res;  // already written
+  // 记录访问 (用于自动切回)
+  const requester = getRequesterChatSessionId(req);
+  if (requester) store.recordAccess(id, requester);
   return ok(res, state);
+}
+
+/**
+ * POST /api/canvas/sessions
+ * P0: 显式创建画布 (走最小可用序号策略)
+ * header X-Requester-Chat-Session-Id: chat-X (必填, 即 owner)
+ * body: { description?: string }  (name 由系统分配)
+ */
+export function handleCreateCanvas(req: Request, res: Response): Response {
+  const requester = getRequesterChatSessionId(req);
+  if (!requester) return err(res, 401, 'X-Requester-Chat-Session-Id header required');
+  const body = (req.body && typeof req.body === 'object') ? req.body as { description?: unknown } : {};
+  const description = typeof body.description === 'string' ? body.description : undefined;
+  const state = getSessionStore().createCanvas(requester);
+  if (!state) return err(res, 409, 'canvas limit reached (max 10, please delete some before creating)');
+  if (description !== undefined) {
+    state.description = description;
+  }
+  // 创建即记录访问
+  getSessionStore().recordAccess(state.sessionId, requester);
+  return ok(res, state);
+}
+
+/**
+ * GET /api/canvas/resources?requesterChatSessionId=X
+ * P0: 资源池端点 — 列出 requester 可访问的所有画布 (按序号升序)
+ * 默认 public 全部可见, 附上 owner 信息便于 UI 展示
+ */
+export function handleListResources(req: Request, res: Response): Response {
+  const requester = getRequesterChatSessionId(req) ?? (
+    typeof req.query.requesterChatSessionId === 'string'
+      ? req.query.requesterChatSessionId
+      : undefined
+  );
+  if (!requester) return err(res, 401, 'X-Requester-Chat-Session-Id header (or ?requesterChatSessionId=) required');
+  const store = getSessionStore();
+  const all = store.listCanvases();
+  const accessible = all
+    .filter(c => store.canRead(c, requester))
+    .map(c => ({
+      sessionId: c.sessionId,
+      name: c.name,
+      displayName: parseCanvasName(c.name) > 0 ? String(parseCanvasName(c.name)) : c.name,
+      description: c.description,
+      ownerChatSessionId: c.ownerChatSessionId,
+      isOwner: c.ownerChatSessionId === requester,
+      deviceCount: c.devices.length,
+      lastUpdated: c.lastUpdated,
+      lastAccessedAt: c.lastAccessedBy?.[requester] ?? null,
+    }));
+  return ok(res, {
+    canvases: accessible,
+    total: accessible.length,
+    lastAccessedCanvasId: store.getLastAccessedCanvas(requester)?.sessionId ?? null,
+    maxCanvases: 10,
+  });
 }
 
 /**
  * PUT /api/canvas/sessions/:id/select-model
  * body: { modelKey: string }
+ * 写操作 - 仅 owner
  */
 export function handleSelectModel(req: Request, res: Response): Response {
   const id = String(req.params.id || '');
   const { modelKey } = req.body || {};
   if (!id) return err(res, 400, 'session id required');
   if (typeof modelKey !== 'string') return err(res, 400, 'modelKey (string) required');
-  getSessionStore().selectDevice(id, modelKey);
+  const store = getSessionStore();
+  const state = store.listCanvases().find(c => c.sessionId === id);
+  if (!state) return err(res, 404, 'canvas not found (use POST /api/canvas/sessions to create)');
+  if (!ensureWriteDevice(req, res, state, 'write_device')) return res;
+  const requester = getRequesterChatSessionId(req);
+  store.selectDevice(id, modelKey);
+  if (requester) emitCanvasChange(state, requester, 'write_device');
   return ok(res);
 }
 
 /**
  * PUT /api/canvas/sessions/:id/devices/selected
  * body: { deviceId: string | null }
+ * 写操作 - 仅 owner
  */
 export function handleSetSelectedDevice(req: Request, res: Response): Response {
   const id = String(req.params.id || '');
@@ -60,13 +230,20 @@ export function handleSetSelectedDevice(req: Request, res: Response): Response {
   if (deviceId !== null && typeof deviceId !== 'string') {
     return err(res, 400, 'deviceId (string | null) required');
   }
-  getSessionStore().setSelectedDevice(id, deviceId);
+  const store = getSessionStore();
+  const state = store.listCanvases().find(c => c.sessionId === id);
+  if (!state) return err(res, 404, 'canvas not found');
+  if (!ensureWriteDevice(req, res, state, 'write_device')) return res;
+  const requester = getRequesterChatSessionId(req);
+  store.setSelectedDevice(id, deviceId);
+  if (requester) emitCanvasChange(state, requester, 'write_device');
   return ok(res);
 }
 
 /**
  * POST /api/canvas/sessions/:id/devices
  * body: DeviceInstance
+ * 写操作 - 仅 owner
  */
 export function handleAddDevice(req: Request, res: Response): Response {
   const id = String(req.params.id || '');
@@ -75,24 +252,38 @@ export function handleAddDevice(req: Request, res: Response): Response {
   if (!device || typeof device.id !== 'string' || typeof device.modelKey !== 'string') {
     return err(res, 400, 'invalid DeviceInstance body');
   }
-  getSessionStore().addDevice(id, device);
+  const store = getSessionStore();
+  const state = store.listCanvases().find(c => c.sessionId === id);
+  if (!state) return err(res, 404, 'canvas not found');
+  if (!ensureWriteDevice(req, res, state, 'write_device')) return res;
+  const requester = getRequesterChatSessionId(req);
+  store.addDevice(id, device);
+  if (requester) emitCanvasChange(state, requester, 'write_device');
   return ok(res);
 }
 
 /**
  * DELETE /api/canvas/sessions/:id/devices/:deviceId
+ * 写操作 - 仅 owner
  */
 export function handleRemoveDevice(req: Request, res: Response): Response {
   const id = String(req.params.id || '');
   const deviceId = String(req.params.deviceId || '');
   if (!id || !deviceId) return err(res, 400, 'session id and deviceId required');
-  getSessionStore().removeDevice(id, deviceId);
+  const store = getSessionStore();
+  const state = store.listCanvases().find(c => c.sessionId === id);
+  if (!state) return err(res, 404, 'canvas not found');
+  if (!ensureWriteDevice(req, res, state, 'remove_device')) return res;
+  const requester = getRequesterChatSessionId(req);
+  store.removeDevice(id, deviceId);
+  if (requester) emitCanvasChange(state, requester, 'remove_device');
   return ok(res);
 }
 
 /**
  * PUT /api/canvas/sessions/:id/devices/:deviceId/transform
  * body: Partial<DeviceInstance>
+ * 写操作 - 仅 owner
  */
 export function handleUpdateTransform(req: Request, res: Response): Response {
   const id = String(req.params.id || '');
@@ -102,28 +293,39 @@ export function handleUpdateTransform(req: Request, res: Response): Response {
   if (!transform || typeof transform !== 'object') {
     return err(res, 400, 'transform body (object) required');
   }
-  getSessionStore().updateDeviceTransform(id, deviceId, transform);
+  const store = getSessionStore();
+  const state = store.listCanvases().find(c => c.sessionId === id);
+  if (!state) return err(res, 404, 'canvas not found');
+  if (!ensureWriteDevice(req, res, state, 'write_device')) return res;
+  const requester = getRequesterChatSessionId(req);
+  store.updateDeviceTransform(id, deviceId, transform);
+  if (requester) emitCanvasChange(state, requester, 'write_device');
   return ok(res);
 }
 
 /**
  * PATCH /api/canvas/sessions/:id
- * s1.4: 改会话名 + 备注
- * body: { name?: string, description?: string }
+ * P0: 仅改 description (备注)
+ * name 是系统分配的零填充序号, 不允许改
+ * 写操作 - 仅 owner
+ * body: { description?: string }
  */
 export function handleRenameSession(req: Request, res: Response): Response {
   const id = String(req.params.id || '');
   if (!id) return err(res, 400, 'session id required');
-  const body = req.body || {};
-  if (typeof body !== 'object') return err(res, 400, 'body must be object');
+  const body = (req.body && typeof req.body === 'object') ? req.body as { description?: unknown } : {};
+  if (body.description !== undefined && typeof body.description !== 'string') {
+    return err(res, 400, 'description must be string');
+  }
+  const store = getSessionStore();
+  const state = store.listCanvases().find(c => c.sessionId === id);
+  if (!state) return err(res, 404, 'canvas not found');
+  if (!ensureManage(req, res, state)) return res;
+  const requester = getRequesterChatSessionId(req);
   try {
-    const state = getSessionStore().renameSession(
-      id,
-      typeof body.name === 'string' ? body.name : undefined,
-      typeof body.description === 'string' ? body.description : undefined
-    );
-    if (!state) return err(res, 404, 'session not found');
-    return ok(res, state);
+    store.updateCanvasDescription(id, typeof body.description === 'string' ? body.description : undefined);
+    if (requester) emitCanvasChange(state, requester, 'rename');
+    return ok(res, store.listCanvases().find(c => c.sessionId === id));
   } catch (e) {
     return err(res, 400, (e as Error).message);
   }
@@ -131,14 +333,21 @@ export function handleRenameSession(req: Request, res: Response): Response {
 
 /**
  * DELETE /api/canvas/sessions/:id
- * s1.4: 删除会话 (内存 + 持久层)
+ * P0: 删除画布 (内存 + 持久层)
+ * 写操作 - 仅 owner
  */
 export async function handleDeleteSession(req: Request, res: Response): Promise<Response> {
   const id = String(req.params.id || '');
   if (!id) return err(res, 400, 'session id required');
+  const store = getSessionStore();
+  const state = store.listCanvases().find(c => c.sessionId === id);
+  if (!state) return err(res, 404, 'canvas not found');
+  if (!ensureManage(req, res, state)) return res;
+  const requester = getRequesterChatSessionId(req);
   try {
-    const ok2 = await getSessionStore().deleteSession(id);
-    if (!ok2) return err(res, 404, 'session not found');
+    const ok2 = await store.deleteSession(id);
+    if (!ok2) return err(res, 404, 'canvas not found');
+    if (requester) emitCanvasChange(state, requester, 'delete');
     return ok(res, { deleted: id });
   } catch (e) {
     return err(res, 500, `delete failed: ${(e as Error).message}`);
@@ -147,10 +356,25 @@ export async function handleDeleteSession(req: Request, res: Response): Promise<
 
 /**
  * GET /api/canvas/sessions
- * s1.4: 列出所有会话 (轻量摘要)
+ * P0: 列出所有画布 (轻量摘要) — 需要 requester (仅返回可读画布)
  */
 export function handleListSessions(req: Request, res: Response): Response {
-  const list = getSessionStore().listSessions();
+  const store = getSessionStore();
+  const all = store.listCanvases();
+  const requester = getRequesterChatSessionId(req);
+  // 没传 requester 时返回 401 (因为新机制下读也要鉴权)
+  if (!requester) return err(res, 401, 'X-Requester-Chat-Session-Id header required');
+  const list = all
+    .filter(c => store.canRead(c, requester))
+    .map(c => ({
+      sessionId: c.sessionId,
+      name: c.name,
+      displayName: parseCanvasName(c.name) > 0 ? String(parseCanvasName(c.name)) : c.name,
+      ownerChatSessionId: c.ownerChatSessionId,
+      isOwner: c.ownerChatSessionId === requester,
+      deviceCount: c.devices.length,
+      lastUpdated: c.lastUpdated,
+    }));
   return ok(res, { sessions: list, total: list.length });
 }
 
@@ -231,12 +455,17 @@ export function handleSetSelectedDevices(req: Request, res: Response): Response 
   if (!Array.isArray(body.deviceIds)) {
     return err(res, 400, 'deviceIds (string[]) required');
   }
-  // 元素必须是 string
   if (body.deviceIds.some((x: unknown) => typeof x !== 'string')) {
     return err(res, 400, 'deviceIds must be string array');
   }
   const primaryId = typeof body.primaryId === 'string' ? body.primaryId : undefined;
-  getSessionStore().setSelectedDevices(id, body.deviceIds as string[], primaryId);
+  const store = getSessionStore();
+  const state = store.listCanvases().find(c => c.sessionId === id);
+  if (!state) return err(res, 404, 'canvas not found');
+  if (!ensureWriteDevice(req, res, state, 'write_device')) return res;
+  const requester = getRequesterChatSessionId(req);
+  store.setSelectedDevices(id, body.deviceIds as string[], primaryId);
+  if (requester) emitCanvasChange(state, requester, 'write_device');
   return ok(res);
 }
 
@@ -247,11 +476,15 @@ export function handleTransformGroup(req: Request, res: Response): Response {
   if (!body || typeof body !== 'object') {
     return err(res, 400, 'delta body (object) required');
   }
-  // 数字字段容错
   const n = (v: unknown): number | undefined => {
     return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
   };
-  getSessionStore().transformGroup(id, {
+  const store = getSessionStore();
+  const state = store.listCanvases().find(c => c.sessionId === id);
+  if (!state) return err(res, 404, 'canvas not found');
+  if (!ensureWriteDevice(req, res, state, 'write_device')) return res;
+  const requester = getRequesterChatSessionId(req);
+  store.transformGroup(id, {
     dXRatio: n(body.dXRatio),
     dYRatio: n(body.dYRatio),
     dRotationX: n(body.dRotationX),
@@ -259,6 +492,7 @@ export function handleTransformGroup(req: Request, res: Response): Response {
     dRotationZ: n(body.dRotationZ),
     scaleDelta: n(body.scaleDelta),
   });
+  if (requester) emitCanvasChange(state, requester, 'write_device');
   return ok(res);
 }
 
@@ -275,16 +509,21 @@ export function handleSetDeviceUiSession(req: Request, res: Response): Response 
   const deviceId = String(req.params.deviceId || '');
   if (!id || !deviceId) return err(res, 400, 'session id and deviceId required');
   const { uiSessionId } = req.body || {};
-  // uiSessionId 可以是 string 或 null (显式传 null = 回退共享 UI)
   if (uiSessionId !== null && uiSessionId !== undefined && typeof uiSessionId !== 'string') {
     return err(res, 400, 'uiSessionId must be string or null');
   }
-  const found = getSessionStore().setDeviceUiSession(
+  const store = getSessionStore();
+  const state = store.listCanvases().find(c => c.sessionId === id);
+  if (!state) return err(res, 404, 'canvas not found');
+  if (!ensureWriteDevice(req, res, state, 'write_device')) return res;
+  const requester = getRequesterChatSessionId(req);
+  const found = store.setDeviceUiSession(
     id,
     deviceId,
     uiSessionId ?? null,
   );
   if (!found) return err(res, 404, 'device not found');
+  if (requester) emitCanvasChange(state, requester, 'write_device');
   return ok(res);
 }
 
@@ -296,6 +535,13 @@ export function handleSetDeviceUiSession(req: Request, res: Response): Response 
  *   'flush' 会被匹配成 deviceId="flush"
  */
 export function registerCanvasSessionRoutes(app: import('express').Express): void {
+  // P0: 资源池端点 (无 :id) 必须在 :id 路由前
+  app.get('/api/canvas/resources', handleListResources);
+  // P0: 画布通知 (drain + ack, 由 owner 轮询)
+  app.get('/api/canvas/notifications', handleDrainNotifications);
+  app.post('/api/canvas/notifications/peek', handlePeekNotifications);
+  // P0: 创建画布
+  app.post('/api/canvas/sessions', handleCreateCanvas);
   // s1.4: 会话列表 (无 :id)
   app.get('/api/canvas/sessions', handleListSessions);
   app.get('/api/canvas/sessions/:id', handleGetSession);
@@ -309,13 +555,43 @@ export function registerCanvasSessionRoutes(app: import('express').Express): voi
   app.post('/api/canvas/sessions/:id/devices', handleAddDevice);
   app.delete('/api/canvas/sessions/:id/devices/:deviceId', handleRemoveDevice);
   app.put('/api/canvas/sessions/:id/devices/:deviceId/transform', handleUpdateTransform);
-  // s3.2c: 多 session 设备 UI — 设置设备独立 UI session
   app.put('/api/canvas/sessions/:id/devices/:deviceId/ui-session', handleSetDeviceUiSession);
   app.post('/api/canvas/sessions/:id/flush', handleFlush);
-  // s2.4: 持久化诊断 (放在 :id 路由之后避免吞掉)
   app.get('/api/canvas/persistence/status', handleGetPersistenceStatus);
   app.post('/api/canvas/persistence/force-flush', handleForceFlush);
   app.post('/api/canvas/persistence/restore-all', handleRestoreAll);
+}
+
+// ─────────────────────────────────────────────────────────────
+// P0: 画布修改通知 (owner 轮询拉取)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/canvas/notifications?requester=chat-A
+ * 拉取 + ack (consume模式, 拉过的就清掉)
+ *
+ * 客户端每 3s 轮询一次, 拿到的 notifications push 到气泡队列
+ */
+export function handleDrainNotifications(req: Request, res: Response): Response {
+  // requester 从 query 或 header 取
+  const requester = String(req.query.requester || getRequesterChatSessionId(req) || '');
+  if (!requester) return err(res, 401, 'requester (query or X-Requester-Chat-Session-Id header) required');
+  const list = getNotificationBus().drain(requester);
+  return ok(res, { notifications: list, count: list.length });
+}
+
+/**
+ * POST /api/canvas/notifications/peek
+ * 仅查看, 不消费 (用于调试 + E2E 测试)
+ *
+ * body: { requester: 'chat-A' }
+ */
+export function handlePeekNotifications(req: Request, res: Response): Response {
+  const body = (req.body && typeof req.body === 'object') ? req.body as { requester?: unknown } : {};
+  const requester = typeof body.requester === 'string' ? body.requester : '';
+  if (!requester) return err(res, 400, 'body.requester required');
+  const list = getNotificationBus().peek(requester);
+  return ok(res, { notifications: list, count: list.length });
 }
 
 /**

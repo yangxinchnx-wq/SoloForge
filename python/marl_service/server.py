@@ -4,6 +4,7 @@ import json
 import logging
 import sys
 import os
+from pathlib import Path
 from typing import Dict, Any, Optional
 
 # Fix Windows encoding for emojis
@@ -49,6 +50,12 @@ class MarlServiceAsyncServer:
         if HAS_TORCH and MAPPOTrainer:
             self.trainer = MAPPOTrainer(config_registry)
             self.logger.info("🧠 MAPPO Trainer initialized with PyTorch backend")
+            # ── 启动时尝试加载历史 checkpoint ──
+            default_ckpt = str(Path(__file__).parent / "models" / "policy.pt")
+            if self.trainer.load_checkpoint(default_ckpt):
+                self.logger.info(f"📥 Loaded existing policy from {default_ckpt}")
+            else:
+                self.logger.info("🌱 No existing checkpoint, training from scratch")
         else:
             self.trainer = None
             self.logger.warning("⚠️ PyTorch not available, running in simulation mode")
@@ -59,7 +66,23 @@ class MarlServiceAsyncServer:
         self.host = config_registry.get("governor.ipc.host", "127.0.0.1")
         self.port = int(config_registry.get("governor.ipc.port", 8765))
         self.server_instance: Optional[asyncio.AbstractServer] = None
-        
+
+        # ─────────────────────────────────────────────
+        # AGENT_TRAINING_DATA rollout buffer + checkpoint
+        # 桥接 training-scheduler.ts → MAPPOTrainer.train_step() → policy.pt
+        # ─────────────────────────────────────────────
+        # 单智能体视角:每个 trace → (obs[10], action, log_prob, reward, value, done)
+        # 我们把 N 条 trace 攒成一个 batch;batch size 到达后调用 trainer.train_step
+        from collections import deque
+        self._rollout_buffer = deque(maxlen=int(config_registry.get("governor.mappo.rollout.max_size", 1024)))
+        self._batch_size = int(config_registry.get("governor.mappo.rollout.batch_size", 8))
+        self._checkpoint_interval = int(config_registry.get("governor.mappo.checkpoint.interval", 32))
+        self._step_counter = 0
+        self._checkpoints_since_load = 0
+        # checkpoint 路径:与 models/policy.pt 共享同一份(loader.py 会优先加载这个)
+        self._checkpoint_path = Path(__file__).parent / "models" / "policy.pt"
+        self._checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+
         # 漂移实验实例
         self.drift_experiment = None
         if HAS_DRIFT and HyperparameterDriftExperiment:
@@ -68,6 +91,94 @@ class MarlServiceAsyncServer:
                 governance_enabled=True,
             )
             self.logger.info("🧬 Hyperparameter Drift Experiment initialized")
+
+    def _consume_agent_training_data(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        把 AGENT_TRAINING_DATA 帧的 trace 累积进 rollout buffer;
+        到达 batch_size 后调用 MAPPOTrainer.train_step() 执行一次梯度更新;
+        每 checkpoint_interval 次更新后写 policy.pt。
+        """
+        from pathlib import Path
+        traces = payload.get("trainingData") or payload.get("traces") or []
+        if not isinstance(traces, list):
+            return {"accepted": 0, "error": "trainingData must be array"}
+
+        accepted = 0
+        for trace in traces:
+            obs = trace.get("observation")
+            if not isinstance(obs, list) or len(obs) < 5:
+                continue
+            # 字段对齐 AgentObservation.dim()=10,缺的尾部用 0 填充
+            obs_padded = (obs + [0.0] * 10)[:10]
+            self._rollout_buffer.append({
+                "obs": obs_padded,
+                "action": int(trace.get("action", 0)),
+                "log_prob": float(trace.get("log_prob", 0.0)),
+                "reward": float(trace.get("reward", 0.0)),
+                "value": float(trace.get("value", 0.0)),
+                "done": bool(trace.get("done", True)),
+                "kernel_version": int(trace.get("kernel_version", 0)),
+            })
+            accepted += 1
+
+        result = {
+            "accepted": accepted,
+            "buffer_size": len(self._rollout_buffer),
+            "batch_size": self._batch_size,
+            "trained_this_call": False,
+            "loss": None,
+            "checkpoint_written": False,
+        }
+
+        if self.trainer is None or len(self._rollout_buffer) < self._batch_size:
+            return result
+
+        # ── 触发一次梯度更新 ──────────────────────────────
+        try:
+            import numpy as np
+            import torch
+            batch = list(self._rollout_buffer)[: self._batch_size]
+            b_local_obs = torch.tensor([t["obs"][:5] for t in batch], dtype=torch.float32)
+            b_global_state = torch.tensor(
+                [t["obs"][:10] for t in batch], dtype=torch.float32
+            )
+            b_actions = torch.tensor([t["action"] for t in batch], dtype=torch.long)
+            b_log_probs = torch.tensor([t["log_prob"] for t in batch], dtype=torch.float32)
+            b_rewards = np.array([t["reward"] for t in batch], dtype=np.float32)
+            b_values = np.array([t["value"] for t in batch], dtype=np.float32)
+            b_dones = np.array([t["done"] for t in batch], dtype=np.float32)
+            b_kernel_versions = np.array([t["kernel_version"] for t in batch], dtype=np.int64)
+
+            losses = self.trainer.train_step(
+                b_local_obs, b_global_state, b_actions, b_log_probs,
+                b_rewards, b_values, b_dones, b_kernel_versions,
+            )
+            result["trained_this_call"] = True
+            result["loss"] = losses
+            self._step_counter += 1
+
+            # 清空已消费的 buffer(留下剩余供下次 batch)
+            for _ in range(self._batch_size):
+                if self._rollout_buffer:
+                    self._rollout_buffer.popleft()
+
+            # ── checkpoint ───────────────────────────────────
+            if self._step_counter % self._checkpoint_interval == 0:
+                torch.save(
+                    self.trainer.policy.state_dict(),
+                    str(self._checkpoint_path),
+                )
+                self._checkpoints_since_load += 1
+                result["checkpoint_written"] = True
+                result["checkpoint_path"] = str(self._checkpoint_path)
+                self.logger.info(
+                    f"💾 Policy checkpoint saved: step={self._step_counter}, path={self._checkpoint_path}"
+                )
+        except Exception as e:
+            self.logger.error(f"💥 train_step failed: {e}")
+            result["error"] = str(e)
+
+        return result
 
     async def launch_server_loop(self) -> None:
         """
@@ -141,6 +252,74 @@ class MarlServiceAsyncServer:
                     "payload": response_payload,
                     "kernelVersionSeal": version_seal,
                     "timestamp": int(asyncio.get_event_loop().time() * 1000)
+                }
+                serialized_response = json.dumps(response_envelope) + "\n"
+                writer.write(serialized_response.encode('utf-8'))
+                await writer.drain()
+
+            elif frame_type == "AGENT_TRAINING_DATA":
+                # ── 闭环关键路径 ─────────────────────────────
+                # TS 端 training-scheduler.ts:191 发送的 trace 帧
+                # 累积到 rollout buffer → trainer.train_step() → 写 policy.pt
+                train_result = self._consume_agent_training_data(payload)
+                response_envelope = {
+                    "frameId": f"train_ack_{envelope.get('frameId', '0000')}",
+                    "type": "AGENT_TRAINING_ACK",
+                    "currentTick": current_tick,
+                    "payload": train_result,
+                    "kernelVersionSeal": version_seal,
+                    "timestamp": int(asyncio.get_event_loop().time() * 1000),
+                }
+                serialized_response = json.dumps(response_envelope) + "\n"
+                writer.write(serialized_response.encode('utf-8'))
+                await writer.drain()
+
+            elif frame_type == "POLICY_QUERY":
+                # ── 闭环回程 ─────────────────────────────
+                # TS 端 agent-decision 询问当前 policy 决策
+                # server.py 用 trainer.policy.forward() 在线推理
+                # 不需要 TS 安装 onnxruntime,不需要 export ONNX
+                obs = payload.get("observation", [])
+                if not isinstance(obs, list) or len(obs) < 10:
+                    action = 0
+                    confidence = 0.0
+                    source = "fallback"
+                elif self.trainer is not None:
+                    try:
+                        import torch
+                        obs_padded = (obs + [0.0] * 10)[:10]
+                        with torch.no_grad():
+                            # policy 网络返回 Categorical 分布 → sample + probs
+                            from marl_service.mappo_net import Categorical
+                            dist = self.trainer.policy.actor(
+                                torch.tensor(obs_padded[:5], dtype=torch.float32).unsqueeze(0)
+                            )
+                            probs_tensor = dist.probs.squeeze(0)  # Categorical 有 probs 属性
+                            action = int(probs_tensor.argmax().item())
+                            confidence = float(probs_tensor.max().item())
+                            source = "trained_policy"
+                    except Exception as e:
+                        self.logger.error(f"💥 POLICY_QUERY inference failed: {e}")
+                        action = 0
+                        confidence = 0.0
+                        source = "fallback_error"
+                else:
+                    action = 0
+                    confidence = 0.0
+                    source = "no_trainer"
+
+                response_envelope = {
+                    "frameId": f"policy_ans_{envelope.get('frameId', '0000')}",
+                    "type": "POLICY_ANSWER",
+                    "currentTick": current_tick,
+                    "payload": {
+                        "action": action,
+                        "confidence": confidence,
+                        "source": source,
+                        "step_counter": self._step_counter,
+                    },
+                    "kernelVersionSeal": version_seal,
+                    "timestamp": int(asyncio.get_event_loop().time() * 1000),
                 }
                 serialized_response = json.dumps(response_envelope) + "\n"
                 writer.write(serialized_response.encode('utf-8'))

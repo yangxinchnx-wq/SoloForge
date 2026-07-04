@@ -18,10 +18,12 @@ const FloatingEditorWindow = lazy(() => import('./components/FloatingEditorWindo
 const AgentSettingsModal = lazy(() => import('./components/AgentSettingsModal').then(m => ({ default: m.default })));
 import { SecondaryModel } from './types';
 import { useHotTheme, useStaticTheme, THEME_PRESETS } from './context/ThemeContext';
+import { LayoutProvider, useLayoutState, useLayoutStatus } from './context/LayoutContext';
+import { SidebarResizeHandle, HistoryResizeHandle, PreviewResizeHandle } from './components/ResizeHandles';
 import { MountTransition } from './components/MountTransition';
-import { EdgeResize } from './components/EdgeResize';
 import { X } from 'lucide-react';
 import { useChatClickCanvasBridge } from './hooks/useChatClickCanvasBridge';
+import { useAppStore } from './state/appStore';
 
 const ModalFallback = () => (
   <div className="fixed inset-0 z-[200] flex items-center justify-center pointer-events-none">
@@ -30,65 +32,44 @@ const ModalFallback = () => (
 );
 
 export default function App() {
-  // Model Settings State
-  const [mainModel, setMainModel] = useState('GPT-4o');
-  const [secModels, setSecModels] = useState<SecondaryModel[]>([
-    { id: 'DeepSeek-V3', name: 'DeepSeek-V3', weight: 5 },
-    { id: 'Gemini-1.5-Pro', name: 'Gemini-1.5-Pro', weight: 5 }
-  ]);
-  const [mixedTasks, setMixedTasks] = useState(true);
-  const [currentPermissionMode, setCurrentPermissionMode] = useState<'normal' | 'performance' | 'ultimate' | 'expert'>('normal');
+  // ==================== 全局状态（zustand appStore）====================
+  // 2026-07-03 重构：原 18 个 useState 收敛到 appStore，消除 MainLayout 37 字段透传
+  const {
+    mainModel, setMainModel,
+    secModels, setSecModels,
+    mixedTasks, setMixedTasks,
+    currentPermissionMode, setCurrentPermissionMode,
+    selectedFile, setSelectedFile,
+    fileCache, setFileCache,
+    editorContent, setEditorContent,
+    selectedChatId, setSelectedChatId,
+    activeTab, setActiveTab,
+    toastMsg, setToastMsg,
+    showHistory, setShowHistory,
+    showCodeEditor, setShowCodeEditor,
+    showThemeCustomizer, setShowThemeCustomizer,
+    showSettingsModal, setShowSettingsModal,
+    showStatsModal, setShowStatsModal,
+    showFloatingEditor, setShowFloatingEditor,
+    activeSettingsChat, setActiveSettingsChat,
+  } = useAppStore();
 
   // Synchronize multi-model mixedTasks based on the active mode (only 'normal' mode needs it disabled)
   useEffect(() => {
     if (currentPermissionMode === 'normal') {
       setMixedTasks(false);
     }
-  }, [currentPermissionMode]);
+  }, [currentPermissionMode, setMixedTasks]);
 
-  // File explorer node state & text-editor content state
-  const [selectedFile, setSelectedFile] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('soloforge_selectedFile') || 'BlogSystem/src/App.vue';
-    }
-    return 'BlogSystem/src/App.vue';
-  });
-
-  // Track modified code cache to keep user changes persistent during exploration
-  const [fileCache, setFileCache] = useState<Record<string, string>>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const saved = localStorage.getItem('soloforge_fileCache');
-        return saved ? JSON.parse(saved) : {};
-      } catch (e) {
-        return {};
-      }
-    }
-    return {};
-  });
-
-  const [editorContent, setEditorContent] = useState(() => {
-    const file = typeof window !== 'undefined' ? (localStorage.getItem('soloforge_selectedFile') || 'BlogSystem/src/App.vue') : 'BlogSystem/src/App.vue';
-    let cache: Record<string, string> = {};
-    if (typeof window !== 'undefined') {
-      try {
-        const saved = localStorage.getItem('soloforge_fileCache');
-        if (saved) cache = JSON.parse(saved);
-      } catch (e) {}
-    }
-    return cache[file] !== undefined ? cache[file] : '';
-  });
-
-  // Synchronous state adjustment when selectedFile changes to prevent intermediate mismatched frames
-  const [prevSelectedFile, setPrevSelectedFile] = useState(selectedFile);
-  if (selectedFile !== prevSelectedFile) {
-    setPrevSelectedFile(selectedFile);
-    const content = fileCache[selectedFile] !== undefined ? fileCache[selectedFile] : '';
+  // selectedFile 切换时同步 editorContent（替代原 prevSelectedFile 衍生 state）
+  const prevSelectedFileRef = useRef(selectedFile);
+  if (selectedFile !== prevSelectedFileRef.current) {
+    prevSelectedFileRef.current = selectedFile;
+    const content = useAppStore.getState().fileCache[selectedFile] !== undefined
+      ? useAppStore.getState().fileCache[selectedFile]
+      : '';
     setEditorContent(content);
   }
-
-  // Active Chats history state
-  const [selectedChatId, setSelectedChatId] = useState('1');
 
   // P0: 画布 → chat 自动桥接
   //   - 监听 selectedChatId 变化 → 拉取该 chat 上次访问的画布
@@ -100,21 +81,6 @@ export default function App() {
     defaultDescription: '默认画布',
   });
   const activeCanvasId = bridge.canvasId;
-
-  // Sidebar navigation toggled tab (explorer/search/git/plugin tabs)
-  const [activeTab, setActiveTab] = useState('explorer');
-
-  // Toast notifications state
-  const [toastMsg, setToastMsg] = useState<string | null>(null);
-  const [showHistory, setShowHistory] = useState(true);
-  const [showCodeEditor, setShowCodeEditor] = useState(true);
-
-  // Interactive Theme Customization and Settings trigger states
-  const [showThemeCustomizer, setShowThemeCustomizer] = useState(false);
-  const [showSettingsModal, setShowSettingsModal] = useState(false);
-  const [showStatsModal, setShowStatsModal] = useState(false);
-  const [showFloatingEditor, setShowFloatingEditor] = useState(false);
-  const [activeSettingsChat, setActiveSettingsChat] = useState<{ id: string; title: string } | null>(null);
 
   const {
     primaryColor,
@@ -161,61 +127,10 @@ export default function App() {
   }, []);
 
   // Interactive Resizing Panel States
-  const [sidebarWidth, setSidebarWidth] = useState(250);
-  const [previewWidth, setPreviewWidth] = useState(385);
-  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
-  const [isResizingPreview, setIsResizingPreview] = useState(false);
-  const [dragStartSidebarWidth, setDragStartSidebarWidth] = useState(250);
-  const [dragStartPreviewWidth, setDragStartPreviewWidth] = useState(385);
-
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (isResizingSidebar) {
-        // Left offset for sidebar next to vertical narrow Activity bar (48px)
-        const newWidth = e.clientX - 48;
-        if (newWidth >= 160 && newWidth <= 600) {
-          setSidebarWidth(newWidth);
-        }
-      } else if (isResizingPreview) {
-        // Right offset for preview panel from screen edge
-        const newWidth = window.innerWidth - e.clientX;
-        if (newWidth >= 250 && newWidth <= 750) {
-          setPreviewWidth(newWidth);
-        }
-      }
-    };
-
-    const handleMouseUp = () => {
-      setIsResizingSidebar(false);
-      setIsResizingPreview(false);
-    };
-
-    if (isResizingSidebar || isResizingPreview) {
-      document.addEventListener('mousemove', handleMouseMove);
-      document.addEventListener('mouseup', handleMouseUp);
-      document.body.style.cursor = 'col-resize';
-      document.body.style.userSelect = 'none';
-
-      // Disable pointer events on all iframes to prevent dragging freeze!
-      const iframes = document.querySelectorAll('iframe');
-      iframes.forEach(iframe => {
-        iframe.style.pointerEvents = 'none';
-      });
-    } else {
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-
-      const iframes = document.querySelectorAll('iframe');
-      iframes.forEach(iframe => {
-        iframe.style.pointerEvents = 'auto';
-      });
-    }
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isResizingSidebar, isResizingPreview]);
+  // 2026-07-02 性能修复: sidebarWidth / previewWidth / isResizing* / dragStart* 从顶层 useState
+  //   迁移到 LayoutProvider (context/LayoutContext.tsx), 拖动时只重渲染消费 state 的列容器 + handle
+  //   App 树其余部分 (Header / FileExplorer / ChatPanel / StatusBar / 3D 画布等) 不再被每帧 60+ 次 setState 拖累
+  // mousemove 监听器也搬到 LayoutProvider 里 (附 rAF 节流), 此处不再持有相关 effect
 
   // Check if we are in popout mode
   const isPopout = typeof window !== 'undefined' && window.location.search.includes('popout=editor');
@@ -478,77 +393,157 @@ export default function App() {
   };
 
   if (isPopout) {
+    // Popout 窗口也走 LayoutProvider — 保持拖动行为与主窗口一致
     return (
-      <div className="flex flex-col h-screen w-screen bg-bg text-on-surface overflow-hidden select-none font-sans">
-        {/* Dynamic Custom Top-Bar for Popout Window */}
-        <div className="h-10 border-b border-[var(--color-primary)]/20 bg-surface px-4 flex items-center justify-between shrink-0 select-none">
-          <div className="flex items-center gap-2">
-            <div className="w-2.5 h-2.5 rounded-full bg-amber-400 shrink-0" />
-            <span className="text-[12px] font-bold text-[var(--color-primary)] tracking-wider uppercase">SoloForge IDE - 编程视图 (窗口模式)</span>
-          </div>
-          <div className="text-[10px] text-on-surface/40 font-mono flex items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-sans text-[9px] font-bold tracking-wide border border-emerald-500/25">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              双向工作区实时通信已建立
-            </span>
-          </div>
-        </div>
-
-        {/* Core Layout split pane */}
-        <div className="flex flex-1 overflow-hidden relative">
-          {/* File Explorer sidebar */}
-          <div 
-            className="h-full bg-surface flex flex-col shrink-0 overflow-hidden"
-            style={{ 
-              width: `${sidebarWidth}px`,
-              transition: isResizingSidebar ? 'none' : 'width 250ms cubic-bezier(0.16, 1, 0.3, 1)'
-            }}
-          >
-            <div className="flex-grow h-full w-full overflow-hidden" style={{ '--color-primary': primaryColorTargets.editorAndExplorer ? 'var(--color-main-primary)' : '#8c8c8c' } as React.CSSProperties}>
-              <FileExplorer 
-                selectedFile={selectedFile} 
-                setSelectedFile={handleFileChange}
-                onNewFile={handleNewFile}
-              />
-            </div>
-          </div>
-
-          {/* Drag Resizer for Sidebar */}
-          <div
-            onMouseDown={() => {
-              setIsResizingSidebar(true);
-              setDragStartSidebarWidth(sidebarWidth);
-            }}
-            className="group relative w-3 h-full cursor-col-resize shrink-0 z-35 select-none -mx-1.5 flex items-center justify-center transition-all bg-[var(--color-primary)]/5 hover:bg-[var(--color-primary)]/10"
-            title="拖拽调整左侧栏宽度"
-          >
-            <div className={`absolute top-0 bottom-0 w-[1px] bg-[var(--color-primary)]/25 group-hover:bg-[var(--color-primary)]/80 group-hover:w-[3px] group-hover:shadow-[0_0_8px_var(--color-primary)] transition-all duration-150 ${isResizingSidebar ? 'bg-[var(--color-primary)] w-[3px] shadow-[0_0_8px_var(--color-primary)]' : ''}`} />
-          </div>
-
-          {/* Source Code Editor */}
-          <div className="flex-1 h-full overflow-hidden bg-surface flex flex-col" style={{ '--color-primary': primaryColorTargets.editorAndExplorer ? 'var(--color-main-primary)' : '#8c8c8c' } as React.CSSProperties}>
-            <SourceCodeEditor 
-              selectedFile={selectedFile}
-              editorContent={editorContent}
-              setEditorContent={handleEditorChange}
-              isPopoutView={true}
-            />
-          </div>
-        </div>
-      </div>
+      <LayoutProvider>
+        <PopoutLayout
+          selectedFile={selectedFile}
+          handleFileChange={handleFileChange}
+          handleNewFile={handleNewFile}
+          editorContent={editorContent}
+          handleEditorChange={handleEditorChange}
+          primaryColorTargets={primaryColorTargets}
+        />
+      </LayoutProvider>
     );
   }
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-bg text-on-surface overflow-hidden select-none">
-      {/* 2026: 4 边 + 4 角的 resize 手柄(替代 frame:true 的 OS 边框,消除 Windows resize 时的白色 sizing box)
-          顶边不放(Header 区域已有 drag-to-move,放 resize handle 会冲突) */}
-      <EdgeResize />
+    <LayoutProvider>
+    <MainLayout
+      mainModel={mainModel}
+      setMainModel={setMainModel}
+      secModels={secModels}
+      setSecModels={setSecModels}
+      mixedTasks={mixedTasks}
+      setMixedTasks={setMixedTasks}
+      currentPermissionMode={currentPermissionMode}
+      setCurrentPermissionMode={setCurrentPermissionMode}
+      selectedFile={selectedFile}
+      setSelectedFile={setSelectedFile}
+      selectedChatId={selectedChatId}
+      setSelectedChatId={setSelectedChatId}
+      activeTab={activeTab}
+      setActiveTab={setActiveTab}
+      toastMsg={toastMsg}
+      setToastMsg={setToastMsg}
+      showHistory={showHistory}
+      setShowHistory={setShowHistory}
+      showCodeEditor={showCodeEditor}
+      setShowCodeEditor={setShowCodeEditor}
+      showThemeCustomizer={showThemeCustomizer}
+      setShowThemeCustomizer={setShowThemeCustomizer}
+      showSettingsModal={showSettingsModal}
+      setShowSettingsModal={setShowSettingsModal}
+      showStatsModal={showStatsModal}
+      setShowStatsModal={setShowStatsModal}
+      showFloatingEditor={showFloatingEditor}
+      setShowFloatingEditor={setShowFloatingEditor}
+      activeSettingsChat={activeSettingsChat}
+      setActiveSettingsChat={setActiveSettingsChat}
+      primaryColor={primaryColor}
+      primaryColorTargets={primaryColorTargets}
+      currentThemeId={currentThemeId}
+      activeTheme={activeTheme}
+      setPrimaryColor={setPrimaryColor}
+      setPrimaryColorTargets={setPrimaryColorTargets}
+      setCurrentThemeId={setCurrentThemeId}
+      handleFileChange={handleFileChange}
+      handleEditorChange={handleEditorChange}
+      handleNewFile={handleNewFile}
+      editorContent={editorContent}
+      bridge={bridge}
+      activeCanvasId={activeCanvasId}
+      onOpenThemeCustomizer={onOpenThemeCustomizer}
+      onOpenSettingsModal={onOpenSettingsModal}
+      onOpenStatsModal={onOpenStatsModal}
+    />
+    </LayoutProvider>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// MainLayout — 消费 LayoutProvider state,负责列宽 / previewWidth / 拖动状态
+//   拆成子组件的目的: 让 LayoutProvider 的 state 改变时,App() 函数 (持有一堆
+//   与拖动无关的 state) 不参与重渲染, 整树更省
+// ─────────────────────────────────────────────────────────────────
+interface MainLayoutProps {
+  mainModel: string;
+  setMainModel: (v: string) => void;
+  secModels: SecondaryModel[];
+  setSecModels: (v: SecondaryModel[]) => void;
+  mixedTasks: boolean;
+  setMixedTasks: (v: boolean) => void;
+  currentPermissionMode: 'normal' | 'performance' | 'ultimate' | 'expert';
+  setCurrentPermissionMode: (v: 'normal' | 'performance' | 'ultimate' | 'expert') => void;
+  selectedFile: string;
+  setSelectedFile: (v: string) => void;
+  selectedChatId: string;
+  setSelectedChatId: (v: string) => void;
+  activeTab: string;
+  setActiveTab: (v: string) => void;
+  toastMsg: string | null;
+  setToastMsg: (v: string | null) => void;
+  showHistory: boolean;
+  setShowHistory: (v: boolean) => void;
+  showCodeEditor: boolean;
+  setShowCodeEditor: (v: boolean) => void;
+  showThemeCustomizer: boolean;
+  setShowThemeCustomizer: (v: boolean) => void;
+  showSettingsModal: boolean;
+  setShowSettingsModal: (v: boolean) => void;
+  showStatsModal: boolean;
+  setShowStatsModal: (v: boolean) => void;
+  showFloatingEditor: boolean;
+  setShowFloatingEditor: (v: boolean) => void;
+  activeSettingsChat: { id: string; title: string } | null;
+  setActiveSettingsChat: (v: { id: string; title: string } | null) => void;
+  primaryColor: string;
+  primaryColorTargets: any;
+  currentThemeId: string;
+  activeTheme: any;
+  setPrimaryColor: (v: string) => void;
+  setPrimaryColorTargets: (v: any) => void;
+  setCurrentThemeId: (v: string) => void;
+  handleFileChange: (file: string) => void;
+  handleEditorChange: (content: string) => void;
+  handleNewFile: () => void;
+  editorContent: string;
+  bridge: any;
+  activeCanvasId: string | null;
+  onOpenThemeCustomizer: () => void;
+  onOpenSettingsModal: () => void;
+  onOpenStatsModal: () => void;
+}
+
+const MainLayout: React.FC<MainLayoutProps> = ({
+  mainModel, setMainModel, secModels, setSecModels, mixedTasks, setMixedTasks,
+  currentPermissionMode, setCurrentPermissionMode,
+  selectedFile, setSelectedFile, selectedChatId, setSelectedChatId,
+  activeTab, setActiveTab, toastMsg, setToastMsg,
+  showHistory, setShowHistory, showCodeEditor, setShowCodeEditor,
+  showThemeCustomizer, setShowThemeCustomizer,
+  showSettingsModal, setShowSettingsModal, showStatsModal, setShowStatsModal,
+  showFloatingEditor, setShowFloatingEditor,
+  activeSettingsChat, setActiveSettingsChat,
+  primaryColor, primaryColorTargets, currentThemeId, activeTheme,
+  setPrimaryColor, setPrimaryColorTargets, setCurrentThemeId,
+  handleFileChange, handleEditorChange, handleNewFile, editorContent,
+  bridge, activeCanvasId,
+  onOpenThemeCustomizer, onOpenSettingsModal, onOpenStatsModal,
+}) => {
+  const layoutState = useLayoutState();
+  const layoutStatus = useLayoutStatus();
+  const { sidebarWidth, previewWidth } = layoutState;
+  const { isResizingSidebar, isResizingPreview, dragStartSidebarWidth, dragStartPreviewWidth } = layoutStatus;
+
+  return (
+    <div
+      className="flex flex-col h-screen w-screen bg-bg text-on-surface overflow-hidden select-none"
+    >
       <div
         className="relative z-[60]"
-        style={{
-          '--color-primary': primaryColorTargets.header ? 'var(--color-main-primary)' : activeTheme.primary,
-        } as React.CSSProperties}
+        data-theme-region="header"
       >
         <Header
           mainModel={mainModel}
@@ -567,7 +562,7 @@ export default function App() {
 
       <div className="flex flex-1 overflow-hidden relative">
         {/* Column 1: Vertical Narrow Activity Bar */}
-        <div style={{ '--color-primary': primaryColorTargets.activityBar ? 'var(--color-main-primary)' : '#8c8c8c' } as React.CSSProperties} className="h-full flex shrink-0">
+        <div data-theme-region="activity-bar" className="h-full flex shrink-0">
           <ActivityBar
             activeTab={activeTab}
             setActiveTab={setActiveTab}
@@ -583,13 +578,25 @@ export default function App() {
 
         {/* Column 2: File Explorer & Source Code Editor stacked (If active) */}
         <div
+          data-theme-region="editor-explorer"
           className="h-full bg-surface flex flex-col shrink-0 overflow-hidden select-none border-r border-[var(--color-primary)]/20"
           style={{
-            width: (activeTab === 'explorer' || activeTab === 'git' || showCodeEditor) ? `${sidebarWidth}px` : '0px',
+            // 2026-07-02 性能修复: 拖动期间不要直接改 column width, 否则 313 元素子树 layout 100ms+
+            //   - isResizingSidebar 期间 width 锁在 dragStartSidebarWidth (不变), 用 transform 视觉偏移
+            //   - mouseup 时 width 才真正变为 sidebarWidth (commit 一次 layout)
+            //   - transform 走 GPU 合成层, 完全跳过 layout/paint
+            // 2026-07-03 主题优化: --color-primary 改由 data-theme-region + :root dataset 驱动,
+            //   primaryColorTargets 变化不再触发 React 重渲染 (CSS 变量级联)
+            width: (activeTab === 'explorer' || activeTab === 'git' || showCodeEditor)
+              ? (isResizingSidebar ? `${dragStartSidebarWidth}px` : `${sidebarWidth}px`)
+              : '0px',
+            transform: isResizingSidebar
+              ? `translate3d(${sidebarWidth - dragStartSidebarWidth}px, 0, 0)`
+              : undefined,
+            willChange: isResizingSidebar ? 'transform' : 'auto',
             opacity: (activeTab === 'explorer' || activeTab === 'git' || showCodeEditor) ? 1 : 0,
             pointerEvents: (activeTab === 'explorer' || activeTab === 'git' || showCodeEditor) ? 'auto' : 'none',
             transition: isResizingSidebar ? 'none' : 'width 250ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease-out',
-            '--color-primary': primaryColorTargets.editorAndExplorer ? 'var(--color-main-primary)' : '#8c8c8c'
           } as React.CSSProperties}
         >
           <div
@@ -634,27 +641,28 @@ export default function App() {
 
         {/* Drag Resizer for Left Sidebar */}
         {(activeTab === 'explorer' || activeTab === 'git' || showCodeEditor) && (
-          <div
-            onMouseDown={() => {
-              setIsResizingSidebar(true);
-              setDragStartSidebarWidth(sidebarWidth);
-            }}
-            className="group relative w-3 h-full cursor-col-resize shrink-0 z-35 select-none -mx-1.5 flex items-center justify-center transition-all"
-            title="拖拽调整左侧栏宽度"
-          >
-            <div className={`absolute top-0 bottom-0 w-[1px] bg-[var(--color-primary)]/25 group-hover:bg-[var(--color-primary)]/80 group-hover:w-[3px] group-hover:shadow-[0_0_8px_var(--color-primary)] transition-all duration-150 ${isResizingSidebar ? 'bg-[var(--color-primary)] w-[3px] shadow-[0_0_8px_var(--color-primary)]' : ''}`} />
-          </div>
+          <SidebarResizeHandle />
         )}
 
         {/* Column 3: History Dialogues List */}
         <div
+          data-theme-region="editor-explorer"
           className="absolute left-[48px] top-0 bottom-0 z-40 flex flex-col overflow-hidden border-r border-[var(--color-primary)]/20 shadow-[4px_0_15px_rgba(0,0,0,0.22)]"
           style={{
-            width: showHistory ? `${sidebarWidth}px` : '0px',
+            // 2026-07-02 性能修复: 拖动期间 History 面板 width 锁在 dragStart, 用 transform 偏移
+            //   - width 变化 → HistoryPanel 内部所有消息重新 layout, 大列表尤其卡
+            //   - transform 走 GPU 合成层, 不触发 layout
+            // 2026-07-03 主题优化: --color-primary 由 data-theme-region 驱动 (CSS 变量级联)
+            width: showHistory
+              ? (isResizingSidebar ? `${dragStartSidebarWidth}px` : `${sidebarWidth}px`)
+              : '0px',
+            transform: isResizingSidebar
+              ? `translate3d(${sidebarWidth - dragStartSidebarWidth}px, 0, 0)`
+              : undefined,
+            willChange: isResizingSidebar ? 'transform' : 'auto',
             opacity: showHistory ? 1 : 0,
             pointerEvents: showHistory ? 'auto' : 'none',
             transition: isResizingSidebar ? 'none' : 'width 250ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease-out',
-            '--color-primary': primaryColorTargets.editorAndExplorer ? 'var(--color-main-primary)' : '#8c8c8c'
           } as React.CSSProperties}
         >
           <div
@@ -684,25 +692,10 @@ export default function App() {
         </div>
 
         {/* Drag Resizer for absolute History Panel */}
-        {showHistory && (
-          <div
-            onMouseDown={() => {
-              setIsResizingSidebar(true);
-              setDragStartSidebarWidth(sidebarWidth);
-            }}
-            className="group absolute top-0 bottom-0 h-full w-3 cursor-col-resize select-none z-50 flex items-center justify-center"
-            style={{ 
-              left: 48 + sidebarWidth - 6,
-              transition: isResizingSidebar ? 'none' : 'left 250ms cubic-bezier(0.16, 1, 0.3, 1)'
-            }}
-            title="拖拽调整历史面板宽度"
-          >
-            <div className={`absolute top-0 bottom-0 w-[1px] bg-[var(--color-primary)]/25 group-hover:bg-[var(--color-primary)]/80 group-hover:w-[3px] group-hover:shadow-[0_0_8px_var(--color-primary)] transition-all duration-150 ${isResizingSidebar ? 'bg-[var(--color-primary)] w-[3px] shadow-[0_0_8px_var(--color-primary)]' : ''}`} />
-          </div>
-        )}
+        {showHistory && <HistoryResizeHandle />}
 
         {/* Column 4: Main Chat Workspace Output Pane + Terminal Logs */}
-        <div style={{ '--color-primary': primaryColorTargets.chatPanel ? 'var(--color-main-primary)' : '#8c8c8c' } as React.CSSProperties} className="flex-1 h-full min-w-0">
+        <div data-theme-region="chat-panel" className="flex-1 h-full min-w-0">
           <ChatPanel 
             permissionMode={currentPermissionMode} 
             setPermissionMode={setCurrentPermissionMode} 
@@ -717,16 +710,7 @@ export default function App() {
         </div>
 
         {/* Right Drag Resizer for Preview Panel */}
-        <div
-          onMouseDown={() => {
-            setIsResizingPreview(true);
-            setDragStartPreviewWidth(previewWidth);
-          }}
-          className="group relative w-3 h-full cursor-col-resize shrink-0 z-35 select-none -mx-1.5 flex items-center justify-center transition-all"
-          title="拖拽调整右侧预览宽度"
-        >
-          <div className={`absolute top-0 bottom-0 w-[1px] bg-[var(--color-primary)]/25 group-hover:bg-[var(--color-primary)]/80 group-hover:w-[3px] group-hover:shadow-[0_0_8px_var(--color-primary)] transition-all duration-150 ${isResizingPreview ? 'bg-[var(--color-primary)] w-[3px] shadow-[0_0_8px_var(--color-primary)]' : ''}`} />
-        </div>
+        <PreviewResizeHandle />
 
         {/* Column 5: Right Column Interactive Preview Web Application */}
         <PreviewPanel
@@ -745,11 +729,11 @@ export default function App() {
       </div>
 
       {/* Micro Status Bar indicator at the very bottom */}
-      <div 
+      <div
+        data-theme-region="status-bar"
         className="relative z-50"
-        style={{ '--color-primary': primaryColorTargets.statusBar ? 'var(--color-main-primary)' : activeTheme.primary } as React.CSSProperties}
       >
-        <StatusBar 
+        <StatusBar
           currentThemeId={currentThemeId}
           setCurrentThemeId={setCurrentThemeId}
         />
@@ -771,7 +755,7 @@ export default function App() {
       </Suspense>
 
       {/* Geek Settings Modal (13 Core Modules) */}
-      <MountTransition show={showSettingsModal} variant="fade">
+      <MountTransition show={showSettingsModal} variant="fade" className="fixed inset-0 z-[1000]">
         <Suspense fallback={<ModalFallback />}>
           {showSettingsModal && (
             <SettingsModal
@@ -783,7 +767,7 @@ export default function App() {
       </MountTransition>
 
       {/* AI & Token Audit statistics popup */}
-      <MountTransition show={showStatsModal} variant="fade-scale">
+      <MountTransition show={showStatsModal} variant="fade-scale" className="fixed inset-0 z-[1000]">
         <Suspense fallback={<ModalFallback />}>
           {showStatsModal && (
             <StatsModal
@@ -843,3 +827,85 @@ export default function App() {
     </div>
   );
 }
+
+// ─────────────────────────────────────────────────────────────────
+// PopoutLayout — 弹出窗口视图 (独立 Editor 窗口), 走 LayoutProvider
+//   复用 SidebarResizeHandle / state.sidebarWidth, 拖动行为与主窗口一致
+// ─────────────────────────────────────────────────────────────────
+interface PopoutLayoutProps {
+  selectedFile: string;
+  handleFileChange: (file: string) => void;
+  handleNewFile: () => void;
+  editorContent: string;
+  handleEditorChange: (content: string) => void;
+  primaryColorTargets: any;
+}
+
+const PopoutLayout: React.FC<PopoutLayoutProps> = ({
+  selectedFile, handleFileChange, handleNewFile,
+  editorContent, handleEditorChange, primaryColorTargets,
+}) => {
+  const layoutState = useLayoutState();
+  const layoutStatus = useLayoutStatus();
+  const { sidebarWidth } = layoutState;
+  const { isResizingSidebar, dragStartSidebarWidth } = layoutStatus;
+
+  return (
+    <div
+      className="flex flex-col h-screen w-screen bg-bg text-on-surface overflow-hidden select-none font-sans"
+    >
+      {/* Dynamic Custom Top-Bar for Popout Window */}
+      <div className="h-10 border-b border-[var(--color-primary)]/20 bg-surface px-4 flex items-center justify-between shrink-0 select-none">
+        <div className="flex items-center gap-2">
+          <div className="w-2.5 h-2.5 rounded-full bg-amber-400 shrink-0" />
+          <span className="text-[12px] font-bold text-[var(--color-primary)] tracking-wider uppercase">SoloForge IDE - 编程视图 (窗口模式)</span>
+        </div>
+        <div className="text-[10px] text-on-surface/40 font-mono flex items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-sans text-[9px] font-bold tracking-wide border border-emerald-500/25">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            双向工作区实时通信已建立
+          </span>
+        </div>
+      </div>
+
+      {/* Core Layout split pane */}
+      <div className="flex flex-1 overflow-hidden relative">
+        {/* File Explorer sidebar */}
+        <div
+          className="h-full bg-surface flex flex-col shrink-0 overflow-hidden"
+          style={{
+            width: `${sidebarWidth}px`,
+            transition: isResizingSidebar ? 'none' : 'width 250ms cubic-bezier(0.16, 1, 0.3, 1)',
+          }}
+        >
+          <div
+            data-theme-region="editor-explorer"
+            className="flex-grow h-full w-full overflow-hidden"
+          >
+            <FileExplorer
+              selectedFile={selectedFile}
+              setSelectedFile={handleFileChange}
+              onNewFile={handleNewFile}
+            />
+          </div>
+        </div>
+
+        {/* Drag Resizer for Sidebar — 走 SidebarResizeHandle,共享 LayoutProvider state */}
+        <SidebarResizeHandle />
+
+        {/* Source Code Editor */}
+        <div
+          data-theme-region="editor-explorer"
+          className="flex-1 h-full overflow-hidden bg-surface flex flex-col"
+        >
+          <SourceCodeEditor
+            selectedFile={selectedFile}
+            editorContent={editorContent}
+            setEditorContent={handleEditorChange}
+            isPopoutView={true}
+          />
+        </div>
+      </div>
+    </div>
+  );
+};

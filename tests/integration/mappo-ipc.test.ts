@@ -4,10 +4,10 @@
 // ─────────────────────────────────────────────────────────────────
 
 import { describe, it, expect, afterAll } from 'vitest';
-import { GeminiMappoResourceGovernorClient } from '../../src/core/governor/mappo-client';
+import { MappoHeuristicGovernor } from '../../src/core/governor/mappo-client';
 
 describe('SoloForge 跨语言 MAPPO 资源控流与时序自愈管道集成验收测试套件', () => {
-  const governorClient = new GeminiMappoResourceGovernorClient();
+  const governorClient = new MappoHeuristicGovernor();
 
   afterAll(() => {
     governorClient.safelyTerminateGovernorContext(); // 物理释放，禁止残留孤儿进程

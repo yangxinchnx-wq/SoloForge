@@ -144,6 +144,22 @@ export interface AuditFinding {
   suggestion: string;
 }
 
+/**
+ * 混合裁决结果（子Agent 评分 → 主模型仲裁 → AI社会制度校验）
+ * 类型从此处导出，原 state/arbitration.ts 的实现已删除（死代码）
+ */
+export interface ArbitrationResult {
+  verdict: 'accept' | 'revise' | 'reject';
+  finalScore: number;
+  layerScores: {
+    subAgent: number;
+    mainModel: number;
+    society: number;
+  };
+  findings: AuditFinding[];
+  reasoning: string;
+}
+
 // ==================== 子Agent ====================
 
 export interface SubAgent {

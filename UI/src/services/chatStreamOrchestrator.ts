@@ -251,3 +251,48 @@ export function useChatPreviewStream() {
     cancel: (_handle: StreamPreviewHandle) => _handle.cancel(),
   };
 }
+
+// ==========================================
+// 2026-07-03 阶段5.C: IPCAdapter 层级倒置修复
+// 原 services/canvas/IPCAdapter.ts 是本文件的薄包装 (59 行), 反向 import
+// 上层 service 造成层级倒置. 已删除该文件, preview() 入口合并到此处.
+// 调用方 (usePreviewPipeline.ts) 直接 import { preview } from './chatStreamOrchestrator'
+// ==========================================
+
+import { pipelineConfig } from './canvas/pipelineConfig';
+
+export interface PreviewOptions {
+  sessionId: string;
+  deviceId?: string;
+  chatId: string;
+  /** LLM pipeline 语言 */
+  language: string;
+  userGoal: string;
+  /** 客户端注入（测试用） */
+  canvasClient?: Canvas3DClient;
+  llmClient?: LLMClient;
+}
+
+export type PreviewHandle = StreamPreviewHandle;
+
+/**
+ * 预览入口 (原 IPCAdapter.preview)
+ * LLM streaming → parser → IPC → canvas
+ */
+export function preview(opts: PreviewOptions): PreviewHandle {
+  if (!opts.language || !opts.userGoal) {
+    throw new Error('preview: language + userGoal required');
+  }
+  if (!opts.chatId) {
+    throw new Error('preview: chatId required');
+  }
+  return streamPreviewForChat({
+    chatId: opts.chatId,
+    language: opts.language,
+    userGoal: opts.userGoal,
+    deviceId: opts.deviceId,
+    llmClient: opts.llmClient,
+    canvasClient: opts.canvasClient,
+    pushIntervalMs: pipelineConfig.pushIntervalMs,
+  });
+}

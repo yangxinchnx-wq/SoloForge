@@ -22,5 +22,5 @@ pub use task::{TaskNode, TaskGraph, TaskState};
 pub use snapshot::{Snapshotable, StateSnapshot};
 pub use interrupt::{Interrupt, InterruptAction, InterruptHandler};
 
-// 向后兼容：导出 actor_queue 中的类型
-pub use actor_queue::{ActorTask, GeminiActorQueue};
+// 向后兼容：导出 actor_queue 模块的公共类型
+pub use actor_queue::{ActorTask, ActorQueue};
