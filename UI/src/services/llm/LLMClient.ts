@@ -66,12 +66,17 @@ export class LLMClient {
 
   /** 从环境变量自动选择 */
   static fromEnv(): LLMClient {
-    const provider = (typeof process !== 'undefined' ? process.env?.LLM_PROVIDER : undefined) ?? 'openai';
-    const apiKey = typeof process !== 'undefined' ? process.env?.LLM_API_KEY : undefined;
-    const baseUrl = typeof process !== 'undefined' ? process.env?.LLM_BASE_URL : undefined;
-    const model = typeof process !== 'undefined' ? process.env?.LLM_MODEL : undefined;
-    const apiBase = (typeof process !== 'undefined' ? process.env?.VITE_API_BASE : undefined) ?? 'http://localhost:3001';
-    const token = typeof process !== 'undefined' ? process.env?.VITE_LLM_API_TOKEN : undefined;
+    // Vite 浏览器环境: import.meta.env (优先), Node 环境: process.env
+    const viteEnv = (typeof import.meta !== 'undefined' && (import.meta as any).env) || {};
+    const nodeEnv = (typeof process !== 'undefined' ? process.env : undefined) || {};
+
+    const provider = viteEnv.VITE_LLM_PROVIDER || nodeEnv.LLM_PROVIDER || 'backend';
+    const apiKey = viteEnv.VITE_LLM_API_KEY || nodeEnv.LLM_API_KEY;
+    const baseUrl = viteEnv.VITE_LLM_BASE_URL || nodeEnv.LLM_BASE_URL;
+    const model = viteEnv.VITE_LLM_MODEL || nodeEnv.LLM_MODEL;
+    // 浏览器端 apiBase 留空 → 相对 URL, 走 3000 代理
+    const apiBase = nodeEnv.VITE_API_BASE ?? '';
+    const token = viteEnv.VITE_LLM_API_TOKEN || nodeEnv.VITE_LLM_API_TOKEN;
 
     // 优先级：backend > 直连 > mock
     if (provider === 'backend' || (provider === 'auto' && !apiKey)) {

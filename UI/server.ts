@@ -10,6 +10,8 @@ import { createProxyMiddleware, fixRequestBody } from "http-proxy-middleware";
 import { registerBrowserUseRoutes } from "../src/core/browser-use/routes";
 import { bootstrapCanvasSessionLayer } from "./src/server/bootstrap/canvas";
 import { registerCanvasToolRoutes } from "./src/server/routes/canvasTools";
+import { registerChatSessionRoutes, flushChatStore } from "./src/server/routes/chatSession";
+import { registerConversationRoutes, flushConversationStore } from "./src/server/routes/conversationRoutes";
 
 // Load Environment variables
 dotenv.config();
@@ -55,28 +57,40 @@ async function startServer() {
   bootstrapCanvasSessionLayer(app);
 
   // ============================================================
-  // Chat 删除路由 (本地端点, 不代理到 3001)
-  //   DELETE /api/chats/:id  — 级联删除该 chat 拥有的所有画布
+  // Chat Session API (3000 本地路由, JSON 持久化)
+  //   GET    /api/chats/list          — 列出所有对话 + 选中ID + liveStates
+  //   POST   /api/chats               — 创建新对话
+  //   PATCH  /api/chats/:id           — 更新对话 (title/tag/permission)
+  //   DELETE /api/chats/:id           — 删除对话 (级联删除画布)
+  //   POST   /api/chats/reorder       — 重排对话顺序
+  //   POST   /api/chats/select        — 设置当前选中对话
+  //   POST   /api/chats/:id/state     — 上报实时流式状态
+  //   DELETE /api/chats/:id/state     — 清除实时流式状态
   //
-  // 之前后端没实现此路由, 前端发出的 DELETE 经代理到 3001 命中 404,
-  // 乐观更新被回滚, chat 永远删不掉。这里在 3000 本地直接处理:
-  //   1. 从 SessionStore 级联删除 chatId 拥有的所有画布 (内存+Garnet+SurrealDB)
-  //   2. 返回 { success: true, selectedId: null } 兼容前端 store 契约
-  //   3. 前端 zustand 已乐观删除 chat 本身, 这里不重复处理 chat 数据
+  // 设计:
+  //   - 内存 Map + JSON 文件冷持久化 (.soloforge/chats.json)
+  //   - 防抖 flush (500ms), 优雅退出时同步 flush
+  //   - 删除对话时级联删除该 chat 拥有的所有画布
   // ============================================================
-  app.delete("/api/chats/:id", async (req, res) => {
-    const chatId = req.params.id;
-    try {
-      const { getSessionStore } = await import("./src/server/services/session/SessionStore");
-      const store = getSessionStore();
-      const deletedCanvases = await store.deleteCanvasesByOwner(chatId);
-      console.log(`[chats] DELETE chat=${chatId} cascaded delete canvases:`, deletedCanvases);
-      res.json({ success: true, selectedId: null, deletedCanvases });
-    } catch (err: any) {
-      console.error(`[chats] DELETE chat=${chatId} failed:`, err);
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
+  registerChatSessionRoutes(app);
+
+  // ============================================================
+  // Conversation API (3000 本地路由, JSON 持久化)
+  //   GET    /api/conversations              — 获取所有对话消息 + 配置
+  //   PUT    /api/conversations              — 全量替换所有对话消息
+  //   GET    /api/conversations/:chatId      — 获取单个对话消息
+  //   PUT    /api/conversations/:chatId      — 替换单个对话消息
+  //   DELETE /api/conversations/:chatId      — 删除单个对话消息 + 配置
+  //   GET    /api/conversations/:chatId/config   — 获取配置
+  //   PUT    /api/conversations/:chatId/config   — 替换配置
+  //   DELETE /api/conversations/:chatId/config   — 删除配置
+  //
+  // 设计:
+  //   - 内存 Map + JSON 文件冷持久化 (.soloforge/conversations.json)
+  //   - 防抖 flush (800ms), 优雅退出时同步 flush
+  //   - 删除对话时级联删除该 chat 的所有消息 + 配置
+  // ============================================================
+  registerConversationRoutes(app);
 
   // ============================================================
   // Canvas Tools MCP (LLM 工具调用入口, /api/canvas/tools/*)
@@ -398,6 +412,7 @@ async function startServer() {
     '/api/audit',
     '/api/vault',    // OS 钥匙串 vault 系统（apiKey 加密存储）
     '/api/providers', // 云端模型服务商连通性测试 & 模型扫描
+    '/api/llm',       // LLM 代理流 (/api/llm/stream) — AST 预览管线走此通道
   ];
   for (const p of backendApiPrefixes) {
     // 关键：用 pathFilter 精确过滤，且不修改 req.url（HPM 默认行为会改写为相对路径）
@@ -882,6 +897,20 @@ async function startServer() {
     });
     console.log("Production static server route configured.");
   }
+
+  // 优雅退出: flush 对话列表 + 消息到磁盘
+  process.on('SIGINT', () => {
+    console.log('[server] SIGINT received, flushing stores...');
+    flushChatStore();
+    flushConversationStore();
+    process.exit(0);
+  });
+  process.on('SIGTERM', () => {
+    console.log('[server] SIGTERM received, flushing stores...');
+    flushChatStore();
+    flushConversationStore();
+    process.exit(0);
+  });
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Development custom full-stack server active on port ${PORT}`);

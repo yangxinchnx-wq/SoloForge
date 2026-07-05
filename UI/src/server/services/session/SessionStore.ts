@@ -766,6 +766,24 @@ export class SessionStore {
   }
 
   /**
+   * 级联删除: 删除指定 chat 拥有的所有画布
+   * 用于删除对话时清理关联画布
+   * 返回被删除的 canvas sessionId 列表
+   */
+  async deleteCanvasesByOwner(ownerChatSessionId: string): Promise<string[]> {
+    const toDelete: string[] = [];
+    for (const [sessionId, state] of this.states.entries()) {
+      if (state.ownerChatSessionId === ownerChatSessionId) {
+        toDelete.push(sessionId);
+      }
+    }
+    for (const sid of toDelete) {
+      await this.deleteSession(sid);
+    }
+    return toDelete;
+  }
+
+  /**
    * s1.4: 列出所有会话 (轻量摘要, 不含 devices 完整数据)
    */
   listSessions(): Array<{

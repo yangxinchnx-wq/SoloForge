@@ -25,7 +25,7 @@ import {
   SuggestEnableView,
 } from './streamViews';
 // 2026-07-03 阶段3.1.E: 12 个 state + 9 个 handler 收敛到 useChatStore
-import { useChatStore, defaultChatDetails, defaultConversations, fallbackActiveSettings } from '../state/useChatStore';
+import { useChatStore, fallbackActiveSettings } from '../state/useChatStore';
 import { NormalIcon, PerformanceIcon, ExpertIcon, UltimateIcon } from './permissionModeIcons';
 
 // 4 个权限模式图标 (NormalIcon/PerformanceIcon/ExpertIcon/UltimateIcon) 已外移到
@@ -175,7 +175,6 @@ export default function ChatPanel({
   const localChatInfo = useMemo(() => chatsList.find(c => c.id === activeChatId) || null, [chatsList, activeChatId]);
   const activeMessages = useMemo(() => {
     return conversations[activeChatId]
-      || defaultConversations[activeChatId]
       || useChatStore.getState().getFallbackMessages(localChatInfo);
   }, [conversations, localChatInfo, activeChatId]);
 
@@ -184,11 +183,9 @@ export default function ChatPanel({
     [configs, activeChatId]
   );
   const isTemporaryNewChat = useMemo(() => !localChatInfo &&
-    !defaultChatDetails[activeChatId] &&
     !isNaN(Number(activeChatId)) &&
     Number(activeChatId) > 1710000000000, [localChatInfo, activeChatId]);
   const activeChatTitle = useMemo(() => localChatInfo?.title
-    || defaultChatDetails[activeChatId]?.title
     || (isTemporaryNewChat ? `新智能对话 #${chatsList.length + 1}` : `智能对话 #${activeChatId}`),
     [localChatInfo, activeChatId, isTemporaryNewChat, chatsList.length]);
   const activeChatIcon = useMemo(

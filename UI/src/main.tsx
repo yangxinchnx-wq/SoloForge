@@ -5,6 +5,69 @@ import './index.css';
 import { ThemeProvider, DEFAULT_FONT_URL, preloadFontByUrl } from './context/ThemeContext';
 import { installStreamDevHooks } from './state/streamingStore';
 import { installWorkdirSyncChannel } from './components/terminal';
+import { useChatsStore, initChatsEventBridge } from './state/chatsStore';
+import { useChatStore } from './state/useChatStore';
+
+// ── 一次性清理: 移除旧版占位 mock 数据 (v1 → v2 迁移) ──────────
+// 旧版在 localStorage 里写入了 6 条硬编码假对话 (id 1~6),
+// 新版已清空这些占位数据, 需要在启动时把残留清掉
+if (typeof window !== 'undefined') {
+  const MIGRATION_KEY = 'soloforge_data_version';
+  if (localStorage.getItem(MIGRATION_KEY) !== '2') {
+    const OLD_TITLES = ['电商平台原型开发', '用户认证 system 设计', 'API 接口文档生成',
+      '数据库表结构设计', '支付模块集成方案', '优化建议'];
+    // 清理 chats list — 如果里面全是旧占位条目就整个清掉
+    try {
+      const raw = localStorage.getItem('soloforge_chats_list');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0
+          && parsed.every((c: any) => OLD_TITLES.includes(c.title))) {
+          localStorage.removeItem('soloforge_chats_list');
+        }
+      }
+    } catch {}
+    // 清理 conversations — 旧占位对话只有 id 1~6
+    try {
+      const raw = localStorage.getItem('soloforge_conversations');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          const keys = Object.keys(parsed);
+          if (keys.length > 0 && keys.every(k => ['1','2','3','4','5','6'].includes(k))) {
+            localStorage.removeItem('soloforge_conversations');
+          }
+        }
+      }
+    } catch {}
+    // 清理 chat configs — 同理
+    try {
+      const raw = localStorage.getItem('soloforge_chat_configs');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          const keys = Object.keys(parsed);
+          if (keys.length > 0 && keys.every(k => ['1','2','3','4','5','6'].includes(k))) {
+            localStorage.removeItem('soloforge_chat_configs');
+          }
+        }
+      }
+    } catch {}
+    localStorage.setItem(MIGRATION_KEY, '2');
+  }
+}
+
+// ── 对话列表 + 消息内容后端化: 启动时从后端加载 ──────────────
+// initChatsEventBridge: 让旧的 soloforge-chats-updated / soloforge-selected-chat-changed
+//   事件仍能正常分发 (ChatPanel / AgentSettingsModal 等仍订阅这些事件)
+// loadFromBackend: 从 /api/chats/list 拉取后端持久化的对话列表
+// loadConversationsFromBackend: 从 /api/conversations 拉取所有对话消息 + 配置
+//   两者失败都不阻塞 UI, store 降级为空状态
+if (typeof window !== 'undefined') {
+  initChatsEventBridge();
+  useChatsStore.getState().loadFromBackend();
+  useChatStore.getState().loadConversationsFromBackend();
+}
 
 // 2026-07-02: 挂载 streaming dev hook 到 window (perf test / 控制台调试)
 // 始终启用, 体积小 (~几百字节), 暴露 applyEvent / getTask / createTask

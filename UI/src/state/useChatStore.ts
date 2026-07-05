@@ -17,52 +17,19 @@ import { Code, Key, Brain, Database, CreditCard, HelpCircle } from '../utils/ico
 import { AndroidIcon, WindowsIcon, HarmonyOSIcon, DefaultChatIcon } from '../components/HistoryAndEditorPanel';
 import { sanitizeConversations } from '../utils/chatMessageSanitizer';
 import { startChat, ChatStreamEvent } from '../services/aiBackend';
+import { useChatsStore } from './chatsStore';
 import type { ChatMessage, ChatSettingsItem } from '../types/chat';
 import type { ToolCall, HashlineReadCall, HashlineEditCall, HashlineBatchCall } from '../types';
 
 // ==========================================
-// 模块级常量 - 默认对话/配置 (从 ChatPanel.tsx 顶部迁来)
+// 模块级常量 - 占位数据已清除
 // ==========================================
 
-const defaultChatDetails: Record<string, { title: string; icon: any }> = {
-  '1': { title: '电商平台原型开发', icon: Code },
-  '2': { title: '用户认证 system 设计', icon: Key },
-  '3': { title: 'API 接口文档生成', icon: Brain },
-  '4': { title: '数据库表结构设计', icon: Database },
-  '5': { title: '支付模块集成方案', icon: CreditCard },
-  '6': { title: '优化建议', icon: HelpCircle },
-};
+const defaultChatDetails: Record<string, { title: string; icon: any }> = {};
 
-const defaultConversations: Record<string, ChatMessage[]> = {
-  '1': [
-    { sender: 'user', content: '帮我创建一个博客系统，包含文章列表、文章详情、评论功能，使用Vue3 + Node.js', time: '11:59:58', avatar: '' }
-  ],
-  '2': [
-    { sender: 'user', content: '我们需要设计一套鲁棒的基于 JWT 和 HttpOnly Cookies 的双令牌认证系统，包含 Refresh Token 手段。', time: '09:12:00', avatar: '' },
-    { sender: 'assistant', content: '已经为您储备好了安全双令牌机制。RefreshToken 保存于严格的 HttpOnly 专属 Cookie，AccessToken 在内存中临时维持 (过载失效15分钟)，完美匹配安全合规守则。', time: '09:13:00', avatar: '' }
-  ],
-  '3': [
-    { sender: 'user', content: '能帮我针对核心逻辑生成一份 API 文档并一键注释吗？', time: '16:04:22', avatar: '' }
-  ],
-  '4': [
-    { sender: 'user', content: '设计一个支持项目分类、多对多标签数据库表关联。', time: '昨天', avatar: '' }
-  ],
-  '5': [
-    { sender: 'user', content: '看一下中国主流 H5 调起以及三方支付模块对接思路。', time: '前天', avatar: '' }
-  ],
-  '6': [
-    { sender: 'user', content: '有哪些前端极端性能优化、极致首屏指标项需要注意？', time: '三天前', avatar: '' }
-  ]
-};
+const defaultConversations: Record<string, ChatMessage[]> = {};
 
-const defaultConfigs: Record<string, ChatSettingsItem> = {
-  '1': { enabledSkills: ['custom_rules', 'frontend_expert'], contextSize: 32000, personality: 'professional', tone: 'detailed', emojiEnabled: true, emojiType: 'mixed' },
-  '2': { enabledSkills: ['security_warden', 'db_manager'], contextSize: 16000, personality: 'geek', tone: 'concise', emojiEnabled: false, emojiType: 'kaomoji' },
-  '3': { enabledSkills: ['custom_rules', 'hashline_auditor'], contextSize: 64000, personality: 'professional', tone: 'detailed', emojiEnabled: true, emojiType: 'standard' },
-  '4': { enabledSkills: ['db_manager'], contextSize: 32000, personality: 'zen', tone: 'detailed', emojiEnabled: true, emojiType: 'kaomoji' },
-  '5': { enabledSkills: ['frontend_expert', 'security_warden'], contextSize: 32000, personality: 'professional', tone: 'concise', emojiEnabled: false, emojiType: 'mixed' },
-  '6': { enabledSkills: ['custom_rules'], contextSize: 132000, personality: 'sarcastic', tone: 'humorous', emojiEnabled: true, emojiType: 'mixed' },
-};
+const defaultConfigs: Record<string, ChatSettingsItem> = {};
 
 const fallbackActiveSettings: ChatSettingsItem = {
   enabledSkills: ['code_review'],
@@ -152,10 +119,12 @@ interface ChatStoreState {
   syncRuntimeOptions: (opts: Partial<ChatRuntimeOptions>) => void;
 
   // ── 复合 actions ─────────────────────────────────
-  /** 从 localStorage 加载会话列表 */
+  /** 从后端加载会话列表 */
   loadChatsList: () => void;
-  /** 从 localStorage 加载会话配置 */
+  /** 从后端加载会话配置 */
   loadChatConfigs: () => void;
+  /** 从后端一次性加载所有对话消息 + 配置 (启动时调用) */
+  loadConversationsFromBackend: () => Promise<void>;
   /** 更新当前激活会话的设置 (merge) */
   handleUpdateActiveSettings: (updates: Partial<ChatSettingsItem>) => void;
   /** 根据会话 tag 返回对应 React 图标组件 */
@@ -171,12 +140,18 @@ interface ChatStoreState {
 }
 
 // ==========================================
-// 模块级持久化 (替代原 useEffect + persistIdleCancelRef)
+// 模块级持久化 — 后端 API (替代旧 localStorage)
 // ==========================================
 
 let persistIdleHandle: any = null;
+let lastPersistedConversations: Record<string, ChatMessage[]> | null = null;
+let lastPersistedConfigs: Record<string, ChatSettingsItem> | null = null;
 
-function schedulePersist(key: string, value: any) {
+/**
+ * 防抖全量同步 conversations + configs 到后端
+ * 用 requestIdleCallback (或 setTimeout fallback) 防止流式 token 高频写入打满网络
+ */
+function schedulePersistToBackend(conversations: Record<string, ChatMessage[]>, configs: Record<string, ChatSettingsItem>) {
   if (typeof window === 'undefined') return;
   if (persistIdleHandle) {
     if (typeof persistIdleHandle === 'object' && typeof (persistIdleHandle as any).cancel === 'function') {
@@ -187,50 +162,31 @@ function schedulePersist(key: string, value: any) {
     persistIdleHandle = null;
   }
   const w = window as any;
+  const doFlush = () => {
+    try {
+      fetch('/api/conversations', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversations, configs }),
+      }).catch(() => {});
+    } catch {}
+  };
   if (w.requestIdleCallback && w.cancelIdleCallback) {
-    const handle = w.requestIdleCallback(() => {
-      try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
-    }, { timeout: 1000 });
+    const handle = w.requestIdleCallback(doFlush, { timeout: 2000 });
     persistIdleHandle = { cancel: () => w.cancelIdleCallback(handle) };
   } else {
-    const handle = setTimeout(() => {
-      try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
-    }, 200);
-    persistIdleHandle = handle;
+    persistIdleHandle = setTimeout(doFlush, 800);
   }
 }
 
 // ==========================================
 // store 创建
 // ==========================================
+// 2026-07-06: initialConversations / initialConfigs 不再从 localStorage 读取
+// 启动时由 main.tsx 调 loadConversationsFromBackend() 从后端异步加载
 
-const initialConversations: Record<string, ChatMessage[]> = (() => {
-  if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem('soloforge_conversations');
-    if (saved) {
-      try {
-        return sanitizeConversations(JSON.parse(saved));
-      } catch (e) {
-        console.error(e);
-      }
-    }
-  }
-  return defaultConversations;
-})();
-
-const initialConfigs: Record<string, ChatSettingsItem> = (() => {
-  if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem('soloforge_chat_configs');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error(e);
-      }
-    }
-  }
-  return defaultConfigs;
-})();
+const initialConversations: Record<string, ChatMessage[]> = {};
+const initialConfigs: Record<string, ChatSettingsItem> = {};
 
 export const useChatStore = create<ChatStoreState>((set, get) => ({
   // ── 初始状态 ──────────────────────────────────────
@@ -274,23 +230,50 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
   // ── 复合 actions ─────────────────────────────────
   loadChatsList: () => {
     if (typeof window === 'undefined') return;
-    const saved = localStorage.getItem('soloforge_chats_list');
-    if (saved) {
-      try {
-        set({ chatsList: JSON.parse(saved) });
-      } catch (e) {
-        console.error(e);
-      }
+    // 从后端权威的 chatsStore 拉取 (替代旧 localStorage 读取)
+    // chatsStore 由 main.tsx 启动时 loadFromBackend 填充, 此处只是镜像同步
+    try {
+      const chats = useChatsStore.getState().chats;
+      const mapped = chats.map((c: any) => ({
+        id: c.id,
+        title: c.title,
+        time: c.time || '',
+        tag: c.tag,
+        tagBg: c.tagBg,
+        tagText: c.tagText,
+        icon: undefined, // icon 由 getActiveChatIcon 根据 tag 动态映射, 不需预存
+        permission: c.permission,
+      }));
+      set({ chatsList: mapped });
+    } catch {
+      // chatsStore 尚未初始化, 留空即可
     }
   },
 
   loadChatConfigs: () => {
     if (typeof window === 'undefined') return;
-    const saved = localStorage.getItem('soloforge_chat_configs');
-    if (saved) {
-      try {
-        set({ configs: JSON.parse(saved) });
-      } catch (e) {}
+    // configs 已随 loadConversationsFromBackend 一起加载, 这里只做 noop
+  },
+
+  loadConversationsFromBackend: async () => {
+    if (typeof window === 'undefined') return;
+    try {
+      const resp = await fetch('/api/conversations');
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (data.success) {
+        const convos = data.conversations && typeof data.conversations === 'object' ? data.conversations : {};
+        const cfgs = data.configs && typeof data.configs === 'object' ? data.configs : {};
+        // 用 sanitizeConversations 清理旧数据中可能残留的外链 avatar
+        const sanitized = sanitizeConversations(convos);
+        // 更新 store, 同时更新 lastPersisted 避免触发回写循环
+        lastPersistedConversations = sanitized;
+        lastPersistedConfigs = cfgs;
+        set({ conversations: sanitized, configs: cfgs });
+        console.log('[useChatStore] 从后端加载对话消息:', Object.keys(sanitized).length, '条对话');
+      }
+    } catch (e) {
+      console.warn('[useChatStore] 从后端加载对话消息失败:', (e as Error).message);
     }
   },
 
@@ -317,7 +300,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     if (localChatInfo?.tag === 'DB') return Database;
     if (localChatInfo?.tag === 'PAY') return CreditCard;
     if (localChatInfo?.tag === 'HELP') return HelpCircle;
-    return defaultChatDetails[activeChatId]?.icon || DefaultChatIcon;
+    return DefaultChatIcon;
   },
 
   getFallbackMessages: (localChatInfo) => {
@@ -351,9 +334,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
         }
       ];
     }
-    return [
-      { sender: 'user', content: '创建全新对话！请给予我一些重构意见。', time: '刚才', avatar: '' }
-    ];
+    return [];
   },
 
   handleSend: (inputRef) => {
@@ -380,7 +361,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     }
 
     const activeChatId = selectedChatId || '1';
-    const activeMessages = conversations[activeChatId] || defaultConversations[activeChatId] || [];
+    const activeMessages = conversations[activeChatId] || [];
     const currentChatMsgs = [...activeMessages, userMsg];
 
     set({
@@ -447,6 +428,15 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     set((s) => ({
       conversations: { ...s.conversations, [activeChatId]: [...currentChatMsgs, assistantMsg] },
     }));
+
+    // 2026-07-06 阶段3: 派发 AST 预览触发事件 → usePreviewBridge 接收
+    //   - 预览流并行于主聊天 SSE, 独立 LLM 调用生成 UniversalAST
+    //   - PreviewPanel 订阅 previewStreamStore 展示流式状态
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('soloforge-preview-trigger', {
+        detail: { chatId: activeChatId, message: finalContent }
+      }));
+    }
 
     // 2026-07-03 阶段5.B: 调用形式对齐 aiBackend.startChat(req, onEvent) 单回调签名
     //   - aiBackend 把所有事件 (text/phase/error/done) 都通过 onEvent 推送
@@ -554,7 +544,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
         switch (evt.kind) {
           case 'phase': {
             const s = get();
-            const activeMessages = s.conversations[activeChatId] || defaultConversations[activeChatId] || [];
+            const activeMessages = s.conversations[activeChatId] || [];
             s.handlePhase(evt, activeMessages);
             break;
           }
@@ -720,21 +710,21 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
 }));
 
 // ==========================================
-// 模块级持久化订阅 (替代原 useEffect + persistIdleCancelRef)
+// 模块级持久化订阅 — 后端 API 同步
 // 在 store 模块加载时立即注册,组件卸载也不取消 (持久化是全局行为)
 // ==========================================
 
-let lastPersistedConversations: Record<string, ChatMessage[]> | null = null;
-let lastPersistedConfigs: Record<string, ChatSettingsItem> | null = null;
-
 useChatStore.subscribe((state, prevState) => {
-  if (state.conversations !== prevState.conversations && state.conversations !== lastPersistedConversations) {
+  const convChanged = state.conversations !== prevState.conversations && state.conversations !== lastPersistedConversations;
+  const cfgChanged = state.configs !== prevState.configs && state.configs !== lastPersistedConfigs;
+  if (convChanged) {
     lastPersistedConversations = state.conversations;
-    schedulePersist('soloforge_conversations', state.conversations);
   }
-  if (state.configs !== prevState.configs && state.configs !== lastPersistedConfigs) {
+  if (cfgChanged) {
     lastPersistedConfigs = state.configs;
-    schedulePersist('soloforge_chat_configs', state.configs);
+  }
+  if (convChanged || cfgChanged) {
+    schedulePersistToBackend(state.conversations, state.configs);
   }
 });
 

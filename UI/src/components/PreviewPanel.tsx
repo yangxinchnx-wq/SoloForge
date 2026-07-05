@@ -2,11 +2,14 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   RefreshCw, Play, Square, Loader2,
   CircleDot, AlertCircle, Monitor, Smartphone, Tablet, Watch,
-  Palette, MonitorSmartphone, Info, ChevronDown, Check, Maximize2
+  Palette, MonitorSmartphone, Info, ChevronDown, Check, Maximize2,
+  Code2
 } from '../utils/icons';
 import { MountTransition } from './MountTransition';
 import { CanvasResourceBar } from './CanvasResourceBar';
 import { CanvasNotificationStack } from './CanvasNotificationBubble';
+import { usePreviewStreamStore } from '../state/previewStreamStore';
+import WebAstPreview from './WebAstPreview';
 import {
   drainCanvasNotifications,
   type CanvasNotification,
@@ -107,6 +110,17 @@ function getSizePreset(key: string) {
 }
 
 export default function PreviewPanel({ width = 385, isResizing = false, dragStartWidth = 385, selectedChatId, canvasId, canvasReady, canvases = [], maxCanvases = 10, onSelectCanvas, onCreateCanvas, onRenameCanvas }: PreviewPanelProps) {
+  // 2026-07-06 阶段3: 订阅 AST 预览流状态
+  const previewEntry = usePreviewStreamStore(s => selectedChatId ? s.entries[selectedChatId] : undefined);
+  const previewIsStreaming = previewEntry?.isStreaming ?? false;
+  const previewPayload = previewEntry?.payload ?? null;
+  const previewAst = previewEntry?.ast;
+  const previewSourceCode = previewEntry?.sourceCode ?? '';
+  const previewLanguage = previewEntry?.language ?? '';
+  const previewRawBytes = previewEntry?.rawBytes ?? 0;
+  const previewPushError = previewEntry?.pushError ?? null;
+  const [showSourceCode, setShowSourceCode] = useState(false);
+
   const [canvasState, setCanvasState] = useState<CanvasState>('idle');
   const [canvasError, setCanvasError] = useState<string>('');
   // P0: 优先使用 App.tsx 解析出的画布 ID (canvas_1 ... canvas_10)
@@ -114,6 +128,8 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
   //   - canvasReady 后再切到真实 ID (canvas.stop 老 + canvas.start 新)
   const fallbackId = `canvas-${selectedChatId || 'default'}`;
   const effectiveCanvasId = canvasId || fallbackId;
+  // 待机状态: bridge 已就绪但当前对话无关联画布
+  const noCanvas = !!canvasReady && !canvasId;
   const sessionIdRef = useRef<string>(effectiveCanvasId);
   const [canvasInfo, setCanvasInfo] = useState<{ port: number; pid: number } | null>(null);
   const [bgColor, setBgColor] = useState<string>(BG_PRESETS[0].value);
@@ -145,6 +161,9 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
     //   - ready=true 时切到 canvas_1 ... canvas_10
     if (canvasReady && canvasId) {
       sessionIdRef.current = canvasId;
+    } else if (canvasReady && !canvasId) {
+      // 无画布待机: 清空 sessionId, 画布不会启动
+      sessionIdRef.current = '';
     } else {
       sessionIdRef.current = fallbackId;
     }
@@ -341,8 +360,80 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
     );
   };
 
+  // 待机渲染 — 无画布时显示闪电 logo (色调跟随主题)
+  const renderStandby = () => (
+    <div className="absolute inset-0 flex flex-col items-center justify-center select-none">
+      <div
+        className="w-20 h-20 opacity-40 transition-opacity duration-300"
+        style={{
+          backgroundColor: 'var(--color-primary)',
+          maskImage: 'url(/lightning_logo.png)',
+          maskSize: 'contain',
+          maskPosition: 'center',
+          maskRepeat: 'no-repeat',
+          WebkitMaskImage: 'url(/lightning_logo.png)',
+          WebkitMaskSize: 'contain',
+          WebkitMaskPosition: 'center',
+          WebkitMaskRepeat: 'no-repeat',
+        }}
+      />
+    </div>
+  );
+
   // 占位渲染
   const renderPlaceholder = () => {
+    // 2026-07-06 阶段3: 如果有 AST 预览流数据, 优先用 Web AST 预览
+    if (previewAst || previewPayload) {
+      const root = previewPayload?.preview?.root || previewAst;
+      if (root) {
+        return <WebAstPreview root={root} bgColor={bgColor} />;
+      }
+    }
+    // 流式中 (还没有 AST 但正在生成)
+    if (previewIsStreaming && !previewAst) {
+      return (
+        <div
+          className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 select-none"
+          style={{ background: bgColor, transition: 'background 200ms ease' }}
+        >
+          <Loader2 className="w-8 h-8 animate-spin mb-3" style={{ color: pickFg(bgColor) }} />
+          <div className="text-[11px] font-mono mb-1" style={{ color: pickFg(bgColor) + 'AA' }}>
+            正在生成 AST 预览…
+          </div>
+          <div className="text-[9px] font-mono" style={{ color: pickFg(bgColor) + '66' }}>
+            {previewLanguage} · {previewRawBytes} bytes
+          </div>
+          {previewPushError && (
+            <div className="text-[9px] text-red-400 mt-2 max-w-[200px]">
+              推送错误: {previewPushError}
+            </div>
+          )}
+        </div>
+      );
+    }
+    // 预览失败 — 有错误但没有生成 AST
+    if (previewPushError && !previewAst && !previewPayload && !previewIsStreaming) {
+      return (
+        <div
+          className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 select-none"
+          style={{ background: bgColor, transition: 'background 200ms ease' }}
+        >
+          <div className="w-14 h-14 rounded-2xl border-2 border-dashed flex items-center justify-center mb-3"
+               style={{ borderColor: '#ef444440', color: '#ef4444AA' }}>
+            <AlertCircle className="w-7 h-7" />
+          </div>
+          <div className="font-display font-bold text-sm mb-1" style={{ color: pickFg(bgColor) }}>
+            AST 预览生成失败
+          </div>
+          <div className="text-[11px] max-w-[260px] leading-relaxed mb-3" style={{ color: pickFg(bgColor) + 'AA' }}>
+            {previewPushError}
+          </div>
+          <div className="text-[9px] font-mono" style={{ color: pickFg(bgColor) + '66' }}>
+            请检查后端 /api/llm/stream 是否可用 · {previewLanguage}
+          </div>
+        </div>
+      );
+    }
     if (canvasState === 'error' || (canvasState === 'idle' && !isElectron())) {
       return (
         <div
@@ -424,18 +515,32 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
           onRename={async (id, desc) => (onRenameCanvas ? onRenameCanvas(id, desc) : false)}
         />
 
-        {/* TOP BAR */}
+        {/* TOP BAR — 无画布待机时隐藏 */}
+        {!noCanvas && (
         <div className="p-2.5 px-3 border-b border-outline/40 flex items-center justify-between bg-surface shrink-0">
           <div className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className={`w-1.5 h-1.5 rounded-full ${previewIsStreaming ? 'bg-blue-500 animate-pulse' : 'bg-emerald-500 animate-pulse'}`} />
             <span className="font-display font-semibold text-[11px] text-on-surface tracking-wide">
-              实时预览 · 画布
+              {previewIsStreaming ? 'AST 流式生成中' : '实时预览 · 画布'}
             </span>
+            {previewIsStreaming && (
+              <span className="text-[9px] font-mono text-blue-500/70 ml-1">
+                {previewLanguage} · {previewRawBytes}B
+              </span>
+            )}
+            {previewPayload && !previewIsStreaming && (
+              <span className="text-[9px] font-mono text-emerald-500/70 ml-1 flex items-center gap-0.5">
+                <Code2 className="w-2.5 h-2.5" />
+                {previewPayload.framework || previewPayload.language}
+              </span>
+            )}
           </div>
           {renderCanvasStatus()}
         </div>
+        )}
 
-        {/* TOOLBAR — 只保留启动/停止 + 底色 */}
+        {/* TOOLBAR — 无画布待机时隐藏 */}
+        {!noCanvas && (
         <div className="px-3 py-2 bg-surface-bright/35 border-b border-outline/30 flex items-center gap-1.5 shrink-0 flex-wrap">
           {canvasState !== 'running' ? (
             <button
@@ -516,10 +621,11 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
             </span>
           )}
         </div>
+        )}
 
         {/* CANVAS AREA — 整个剩余空间都是画布区 */}
         <div className="flex-1 relative overflow-hidden">
-          {renderPlaceholder()}
+          {noCanvas ? renderStandby() : renderPlaceholder()}
 
           {/* 内置尺寸选择器 — 画布右下角悬浮 */}
           {canvasState === 'running' && (
@@ -579,6 +685,44 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
                   })}
                 </div>
               </MountTransition>
+            </div>
+          )}
+
+          {/* 2026-07-06 阶段3: AST 源码查看 toggle — 左下角悬浮 */}
+          {(previewSourceCode || previewPayload?.source_code) && (
+            <div className="absolute bottom-2 left-2 z-40">
+              <button
+                onClick={() => setShowSourceCode(s => !s)}
+                title="查看/隐藏源码"
+                className={`flex items-center gap-1.5 px-2 py-1 rounded-md backdrop-blur-md text-[10px] font-mono transition-colors border ${
+                  showSourceCode
+                    ? 'bg-primary/80 border-primary text-white'
+                    : 'bg-black/50 hover:bg-black/65 border-white/15 text-white'
+                }`}
+              >
+                <Code2 className="w-3 h-3" />
+                <span>源码</span>
+              </button>
+            </div>
+          )}
+
+          {/* 源码查看覆盖层 */}
+          {showSourceCode && (previewSourceCode || previewPayload?.source_code) && (
+            <div className="absolute inset-0 z-45 bg-bg/95 backdrop-blur-sm overflow-auto p-3">
+              <div className="flex items-center justify-between mb-2 sticky top-0 bg-bg/90 backdrop-blur py-1">
+                <span className="text-[10px] font-mono text-on-surface/60">
+                  {previewLanguage} · {previewPayload?.framework || ''}
+                </span>
+                <button
+                  onClick={() => setShowSourceCode(false)}
+                  className="text-on-surface/50 hover:text-on-surface text-[10px] px-1.5 py-0.5 rounded hover:bg-surface-bright"
+                >
+                  ✕ 关闭
+                </button>
+              </div>
+              <pre className="text-[10px] font-mono text-on-surface/80 whitespace-pre-wrap break-all leading-relaxed">
+                {previewPayload?.source_code || previewSourceCode}
+              </pre>
             </div>
           )}
         </div>

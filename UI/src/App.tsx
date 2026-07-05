@@ -23,7 +23,9 @@ import { SidebarResizeHandle, HistoryResizeHandle, PreviewResizeHandle } from '.
 import { MountTransition } from './components/MountTransition';
 import { X } from './utils/icons';
 import { useChatClickCanvasBridge } from './hooks/useChatClickCanvasBridge';
+import { usePreviewBridge } from './hooks/usePreviewBridge';
 import { useAppStore } from './state/appStore';
+import { useChatsStore } from './state/chatsStore';
 
 const ModalFallback = () => (
   <div className="fixed inset-0 z-[200] flex items-center justify-center pointer-events-none">
@@ -54,6 +56,17 @@ export default function App() {
     activeSettingsChat, setActiveSettingsChat,
   } = useAppStore();
 
+  // ── chatsStore → appStore 单向同步 ──────────────────────────
+  // loadFromBackend 完成后 chatsStore.selectedChatId 会更新 (从后端恢复),
+  // 需要同步到 appStore.selectedChatId 驱动 UI 渲染。
+  // 反向同步由 HistoryAndEditorPanel.handleSelect 双调实现 (setSelectedChatId + selectChat)。
+  const chatsStoreSelectedId = useChatsStore((s) => s.selectedChatId);
+  useEffect(() => {
+    if (chatsStoreSelectedId && chatsStoreSelectedId !== selectedChatId) {
+      setSelectedChatId(chatsStoreSelectedId);
+    }
+  }, [chatsStoreSelectedId]); // 故意不依赖 selectedChatId, 避免循环
+
   // Synchronize multi-model mixedTasks based on the active mode (only 'normal' mode needs it disabled)
   useEffect(() => {
     if (currentPermissionMode === 'normal') {
@@ -71,16 +84,20 @@ export default function App() {
     setEditorContent(content);
   }
 
-  // P0: 画布 → chat 自动桥接
+  // P0: 画布 → chat 自动桥接 (按需画布)
   //   - 监听 selectedChatId 变化 → 拉取该 chat 上次访问的画布
-  //   - 若从未访问过, 自动建一个 (走最小可用序号)
-  //   - 把解析出的 canvasId 传给 PreviewPanel, 替换旧 "canvas-${chatId}" 派生逻辑
+  //   - 若从未访问过, 不自动创建 (allowCreate=false)
+  //   - 用户通过 CanvasResourceBar 的 + 按钮或待机状态手动创建
+  //   - 把解析出的 canvasId 传给 PreviewPanel; null 时显示待机闪电
   const bridge = useChatClickCanvasBridge({
     chatId: selectedChatId,
-    allowCreate: true,
+    allowCreate: false,
     defaultDescription: '默认画布',
   });
   const activeCanvasId = bridge.canvasId;
+
+  // 2026-07-06 阶段3: AST 预览流桥接 — 监听聊天发送事件, 触发 streamPreviewForChat
+  usePreviewBridge();
 
   const {
     primaryColor,

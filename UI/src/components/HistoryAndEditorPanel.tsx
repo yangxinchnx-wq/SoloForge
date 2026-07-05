@@ -21,10 +21,41 @@ import { restrictToVerticalAxis, restrictToFirstScrollableAncestor } from '@dnd-
 import { MountTransition } from './MountTransition';
 import { SortableHistoryItem, HistoryItemCard, type DraggableChatHistoryItem } from './HistoryItem';
 import { DefaultChatIcon } from './brandIcons';
-import { DEFAULT_CHATS, parseSavedChats } from '../data/defaultChats';
+import { Code, Key, Brain, Database, CreditCard, HelpCircle } from '../utils/icons';
+import { AndroidIcon, WindowsIcon, HarmonyOSIcon } from './brandIcons';
+import { useChatsStore, type ChatItem, type ChatTag } from '../state/chatsStore';
 
 // 兼容性 re-export
 export { AndroidIcon, WindowsIcon, HarmonyOSIcon, DefaultChatIcon } from './brandIcons';
+
+// ── ChatItem → DraggableChatHistoryItem 映射 ──────────────────
+// chatsStore 的 ChatItem 不含 icon (icon 是纯前端渲染关注点),
+// 这里根据 tag 映射到对应的 React 图标组件
+
+const TAG_ICON_MAP: Record<ChatTag, any> = {
+  VUE: Code,
+  AUTH: Key,
+  AI: Brain,
+  DB: Database,
+  PAY: CreditCard,
+  HELP: HelpCircle,
+  NEW: DefaultChatIcon,
+  WINDOWS: WindowsIcon,
+  HARMONY: HarmonyOSIcon,
+};
+
+function chatItemToDraggable(chat: ChatItem): DraggableChatHistoryItem {
+  return {
+    id: chat.id,
+    title: chat.title,
+    time: chat.time || new Date(chat.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    tag: chat.tag,
+    tagBg: chat.tagBg,
+    tagText: chat.tagText,
+    icon: TAG_ICON_MAP[chat.tag] || DefaultChatIcon,
+    permission: chat.permission,
+  };
+}
 
 interface HistoryAndEditorPanelProps {
   selectedFile: string;
@@ -55,31 +86,17 @@ export default function HistoryAndEditorPanel({
 }: HistoryAndEditorPanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
 
-  const [chats, setChats] = useState<DraggableChatHistoryItem[]>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('soloforge_chats_list');
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          return parseSavedChats(parsed);
-        } catch (e) {
-          console.error(e);
-        }
-      }
-    }
-    return DEFAULT_CHATS;
-  });
+  // ── 从 useChatsStore 读取对话列表 ──────────────────────────
+  const rawChats = useChatsStore((s) => s.chats);
+  const chats: DraggableChatHistoryItem[] = useMemo(
+    () => rawChats.map(chatItemToDraggable),
+    [rawChats]
+  );
 
   const currentChat = chats.find(c => c.id === selectedChatId) || chats[0];
   const permissionMode = currentChat?.permission || 'normal';
 
-  React.useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('soloforge_chats_list', JSON.stringify(chats));
-    }
-    window.dispatchEvent(new CustomEvent('soloforge-chats-updated'));
-  }, [chats]);
-
+  // ── 权限同步 effect ────────────────────────────────────────
   React.useEffect(() => {
     if (onPermissionChange) {
       onPermissionChange(permissionMode);
@@ -95,27 +112,14 @@ export default function HistoryAndEditorPanel({
       prevParentPermissionRef.current = parentPermissionMode;
       return;
     }
+    // 父组件权限模式变化 → 同步到后端
     if (parentPermissionMode && parentPermissionMode !== prevParentPermissionRef.current) {
-      setChats(prevChats =>
-        prevChats.map(c =>
-          c.id === selectedChatId ? { ...c, permission: parentPermissionMode } : c
-        )
-      );
+      useChatsStore.getState().updateChat(selectedChatId, { permission: parentPermissionMode });
     }
     prevParentPermissionRef.current = parentPermissionMode;
   }, [parentPermissionMode, selectedChatId]);
 
-  const handleSetPermission = (id: string, mode: 'normal' | 'performance' | 'ultimate' | 'expert') => {
-    setChats(prevChats =>
-      prevChats.map(c =>
-        c.id === id ? { ...c, permission: mode } : c
-      )
-    );
-  };
-
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
-
-  // ===== dnd-kit drag infrastructure =====
+  // ── dnd-kit drag infrastructure ────────────────────────────
   const scrollContainerRef = React.useRef<HTMLDivElement>(null);
   const [activeDragId, setActiveDragId] = React.useState<string | null>(null);
 
@@ -126,15 +130,19 @@ export default function HistoryAndEditorPanel({
 
   // useCallback — 这些回调传给 SortableHistoryItem,如果不稳定,
   // React.memo 就失效了 (每次渲染都生成新函数引用)。
-  const handleSelect = useCallback((id: string) => setSelectedChatId(id), [setSelectedChatId]);
+  const handleSelect = useCallback((id: string) => {
+    setSelectedChatId(id);
+    // 同步到后端 (非阻塞, 失败不回滚本地选中态)
+    useChatsStore.getState().selectChat(id);
+  }, [setSelectedChatId]);
+
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const handleDelete = useCallback((id: string, title: string) => setDeleteTarget({ id, title }), []);
+
   const handleRename = useCallback((id: string, newTitle: string) => {
-    setChats(prevChats =>
-      prevChats.map(c =>
-        c.id === id ? { ...c, title: newTitle } : c
-      )
-    );
+    useChatsStore.getState().updateChat(id, { title: newTitle });
   }, []);
+
   const handleOpenSettings = useCallback((id: string, title: string) => {
     window.dispatchEvent(new CustomEvent('soloforge-open-agent-settings', { detail: { id, title } }));
   }, []);
@@ -142,12 +150,6 @@ export default function HistoryAndEditorPanel({
   const handleDragStart = useCallback((event: DragStartEvent) => {
     setActiveDragId(String(event.active.id));
   }, []);
-
-  // 2026-07-05 优化: 去掉 onDragOver handler。
-  // 原来每次鼠标移动都 setState(overId) → 整个列表重渲染。
-  // dnd-kit SortableContext 内部已经管理了 over 状态用于排序,
-  // 我们的 overId 只用于 CSS .sf-drop-target 装饰效果,不值得付出
-  // 每帧重渲染的代价。去掉后拖动时零重渲染 (只有 DragOverlay 跟鼠标)。
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
@@ -157,7 +159,9 @@ export default function HistoryAndEditorPanel({
     const oldIndex = chats.findIndex((c) => c.id === active.id);
     const newIndex = chats.findIndex((c) => c.id === over.id);
     if (oldIndex !== -1 && newIndex !== -1) {
-      setChats(arrayMove(chats, oldIndex, newIndex));
+      // 乐观更新: 先本地 arrayMove, 再上报后端
+      const reordered = arrayMove(chats, oldIndex, newIndex);
+      useChatsStore.getState().reorderChats(reordered.map(c => c.id));
     }
   }, [chats]);
 
@@ -165,61 +169,23 @@ export default function HistoryAndEditorPanel({
     setActiveDragId(null);
   }, []);
 
-  React.useEffect(() => {
-    return () => {};
-  }, []);
-
-  const executeDelete = (id: string) => {
-    const updated = chats.filter(c => c.id !== id);
-    if (selectedChatId === id) {
-      if (updated.length > 0) {
-        setSelectedChatId(updated[0].id);
-      } else {
-        const nextId = String(Date.now());
-        const newChat: DraggableChatHistoryItem = {
-          id: nextId,
-          title: `新智能对话 #1`,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          tag: 'NEW',
-          tagBg: 'bg-amber-500/10 border-amber-500/20',
-          tagText: 'text-amber-400',
-          icon: DefaultChatIcon,
-          permission: 'normal'
-        };
-        updated.push(newChat);
-        setSelectedChatId(nextId);
-      }
+  // ── 创建新对话 ──────────────────────────────────────────────
+  const handleCreateNewChat = useCallback(async () => {
+    const newChat = await useChatsStore.getState().createChat();
+    if (newChat) {
+      setSelectedChatId(newChat.id);
     }
-    setChats(updated);
-  };
+  }, [setSelectedChatId]);
 
-  const getNextChatNumber = (): number => {
-    const key = 'soloforge_chat_counter';
-    const saved = typeof window !== 'undefined' ? localStorage.getItem(key) : null;
-    const next = saved ? parseInt(saved, 10) + 1 : 1;
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(key, String(next));
+  // ── 删除对话 ────────────────────────────────────────────────
+  const executeDelete = useCallback(async (id: string) => {
+    await useChatsStore.getState().deleteChat(id);
+    // 同步选中态到 appStore
+    const nextSelected = useChatsStore.getState().selectedChatId;
+    if (nextSelected) {
+      setSelectedChatId(nextSelected);
     }
-    return next;
-  };
-
-  const handleCreateNewChat = () => {
-    const nextId = String(Date.now());
-    const nextNum = getNextChatNumber();
-    const newChat: DraggableChatHistoryItem = {
-      id: nextId,
-      title: `新对话${nextNum}`,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      tag: 'NEW',
-      tagBg: 'bg-amber-500/10 border-amber-500/20',
-      tagText: 'text-amber-400',
-      icon: DefaultChatIcon,
-      permission: 'normal'
-    };
-
-    setChats(prev => [newChat, ...prev]);
-    setSelectedChatId(nextId);
-  };
+  }, [setSelectedChatId]);
 
   const filteredChats = useMemo(() =>
     chats.filter((c) =>

@@ -10,6 +10,8 @@ import { useHotTheme } from '../context/ThemeContext';
 // 2026-07-03 阶段3.1.A: ChatSettingsItem + getSettingsSummary 复用 types/chat.ts (与 ChatPanel 共享)
 import type { ChatSettingsItem } from '../types/chat';
 import { getSettingsSummary } from '../types/chat';
+// 2026-07-06: configs 从 useChatStore 读取 (后端持久化), 不再走 localStorage
+import { useChatStore } from '../state/useChatStore';
 // 重新导出保持外部 import 兼容 (老代码若有 from './AgentSettingsModal' 拿 ChatSettingsItem)
 export type { ChatSettingsItem } from '../types/chat';
 
@@ -29,26 +31,9 @@ const pMapPlaceholder: Record<string, string> = {
 export default function AgentSettingsModal({ chatId, chatTitle, onClose }: AgentSettingsModalProps) {
   const { activeTheme } = useHotTheme();
 
-  // Load configs
-  // ==========================================
-  // 【后端对接提示 - 获取特定会话的智能助手参数配置】
-  // 原通过 localStorage 在客户端对不同对话的设置进行本地存取。后期对接服务端：
-  // 1. 可以通过 API: GET /api/chats/:chatId/settings 获取当前对话的配置详情
-  // 2. 所需表字段 recommendation: enabled_skills (array/json), context_size (int), personality (text), tone (text), emoji_enabled (boolean)
-  // ==========================================
-  const [configs, setConfigs] = useState<Record<string, ChatSettingsItem>>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('soloforge_chat_configs');
-      if (saved) {
-        try {
-          return JSON.parse(saved);
-        } catch (e) {
-          console.error(e);
-        }
-      }
-    }
-    return {};
-  });
+  // Load configs — 从 useChatStore 读取 (后端持久化)
+  const storeConfigs = useChatStore(s => s.configs);
+  const setStoreConfigs = useChatStore(s => s.setConfigs);
 
   // Get active settings for target chatId
   const activeSettings = useMemo(() => {
@@ -60,28 +45,20 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
       emojiEnabled: true,
       emojiType: 'mixed'
     };
-    return configs[chatId] || defaultSettings;
-  }, [configs, chatId]);
+    return storeConfigs[chatId] || defaultSettings;
+  }, [storeConfigs, chatId]);
 
-  // ==========================================
-  // 【后端对接提示 - 智能助手参数保存变更】
-  // 改变设置时，除了本地 state 更新，应该通过 HTTP PUT 请求同步至后端：
-  // 对应 API: PUT /api/chats/:chatId/settings, 载荷即最新设置对象
-  // ==========================================
+  // 改变设置时同步到 store (store 模块级 subscribe 会自动防抖推到后端)
   const handleUpdateSettings = (updates: Partial<ChatSettingsItem>) => {
-    const updated = {
-      ...configs,
+    setStoreConfigs(prev => ({
+      ...prev,
       [chatId]: {
         ...activeSettings,
         ...updates
       }
-    };
-    setConfigs(updated);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('soloforge_chat_configs', JSON.stringify(updated));
-      // Notify other components (e.g. ChatPanel)
-      window.dispatchEvent(new CustomEvent('soloforge-chat-configs-updated'));
-    }
+    }));
+    // Notify other components (e.g. ChatPanel)
+    window.dispatchEvent(new CustomEvent('soloforge-chat-configs-updated'));
   };
 
   const [customRules, setCustomRules] = useState('');
