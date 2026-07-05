@@ -14,10 +14,7 @@
 
 import fs from 'fs/promises';
 import path from 'path';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-
-const execAsync = promisify(exec);
+import { spawn } from 'child_process';
 
 // ─── Tool Schema (OpenAI Function Calling 格式) ─────────────────────
 
@@ -165,14 +162,14 @@ export const AGENT_TOOLS: ToolSchema[] = [
     type: 'function',
     function: {
       name: 'solo_canvas_get',
-      description: '获取画布完整状态：选中的设备、设备列表、背景色、备注等。',
+      description: '获取画布完整状态：选中的设备、设备列表、背景色、备注等。canvasId 可不传——系统会自动用当前会话绑定的画布。',
       parameters: {
         type: 'object',
         properties: {
-          sessionId: { type: 'string', description: '画布 ID，如 canvas_1' },
+          canvasId: { type: 'string', description: '画布 ID，如 canvas_1（可选；不传时使用当前会话绑定的画布）' },
           requesterChatSessionId: { type: 'string' },
         },
-        required: ['sessionId', 'requesterChatSessionId'],
+        required: ['requesterChatSessionId'],
       },
     },
   },
@@ -195,15 +192,15 @@ export const AGENT_TOOLS: ToolSchema[] = [
     type: 'function',
     function: {
       name: 'solo_canvas_add_device',
-      description: '向画布添加一个 3D 设备（iPhone / iPad / MacBook 等）。',
+      description: '向画布添加一个 3D 设备（iPhone / iPad / MacBook 等）。canvasId 可不传——系统会自动用当前会话绑定的画布。',
       parameters: {
         type: 'object',
         properties: {
-          sessionId: { type: 'string' },
+          canvasId: { type: 'string', description: '画布 ID（可选；不传时使用当前会话绑定的画布）' },
           device: { type: 'string', description: '设备 JSON 对象（modelKey/xRatio/yRatio 等）' },
           requesterChatSessionId: { type: 'string' },
         },
-        required: ['sessionId', 'device', 'requesterChatSessionId'],
+        required: ['device', 'requesterChatSessionId'],
       },
     },
   },
@@ -211,16 +208,16 @@ export const AGENT_TOOLS: ToolSchema[] = [
     type: 'function',
     function: {
       name: 'solo_canvas_update_device',
-      description: '更新画布上的某个设备（位置、颜色、UI session 等）。',
+      description: '更新画布上的某个设备（位置、颜色、UI session 等）。canvasId 可不传——系统会自动用当前会话绑定的画布。',
       parameters: {
         type: 'object',
         properties: {
-          sessionId: { type: 'string' },
+          canvasId: { type: 'string', description: '画布 ID（可选；不传时使用当前会话绑定的画布）' },
           deviceId: { type: 'string' },
           updates: { type: 'string', description: '要更新的字段 JSON 字符串' },
           requesterChatSessionId: { type: 'string' },
         },
-        required: ['sessionId', 'deviceId', 'updates', 'requesterChatSessionId'],
+        required: ['deviceId', 'updates', 'requesterChatSessionId'],
       },
     },
   },
@@ -228,15 +225,15 @@ export const AGENT_TOOLS: ToolSchema[] = [
     type: 'function',
     function: {
       name: 'solo_canvas_remove_device',
-      description: '从画布移除指定设备。',
+      description: '从画布移除指定设备。canvasId 可不传——系统会自动用当前会话绑定的画布。',
       parameters: {
         type: 'object',
         properties: {
-          sessionId: { type: 'string' },
+          canvasId: { type: 'string', description: '画布 ID（可选；不传时使用当前会话绑定的画布）' },
           deviceId: { type: 'string' },
           requesterChatSessionId: { type: 'string' },
         },
-        required: ['sessionId', 'deviceId', 'requesterChatSessionId'],
+        required: ['deviceId', 'requesterChatSessionId'],
       },
     },
   },
@@ -244,15 +241,15 @@ export const AGENT_TOOLS: ToolSchema[] = [
     type: 'function',
     function: {
       name: 'solo_canvas_rename',
-      description: '修改画布的备注 / 描述（仅 owner 可调）。',
+      description: '修改画布的备注 / 描述（仅 owner 可调）。canvasId 可不传——系统会自动用当前会话绑定的画布。',
       parameters: {
         type: 'object',
         properties: {
-          sessionId: { type: 'string' },
+          canvasId: { type: 'string', description: '画布 ID（可选；不传时使用当前会话绑定的画布）' },
           description: { type: 'string' },
           requesterChatSessionId: { type: 'string' },
         },
-        required: ['sessionId', 'description', 'requesterChatSessionId'],
+        required: ['description', 'requesterChatSessionId'],
       },
     },
   },
@@ -260,14 +257,14 @@ export const AGENT_TOOLS: ToolSchema[] = [
     type: 'function',
     function: {
       name: 'solo_canvas_delete',
-      description: '删除整个画布（仅 owner 可调，慎用）。',
+      description: '删除整个画布（仅 owner 可调，慎用）。canvasId 可不传——系统会自动用当前会话绑定的画布。',
       parameters: {
         type: 'object',
         properties: {
-          sessionId: { type: 'string' },
+          canvasId: { type: 'string', description: '画布 ID（可选；不传时使用当前会话绑定的画布）' },
           requesterChatSessionId: { type: 'string' },
         },
-        required: ['sessionId', 'requesterChatSessionId'],
+        required: ['requesterChatSessionId'],
       },
     },
   },
@@ -279,6 +276,35 @@ export interface ToolCallRequest {
   id: string;
   name: string;
   arguments: Record<string, any>;
+  /**
+   * 可选: 流式事件注入点 (主要给 execute_cmd 用)。
+   * 命中时, spawn 的 stdout/stderr data 事件会被实时 emit 到 streamHook,
+   * 由 agent-loop → kernel.eventBus → SSE → 前端 TerminalPanel 实时显示。
+   */
+  streamHook?: ToolStreamHook;
+}
+
+/**
+ * 工具流式事件钩子。
+ * - eventName='tool_stdout' / 'tool_stderr' / 'tool_exit'
+ * - payload.toolCallId 与 ToolCallRequest.id 对齐, 前端按此路由到对应终端页签
+ */
+export interface ToolStreamHook {
+  chatId: string;
+  subTaskId: string;
+  emit: (
+    eventName: 'tool_stdout' | 'tool_stderr' | 'tool_exit',
+    payload: {
+      chatId: string;
+      subTaskId: string;
+      toolCallId: string;
+      tool: string;
+      chunk?: string;
+      exitCode?: number;
+      durationMs?: number;
+      ts: number;
+    }
+  ): void;
 }
 
 export interface ToolCallResult {
@@ -383,15 +409,94 @@ export async function executeToolCall(request: ToolCallRequest): Promise<ToolCal
         const cwd = request.arguments.cwd
           ? resolvePath(request.arguments.cwd)
           : PROJECT_ROOT;
-        const { stdout, stderr } = await execAsync(request.arguments.command, {
-          cwd,
-          timeout: 30000,
-          maxBuffer: 1024 * 1024,
-          windowsHide: true,
+        const command = String(request.arguments.command || '');
+        const hook = request.streamHook;
+        const toolStart = Date.now();
+
+        // 跨平台 spawn: 在 Windows 上用 cmd /c, 在 *nix 上用 sh -c
+        const isWin = process.platform === 'win32';
+        const child = isWin
+          ? spawn('cmd.exe', ['/c', command], { cwd, windowsHide: true })
+          : spawn('sh', ['-c', command], { cwd });
+
+        let stdoutBuf = '';
+        let stderrBuf = '';
+
+        const pushStdout = (chunk: string) => {
+          stdoutBuf += chunk;
+          if (hook) {
+            try {
+              hook.emit('tool_stdout', {
+                chatId: hook.chatId,
+                subTaskId: hook.subTaskId,
+                toolCallId: request.id,
+                tool: 'execute_cmd',
+                chunk,
+                ts: Date.now(),
+              });
+            } catch { /* emit 失败不影响执行 */ }
+          }
+        };
+        const pushStderr = (chunk: string) => {
+          stderrBuf += chunk;
+          if (hook) {
+            try {
+              hook.emit('tool_stderr', {
+                chatId: hook.chatId,
+                subTaskId: hook.subTaskId,
+                toolCallId: request.id,
+                tool: 'execute_cmd',
+                chunk,
+                ts: Date.now(),
+              });
+            } catch { /* emit 失败不影响执行 */ }
+          }
+        };
+
+        child.stdout?.on('data', (data: Buffer) => pushStdout(data.toString('utf-8')));
+        child.stderr?.on('data', (data: Buffer) => pushStderr(data.toString('utf-8')));
+
+        const exitCode: number = await new Promise((resolve) => {
+          child.on('close', (code: number | null) => resolve(code ?? 0));
+          child.on('error', (err: Error) => {
+            pushStderr(`\n[spawn error] ${err.message}\n`);
+            resolve(1);
+          });
+          // 兜底超时: 30s
+          setTimeout(() => {
+            try { child.kill('SIGTERM'); } catch { /* ignore */ }
+            resolve(124);
+          }, 30000);
         });
-        output = (stdout + (stderr ? `\n[stderr]\n${stderr}` : '')).trim();
+
+        const durationMs = Date.now() - toolStart;
+        if (hook) {
+          try {
+            hook.emit('tool_exit', {
+              chatId: hook.chatId,
+              subTaskId: hook.subTaskId,
+              toolCallId: request.id,
+              tool: 'execute_cmd',
+              exitCode,
+              durationMs,
+              ts: Date.now(),
+            });
+          } catch { /* ignore */ }
+        }
+
+        output = (stdoutBuf + (stderrBuf ? `\n[stderr]\n${stderrBuf}` : '')).trim();
         if (output.length > 5000) {
           output = output.slice(-5000) + '\n... (truncated)';
+        }
+        if (exitCode !== 0) {
+          // 仍走 isError 分支, 让 LLM 知道命令失败
+          return {
+            tool_call_id: request.id,
+            name: 'execute_cmd',
+            output: output + `\n[exit ${exitCode}]`,
+            isError: true,
+            durationMs,
+          };
         }
         break;
       }

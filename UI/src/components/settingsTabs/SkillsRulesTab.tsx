@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Compass, FileText } from 'lucide-react';
+import { Compass, FileText } from '../../utils/icons';
 import { NormalIcon, PerformanceIcon, ExpertIcon, UltimateIcon } from '../ChatPanel';
 
 // 06. 预置智能规则

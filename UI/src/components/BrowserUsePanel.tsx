@@ -11,7 +11,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Plus, RefreshCw, Globe, ListChecks, ChevronRight, AlertCircle,
-} from 'lucide-react';
+} from '../utils/icons';
 import { useBrowserUseStream, BrowserUseApi } from '../hooks/useBrowserUseStream';
 import { BrowserTaskCard, type BrowserTaskData } from './BrowserTaskCard';
 import { ReactStepBubble, type ReactStepData } from './ReactStepBubble';

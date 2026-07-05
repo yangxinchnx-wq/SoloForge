@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { GitBranch, Terminal, HardDrive, Sun, Moon, Zap, ShieldAlert } from 'lucide-react';
+import { GitBranch, Terminal, HardDrive, Sun, Moon, Zap, ShieldAlert } from '../utils/icons';
 import { useHotTheme } from '../context/ThemeContext';
 import { usePendingConfirmBadge } from './terminal/hooks/usePendingConfirmBadge';
 

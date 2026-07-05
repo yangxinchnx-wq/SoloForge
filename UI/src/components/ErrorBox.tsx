@@ -6,7 +6,7 @@
  */
 
 import React from 'react';
-import { AlertCircle, RefreshCw } from 'lucide-react';
+import { AlertCircle, RefreshCw } from '../utils/icons';
 
 export interface ErrorBoxProps {
   error: Error | string;

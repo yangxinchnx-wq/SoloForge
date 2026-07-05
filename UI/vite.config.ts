@@ -141,8 +141,6 @@ export default defineConfig(() => {
             if (id.includes('monaco-') || id.includes('@monaco-editor')) return 'vendor-monaco';
             // 2026-07-02 优化:状态管理单独 chunk(Zustand + 持久化中间件)
             if (id.includes('zustand') || id.includes('immer')) return 'vendor-zustand';
-            // 2026-07-02 优化:Google AI SDK 单独 chunk(@google/genai 是流式 SDK,体积不小)
-            if (id.includes('@google/genai') || id.includes('@google-cloud')) return 'vendor-ai-sdk';
             // 2026-07-02 优化:LLM / SSE / 解析库(pako / jszip / event-source-polyfill 等)
             if (id.includes('eventsource') || id.includes('event-source-polyfill')) return 'vendor-sse';
             // dnd-kit 拖拽核心(独立,避免和主包混在一起)

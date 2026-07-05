@@ -14,7 +14,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Globe, Loader2, CheckCircle2, XCircle, AlertCircle, Pause, Play, X,
   ChevronDown, ListOrdered,
-} from 'lucide-react';
+} from '../utils/icons';
 import { ReactStepBubble, type ReactStepData } from './ReactStepBubble';
 
 export type BrowserTaskStatus = 'queued' | 'running' | 'paused' | 'success' | 'error' | 'cancelled';

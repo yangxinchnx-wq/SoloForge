@@ -55,6 +55,30 @@ async function startServer() {
   bootstrapCanvasSessionLayer(app);
 
   // ============================================================
+  // Chat 删除路由 (本地端点, 不代理到 3001)
+  //   DELETE /api/chats/:id  — 级联删除该 chat 拥有的所有画布
+  //
+  // 之前后端没实现此路由, 前端发出的 DELETE 经代理到 3001 命中 404,
+  // 乐观更新被回滚, chat 永远删不掉。这里在 3000 本地直接处理:
+  //   1. 从 SessionStore 级联删除 chatId 拥有的所有画布 (内存+Garnet+SurrealDB)
+  //   2. 返回 { success: true, selectedId: null } 兼容前端 store 契约
+  //   3. 前端 zustand 已乐观删除 chat 本身, 这里不重复处理 chat 数据
+  // ============================================================
+  app.delete("/api/chats/:id", async (req, res) => {
+    const chatId = req.params.id;
+    try {
+      const { getSessionStore } = await import("./src/server/services/session/SessionStore");
+      const store = getSessionStore();
+      const deletedCanvases = await store.deleteCanvasesByOwner(chatId);
+      console.log(`[chats] DELETE chat=${chatId} cascaded delete canvases:`, deletedCanvases);
+      res.json({ success: true, selectedId: null, deletedCanvases });
+    } catch (err: any) {
+      console.error(`[chats] DELETE chat=${chatId} failed:`, err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ============================================================
   // Canvas Tools MCP (LLM 工具调用入口, /api/canvas/tools/*)
   //   - GET  /api/canvas/tools          → 工具 schema 列表
   //   - POST /api/canvas/tools/invoke   → 执行工具
@@ -372,6 +396,8 @@ async function startServer() {
     '/api/database', '/api/agents', '/api/archiver', '/api/scheduler',
     '/api/events/list', '/api/observation', '/api/chat', '/api/ws/stats',
     '/api/audit',
+    '/api/vault',    // OS 钥匙串 vault 系统（apiKey 加密存储）
+    '/api/providers', // 云端模型服务商连通性测试 & 模型扫描
   ];
   for (const p of backendApiPrefixes) {
     // 关键：用 pathFilter 精确过滤，且不修改 req.url（HPM 默认行为会改写为相对路径）

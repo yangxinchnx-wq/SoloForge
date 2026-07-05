@@ -34,8 +34,3 @@ export {
   evaluateCommand,
   POLICY_KW,
 } from './service/commandPolicy';
-export {
-  guardedExecute,
-  type GuardedOptions,
-  type GuardedResult,
-} from './service/execGuard';

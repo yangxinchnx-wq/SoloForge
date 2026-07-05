@@ -1,5 +1,5 @@
 import React from 'react';
-import { Save } from 'lucide-react';
+import { Save } from '../../utils/icons';
 
 // 11. 数据备份
 export default function DataManagementTab() {

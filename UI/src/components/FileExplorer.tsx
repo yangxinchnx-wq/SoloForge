@@ -24,7 +24,7 @@ import {
   AlertCircle,
   Search,
   FileText
-} from 'lucide-react';
+} from '../utils/icons';
 import { MountTransition } from './MountTransition';
 import type { FileNode } from '../shared/types/file';
 

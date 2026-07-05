@@ -256,7 +256,10 @@ export class AgentRegistry {
       const streamHook = {
         chatId: binding.chatId,
         subTaskId: binding.subTaskId,
-        emit: (eventName: 'tool_started' | 'tool_completed', payload: any) => {
+        emit: (
+          eventName: 'tool_started' | 'tool_completed' | 'tool_stdout' | 'tool_stderr' | 'tool_exit',
+          payload: any
+        ) => {
           this.kernel.eventBus.emit(eventName, payload);
         },
       };

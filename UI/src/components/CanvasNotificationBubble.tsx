@@ -16,7 +16,7 @@
  */
 
 import React from 'react';
-import { User } from 'lucide-react';
+import { User } from '../utils/icons';
 import type { CanvasNotification } from '../services/canvas/sessionApi';
 
 interface Props {
@@ -49,7 +49,7 @@ export function CanvasNotificationBubble({ note }: Props) {
         max-w-[80%]
       "
     >
-      <User size={14} className="text-primary shrink-0" />
+      <User className="w-3.5 h-3.5 text-primary shrink-0" />
       <span className="text-xs text-on-surface whitespace-nowrap">
         <span className="font-medium text-primary">{note.actorChatSessionId}</span>
         <span className="mx-1 opacity-70">{ACTION_LABEL[note.action]}</span>

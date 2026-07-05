@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { X, Palette, Check, Sun, Moon, Zap, CloudSnow, Heart, RefreshCw, PanelBottom, Menu, Sliders, MessageSquare, FileCode, Settings } from 'lucide-react';
+import { X, Palette, Check, Sun, Moon, Zap, CloudSnow, Heart, RefreshCw, PanelBottom, Menu, Sliders, MessageSquare, FileCode, Settings } from '../utils/icons';
 import { THEME_PRESETS, SYNTAX_THEMES, useStaticTheme } from '../context/ThemeContext';
 
 interface ThemeModalProps {

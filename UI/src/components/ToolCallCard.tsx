@@ -7,7 +7,7 @@
  *  - 错误态: 显示 code + 提示(stale 时提示"AI 将自动重试")
  */
 import React, { useState } from 'react';
-import { ChevronDown, CheckCircle2, XCircle, Loader2, FileText, Edit3, Layers } from 'lucide-react';
+import { ChevronDown, CheckCircle2, XCircle, Loader2, FileText, Edit3, Layers } from '../utils/icons';
 import type { ToolCall, HashlineEditCall, HashlineReadCall, HashlineBatchCall } from '../types';
 
 interface Props {

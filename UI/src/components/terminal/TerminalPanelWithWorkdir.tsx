@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { FolderTree, RefreshCw } from 'lucide-react';
+import { FolderTree, RefreshCw } from '../../utils/icons';
 import TerminalPanel from '../TerminalPanel';
 import { useChatWorkdir } from './hooks/useChatWorkdir';
 import { useHotTheme } from '../../context/ThemeContext';
@@ -78,7 +78,7 @@ export default function TerminalPanelWithWorkdir({
           userSelect: 'none',
         }}
       >
-        <FolderTree size={12} />
+        <FolderTree className="w-3 h-3" />
         <span style={{ flex: 1, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
           {displayPath || '(尚未设置工作目录)'}
         </span>
@@ -98,7 +98,7 @@ export default function TerminalPanelWithWorkdir({
           title="切换工作目录"
           aria-label="切换工作目录"
         >
-          <RefreshCw size={12} />
+          <RefreshCw className="w-3 h-3" />
           <span>切换</span>
         </button>
       </div>

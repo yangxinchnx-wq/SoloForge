@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw } from '../../utils/icons';
 
 // 03. 本地模型管理
 export default function LocalModelTab() {

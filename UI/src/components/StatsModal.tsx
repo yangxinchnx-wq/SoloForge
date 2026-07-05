@@ -3,7 +3,7 @@ import {
   X, BarChart3, PieChart, TrendingUp, Clock, ArrowUpRight, ArrowDownRight, 
   Database, MessageSquare, Calendar, Flame, Cpu, Zap, Award, Download,
   Activity, Gauge, HardDrive, LineChart as LineChartIcon, Brain
-} from 'lucide-react';
+} from '../utils/icons';
 import {
   ResponsiveContainer,
   AreaChart,

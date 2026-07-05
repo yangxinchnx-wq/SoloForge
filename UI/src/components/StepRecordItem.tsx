@@ -3,7 +3,7 @@
  * 显示子任务的一个步骤（READ_TASK/UNDERSTAND/DECIDE/EXECUTE/COMPLETE/SUBMIT_TO_JUDGE）
  */
 import React, { useState } from 'react';
-import { ChevronDown, CheckCircle2, Loader2, Clock, AlertCircle } from 'lucide-react';
+import { ChevronDown, CheckCircle2, Loader2, Clock, AlertCircle } from '../utils/icons';
 import type { StepRecord, SubTaskStep } from '../types/streaming';
 
 interface StepRecordItemProps {

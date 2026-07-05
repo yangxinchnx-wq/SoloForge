@@ -13,7 +13,7 @@
  */
 
 import { create } from 'zustand';
-import { Code, Key, Brain, Database, CreditCard, HelpCircle } from 'lucide-react';
+import { Code, Key, Brain, Database, CreditCard, HelpCircle } from '../utils/icons';
 import { AndroidIcon, WindowsIcon, HarmonyOSIcon, DefaultChatIcon } from '../components/HistoryAndEditorPanel';
 import { sanitizeConversations } from '../utils/chatMessageSanitizer';
 import { startChat, ChatStreamEvent } from '../services/aiBackend';

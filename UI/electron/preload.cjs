@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('soloforge', {
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window:toggle-maximize'),
+    restore: () => ipcRenderer.invoke('window:restore'),
     close: () => ipcRenderer.invoke('window:close'),
     isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
     onMaximizeStateChange: (callback) => {

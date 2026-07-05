@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Globe, Plus, Search, RefreshCw, Key, Eye, EyeOff, X, Layers, Check, AlertCircle, Radio, Trash2 } from 'lucide-react';
+import { Globe, Plus, Search, RefreshCw, Key, Eye, EyeOff, X, Layers, Check, AlertCircle, Radio, Trash2 } from '../../utils/icons';
 import * as DndKitCore from '@dnd-kit/core';
 import * as DndKitModifiers from '@dnd-kit/modifiers';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, arrayMove, useSortable } from '@dnd-kit/sortable';

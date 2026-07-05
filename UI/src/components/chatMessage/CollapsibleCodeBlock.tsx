@@ -6,7 +6,7 @@
  */
 
 import React, { useState } from 'react';
-import { FileCode, ChevronUp, ChevronDown, Copy } from 'lucide-react';
+import { FileCode, ChevronUp, ChevronDown, Copy } from '../../utils/icons';
 import { MountTransition } from '../MountTransition';
 
 export interface CollapsibleCodeBlockProps {

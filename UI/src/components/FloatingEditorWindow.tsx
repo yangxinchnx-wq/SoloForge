@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Pin, X, Code, Maximize2, Minimize2 } from 'lucide-react';
+import { Pin, X, Code, Maximize2, Minimize2 } from '../utils/icons';
 import { useHotTheme } from '../context/ThemeContext';
 import SourceCodeEditor from './SourceCodeEditor';
 

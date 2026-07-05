@@ -3,7 +3,7 @@
  * 显示模型分配、进度百分比、步骤折叠（source=llm 走 StepRecordItem，source=browser-use 走 ReactStepBubble）
  */
 import React, { useState } from 'react';
-import { ChevronDown, Bot, Globe, Wrench, Zap, Loader2, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
+import { ChevronDown, Bot, Globe, Wrench, Zap, Loader2, CheckCircle2, AlertCircle, Clock } from '../utils/icons';
 import { MountTransition } from './MountTransition';
 import type { SubTask, SubTaskSource } from '../types/streaming';
 import { StepRecordItem } from './StepRecordItem';

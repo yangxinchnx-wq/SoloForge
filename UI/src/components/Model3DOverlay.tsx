@@ -12,7 +12,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { MountTransition } from './MountTransition';
-import { Box, Trash2, Copy, ClipboardPaste } from 'lucide-react';
+import { Box, Trash2, Copy, ClipboardPaste } from '../utils/icons';
 import type { DeviceInstance } from '../services/canvas/types';
 import {
   fetchSession,

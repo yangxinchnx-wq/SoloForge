@@ -1,15 +1,13 @@
 // ─────────────────────────────────────────────────────────────────
-// SoloForge 自定义窗口控件(替代 Electron titleBarOverlay)
-// 原因:Windows 11 22H2+ DWM 会对 titleBarOverlay 区域强行加暗色 tint,
-//      即使设置 color: '#121414' 也会变成接近纯黑,跟我们的 --color-surface 不一致。
-// 解决:完全不用 native overlay,自己用 React 画按钮,背景 100% 跟 Header 一致,
-//      切换主题时也自动跟随(用 CSS 变量)。
+// SoloForge 自定义窗口控件
+// 2026-07-05: titleBarStyle:'hidden' (无 overlay)
+//   - 系统处理 WM_NCHITTEST (不是 Chromium) → maximizable:false → 无 snap flyout
+//   - 系统不画按钮 → 三个按钮全部自绘
 // ─────────────────────────────────────────────────────────────────
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { Minus, Square, Copy, X } from 'lucide-react';
+import { Minus, Square, Copy, X } from '../utils/icons';
 
-// 浏览器(非 Electron)走 noop,不挂事件,不报错
 const noopWindowApi = {
   minimize: () => {},
   toggleMaximize: () => Promise.resolve(false),
@@ -53,7 +51,6 @@ export const WindowControls: React.FC = () => {
     api.close();
   }, [api]);
 
-  // 共享按钮基础样式
   const btnBase: React.CSSProperties = {
     width: 46,
     height: 48,
@@ -66,8 +63,6 @@ export const WindowControls: React.FC = () => {
     cursor: 'pointer',
     transition: 'background 120ms ease, color 120ms ease',
     padding: 0,
-    // ★ 关键:控件区域不能被 header 的 -webkit-app-region: drag 捕获,
-    // 否则点击不会触发 onClick,而是被 OS 当成"拖动窗口"处理
     WebkitAppRegion: 'no-drag',
   } as React.CSSProperties;
 
@@ -75,14 +70,8 @@ export const WindowControls: React.FC = () => {
     <div
       data-window-controls
       className="flex items-stretch shrink-0 select-none"
-      // 2026: 关键 — 把整个控件条从屏幕绝对右上角挪开 ~12px
-      // OS 在 explorer.exe 里探测"最大化按钮区"用的就是右上角
-      // ~100×48 px 的矩形;我们自己的 React 按钮只要不贴边,explorer 就
-      // 不会把它当成 maximize button,snap layout popup 不会触发
       style={{
         WebkitAppRegion: 'no-drag',
-        paddingRight: 8,
-        marginRight: 4,
       } as React.CSSProperties}
     >
       <button
@@ -100,7 +89,7 @@ export const WindowControls: React.FC = () => {
           e.currentTarget.style.color = '#a8b0b8';
         }}
       >
-        <Minus size={14} strokeWidth={1.5} />
+        <Minus className="w-3.5 h-3.5" strokeWidth={1.5} />
       </button>
 
       <button
@@ -118,7 +107,7 @@ export const WindowControls: React.FC = () => {
           e.currentTarget.style.color = '#a8b0b8';
         }}
       >
-        {isMaximized ? <Copy size={13} strokeWidth={1.5} /> : <Square size={13} strokeWidth={1.5} />}
+        {isMaximized ? <Copy className="w-[13px] h-[13px]" strokeWidth={1.5} /> : <Square className="w-[13px] h-[13px]" strokeWidth={1.5} />}
       </button>
 
       <button
@@ -136,7 +125,7 @@ export const WindowControls: React.FC = () => {
           e.currentTarget.style.color = '#a8b0b8';
         }}
       >
-        <X size={15} strokeWidth={1.5} />
+        <X className="w-4 h-4" strokeWidth={1.5} />
       </button>
     </div>
   );

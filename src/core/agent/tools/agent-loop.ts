@@ -22,6 +22,7 @@ import {
   AGENT_TOOLS,
   type ToolCallRequest,
   type ToolCallResult,
+  type ToolStreamHook,
   executeToolCall,
 } from './tool-definitions';
 
@@ -41,24 +42,30 @@ export interface AgentExecutionContext {
    * 可选: 流送区事件注入点
    *   chatId — 前端 chat id, 用于 SSE 路由
    *   subTaskId — 前端 subTask id, 事件挂到该 subTask 的 stepHistory
-   *   emit — 推送 tool_started / tool_completed 事件
+   *   emit — 推送 tool_started / tool_completed / tool_stdout / tool_stderr / tool_exit 事件
    *          (未传时只走 logger, 向后兼容)
    */
   streamHook?: {
     chatId: string;
     subTaskId: string;
-    emit: (eventName: 'tool_started' | 'tool_completed', payload: {
-      chatId: string;
-      subTaskId: string;
-      agentId: string;
-      tool: string;
-      args?: string;
-      success?: boolean;
-      result?: string;
-      error?: string;
-      durationMs?: number;
-      ts: number;
-    }) => void;
+    emit: (
+      eventName: 'tool_started' | 'tool_completed' | 'tool_stdout' | 'tool_stderr' | 'tool_exit',
+      payload: {
+        chatId: string;
+        subTaskId: string;
+        agentId?: string;
+        tool?: string;
+        toolCallId?: string;
+        args?: string;
+        success?: boolean;
+        result?: string;
+        error?: string;
+        exitCode?: number;
+        chunk?: string;
+        durationMs?: number;
+        ts: number;
+      }
+    ) => void;
   };
 }
 
@@ -132,6 +139,7 @@ export async function runAgentLoop(ctx: AgentExecutionContext, userTask: string)
             subTaskId: hook.subTaskId,
             agentId: ctx.agentId,
             tool: call.name,
+            toolCallId: call.id,
             args: argsJson,
             ts: Date.now(),
           });
@@ -140,8 +148,18 @@ export async function runAgentLoop(ctx: AgentExecutionContext, userTask: string)
         }
       }
 
+      // 透传 streamHook 给 executeToolCall, 让 execute_cmd 的 stdout/stderr 流式 emit
       const toolStart = Date.now();
-      const toolResult = await executeToolCall(call);
+      const toolResult = await executeToolCall({
+        ...call,
+        streamHook: hook
+          ? {
+              chatId: hook.chatId,
+              subTaskId: hook.subTaskId,
+              emit: (eventName, payload) => hook.emit(eventName, payload),
+            }
+          : undefined,
+      } as ToolCallRequest);
       const toolDurationMs = Date.now() - toolStart;
 
       toolSteps.push({
@@ -160,6 +178,7 @@ export async function runAgentLoop(ctx: AgentExecutionContext, userTask: string)
             subTaskId: hook.subTaskId,
             agentId: ctx.agentId,
             tool: call.name,
+            toolCallId: call.id,
             args: argsJson,
             success: !toolResult.isError,
             result: toolResult.output ? toolResult.output.slice(0, 500) : undefined,
@@ -218,6 +237,22 @@ ${AGENT_TOOLS.map(t => `- **${t.function.name}**: ${t.function.description}`).jo
 - 生成代码后用 execute_cmd 运行测试验证
 - 如果遇到错误，分析原因并修复
 - 给出最终答案时，说明你做了什么、为什么这样做`);
+
+  // 2.5 画布上下文注入（P0 修复: 避免 LLM 瞎编 requesterChatSessionId / canvasId）
+  //   - streamHook.chatId 是真实的对话 ID（来自前端 appStore.selectedChatId）
+  //   - 注入后 LLM 调画布工具时必须原样回填这个值，否则 ACL 会失败
+  //   - canvasId 不在这里硬编码，因为画布可能动态切换；告诉 LLM "可以不传 canvasId"
+  const chatId = ctx.streamHook?.chatId;
+  if (chatId) {
+    parts.push(`
+## 画布工作上下文（重要）
+
+- 当前对话的 \`requesterChatSessionId\` = \`${chatId}\`
+- 调用所有 \`solo_canvas_*\` 工具时，**必须** 把 \`requesterChatSessionId\` 参数填成上面这个值，不要编造其他值
+- 所有 \`solo_canvas_*\` 工具的 \`canvasId\` 参数都是**可选**的：不传时系统会自动用当前对话绑定的画布
+- 推荐做法：第一次操作画布前先调 \`solo_canvas_list\` 看当前对话有哪些画布；之后的设备增删改操作**不用传 canvasId**，让系统自动定位
+- 只有需要操作"非当前对话"的画布时，才显式传 \`canvasId\``);
+  }
 
   // 3. 技能库经验注入
   if (ctx.skills.length > 0) {

@@ -1,5 +1,5 @@
 import React from 'react';
-import { SlidersHorizontal, Trash2 } from 'lucide-react';
+import { SlidersHorizontal, Trash2 } from '../utils/icons';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { ChatHistoryItem } from '../types';

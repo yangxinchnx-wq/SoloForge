@@ -16,7 +16,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Layers, Plus, Crown, Users } from 'lucide-react';
+import { Layers, Plus, Crown, Users } from '../utils/icons';
 import type { CanvasResource } from '../services/canvas/sessionApi';
 
 interface Props {
@@ -86,7 +86,7 @@ export function CanvasResourceBar({
 
   return (
     <div className="flex items-center gap-1 px-2 h-9 bg-surface/60 border-b border-outline/30 select-none">
-      <Layers size={13} className="text-on-surface/60 shrink-0 mr-1" />
+      <Layers className="w-3.5 h-3.5 text-on-surface/60 shrink-0 mr-1" />
       <span className="text-[10px] uppercase tracking-wider text-on-surface/50 mr-1 shrink-0">
         画布池
       </span>
@@ -154,8 +154,8 @@ export function CanvasResourceBar({
             >
               <span className="tabular-nums">{c.displayName}</span>
               {c.isOwner
-                ? <Crown size={9} className={active ? '' : 'text-amber-500'} />
-                : <Users size={9} className="opacity-60" />}
+                ? <Crown className={`w-2.5 h-2.5 ${active ? '' : 'text-amber-500'}`} />
+                : <Users className="w-2.5 h-2.5 opacity-60" />}
               {c.deviceCount > 0 && (
                 <span className={active ? 'opacity-80' : 'opacity-50'}>{c.deviceCount}</span>
               )}
@@ -190,7 +190,7 @@ export function CanvasResourceBar({
               : 'border-outline/50 text-on-surface/70 hover:bg-primary/10 hover:text-primary hover:border-primary',
           ].join(' ')}
         >
-          <Plus size={12} />
+          <Plus className="w-3 h-3" />
         </button>
       </div>
 

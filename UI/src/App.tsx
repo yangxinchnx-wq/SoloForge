@@ -21,7 +21,7 @@ import { useHotTheme, useStaticTheme, THEME_PRESETS } from './context/ThemeConte
 import { LayoutProvider, useLayoutState, useLayoutStatus } from './context/LayoutContext';
 import { SidebarResizeHandle, HistoryResizeHandle, PreviewResizeHandle } from './components/ResizeHandles';
 import { MountTransition } from './components/MountTransition';
-import { X } from 'lucide-react';
+import { X } from './utils/icons';
 import { useChatClickCanvasBridge } from './hooks/useChatClickCanvasBridge';
 import { useAppStore } from './state/appStore';
 

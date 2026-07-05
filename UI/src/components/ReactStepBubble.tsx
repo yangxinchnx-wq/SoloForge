@@ -9,7 +9,7 @@
  *   - final       ✅  任务结束
  */
 import React, { useState } from 'react';
-import { Brain, MousePointer, Eye, AlertTriangle, CheckCircle2, ChevronDown, Camera } from 'lucide-react';
+import { Brain, MousePointer, Eye, AlertTriangle, CheckCircle2, ChevronDown, Camera } from '../utils/icons';
 
 export type ReactStepKind = 'thought' | 'action' | 'observation' | 'error' | 'final';
 

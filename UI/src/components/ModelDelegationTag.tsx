@@ -3,7 +3,7 @@
  * 显示「GPT-4 被 Xiaomi 分配了 XXX 任务」
  */
 import React from 'react';
-import { ArrowRight, Bot } from 'lucide-react';
+import { ArrowRight, Bot } from '../utils/icons';
 
 interface ModelDelegationTagProps {
   fromModel: string;

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, Database, Trash2 } from 'lucide-react';
+import { Search, Database, Trash2 } from '../../utils/icons';
 
 // 09. 知识库控制
 export default function KnowledgeBaseTab() {

@@ -15,7 +15,7 @@
 
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Layers, ChevronDown, Minus, Plus, X } from 'lucide-react';
+import { Layers, ChevronDown, Minus, Plus, X } from '../../utils/icons';
 import { ModelIcon } from '../ModelIcon';
 import { SecondaryModel } from '../../types';
 

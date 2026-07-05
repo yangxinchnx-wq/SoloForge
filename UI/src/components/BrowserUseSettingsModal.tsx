@@ -15,7 +15,7 @@
  */
 import React, { useState, useEffect } from 'react';
 import { MountTransition } from './MountTransition';
-import { X, Globe, Key, Cpu, Eye, Network, Save, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { X, Globe, Key, Cpu, Eye, Network, Save, AlertCircle, CheckCircle2 } from '../utils/icons';
 
 export interface BrowserUseConfig {
   provider: 'google' | 'openai' | 'anthropic';

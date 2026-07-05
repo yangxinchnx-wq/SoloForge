@@ -11,7 +11,7 @@
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown } from '../../utils/icons';
 import { useThemedSurface } from './themeColors';
 
 const AVATARS = [

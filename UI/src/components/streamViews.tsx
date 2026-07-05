@@ -14,7 +14,7 @@
  */
 
 import React from 'react';
-import { Workflow, Gauge, BadgeCheck, ShieldCheck, Rocket, Zap } from 'lucide-react';
+import { Workflow, Gauge, BadgeCheck, ShieldCheck, Rocket, Zap } from '../utils/icons';
 
 // ─────────────────────────────────────────────────────────────
 // 共享类型（也可考虑外移到 types/stream.ts,目前只此模块使用故就近定义）

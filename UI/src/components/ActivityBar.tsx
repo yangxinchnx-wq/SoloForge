@@ -1,5 +1,5 @@
 import React from 'react';
-import { FolderOpen, GitBranch, MessageSquare, FileCode, Search, Puzzle, Settings, HelpCircle, Palette, BarChart3 } from 'lucide-react';
+import { FolderOpen, GitBranch, MessageSquare, FileCode, Search, Puzzle, Settings, HelpCircle, Palette, BarChart3 } from '../utils/icons';
 
 interface ActivityBarProps {
   activeTab: string;

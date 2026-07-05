@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Terminal } from 'lucide-react';
+import { Terminal } from '../../utils/icons';
 
 // 05. 沙箱环境配置
 export default function EnvironmentTab() {

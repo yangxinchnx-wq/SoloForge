@@ -14,7 +14,7 @@ import {
   Settings,
   History,
   GitCommitHorizontal,
-} from 'lucide-react';
+} from '../utils/icons';
 import { useGit } from '../git/useGit';
 
 // ── Diff Renderer ────────────────────────────────────────────────

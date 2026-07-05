@@ -10,7 +10,7 @@
  */
 
 import React, { useRef, useEffect, useCallback } from 'react';
-import { Plus, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, X, ChevronLeft, ChevronRight } from '../utils/icons';
 
 export type CanvasTabStatus = 'idle' | 'starting' | 'running' | 'paused' | 'error';
 

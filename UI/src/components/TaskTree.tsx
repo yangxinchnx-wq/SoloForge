@@ -3,7 +3,7 @@
  * 展示根任务、子任务列表、审查区、进度条
  */
 import React from 'react';
-import { Layers, ChevronDown } from 'lucide-react';
+import { Layers, ChevronDown } from '../utils/icons';
 import type { RootTask, PermissionMode } from '../types/streaming';
 import type { ArbitrationResult } from '../types/streaming';
 import { SubTaskNode } from './SubTaskNode';

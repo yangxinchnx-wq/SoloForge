@@ -4,7 +4,7 @@
  * 样式与消息卡片一致，无缝融入对话流
  */
 import React, { useEffect, useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown } from '../utils/icons';
 import type { StreamEvent, PermissionMode } from '../types/streaming';
 import { useStreamingStore } from '../state/streamingStore';
 import { promptCardPool } from '../services/promptCardPool';

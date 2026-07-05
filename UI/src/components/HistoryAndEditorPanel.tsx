@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react';
-import { Search, X, Plus, Trash2 } from 'lucide-react';
+import { Search, X, Plus, Trash2 } from '../utils/icons';
 import {
   DndContext,
   closestCenter,

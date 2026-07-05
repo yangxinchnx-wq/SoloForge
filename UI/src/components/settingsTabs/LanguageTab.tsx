@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Check, Trash2, Plus } from 'lucide-react';
+import { Check, Trash2, Plus } from '../../utils/icons';
 import { useStaticTheme, PRESET_FONTS, preloadFontByName } from '../../context/ThemeContext';
 
 // 01. 界面语言与全局字体

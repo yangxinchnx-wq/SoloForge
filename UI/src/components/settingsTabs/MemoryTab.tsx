@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Trash2 } from '../../utils/icons';
 
 // 07. 记忆体管理
 export default function MemoryTab() {

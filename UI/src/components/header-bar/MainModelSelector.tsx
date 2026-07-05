@@ -15,7 +15,7 @@
 import React, { memo, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useThemedSurface } from './themeColors';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown } from '../../utils/icons';
 import { ModelIcon } from '../ModelIcon';
 import { computeAvailableModels, pickModel } from './mainModelSelectorLogic';
 export { computeAvailableModels, pickModel } from './mainModelSelectorLogic';

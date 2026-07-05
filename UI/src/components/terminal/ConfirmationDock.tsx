@@ -9,7 +9,7 @@
  *     deny           → resolve(id, 'deny')
  */
 import { useEffect, useRef, useState } from 'react';
-import { Check, ShieldAlert, ShieldCheck, XCircle } from 'lucide-react';
+import { Check, ShieldAlert, ShieldCheck, XCircle } from '../../utils/icons';
 import { useConfirmQueueStore, type PendingCommand } from './store/confirmQueueStore';
 import { useHotTheme } from '../../context/ThemeContext';
 
@@ -118,7 +118,7 @@ export default function ConfirmationDock({ chatId }: ConfirmationDockProps) {
       aria-label="AI 命令待确认"
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600 }}>
-        <ShieldAlert size={14} />
+        <ShieldAlert className="w-3.5 h-3.5" />
         <span>
           等待确认 ({pending.length}/{total})
           {total > pending.length ? ' · 其它会话 ' + (total - pending.length) : ''}
@@ -167,13 +167,13 @@ function PendingRow({ item, isLight, rowStyle, btn, onAllowOnce, onAllowChat, on
         [{item.decision.label}]
       </span>
       <button style={{ ...btn, color: isLight ? '#047857' : '#34d399' }} onClick={onAllowOnce} title="本次放行">
-        <Check size={12} /> 放行
+        <Check className="w-3 h-3" /> 放行
       </button>
       <button style={{ ...btn, color: isLight ? '#0e7490' : '#22d3ee' }} onClick={onAllowChat} title="本会话永不再问">
-        <ShieldCheck size={12} /> 永不再问
+        <ShieldCheck className="w-3 h-3" /> 永不再问
       </button>
       <button style={{ ...btn, color: isLight ? '#b91c1c' : '#f87171' }} onClick={onDeny} title="拒绝">
-        <XCircle size={12} /> 拒绝
+        <XCircle className="w-3 h-3" /> 拒绝
       </button>
       <button style={{ ...btn, color: isLight ? '#6b7280' : '#94a3b8' }} onClick={onClearChatHistory} title="清空本会话全部待确认">
         清空

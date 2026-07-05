@@ -145,6 +145,31 @@ export async function handleVaultResolve(providerId: string): Promise<VaultRoute
 }
 
 /**
+ * 返回明文 apiKey（仅本机 127.0.0.1 调用，供前端小眼睛显示/复制）
+ * 安全前提：api-server 只绑定 127.0.0.1，外部网络访问不到
+ */
+export async function handleVaultReveal(providerId: string): Promise<VaultRouteResult> {
+  if (!isValidId(providerId)) {
+    return jsonResponse(400, { error: 'Invalid providerId' });
+  }
+  try {
+    const got = await apiKeyVault.getKey(providerId);
+    if (!got) {
+      return jsonResponse(404, { error: 'Key not found', id: providerId });
+    }
+    return jsonResponse(200, {
+      id: providerId,
+      apiKey: got.apiKey,
+      baseUrl: got.baseUrl,
+      source: got.source,
+    });
+  } catch (e: any) {
+    logger.error('Vault', `reveal failed: ${e.message}`);
+    return jsonResponse(500, { error: e.message });
+  }
+}
+
+/**
  * ÃÂ§ÃÂÃÂ¨ÃÂ©ÃÂÃÂÃÂ¥ÃÂºÃÂÃÂ¤ÃÂ¸ÃÂ­ÃÂ§ÃÂÃÂ key ÃÂ¦ÃÂµÃÂÃÂ¨ÃÂ¯ÃÂ provider ÃÂ¨ÃÂ¿ÃÂÃÂ©ÃÂÃÂÃÂ¦ÃÂÃÂ§
  * ÃÂ¤ÃÂ¼ÃÂÃÂ¥ÃÂÃÂÃÂ§ÃÂºÃÂ§: keychain ÃÂ¢ÃÂÃÂ env ÃÂ¢ÃÂÃÂ ÃÂ¥ÃÂ¤ÃÂ±ÃÂ¨ÃÂ´ÃÂ¥
  */

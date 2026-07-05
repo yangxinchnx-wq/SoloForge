@@ -17,7 +17,7 @@ import {
   AlertTriangle,
   AlertCircle,
   Info
-} from 'lucide-react';
+} from '../utils/icons';
 
 interface SourceCodeEditorProps {
   selectedFile: string;

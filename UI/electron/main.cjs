@@ -184,128 +184,8 @@ function execPs(script) {
   });
 }
 
-// ── 2026 关闭 DWM 在窗口上的 chrome(消除 Windows 11 snap layout 的尺寸说明 tooltip) ──
-// frame:false + transparent:true 都不能阻止 DWM 在用户拖动/缩放窗口时画
-// "1234 × 567" 尺寸 tooltip,这是 DWM 在 explorer.exe 进程里画的,必须调
-// DwmSetWindowAttribute 把 DWMWA_NCRENDERING_POLICY 设为 DWMNCRP_DISABLED
-// (DWM 完全不参与此窗口的非客户区渲染 → snap tooltip 不再画)。
-// 用 PowerShell + EncodedCommand 调,严格只动这一个 attribute,不动窗口位置/尺寸/样式。
-function disableDwmNonClientRender(window) {
-  if (process.platform !== 'win32') return;
-  if (!window || window.isDestroyed()) return;
 
-  let hwnd;
-  try {
-    const hwndBuf = window.getNativeWindowHandle();
-    // Electron 返回 Buffer:64-bit 进程 8 字节,32-bit 进程 4 字节
-    // PowerShell [IntPtr] 在 64-bit 系统上 8 字节,转 Int64 即可
-    if (hwndBuf.length >= 8) {
-      hwnd = hwndBuf.readBigInt64LE(0).toString();
-    } else {
-      hwnd = hwndBuf.readInt32LE(0).toString();
-    }
-  } catch (e) {
-    console.warn('[dwm] get hwnd failed:', e?.message);
-    return;
-  }
 
-  // 严格只设 DWMWA_NCRENDERING_POLICY = DWMNCRP_DISABLED,不动窗口
-  //   DWMWA_NCRENDERING_POLICY = 2
-  //   DWMNCRP_DISABLED        = 1
-  const psScript = `
-$src = @'
-using System;
-using System.Runtime.InteropServices;
-public class W {
-  [DllImport("dwmapi.dll", PreserveSig=true)]
-  public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
-}
-'@
-Add-Type -TypeDefinition $src -Language CSharp
-$hwnd = [IntPtr]::new([Int64]${hwnd})
-$policy = 1
-$ret = [W]::DwmSetWindowAttribute($hwnd, 2, [ref]$policy, 4)
-Write-Output "DWM_RET=$ret"
-`;
-
-  // 用 EncodedCommand 避免嵌套引号/反引号转义问题
-  const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
-  const { exec } = require('child_process');
-  exec(
-    `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}`,
-    { timeout: 8000, windowsHide: true, encoding: 'utf-8' },
-    (err, stdout) => {
-      if (err) {
-        console.warn('[dwm] disable non-client render failed:', err.message);
-      } else {
-        console.log('[dwm] disable non-client render:', (stdout || '').trim());
-      }
-    }
-  );
-}
-
-// ── 2026 把窗口标记为"工具窗口" → explorer.exe 不再画 snap layout tooltip ──
-// frame:false + transparent:true + DWMNCRP_DISABLED 都拦不住,Windows 11
-// 的 snap layout tooltip 是 explorer.exe 在它自己的进程里画的(独立 overlay
-// 顶层窗口),针对所有 explorer 认定的"顶层应用窗口"。
-// WS_EX_TOOLWINDOW 让 explorer 把它当工具窗口 → 不参与 snap → tooltip 不再画
-// WS_EX_APPWINDOW  对冲 TOOLWINDOW 的"不出现在任务栏"副作用,强制出现
-function applyNoSnapExStyles(window) {
-  if (process.platform !== 'win32') return;
-  if (!window || window.isDestroyed()) return;
-
-  let hwnd;
-  try {
-    const hwndBuf = window.getNativeWindowHandle();
-    if (hwndBuf.length >= 8) {
-      hwnd = hwndBuf.readBigInt64LE(0).toString();
-    } else {
-      hwnd = hwndBuf.readInt32LE(0).toString();
-    }
-  } catch (e) {
-    console.warn('[exstyle] get hwnd failed:', e?.message);
-    return;
-  }
-
-  // GWL_EXSTYLE = -20
-  //   WS_EX_TOOLWINDOW = 0x00000080
-  //   WS_EX_APPWINDOW  = 0x00040000
-  // 直接 OR 进去,不动其他 bit
-  const psScript = `
-$src = @'
-using System;
-using System.Runtime.InteropServices;
-public class W {
-  [DllImport("user32.dll")]
-  public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
-  [DllImport("user32.dll")]
-  public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
-}
-'@
-Add-Type -TypeDefinition $src -Language CSharp
-$hwnd = [IntPtr]::new([Int64]${hwnd})
-$TOOL = 0x80
-$APP  = 0x40000
-$old = [W]::GetWindowLong($hwnd, -20)
-$new = $old -bor $TOOL -bor $APP
-[W]::SetWindowLong($hwnd, -20, $new) | Out-Null
-Write-Output "EXSTYLE_OLD=$old,NEW=$new"
-`;
-
-  const encoded = Buffer.from(psScript, 'utf16le').toString('base64');
-  const { exec } = require('child_process');
-  exec(
-    `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}`,
-    { timeout: 8000, windowsHide: true, encoding: 'utf-8' },
-    (err, stdout) => {
-      if (err) {
-        console.warn('[exstyle] apply failed:', err.message);
-      } else {
-        console.log('[exstyle]', (stdout || '').trim());
-      }
-    }
-  );
-}
 
 const PS_WIN32 = `
 Add-Type -TypeDefinition @'
@@ -325,6 +205,8 @@ public class W32 {
   [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
   [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern IntPtr GetParent(IntPtr hWnd);
   [DllImport("dwmapi.dll", PreserveSig=true)] public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
   public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
@@ -622,29 +504,67 @@ function registerIpc() {
   // 查询画布宿主窗口是否已就绪（renderer 用来判断能否启动）
   ipcMain.handle('canvas:host-info', async () => ({ ok: true, bounds: hostBounds }));
 
-  // ── 2026 自定义窗口控制按钮(替代 titleBarOverlay,因为 DWM 暗 tint 无法消除) ──
-  // 由 UI/src/components/WindowControls.tsx 调用
-  ipcMain.handle('window:minimize', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize();
-  });
-  ipcMain.handle('window:toggle-maximize', () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return false;
-    if (mainWindow.isMaximized()) mainWindow.unmaximize();
-    else mainWindow.maximize();
-    return mainWindow.isMaximized();
-  });
-  ipcMain.handle('window:close', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
-  });
-  ipcMain.handle('window:is-maximized', () => {
-    return mainWindow && !mainWindow.isDestroyed() ? mainWindow.isMaximized() : false;
-  });
-  ipcMain.handle('window:maximize-state', (event) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.on('maximize', () => event.sender.send('window:maximize-state-changed', true));
-      mainWindow.on('unmaximize', () => event.sender.send('window:maximize-state-changed', false));
+// ── 2026-07-05 自定义窗口控制按钮 ──
+// 由 UI/src/components/WindowControls.tsx 调用
+//
+// toggle-maximize 不用 mainWindow.maximize()/unmaximize():
+//   maximize() 内部调用 ShowWindow(SW_MAXIMIZE) → DWM 播放状态转换动画
+//   → 显示半透明尺寸数字提示 (白色长方形)
+//   DWMWA_TRANSITIONS_FORCEDISABLED 对 Win11 的这个 tooltip 无效
+//   改用 setBounds 手动设置窗口尺寸到工作区全屏 → 不触发 DWM 动画 → 无 tooltip
+//
+// 用自定义标志 _customMaximized 记录状态, 不依赖 OS 的 maximized 状态
+
+let _customMaximized = false;
+let _savedBounds = null;
+
+ipcMain.handle('window:minimize', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize();
+});
+
+ipcMain.handle('window:toggle-maximize', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  if (_customMaximized) {
+    // 还原
+    if (_savedBounds) {
+      mainWindow.setBounds(_savedBounds);
     }
-  });
+    _customMaximized = false;
+  } else {
+    // 最大化: 保存当前 bounds, 然后设置为屏幕工作区全屏
+    _savedBounds = mainWindow.getBounds();
+    const { screen } = require('electron');
+    const display = screen.getDisplayMatching(_savedBounds);
+    mainWindow.setBounds(display.workArea);
+    _customMaximized = true;
+  }
+  // 通知渲染器状态变化
+  mainWindow.webContents.send('window:maximize-state-changed', _customMaximized);
+  return _customMaximized;
+});
+
+ipcMain.handle('window:restore', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (_customMaximized && _savedBounds) {
+      mainWindow.setBounds(_savedBounds);
+      _customMaximized = false;
+      mainWindow.webContents.send('window:maximize-state-changed', false);
+    } else {
+      mainWindow.restore();
+    }
+  }
+});
+
+ipcMain.handle('window:close', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+});
+ipcMain.handle('window:is-maximized', () => {
+  return _customMaximized;
+});
+ipcMain.handle('window:maximize-state', (event) => {
+  // 立即推送当前状态
+  event.sender.send('window:maximize-state-changed', _customMaximized);
+});
 
   // ── 2026-07-02 彻底重构: 自定义窗口拖动(绝对坐标模式 + 同步 FIFO) ──
   // 之前架构 (delta 模式) 的根因缺陷:
@@ -892,25 +812,14 @@ function getHwndStr(window) {
   } catch (e) { return null; }
 }
 
-// ── 2026 终极反 snap(11 个独立措施,合并到 1 次 PS 调用) ──
-//   A) GWL_STYLE 移除 WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_SYSMENU
-//      → OS 不再认为这是有"系统按钮"的窗口 → 不会在右上角探测到 maximize button
-//      → snap layout popup(尺寸说明)不再出现
-//   B) GWL_EXSTYLE 叠加 6 个 flag:
-//      WS_EX_TOOLWINDOW     → explorer 当它是工具窗口,不参与 snap
-//      WS_EX_APPWINDOW      → 对冲 TOOLWINDOW 的"不出现任务栏"副作用
-//      WS_EX_NOREDIRECTION  → 强制 DWM 走 redirection
-//      WS_EX_COMPOSITED     → 双缓冲,不走 GDI cache
-//      WS_EX_NOACTIVATE     → 不响应 WM_MOUSEACTIVATE,explorer 不跟踪焦点
-//      WS_EX_TRANSPARENT    → 鼠标穿透(只对 OS 探测有效,我们的 React 事件正常)
-//   C) DWM attributes × 4:
-//      DWMWA_NCRENDERING_POLICY  = DWMNCRP_DISABLED      (DWM 不画非客户区)
-//      DWMWA_EXCLUDED_FROM_PEEK  = TRUE                  (taskbar peek 排除)
-//      DWMWA_FLIP3D_POLICY       = DWMFLIP3D_EXCLUDEBELOW(3D 切换排除)
-//      DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_DONOTROUND(去掉圆角)
-//   D) SetWindowPos SWP_NOSENDCHANGING 刷新
-//      → 不发 WM_WINDOWPOSCHANGING,explorer 拿不到"窗口要变"事件 → 不画 size tooltip
-//   E) ShowWindow SW_SHOWNOACTIVATE 强制 DWM 重评 chrome
+// ── 2026-07-05 窗口样式 → WS_POPUP (彻底移除非客户区) ──
+//   核心反 snap: 将 GWL_STYLE 替换为 WS_POPUP
+//   frame:false 不够: Chromium 内部 WM_NCHITTEST 仍返回 HTMAXBUTTON → snap flyout
+//   WS_POPUP 完全无非客户区 → WM_NCHITTEST 不返回 HTMAXBUTTON → flyout 不出现
+//   A) GWL_STYLE = WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN
+//   B) GWL_EXSTYLE |= WS_EX_APPWINDOW (任务栏可见)
+//   C) DWM: 方角 + NC 渲染关闭
+//   D) SetWindowPos 刷新
 function applyNoSnapFinal(window) {
   if (process.platform !== 'win32') return;
   const hwnd = getHwndStr(window);
@@ -919,88 +828,65 @@ function applyNoSnapFinal(window) {
   const script = PS_WIN32 + `
 $hwnd = [IntPtr]::new([Int64]${hwnd})
 
-# === A) GWL_STYLE = -16: 移除 maximize/minimize/sysmenu ===
-#   WS_MAXIMIZEBOX = 0x00010000  → 移除后 OS 不再认为此窗口有"最大化按钮"
-#                                  右上角的 snap layout popup 触发条件之一就是
-#                                  鼠标进入 maximize button 区;移除后 explorer
-#                                  探测不到 maximize button,popup 不再画
-#   WS_MINIMIZEBOX = 0x00020000  → 同理最小化按钮
-#   WS_SYSMENU     = 0x00080000  → 移除后 OS 不再画系统菜单(右键标题栏不再触发)
-$WS_MAXIMIZEBOX = 0x00010000
-$WS_MINIMIZEBOX = 0x00020000
-$WS_SYSMENU     = 0x00080000
+# === 核心反 snap: 将窗口样式替换为 WS_POPUP ===
+#   frame:false 不够: Chromium 内部的 WM_NCHITTEST 处理器仍然为右上角返回 HTMAXBUTTON,
+#   触发 Windows 11 snap layout flyout (白色尺寸浮动块)
+#   WS_POPUP 完全没有非客户区 → WM_NCHITTEST 不会返回 HTMAXBUTTON → flyout 不出现
+#   保留 WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN
+$WS_POPUP        = 0x80000000
+$WS_VISIBLE      = 0x10000000
+$WS_CLIPSIBLINGS = 0x04000000
+$WS_CLIPCHILDREN = 0x02000000
 $oldStyle = [W32]::GetWindowLong($hwnd, -16)
-$newStyle = ($oldStyle -band -bnot $WS_MAXIMIZEBOX) -band -bnot $WS_MINIMIZEBOX -band -bnot $WS_SYSMENU
+$newStyle = $WS_POPUP -bor $WS_VISIBLE -bor $WS_CLIPSIBLINGS -bor $WS_CLIPCHILDREN
 [W32]::SetWindowLong($hwnd, -16, $newStyle) | Out-Null
-$styleOut = "STYLE=$oldStyle->$newStyle"
+$styleOut = "STYLE=0x$($oldStyle.ToString('X8'))->0x$($newStyle.ToString('X8'))"
 
-# === B) GWL_EXSTYLE = -20: 叠加反 snap 扩展风格 ===
-# 2026-07-04 修复: 移除 WS_EX_TRANSPARENT (0x20)
-#   原因: Electron transparent:true 已设置 WS_EX_LAYERED,
-#   再叠加 WS_EX_TRANSPARENT 形成 layered+transparent 组合 = 鼠标穿透
-#   导致 Chromium mousemove 事件 screenX 几乎不变, 拖拽时 dx 不累计
-#   实测: 拖几厘米 dx 只有 0~3 像素, 窗口完全不动
-# 反 snap 不需要 TRANSPARENT, 其他 5 个 flag 已足够:
-$TOOL     = 0x80
-$APP      = 0x40000
-$NOREDIR  = 0x200000
-$COMPOSED = 0x2000000
-$NOACT    = 0x8000000
+# === GWL_EXSTYLE: 确保 WS_EX_APPWINDOW (任务栏可见) ===
+$APP  = 0x40000
 $oldEx = [W32]::GetWindowLong($hwnd, -20)
-$newEx = $oldEx -bor $TOOL -bor $APP -bor $NOREDIR -bor $COMPOSED -bor $NOACT
+$newEx = $oldEx -bor $APP
 [W32]::SetWindowLong($hwnd, -20, $newEx) | Out-Null
-$exOut = "EXSTYLE=$oldEx->$newEx"
+$exOut = "EX=0x$($oldEx.ToString('X8'))->0x$($newEx.ToString('X8'))"
 
-# === C) DWM attributes × 4 ===
-# DWMWA_NCRENDERING_POLICY       = 2,  DWMNCRP_DISABLED       = 1
-# DWMWA_EXCLUDED_FROM_PEEK       = 12, TRUE                    = 1
-# DWMWA_FLIP3D_POLICY            = 8,  DWMFLIP3D_EXCLUDEBELOW  = 2
-# DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_DONOTROUND       = 2
+# === DWM: 方角 + NC 渲染关闭 ===
 $policy1 = 1
-$policy2 = 1
-$policy3 = 2
 $policy4 = 2
 $dwmRet1 = [W32]::DwmSetWindowAttribute($hwnd, 2,  [ref]$policy1, 4)
-$dwmRet2 = [W32]::DwmSetWindowAttribute($hwnd, 12, [ref]$policy2, 4)
-$dwmRet3 = [W32]::DwmSetWindowAttribute($hwnd, 8,  [ref]$policy3, 4)
 $dwmRet4 = [W32]::DwmSetWindowAttribute($hwnd, 33, [ref]$policy4, 4)
-$dwmOut = "DWM_NCR=$dwmRet1,EXCL_PEEK=$dwmRet2,FLIP3D=$dwmRet3,CORNER=$dwmRet4"
+$dwmOut = "DWM_NCR=$dwmRet1,CORNER=$dwmRet4"
 
-# === D) SetWindowPos 刷新(SWP_NOSENDCHANGING) ===
-#   SWP_NOSIZE         = 0x0001
-#   SWP_NOMOVE         = 0x0002
-#   SWP_NOZORDER       = 0x0004
-#   SWP_NOACTIVATE     = 0x0010
-#   SWP_NOSENDCHANGING = 0x0400
+# === SetWindowPos 刷新 ===
 $SWP = 0x0001 -bor 0x0002 -bor 0x0004 -bor 0x0010 -bor 0x0400
 $swpRet = [W32]::SetWindowPos($hwnd, [IntPtr]::Zero, 0, 0, 0, 0, $SWP)
 $swpOut = "SWP=$swpRet"
 
-# === E) ShowWindow SW_SHOWNOACTIVATE = 4 强制 DWM 重新评估 chrome ===
-$swRet = [W32]::ShowWindow($hwnd, 4)
-$swShow = "SHOW=$swRet"
-
-Write-Output "$styleOut; $exOut; $dwmOut; $swpOut; $swShow"
+Write-Output "$styleOut; $exOut; $dwmOut; $swpOut"
 `;
-  // async → 不用 await 在这里,fire-and-forget
   execPsSync(script).then((out) => {
-    if (out) console.log('[no-snap]', out);
+    if (out) console.log('[dwm-style]', out);
   });
 }
 
 // 2026-07-04 拖动期间禁用 reapplyNoSnap 的标志
-// 原因: 每次 setPosition 触发 'move' 事件 → reapplyNoSnap → applyNoSnapFinal
-//   (一次同步 PowerShell spawn + Add-Type + 11 个 Win32 调用)
-//   → 每秒 60 次 PowerShell spawn → 卡死
-// 拖动期间设 true, drag-stop 时再重新应用一次
 let dragActive = false;
 
-// 异步重新应用反 snap 样式(setImmediate 避免阻塞调用方)
+// 2026-07-05: 样式只需应用一次, 不再在每次 move/resize 时重新应用
+//   之前每次 move/resize 都 spawn 一个新 PowerShell 进程 → 启动时十几个进程 → 拖动卡
+//   SetWindowLong 设的样式会持久保持, 不需要反复重设
+let _styleApplied = false;
 function reapplyNoSnap() {
   if (process.platform !== 'win32') return;
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  if (dragActive) return;  // 拖动期间跳过, 避免每帧 spawn PowerShell
-  setImmediate(() => applyNoSnapFinal(mainWindow));
+  if (dragActive) return;
+  if (mainWindow.isMinimized()) return;
+  if (_styleApplied) return;  // 已应用过, 跳过
+  setImmediate(() => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isMinimized()) {
+      applyNoSnapFinal(mainWindow);
+      _styleApplied = true;
+    }
+  });
 }
 
 // ── 2026 持久 PowerShell 进程(高频 SetWindowPos 用) ──
@@ -1040,7 +926,7 @@ function startPsWorker() {
   //   while(true) { ReadLine → 解析命令 → SetWindowPos → Console.Out.WriteLine("OK") → flush }
   // 用 [Console]::Out.Flush() 强制立即把 OK 推给 Node 端 (避免 .NET 默认缓冲)
   const psCode = `
-$ErrorActionPreference = 'SilentlyContinue'
+$ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -1051,8 +937,39 @@ public class WSet {
   [DllImport("kernel32.dll")] public static extern uint GetLastError();
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
   [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT lpPoint);
+  [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] public static extern IntPtr SetWindowLongPtr64(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+  [DllImport("user32.dll", EntryPoint = "SetWindowLongW")] public static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int dwNewLong);
+  [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] public static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int nIndex);
+  [DllImport("user32.dll", EntryPoint = "GetWindowLongW")] public static extern int GetWindowLong32(IntPtr hWnd, int nIndex);
+  [DllImport("user32.dll")] public static extern IntPtr CallWindowProc(IntPtr lpPrevWndFunc, IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+  public delegate IntPtr WndProcDelegate(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
   public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
   public struct POINT { public int X; public int Y; }
+  public static IntPtr OriginalWndProc = IntPtr.Zero;
+  public static WndProcDelegate HookDelegate;
+  public static IntPtr HookedHwnd = IntPtr.Zero;
+  public static IntPtr HookedWndProc(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam) {
+    if (Msg == 0x0084) {
+      IntPtr result = CallWindowProc(OriginalWndProc, hWnd, Msg, wParam, lParam);
+      if (result.ToInt64() == 9) return new IntPtr(1);
+      return result;
+    }
+    return CallWindowProc(OriginalWndProc, hWnd, Msg, wParam, lParam);
+  }
+  public static IntPtr DoSetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong) {
+    if (IntPtr.Size == 8) return SetWindowLongPtr64(hWnd, nIndex, dwNewLong);
+    return new IntPtr(SetWindowLong32(hWnd, nIndex, dwNewLong.ToInt32()));
+  }
+  public static bool InstallHook(IntPtr hWnd) {
+    if (HookedHwnd != IntPtr.Zero) return false;
+    HookDelegate = new WndProcDelegate(HookedWndProc);
+    IntPtr funcPtr = Marshal.GetFunctionPointerForDelegate(HookDelegate);
+    OriginalWndProc = DoSetWindowLongPtr(hWnd, -4, funcPtr);
+    HookedHwnd = hWnd;
+    uint err = GetLastError();
+    System.Console.Error.WriteLine("InstallHook: funcPtr=" + funcPtr + " origProc=" + OriginalWndProc + " err=" + err + " ptrSize=" + IntPtr.Size);
+    return OriginalWndProc != IntPtr.Zero;
+  }
 }
 '@
 [Console]::Out.WriteLine("READY")
@@ -1072,6 +989,13 @@ while ($true) {
       $rect = New-Object WSet+RECT
       $gr = [WSet]::GetWindowRect($hwnd, [ref]$rect)
       [Console]::Out.WriteLine("PONG hwnd=$hwnd IsWindow=$isWin GetRect=$gr L=$($rect.Left) T=$($rect.Top) R=$($rect.Right) B=$($rect.Bottom) LastErr=" + [WSet]::GetLastError())
+      [Console]::Out.Flush()
+      continue
+    }
+    if ($cmd -eq 'SUBCLASS') {
+      # 安装子类化 WindowProc, 拦截 WM_NCHITTEST
+      $ok = [WSet]::InstallHook($hwnd)
+      [Console]::Out.WriteLine("OK SUBCLASS installed=$ok hwnd=$hwnd")
       [Console]::Out.Flush()
       continue
     }
@@ -1206,6 +1130,15 @@ while ($true) {
       psWorker = null;
       psWorkerOk = false;
       psWorkerStdinReady = true;
+      // 2026-07-05: 自动重启 PS Worker (3秒后, 避免频繁重启)
+      if (!dragActive && code !== 0) {
+        console.log('[ps-worker] 3秒后自动重启...');
+        setTimeout(() => {
+          if (!psWorker && !dragActive) {
+            startPsWorker();
+          }
+        }, 3000);
+      }
     });
     psWorker.on('error', (e) => {
       console.warn('[ps-worker] spawn error:', e.message);
@@ -1298,27 +1231,22 @@ function createWindow() {
     width: 1440,
     height: 900,
     show: false,
-    // ── 2026 完全自定义窗口(DWM 不画任何 chrome) ──
-    // frame: false                → 完全去掉 OS 边框 / 标题栏 / resize sizing box
-    // transparent: true           → 关键!窗口变成 WS_EX_LAYERED layered window,
-    //                              DWM 不再绘制任何非客户区(包括 resize 时的 size box / drag preview)
-    //                              这是 VS Code/Discord 完整隐藏 OS chrome 的官方做法
-    //   - 替代实现:
-    //     - 顶部 drag 区域由 .soloforge-drag-header CSS class 提供(WebkitAppRegion: drag)
-    //     - "−/□/×" 按钮由 UI/src/components/WindowControls.tsx 用 React 画(走 IPC)
-    //     - resize 由 UI/src/components/EdgeResize.tsx 在 4 边 + 4 角提供透明 handle(走 IPC)
-    //   - 注意:body 必须有 solid 背景(见 index.css),否则 resize 时会看到桌面透出
-    frame: false,
-    transparent: true,
-    // 2026-07-02:transient 模式下 backgroundColor 必须 #00000000
-    //   抗 FOUC 靠 mainWindow.once('ready-to-show') 推迟显示,
-    //   等 React mount + ThemeContext useEffect 跑完才 show(),主题 CSS 变量
-    //   已经就位,用户不会看到一闪而过的"透明/桌面背景"。
-    backgroundColor: '#00000000',
+    // ── 2026-07-05 最终方案: titleBarStyle:'hidden' (无 overlay) ──
+    //
+    // 根因: frame:false 时 Chromium 硬编码 WM_NCHITTEST 返回 HTMAXBUTTON,
+    //   触发 Windows 11 snap layout flyout。跨进程拦截得到 ACCESS_DENIED。
+    //
+    // titleBarStyle:'hidden' (无 titleBarOverlay):
+    //   - 系统处理 WM_NCHITTEST (不是 Chromium)
+    //   - maximizable:false → WS_MAXIMIZEBOX 不被加入 → 系统不返回 HTMAXBUTTON → 无 snap flyout
+    //   - 不画系统按钮 (无 overlay) → 三个按钮全部自绘 (跟之前 frame:false 一样)
+    //   - 自定义拖动: -webkit-app-region: drag (已有)
+    titleBarStyle: 'hidden',
+    backgroundColor: '#050505',
     hasShadow: false,
     minimizable: true,
-    maximizable: true,
-    resizable: true,         // frame:false 时 OS 不画 drag box,但这个 flag 影响 cursor 反馈
+    maximizable: false,
+    resizable: true,
     fullscreenable: true,
     paintWhenInitiallyHidden: true,
     webPreferences: {
@@ -1348,20 +1276,9 @@ function createWindow() {
   // 创建窗口时立即清一次缓存,把上一版本的 dist/ 残留从磁盘清掉
   try { mainWindow.webContents.session.clearCache(); } catch {}
 
-  // 2026-07-04 修复强制刷新(Ctrl+Shift+R)黑屏问题:
-  //   根因: transparent:true + backgroundColor:#00000000 → 窗口在页面卸载到
-  //   新页面到达之间没有任何 paint,透出桌面(看起来是黑屏)。
-  //   ready-to-show 只在首次创建窗口时触发,刷新时不触发。
-  //   index.html 里的内联 <style> 要等 Vite 服务器返回 HTML 才生效,
-  //   但在那之前已经有 1-3 秒的透明 gap。
-  //
-  //   修复: 在 did-start-loading(导航开始,旧页面还在)时:
-  //   1. setBackgroundColor('#050505') — 让 native 窗口在 gap 期间有深色底
-  //   2. executeJavaScript — 在旧页面上涂深色背景,让最后一帧 persist
-  //   did-finish-load 时恢复透明(setBackgroundColor('#00000000'))
+  // 2026-07-05: frame:false + 实色背景, 刷新时 native 窗口自带深色底, 无黑屏。
+  //   executeJavaScript 涂深色背景让旧页面最后一帧 persist (双重保险)。
   mainWindow.webContents.on('did-start-loading', () => {
-    try { mainWindow.webContents.setBackgroundColor('#050505'); } catch {}
-    // 在旧页面上涂背景色 — Chromium 卸载页面后最后一帧会 persist 一小段时间
     mainWindow.webContents.executeJavaScript(
       `try{document.documentElement.style.setProperty('background','#050505','important');` +
       `document.body&&document.body.style.setProperty('background','#050505','important');}catch(e){}`
@@ -1371,12 +1288,9 @@ function createWindow() {
   // 2026-07-02 调试日志:确认 renderer 真正加载的 URL(诊断"看到的还是旧 UI")
   mainWindow.webContents.on('did-finish-load', () => {
     console.log(`[electron] ★ renderer 真正加载的 URL: ${mainWindow.webContents.getURL()}`);
-    // 恢复透明背景 — React mount + CSS 变量就位后,窗口可以回到 transparent 模式
-    try { mainWindow.webContents.setBackgroundColor('#00000000'); } catch {}
   });
   mainWindow.webContents.on('did-fail-load', (_, code, desc, url) => {
     console.error(`[electron] ✗ renderer 加载失败: ${url} (${code} ${desc})`);
-    try { mainWindow.webContents.setBackgroundColor('#00000000'); } catch {}
   });
 
   // ready-to-show:页面首次渲染完成后才显示窗口(避免闪烁)
@@ -1536,35 +1450,12 @@ app.whenReady().then(() => {
   createWindow();                  // 先创建主窗口
   createCanvasHostWindow(mainWindow); // 再以主窗口为 parent 创建画布宿主 → OS 自动管 z-order
 
-  // 2026 终极反 snap 设置(同步,主进程控制流继续前必须完成)
-  // 11 个措施一次到位,合并到 1 次 PowerShell 调用
+  // 2026-07-05: titleBarStyle:'hidden' + titleBarOverlay 让系统处理 WM_NCHITTEST
+  //   不需要 applyNoSnapFinal (WS_POPUP hack) 或 SUBCLASS (跨进程拦截)
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
   });
-  applyNoSnapFinal(mainWindow);
   registerIpc();
-
-  // 2026: 周期兜底 + 焦点/可见性事件触发
-  // Win11 焦点切换时 explorer 可能静默重置窗口 style,定期重新打一次
-  // 前 60s 每 3s 一次(启动期 explorer 会重试关联窗口),
-  // 之后每 30s 一次(防御)
-  let nosnapTicks = 0;
-  const nosnapTimer = setInterval(() => {
-    reapplyNoSnap();
-    nosnapTicks++;
-    if (nosnapTicks >= 20) {  // 20 * 3s = 60s
-      clearInterval(nosnapTimer);
-      // 之后每 30s 兜底
-      setInterval(reapplyNoSnap, 30000);
-    }
-  }, 3000);
-
-  // 焦点/恢复/重绘/移动 事件触发立即重置
-  mainWindow.on('focus', reapplyNoSnap);
-  mainWindow.on('show', reapplyNoSnap);
-  mainWindow.on('restore', reapplyNoSnap);
-  mainWindow.on('move', reapplyNoSnap);
-  mainWindow.on('resize', reapplyNoSnap);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

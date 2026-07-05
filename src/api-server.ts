@@ -62,6 +62,7 @@ import {
   handleVaultExport,
   handleVaultImport,
   handleVaultVerifyPassphrase,
+  handleVaultReveal,
 } from './security/vaultHandler';
 
 // ============================================================
@@ -913,12 +914,14 @@ export class SoloForgeApiServer {
     if (reqPath === '/api/vault/keys' && method === 'GET') {
       return this.vaultResultToApi(await handleVaultList());
     }
-    const vaultKeyMatch = reqPath.match(/^\/api\/vault\/keys\/([A-Za-z0-9_-]{1,64})(?:\/(verify))?$/);
+    const vaultKeyMatch = reqPath.match(/^\/api\/vault\/keys\/([A-Za-z0-9_-]{1,64})(?:\/(verify|reveal))?$/);
     if (vaultKeyMatch) {
       const id = decodeURIComponent(vaultKeyMatch[1]);
       const sub = vaultKeyMatch[2];
       if (sub === 'verify') {
         if (method === 'POST') return this.vaultResultToApi(await handleVaultVerify(id));
+      } else if (sub === 'reveal') {
+        if (method === 'GET') return this.vaultResultToApi(await handleVaultReveal(id));
       } else if (method === 'GET') {
         return this.vaultResultToApi(await handleVaultGet(id));
       } else if (method === 'PUT') {
@@ -968,9 +971,11 @@ export class SoloForgeApiServer {
   // Allow-list of fields that may be returned from /api/vault/* to the browser.
   // Even if PublicKeyInfo gains a new field in the future, this guard prevents
   // accidental secret leakage to the front-end (defense-in-depth).
+  // 'apiKey' 仅由 /api/vault/keys/:id/reveal 端点返回明文，供前端小眼睛显示/复制
   private static readonly VAULT_PUBLIC_FIELDS = new Set([
     'id', 'baseUrl', 'hasKey', 'source', 'createdAt', 'updatedAt',
     'items', 'count', 'item', 'error', 'verified', 'exported', 'imported' as any as never,
+    'apiKey',
   ]);
 
   private redactVaultBody(body: any): any {

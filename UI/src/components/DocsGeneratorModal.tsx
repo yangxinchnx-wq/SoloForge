@@ -15,7 +15,7 @@ import { useEffect } from 'react';
 import {
   FileText, X, HelpCircle, FileCode, Clock, Brain,
   Loader2, Check, Copy, Download, CheckCheck,
-} from 'lucide-react';
+} from '../utils/icons';
 import { MountTransition } from './MountTransition';
 import { useDocsGeneratorStore } from '../state/useDocsGeneratorStore';
 

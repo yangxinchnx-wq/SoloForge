@@ -9,7 +9,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { MountTransition } from './MountTransition';
-import { X, AlertTriangle, Trash2 } from 'lucide-react';
+import { X, AlertTriangle, Trash2 } from '../utils/icons';
 import { useHotTheme } from '../context/ThemeContext';
 
 interface DeleteConfirmModalProps {

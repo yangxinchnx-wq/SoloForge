@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import { MountTransition } from './MountTransition';
-import { HelpCircle, Wrench, Shield, Zap, Globe, AlertTriangle, CheckCircle2, Clock, X } from 'lucide-react';
+import { HelpCircle, Wrench, Shield, Zap, Globe, AlertTriangle, CheckCircle2, Clock, X } from '../utils/icons';
 import { useCountdownTimer } from '../hooks/useCountdownTimer';
 import type { PromptCardInstance, PromptCardType, PromptAction } from '../types/streaming';
 

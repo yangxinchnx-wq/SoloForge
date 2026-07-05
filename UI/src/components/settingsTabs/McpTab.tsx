@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Trash2 } from '../../utils/icons';
 
 // 04. MCP 工具注册
 export default function McpTab() {

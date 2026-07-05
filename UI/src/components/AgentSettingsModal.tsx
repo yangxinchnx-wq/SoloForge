@@ -5,7 +5,7 @@ import {
   SlidersHorizontal, ChevronDown, Flame, Brain,
   Rocket, Workflow, FileText, Save, FolderOpen,
   ZoomIn, ZoomOut
-} from 'lucide-react';
+} from '../utils/icons';
 import { useHotTheme } from '../context/ThemeContext';
 // 2026-07-03 阶段3.1.A: ChatSettingsItem + getSettingsSummary 复用 types/chat.ts (与 ChatPanel 共享)
 import type { ChatSettingsItem } from '../types/chat';

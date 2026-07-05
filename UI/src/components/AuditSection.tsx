@@ -3,7 +3,7 @@
  * 显示子Agent评分 → 主模型仲裁 → AI社会制度校验 三层裁决链
  */
 import React, { useState } from 'react';
-import { ChevronDown, Shield, Gavel, Scale, CheckCircle2, AlertTriangle, XCircle, RefreshCw } from 'lucide-react';
+import { ChevronDown, Shield, Gavel, Scale, CheckCircle2, AlertTriangle, XCircle, RefreshCw } from '../utils/icons';
 import { MountTransition } from '../MountTransition';
 import type { AuditTask, AuditFinding, ArbitrationResult } from '../types/streaming';
 import type { PermissionMode } from '../types/streaming';

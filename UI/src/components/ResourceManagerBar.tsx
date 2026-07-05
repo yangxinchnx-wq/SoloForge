@@ -15,7 +15,7 @@ import React, { useEffect, useRef } from 'react';
 import {
   Brain, Upload, ChevronDown, FolderPlus, X, Pencil, Trash2,
   Circle, GripVertical,
-} from 'lucide-react';
+} from '../utils/icons';
 import {
   useResourceManagerStore,
   isParentTool, getChildIds,

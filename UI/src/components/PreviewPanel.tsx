@@ -3,7 +3,7 @@ import {
   RefreshCw, Play, Square, Loader2,
   CircleDot, AlertCircle, Monitor, Smartphone, Tablet, Watch,
   Palette, MonitorSmartphone, Info, ChevronDown, Check, Maximize2
-} from 'lucide-react';
+} from '../utils/icons';
 import { MountTransition } from './MountTransition';
 import { CanvasResourceBar } from './CanvasResourceBar';
 import { CanvasNotificationStack } from './CanvasNotificationBubble';

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   X, Globe, PlusCircle, Laptop, Cpu, Code2,
   ShieldCheck, Layers, Navigation, Database, Share2, Save, Settings
-} from 'lucide-react';
+} from '../utils/icons';
 import LanguageTab from './settingsTabs/LanguageTab';
 import ModelAddTab from './settingsTabs/ModelAddTab';
 import LocalModelTab from './settingsTabs/LocalModelTab';

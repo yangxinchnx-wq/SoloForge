@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
   Play, Trash2, Lock, Unlock, ChevronDown, ChevronUp,
   MessageSquarePlus, Check, Plus, X,
-} from 'lucide-react';
+} from '../utils/icons';
 import { useHotTheme } from '../context/ThemeContext';
 
 interface LogItem {
