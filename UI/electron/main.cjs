@@ -1163,24 +1163,35 @@ app.whenReady().then(() => {
     console.log('[electron] ✓ session 缓存已清');
   });
 
-  // ★ 直接删 user-data-dir 里的所有持久化数据 (绕过 session API 限制)
-  //   session.clearCache() / clearStorageData() 都不删 localStorage / IndexedDB
-  //   (它们用的是不同的 storage backend),必须用 fs.rm 直接删 user-data-dir
-  //   这里包括:
-  //   - Code Cache / Cache / GPUCache: V8 字节码 / HTTP 缓存
-  //   - Local Storage / Session Storage: React zustand persist 用,旧 store 数据锁住 UI
+  // ★ 清理 user-data-dir 中的缓存目录(绕过 session API 限制)
+  //   session.clearCache() / clearStorageData() 都不删 Code Cache(V8 字节码缓存),
+  //   必须用 fs.rm 直接删。但要保留用户数据目录(Local Storage / IndexedDB / settings-store.json)。
+  //   如果需要强制清除所有数据(开发调试用),设置环境变量 SOLOFORGE_CLEAR_ALL_DATA=1。
+  //
+  //   安全删除的缓存目录:
+  //   - Code Cache / Cache / GPUCache / DawnGraphiteCache / DawnWebGPUCache: V8 字节码 / HTTP / GPU 缓存
+  //   - Service Worker / Service Worker Database / Shared Dictionary: Service Worker 缓存
+  //   - File System / blob_storage / Network: 文件系统 / blob / 网络缓存
+  //
+  //   必须保留的用户数据目录(禁止删除):
+  //   - Local Storage / Session Storage: React zustand persist 用的应用状态
   //   - IndexedDB: 大对象持久化(canvas session / chats / 历史)
   //   - WebStorage: 同 Local Storage 的另一种存储
-  //   - settings-store.json: 如果有 Electron 主进程写入的设置
+  //   - settings-store.json: Electron 主进程写入的设置
   try {
     const userDataDir = app.getPath('userData');
-    const targets = [
+    const cacheTargets = [
       'Code Cache', 'Cache', 'GPUCache', 'DawnGraphiteCache', 'DawnWebGPUCache',
-      'Local Storage', 'Session Storage', 'IndexedDB', 'WebStorage',
       'Service Worker', 'Service Worker Database', 'Shared Dictionary',
       'File System', 'blob_storage', 'Network',
+    ];
+    const dataTargets = [
+      'Local Storage', 'Session Storage', 'IndexedDB', 'WebStorage',
       'settings-store.json',
     ];
+    const targets = process.env.SOLOFORGE_CLEAR_ALL_DATA === '1'
+      ? [...cacheTargets, ...dataTargets]
+      : cacheTargets;
     let deletedCount = 0;
     for (const sub of targets) {
       const p = path.join(userDataDir, sub);
@@ -1189,15 +1200,15 @@ app.whenReady().then(() => {
           fs.rmSync(p, { recursive: true, force: true });
           deletedCount++;
         } catch (e) {
-          // 文件可能被 Chromium 持有,跳过(Electron 退出后会再清一次)
           console.warn(`[electron] 清 ${sub} 失败(可能在用):`, e?.message);
         }
       }
     }
     if (deletedCount > 0) {
-      console.log(`[electron] ✓ 已删 ${deletedCount} 个 user-data-dir 目录(Code Cache / Local Storage / IndexedDB ...)`);
+      const mode = process.env.SOLOFORGE_CLEAR_ALL_DATA === '1' ? '全部数据' : '缓存';
+      console.log(`[electron] ✓ 已删 ${deletedCount} 个 ${mode} 目录`);
     } else {
-      console.log(`[electron] user-data-dir 无缓存需清`);
+      console.log(`[electron] user-data-dir 无${process.env.SOLOFORGE_CLEAR_ALL_DATA === '1' ? '数据' : '缓存'}需清`);
     }
   } catch (e) {
     console.warn('[electron] 清 user-data-dir 失败:', e?.message);
