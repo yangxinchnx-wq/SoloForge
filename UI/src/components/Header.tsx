@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   SecondaryModelSelector,
   MainModelSelector,
@@ -162,62 +162,14 @@ export default function Header({
   // ── Logo: 闪电图标 (mask 渲染, 颜色跟随主题) ─────────────────────
   // 与画布待机闪电图标共用同一份 /lightning_logo.png, 用 mask 让颜色跟随主题
 
-  // 2026-07-04 主进程轮询模式 (根治 mousemove 事件风暴 + 卡死)
-  // 旧方案: renderer 监听 mousemove → 每帧 IPC moveWindow → 主进程 setPosition
-  //   问题: 每秒 100+ 次 IPC 往返 + setPosition 触发 resize 事件 → 整个 React 树重渲染 → 卡死 + 风扇起飞
-  //
-  // 新方案: renderer mousedown 时一次 IPC drag-start, mouseup 时一次 IPC drag-stop
-  //   主进程用 setInterval(16ms) 自己读 screen.getCursorScreenPoint() + setPosition
-  //   渲染器零事件监听, 零 IPC 往返 (拖动期间)
-  const draggingRef = useRef(false);
-
-  const onHeaderMouseDown = (e: React.MouseEvent<HTMLElement>) => {
-    const t = e.target as HTMLElement;
-    if (t.closest('button, input, select, textarea, a, [role="button"], [role="combobox"], [role="listbox"], [role="menuitem"], [data-no-drag]')) {
-      return;
-    }
-    if (t.closest('[data-window-controls]')) {
-      return;
-    }
-    // 仅响应主键 (左键)
-    if (e.button !== 0) return;
-    e.preventDefault();
-    const api = (window as any).soloforge;
-    const dragStart = api?.dragStart;
-    const dragStop = api?.dragStop;
-    if (typeof dragStart !== 'function' || typeof dragStop !== 'function') return;
-    draggingRef.current = true;
-    document.body.style.userSelect = 'none';
-    dragStart().catch(() => {});
-  };
-
-  // 全局 mouseup — 拖拽结束, 一次 IPC drag-stop
-  useEffect(() => {
-    const onUp = () => {
-      if (!draggingRef.current) return;
-      draggingRef.current = false;
-      document.body.style.userSelect = '';
-      const dragStop = (window as any).soloforge?.dragStop;
-      if (typeof dragStop === 'function') {
-        dragStop().catch(() => {});
-      }
-    };
-    // 防止鼠标拖出窗口后释放未触发: 同时监听窗口失焦
-    const onBlur = () => {
-      if (!draggingRef.current) return;
-      onUp();
-    };
-    window.addEventListener('mouseup', onUp, { passive: true });
-    window.addEventListener('blur', onBlur);
-    return () => {
-      window.removeEventListener('mouseup', onUp);
-      window.removeEventListener('blur', onBlur);
-    };
-  }, []);
+  // 2026-07-06 原生窗口拖动 (-webkit-app-region: drag)
+  // CSS 在 .soloforge-drag-header 上设置 -webkit-app-region: drag
+  // 交互元素 (button, [data-no-drag] 等) 通过 CSS no-drag 排除
+  // 原生拖动由 OS 内核处理, 零 IPC, 零 JS, 零 React 重渲染 → 完美丝滑
+  // 无需任何 JS mousedown/mouseup 监听
 
   return (
     <header
-      onMouseDown={onHeaderMouseDown}
       className="soloforge-drag-header relative h-[52px] flex items-center justify-between pl-4 pr-0 shrink-0 select-none font-sans z-[60]"
       style={{
         // ── Editorial Glass Header 底色(主题色对齐) ──────────────

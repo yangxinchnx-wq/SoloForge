@@ -258,22 +258,30 @@ a {
 }
 
 /* ==========================================================================
-   2026-07-04 窗口拖动期间性能优化
-   主进程在 drag-start 时推送 drag-state:true, drag-stop 时推送 false
-   渲染器给 <html> 加 .is-dragging class, CSS 临时禁用所有合成昂贵的属性
-   原因: transparent:true 窗口移动时, backdrop-filter / filter / box-shadow
-     都会触发 Chromium 重新采样合成, 拖动期间临时禁用可大幅降低合成开销
+   2026-07-06 原生窗口拖动 (-webkit-app-region: drag)
+   titleBarStyle:'hidden' + maximizable:false → 系统处理 WM_NCHITTEST
+   系统不返回 HTMAXBUTTON → 无 Win11 snap layout flyout
+   原生拖动由 OS 内核处理, 零 IPC, 零 JS, 零 React 重渲染 → 完美丝滑
    ========================================================================== */
-html.is-dragging *,
-html.is-dragging *::before,
-html.is-dragging *::after {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  filter: none !important;
-  animation: none !important;
-  transition: none !important;
-  will-change: auto !important;
-  contain: none !important;
+.soloforge-drag-header {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+/* 所有交互元素排除拖动 — 点击/悬停正常工作 */
+.soloforge-drag-header button,
+.soloforge-drag-header input,
+.soloforge-drag-header select,
+.soloforge-drag-header textarea,
+.soloforge-drag-header a,
+.soloforge-drag-header [role="button"],
+.soloforge-drag-header [role="combobox"],
+.soloforge-drag-header [role="listbox"],
+.soloforge-drag-header [role="menuitem"],
+.soloforge-drag-header [data-no-drag],
+.soloforge-drag-header [data-window-controls] {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
 

@@ -621,6 +621,13 @@ ipcMain.handle('window:maximize-state', (event) => {
         try { applyNoSnapFinal(mainWindow); } catch {}
       });
     }
+    // 2026-07-06: 拖拽结束后, 如果 PS Worker 已死则重启
+    if (!psWorker && process.platform === 'win32') {
+      console.log('[ps-worker] 拖拽结束, 3秒后自动重启...');
+      setTimeout(() => {
+        if (!psWorker) startPsWorker();
+      }, 3000);
+    }
   };
 
   const stopDragFallback = () => {
@@ -631,6 +638,9 @@ ipcMain.handle('window:maximize-state', (event) => {
         console.log('[drag-fallback] stopped after %d frames', dragFrameCount);
       }
       dragFrameCount = 0;
+    }
+    // 2026-07-06: 无论 dragTimer 是否存在, 只要 dragActive 就清理
+    if (dragActive) {
       cleanupDragState();
     }
   };
@@ -1131,10 +1141,12 @@ while ($true) {
       psWorkerOk = false;
       psWorkerStdinReady = true;
       // 2026-07-05: 自动重启 PS Worker (3秒后, 避免频繁重启)
-      if (!dragActive && code !== 0) {
+      // 2026-07-06: 移除 !dragActive 条件 — 即使在拖拽中崩溃也要重启
+      //   (拖拽用的是 fallback setInterval, PS Worker 重启不会干扰)
+      if (code !== 0) {
         console.log('[ps-worker] 3秒后自动重启...');
         setTimeout(() => {
-          if (!psWorker && !dragActive) {
+          if (!psWorker) {
             startPsWorker();
           }
         }, 3000);

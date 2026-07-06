@@ -625,7 +625,7 @@ export default function ModelAddTab() {
   };
 
   const createNewCustomProvider = () => {
-    const customCount = providers.filter(p => p.id.startsWith('custom_') || p.id === 'custom').length;
+    const customCount = providers.filter(p => p.id.startsWith('custom_')).length;
     const newId = `custom_${Date.now()}`;
     const newProvider: ModelProvider = {
       id: newId,
