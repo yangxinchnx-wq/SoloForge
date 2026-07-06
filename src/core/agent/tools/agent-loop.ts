@@ -33,17 +33,13 @@ export interface AgentExecutionContext {
   domain: string;
   role: string;
   systemPrompt: string;
-  skills: string[]; // 从技能库检索的经验
+  skills: string[];
   maxRounds?: number;
   model?: string;
   temperature?: number;
   maxTokens?: number;
   /**
    * 可选: 流送区事件注入点
-   *   chatId — 前端 chat id, 用于 SSE 路由
-   *   subTaskId — 前端 subTask id, 事件挂到该 subTask 的 stepHistory
-   *   emit — 推送 tool_started / tool_completed / tool_stdout / tool_stderr / tool_exit 事件
-   *          (未传时只走 logger, 向后兼容)
    */
   streamHook?: {
     chatId: string;
@@ -67,6 +63,11 @@ export interface AgentExecutionContext {
       }
     ) => void;
   };
+  /**
+   * 可选: LLM provider 覆盖 (前端传入的 apiKey + baseUrl + model)
+   * 不传时 function-calling-client 使用环境变量配置
+   */
+  llmConfig?: { baseUrl: string; apiKey: string; model: string };
 }
 
 // ─── Agent 执行结果 ─────────────────────────────────────────────────
@@ -126,6 +127,7 @@ export async function runAgentLoop(ctx: AgentExecutionContext, userTask: string)
     temperature: ctx.temperature ?? 0.2,
     maxTokens: ctx.maxTokens ?? 4096,
     maxRounds: ctx.maxRounds ?? 10,
+    llmConfig: ctx.llmConfig,
     onToolCall: async (call: ToolCallRequest) => {
       logger.info('AgentLoop', `[${ctx.agentId}] Tool: ${call.name}(${JSON.stringify(call.arguments).slice(0, 100)})`);
       const argsJson = JSON.stringify(call.arguments).slice(0, 200);

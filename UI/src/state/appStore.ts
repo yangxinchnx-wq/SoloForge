@@ -95,13 +95,11 @@ interface AppState {
 
 export const useAppStore = create<AppState>()(
   subscribeWithSelector((set) => ({
-    // ---------- 初始值（与原 App.tsx lazy initializer 一致） ----------
-    mainModel: 'GPT-4o',
-    secModels: [
-      { id: 'DeepSeek-V3', name: 'DeepSeek-V3', weight: 5 },
-      { id: 'Gemini-1.5-Pro', name: 'Gemini-1.5-Pro', weight: 5 },
-    ],
-    mixedTasks: true,
+    // ---------- 初始值 ----------
+    // mainModel 初始为空字符串，等 Header 读取 cherry_providers_v2 后自动选第一个可用模型
+    mainModel: '',
+    secModels: [],
+    mixedTasks: false,
     currentPermissionMode: 'normal',
 
     selectedFile: loadSelectedFile(),

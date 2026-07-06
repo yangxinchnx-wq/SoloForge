@@ -60,10 +60,13 @@ export interface AgentTask {
   model?: string;
   /**
    * 可选: 流送区事件注入 (与 AgentExecutionContext.streamHook 同构)
-   *   让 Agent 在调工具时把 tool_started/tool_completed 推到 eventBus
-   *   → SSE 广播 → 前端流送区 subTask.stepHistory 实时显示
    */
   streamHook?: AgentExecutionContext['streamHook'];
+  /**
+   * 可选: LLM provider 覆盖 (前端传入的 apiKey + baseUrl + model)
+   * 不传时 agent-loop 使用环境变量中的配置
+   */
+  llmConfig?: { baseUrl: string; apiKey: string; model: string };
 }
 
 // ─── Agent 任务结果 ────────────────────────────────────────────────
@@ -115,12 +118,13 @@ export class SpecializedAgent {
       domain: this.config.domain,
       role: this.config.role,
       systemPrompt: this.buildSystemPrompt(task),
-      skills: this.skillLibrary.slice(-10), // 最近 10 条经验
+      skills: this.skillLibrary.slice(-10),
       maxRounds: task.maxRounds ?? this.getDefaultMaxRounds(),
       model: task.model,
       temperature: this.getTemperature(task.strategy ?? this.config.defaultStrategy),
       maxTokens: this.getMaxTokens(task.strategy ?? this.config.defaultStrategy),
       streamHook: task.streamHook,
+      llmConfig: task.llmConfig,
     };
 
     // 执行 Agent Loop

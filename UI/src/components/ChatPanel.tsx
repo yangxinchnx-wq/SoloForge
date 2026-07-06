@@ -59,10 +59,10 @@ export default function ChatPanel({
   // 2026-07-03 阶段3.1.D: primaryColorTargets 已不再使用
   //   (原仅用于 skill-bar inline --color-primary, 已迁到 ResourceManagerBar 走 data-theme-region="skill-bar")
   selectedChatId = '1',
-  mainModel = 'GPT-4o',
+  mainModel = '',
   secModels = [],
   mixedTasks = false,
-  selectedFile = 'BlogSystem/src/App.vue',
+  selectedFile = '',
   editorContent = '',
   modelProviderMap = {}
 }: ChatPanelProps) {
@@ -281,14 +281,14 @@ export default function ChatPanel({
                     </div>
                   ) : (
                     <div className="w-11 h-11 rounded-full bg-on-surface/5 border border-on-surface/10 flex items-center justify-center shrink-0">
-                      <ModelIcon modelName={mainModel || 'GPT-4o'} size={32} className="shrink-0" />
+                      <ModelIcon modelName={mainModel || '未配置'} size={32} className="shrink-0" />
                     </div>
                   )}
 
                   {/* Info block (Username/Model + Time) */}
                   <div className={`flex items-center gap-2 ${isUser ? 'flex-row-reverse' : ''}`}>
                     <span className={`text-[11px] font-bold ${isUser ? 'text-primary/95 text-right' : 'text-[#3b82f6]'}`}>
-                      {isUser ? '你' : (mainModel || 'GPT-4o')}
+                      {isUser ? '你' : (mainModel || '未配置模型')}
                     </span>
                     <span className="text-[9px] text-on-surface/30 font-mono tracking-wide">{msg.time}</span>
                   </div>
@@ -328,14 +328,14 @@ export default function ChatPanel({
               <div className="flex gap-3.5 items-center mb-1">
                 {/* Avatar block with overlapping spinner */}
                 <div className="relative w-11 h-11 rounded-full bg-on-surface/5 border border-on-surface/10 flex items-center justify-center shrink-0">
-                  <ModelIcon modelName={mainModel || 'GPT-4o'} size={32} className="shrink-0 opacity-40 animate-pulse" />
+                  <ModelIcon modelName={mainModel || '未配置'} size={32} className="shrink-0 opacity-40 animate-pulse" />
                   <Loader2 className="absolute inset-0 w-full h-full text-primary/80 animate-spin p-2" />
                 </div>
 
                 {/* Info block (Username/Model + Loading status) */}
                 <div className="flex items-center gap-2 animate-pulse font-sans">
                   <span className="text-[11px] font-bold text-[#3b82f6]">
-                    {mainModel} 智脑中枢正在计算中...
+                    {mainModel} 正在响应中
                   </span>
                   <span className="text-[9px] text-on-surface/30 font-mono">排队分析中</span>
                 </div>

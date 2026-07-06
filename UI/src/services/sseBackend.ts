@@ -19,6 +19,7 @@
  */
 
 import type { ChatStreamEvent } from './aiBackend';
+import { useTerminalLogStore } from '../components/terminal/store/terminalLogStore';
 
 /** 关心的 phase 事件名 (跟后端 Orchestrator emit 对齐) */
 const PHASE_EVENTS = new Set([
@@ -35,6 +36,11 @@ const PHASE_EVENTS = new Set([
   // (需携带 subTaskId + chatId, 与 phase 事件同构)
   'tool_started',
   'tool_completed',
+  // execute_cmd 流式事件 (用户主动命令 / AI agent 工具调用)
+  // 由 sseBackend 直接桥接到 terminalLogStore, 不依赖 subscriber
+  'tool_stdout',
+  'tool_stderr',
+  'tool_exit',
 ]);
 
 export interface PhaseHandler {
@@ -52,6 +58,8 @@ class SseBackend {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
   private maxReconnectDelay = 30_000;
+  /** 常驻连接标记 — 终端模块用 enableKeepAlive() 开启, 即使没有 chat subscriber 也保持 SSE 连接 */
+  private keepAlive = false;
 
   // 2026-07-02 性能优化:事件批处理
   // LLM 高频流会一次推上百个 phase 事件,如果直接同步分发,每个事件触发 1 次 store set
@@ -77,7 +85,7 @@ class SseBackend {
    */
   unsubscribe(chatId: string): void {
     this.removeSubscriber(chatId);
-    if (this.subscribers.length === 0) this.disconnect();
+    // removeSubscriber 内部已处理 keepAlive 逻辑
   }
 
   /** 强制断开 (整个 App 关闭时) */
@@ -91,6 +99,18 @@ class SseBackend {
 
   private removeSubscriber(chatId: string): void {
     this.subscribers = this.subscribers.filter(s => s.chatId !== chatId);
+    // 仍有 subscriber 或被标记为常驻连接 (终端用), 不关闭
+    if (this.subscribers.length === 0 && !this.keepAlive) this.disconnect();
+  }
+
+  /**
+   * 启用常驻 SSE 连接 (即使没有 subscriber 也保持连接).
+   * 终端模块用此方法: 用户可随时主动执行命令, 需要持续监听 tool_* 事件
+   * 桥接到 terminalLogStore.
+   */
+  enableKeepAlive(): void {
+    this.keepAlive = true;
+    this.ensureConnected();
   }
 
   private ensureConnected(): void {
@@ -169,6 +189,19 @@ class SseBackend {
     const evtChatId = payload?.chatId;
     if (!evtChatId) return;
 
+    // 2.5) tool_* 流式事件直接桥接到 terminalLogStore (不依赖 subscriber)
+    //      — terminalLogStore 用 zustand 订阅, 状态变化自动触发 TerminalPanel 重渲染
+    //      — 不入 batchQueue, 因为这些事件高频且不需要 phase handler 处理
+    if (eventName === 'tool_started' || eventName === 'tool_stdout' ||
+        eventName === 'tool_stderr' || eventName === 'tool_exit' ||
+        eventName === 'tool_completed') {
+      try {
+        this.routeToolEventToTerminalStore(eventName, payload);
+      } catch (err) {
+        console.error('[sseBackend] routeToolEventToTerminalStore threw', err);
+      }
+    }
+
     // 入队 → schedule rAF
     this.batchQueue.push({ eventName, payload, timestamp });
     if (this.batchRafId === null) {
@@ -176,6 +209,41 @@ class SseBackend {
         ? requestAnimationFrame.bind(typeof window !== 'undefined' ? window : globalThis)
         : (cb: FrameRequestCallback) => setTimeout(() => cb(Date.now()), 16) as unknown as typeof requestAnimationFrame;
       this.batchRafId = raf(() => this.flushBatch());
+    }
+  }
+
+  /**
+   * 把 tool_* 事件路由到 terminalLogStore (按 chatId 隔离)
+   * 事件 payload 字段:
+   *   - tool_started:   { chatId, toolCallId, tool, args?, ts }
+   *   - tool_stdout:    { chatId, toolCallId, tool, chunk, ts }
+   *   - tool_stderr:    { chatId, toolCallId, tool, chunk, ts }
+   *   - tool_exit:      { chatId, toolCallId, tool, exitCode, durationMs?, ts }
+   *   - tool_completed: { chatId, toolCallId, success, durationMs?, ts }
+   */
+  private routeToolEventToTerminalStore(eventName: string, payload: any): void {
+    const store = useTerminalLogStore.getState();
+    const chatId = payload?.chatId;
+    const toolCallId = payload?.toolCallId;
+    if (!chatId || !toolCallId) return;
+    const tool = String(payload?.tool || 'execute_cmd');
+
+    switch (eventName) {
+      case 'tool_started':
+        store.onToolStarted(chatId, toolCallId, tool, payload.args);
+        break;
+      case 'tool_stdout':
+        store.onToolStdout(chatId, toolCallId, String(payload.chunk ?? ''), tool);
+        break;
+      case 'tool_stderr':
+        store.onToolStderr(chatId, toolCallId, String(payload.chunk ?? ''), tool);
+        break;
+      case 'tool_exit':
+        store.onToolExit(chatId, toolCallId, Number(payload.exitCode ?? 0), payload.durationMs);
+        break;
+      case 'tool_completed':
+        store.onToolCompleted(chatId, toolCallId, Boolean(payload.success), payload.durationMs);
+        break;
     }
   }
 

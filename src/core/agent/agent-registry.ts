@@ -34,6 +34,12 @@ export interface AgentSnapshot {
   totalLosses: number;
 }
 
+export interface LLMProviderConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
 export interface AgentDispatchRequest {
   packetUuid?: string;
   packetSizeKb?: number;
@@ -43,6 +49,14 @@ export interface AgentDispatchRequest {
   adaptiveContext?: SystemAdaptiveContext;
   /** 前端 chatId (用于 phase 事件路由回流送区) */
   chatId?: string;
+  /** 用户输入的原始 prompt */
+  prompt?: string;
+  /** 对话历史 */
+  history?: Array<{ sender: string; content: string }>;
+  /** 当前打开的文件上下文 */
+  activeFile?: { name: string; content: string } | null;
+  /** 前端配置的 LLM provider (apiKey + baseUrl + model) */
+  mainProvider?: LLMProviderConfig;
 }
 
 export interface AgentDispatchResult {
@@ -221,7 +235,13 @@ export class AgentRegistry {
     agentId: string,
     packetUuid: string,
     packetSizeKb: number,
-    workerIdx?: number  // B+C 升级: 让 RACER 把 workerIdx 一并传入, 精确查 binding
+    workerIdx?: number,
+    taskContext?: {
+      prompt: string;
+      history?: Array<{ sender: string; content: string }>;
+      activeFile?: { name: string; content: string } | null;
+      mainProvider?: { baseUrl: string; apiKey: string; model: string };
+    },
   ): Promise<string> {
     const agent = this.agents.get(agentId);
     if (!agent) {
@@ -231,9 +251,7 @@ export class AgentRegistry {
     m.executions += 1;
     m.version += 1;
 
-    // ===== B+C 升级: 优先走 SpecializedAgent (真实 LLM 工具调用) =====
     // 1) 查 subTaskBinding: 拿当前 worker 对应的 chatId + subTaskId
-    //   优先用传入的 workerIdx, 否则回退到查找
     let binding: { chatId: string; subTaskId: string; agentId: string } | undefined;
     if (workerIdx !== undefined) {
       binding = this.subTaskBindings.get(this.bindingKey(packetUuid, workerIdx));
@@ -244,46 +262,58 @@ export class AgentRegistry {
       }
     }
 
-    let output: string;
-    let llmExecuted = false;
+    // 2) 构造 streamHook (有 binding 就用, 没有就用 packetUuid 做占位)
+    const streamHook = binding
+      ? {
+          chatId: binding.chatId,
+          subTaskId: binding.subTaskId,
+          emit: (
+            eventName: 'tool_started' | 'tool_completed' | 'tool_stdout' | 'tool_stderr' | 'tool_exit',
+            payload: any,
+          ) => {
+            this.kernel.eventBus.emit(eventName, payload);
+          },
+        }
+      : undefined;
 
-    if (binding) {
-      // 2) 拿到绑定, 尝试走真实 LLM
-      const specialized = this.getOrCreateSpecializedAgent(agentId, agent.strategyType);
-      const taskDesc = `Execute packet ${packetUuid} (size ${packetSizeKb}KB). Provide a concise, helpful response.`;
+    // 3) 构造真实任务描述 — 用户 prompt + 历史对话 + 文件上下文
+    const prompt = taskContext?.prompt ?? '';
+    const history = taskContext?.history ?? [];
+    const activeFile = taskContext?.activeFile ?? null;
+    const mainProvider = taskContext?.mainProvider;
 
-      // 3) 构造 streamHook: emit → kernel.eventBus.emit → SSE → 流送区
-      const streamHook = {
-        chatId: binding.chatId,
-        subTaskId: binding.subTaskId,
-        emit: (
-          eventName: 'tool_started' | 'tool_completed' | 'tool_stdout' | 'tool_stderr' | 'tool_exit',
-          payload: any
-        ) => {
-          this.kernel.eventBus.emit(eventName, payload);
-        },
-      };
-
-      try {
-        const result = await specialized.executeTask({
-          taskId: packetUuid,
-          description: taskDesc,
-          streamHook,
-        });
-        output = result.answer ?? '';
-        llmExecuted = true;
-        logger.info(this.moduleName, `executeOnAgent [${agentId}] via SpecializedAgent (LLM) packet=${packetUuid}`);
-      } catch (e: any) {
-        // LLM 调用失败 (无 API key / 网络 / 超时) → 降级到模拟
-        logger.warn(this.moduleName, `SpecializedAgent failed for [${agentId}], fallback to simulated: ${e?.message ?? e}`);
-        output = await agent.executeNetworkPacketTask(packetUuid, packetSizeKb);
-      }
-    } else {
-      // 3) 没绑定 (前端未流送区 / 测试) → 走原模拟逻辑
-      output = await agent.executeNetworkPacketTask(packetUuid, packetSizeKb);
+    let taskDesc = prompt;
+    if (history.length > 0) {
+      const historyText = history
+        .slice(-10) // 最近 10 条
+        .map(h => `[${h.sender}]: ${h.content}`)
+        .join('\n');
+      taskDesc = `## 对话历史\n${historyText}\n\n## 当前问题\n${prompt}`;
+    }
+    if (activeFile) {
+      taskDesc += `\n\n## 当前文件: ${activeFile.name}\n\`\`\`\n${activeFile.content.slice(0, 4000)}\n\`\`\``;
     }
 
-    // 更新多维度声誉: 任务成功 → 可靠性 +0.01, 能力 +0.005
+    // 4) 始终走真实 LLM (SpecializedAgent)
+    const specialized = this.getOrCreateSpecializedAgent(agentId, agent.strategyType);
+
+    let output: string;
+    try {
+      const result = await specialized.executeTask({
+        taskId: packetUuid,
+        description: taskDesc,
+        streamHook,
+        llmConfig: mainProvider,
+      });
+      output = result.answer ?? '';
+      logger.info(this.moduleName, `executeOnAgent [${agentId}] via LLM packet=${packetUuid} tools=${result.toolCallCount}`);
+    } catch (e: any) {
+      // LLM 调用失败 — 抛出错误, 不再降级到模拟
+      logger.error(this.moduleName, `executeOnAgent [${agentId}] LLM failed: ${e?.message ?? e}`);
+      throw new Error(`LLM_EXECUTION_FAILED [${agentId}]: ${e?.message ?? e}`);
+    }
+
+    // 更新多维度声誉
     this.reputationEngine.updateFromDirectInteraction(agentId, 'reliability', 0.01, m.version);
     this.reputationEngine.updateFromDirectInteraction(agentId, 'competence', 0.005, m.version);
 
@@ -291,8 +321,8 @@ export class AgentRegistry {
       agentId,
       packetUuid,
       packetSizeKb,
-      llmExecuted,
-      durationSimulatedMs: llmExecuted ? 0 : (packetSizeKb > 100 ? 80 : 15),
+      llmExecuted: true,
+      durationSimulatedMs: 0,
       timestamp: Date.now(),
     });
     return output;

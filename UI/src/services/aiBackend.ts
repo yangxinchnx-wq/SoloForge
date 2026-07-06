@@ -29,6 +29,8 @@ export interface ChatRequest {
   secModels?: any[];
   mixedTasks?: boolean;
   activeSettings?: any;
+  /** 前端配置的 LLM provider (apiKey + baseUrl + model), 传递给后端 */
+  mainProvider?: { baseUrl: string; apiKey: string; model: string };
   // 多模型场景下透传到 phaseMappers
   [k: string]: any;
 }
@@ -71,8 +73,13 @@ async function startChatViaFetch(req: ChatRequest, onEvent: (e: ChatStreamEvent)
         body: JSON.stringify({
           agentId: 'agent-001',
           taskType: 'execute',
-          payload: { prompt: req.prompt, history: req.history, activeFile: req.activeFile },
+          payload: { 
+            prompt: req.prompt, 
+            history: req.history, 
+            activeFile: req.activeFile ?? req.fileContext ?? null,
+          },
           chatId,
+          mainProvider: req.mainProvider ?? null,
         }),
         signal,
       });
@@ -83,10 +90,14 @@ async function startChatViaFetch(req: ChatRequest, onEvent: (e: ChatStreamEvent)
         return;
       }
 
-      // 3) Orchestrator 终态返回, emit done
+      // 3) Orchestrator 终态返回, emit text + done
       //    (中间 phase 由 sseBackend 通过 EventSource 推过来)
       const result = await res.json().catch(() => null);
       if (!signal.aborted) {
+        // 后端返回的 output 就是 LLM 的最终回答文本
+        if (result?.output) {
+          onEvent({ kind: 'text', text: result.output, taskId });
+        }
         onEvent({ kind: 'done', taskId });
       }
     } catch (err: any) {
@@ -145,12 +156,21 @@ async function startChatViaIpc(req: ChatRequest, onEvent: (e: ChatStreamEvent) =
       const resp = await sf.dispatchAgent({
         agentId: 'agent-001',
         taskType: 'execute',
-        payload: { prompt: req.prompt, history: req.history, activeFile: req.activeFile },
+        payload: { 
+          prompt: req.prompt, 
+          history: req.history, 
+          activeFile: req.activeFile ?? req.fileContext ?? null,
+        },
         chatId,
+        mainProvider: req.mainProvider ?? null,
       });
       if (!resp?.ok) {
         onEvent({ kind: 'error', error: `IPC dispatch failed: HTTP ${resp?.status} ${resp?.error ?? ''}`, taskId });
         return;
+      }
+      // IPC 返回的 body 中包含 output (LLM 回答)
+      if (resp?.body?.output) {
+        onEvent({ kind: 'text', text: resp.body.output, taskId });
       }
       onEvent({ kind: 'done', taskId });
     } catch (err: any) {

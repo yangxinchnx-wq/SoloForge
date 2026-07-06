@@ -48,7 +48,8 @@ export default function Header({
   }, [sidebarWidth, mixedTasks]);
 
   // ── Providers 持久化读取(主模型可用列表 + 副模型候选) ──────────────
-  const getDynamicModels = () => {
+  // 只显示在「设置 → 云端模型」中测试通过 (status === 'success') 且启用的模型
+  const getDynamicModels = (): string[] => {
     try {
       const saved = localStorage.getItem('cherry_providers_v2');
       if (saved) {
@@ -56,7 +57,7 @@ export default function Header({
         if (Array.isArray(parsed)) {
           const enabledList: string[] = [];
           parsed.forEach((prov: any) => {
-            if (prov.enabled && prov.status === 'success') {
+            if (prov.enabled && prov.status === 'success' && prov.apiKey) {
               if (Array.isArray(prov.models)) {
                 prov.models.forEach((m: any) => {
                   if (m.enabled) enabledList.push(m.id);
@@ -70,16 +71,16 @@ export default function Header({
               }
             }
           });
-          if (enabledList.length > 0) return enabledList;
+          return enabledList;
         }
       }
     } catch (e) {
       console.error('Error loading dynamic models for header', e);
     }
-    return ['GPT-4o', 'GPT-4-turbo', 'Claude-3.5-Sonnet', 'Gemini-1.5-Pro', 'DeepSeek-R1'];
+    return [];
   };
 
-  const getDynamicSecondarySubmodels = () => {
+  const getDynamicSecondarySubmodels = (): string[] => {
     try {
       const saved = localStorage.getItem('cherry_providers_v2');
       if (saved) {
@@ -87,22 +88,21 @@ export default function Header({
         if (Array.isArray(parsed)) {
           const allList: string[] = [];
           parsed.forEach((prov: any) => {
-            if (prov.enabled) {
-              if (Array.isArray(prov.models)) prov.models.forEach((m: any) => allList.push(m.id));
-              if (Array.isArray(prov.customModels)) prov.customModels.forEach((cm: any) => allList.push(cm));
+            if (prov.enabled && prov.apiKey) {
+              if (Array.isArray(prov.models)) prov.models.forEach((m: any) => { if (m.enabled) allList.push(m.id); });
+              if (Array.isArray(prov.customModels)) prov.customModels.forEach((cm: any) => {
+                if (typeof cm === 'string') allList.push(cm);
+                else if (cm && cm.id && cm.enabled !== false) allList.push(cm.id);
+              });
             }
           });
-          if (allList.length > 0) return allList;
+          return allList;
         }
       }
     } catch (e) {
       console.error('Error loading secondary models list', e);
     }
-    return [
-      'DeepSeek-V3', 'Gemini-1.5-Pro', 'Llama-3.1-70B', 'Claude-3-Haiku',
-      'Llama-3.2 (本地)', 'Qwen-2.5-7B (本地)', 'DeepSeek-R1-Distill (本地)',
-      'Mistral-7B (本地)', 'GPT-4o', 'Claude-3.5-Sonnet',
-    ];
+    return [];
   };
 
   const [availableModels, setAvailableModels] = useState<string[]>(() => getDynamicModels());
@@ -110,8 +110,13 @@ export default function Header({
 
   useEffect(() => {
     const refreshLists = () => {
-      setAvailableModels(getDynamicModels());
+      const models = getDynamicModels();
+      setAvailableModels(models);
       setAllAvailableModelsList(getDynamicSecondarySubmodels());
+      // 自动选中第一个可用模型 (当 mainModel 为空或不在可用列表中时)
+      if (models.length > 0 && !models.includes(mainModel)) {
+        setMainModel(models[0]);
+      }
     };
     refreshLists();
     window.addEventListener('storage', refreshLists);
@@ -120,7 +125,7 @@ export default function Header({
       window.removeEventListener('storage', refreshLists);
       window.removeEventListener('providers_updated', refreshLists);
     };
-  }, []);
+  }, [mainModel, setMainModel]);
 
   // ── 副模型集合的增删改 ──────────────────────────────────────────────
   const addSecModel = useCallback((m: string) => {
@@ -154,14 +159,8 @@ export default function Header({
     setSecModels(updated);
   }, [secModels, setSecModels]);
 
-  // ── Logo 多回退 ─────────────────────────────────────────────────────
-  const [logoSrc, setLogoSrc] = useState('/logo.png');
-  const [logoError, setLogoError] = useState(false);
-  const handleLogoError = () => {
-    if (logoSrc === '/logo.png') setLogoSrc('logo.png');
-    else if (logoSrc === 'logo.png') setLogoSrc('/src/assets/logo.png');
-    else setLogoError(true);
-  };
+  // ── Logo: 闪电图标 (mask 渲染, 颜色跟随主题) ─────────────────────
+  // 与画布待机闪电图标共用同一份 /lightning_logo.png, 用 mask 让颜色跟随主题
 
   // 2026-07-04 主进程轮询模式 (根治 mousemove 事件风暴 + 卡死)
   // 旧方案: renderer 监听 mousemove → 每帧 IPC moveWindow → 主进程 setPosition
@@ -231,79 +230,63 @@ export default function Header({
         color: 'var(--color-on-surface)',
       }}
     >
-      {/* ─── 左: Logo + 品牌名(Editorial Glass · 字面 + 字符记号) ───── */}
+      {/* ─── 左: Logo + 品牌名(Editorial Glass · 闪电图标 + 字面) ───── */}
       <div className="flex items-center gap-3 shrink-0 z-10 min-w-0">
         <div className="flex items-center gap-2.5 select-none">
-          {!logoError && (
-            <img
-              src={logoSrc}
-              alt="SoloForge"
-              className="h-[26px] w-auto shrink-0 object-contain block"
-              onError={handleLogoError}
-              referrerPolicy="no-referrer"
+          {/* 圆角方框 + 内嵌闪电图标 (mask 渲染, 颜色跟随主题) */}
+          <div
+            className="flex items-center justify-center shrink-0"
+            style={{
+              width: 30,
+              height: 30,
+              borderRadius: 9,
+              background: `linear-gradient(135deg, ${rgba('--color-primary-rgb', 0.20)} 0%, ${rgba('--color-primary-rgb', 0.06)} 100%)`,
+              border: `1px solid ${rgba('--color-primary-rgb', 0.45)}`,
+              boxShadow: `${isDark ? '0 2px 8px rgba(0,0,0,0.30)' : '0 2px 6px rgba(0,0,0,0.06)'}, inset 0 1px 0 ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.50)'}`,
+            }}
+          >
+            <div
+              style={{
+                width: 22,
+                height: 22,
+                backgroundColor: 'var(--color-primary)',
+                maskImage: 'url(/lightning_logo.png)',
+                maskSize: 'contain',
+                maskPosition: 'center',
+                maskRepeat: 'no-repeat',
+                WebkitMaskImage: 'url(/lightning_logo.png)',
+                WebkitMaskSize: 'contain',
+                WebkitMaskPosition: 'center',
+                WebkitMaskRepeat: 'no-repeat',
+                filter: `drop-shadow(0 0 8px ${rgba('--color-primary-rgb', 0.55)})`,
+              }}
             />
-          )}
-
-          {(logoSrc === '/src/assets/logo.png' || logoError) && (
-            <>
-              {/* Editorial 字符记号: S/F 字母配金条, 字距紧 + 微微光晕 */}
-              <div
-                className="flex items-center justify-center shrink-0"
-                style={{
-                  width: 30,
-                  height: 30,
-                  borderRadius: 9,
-                  background: `linear-gradient(135deg, ${rgba('--color-primary-rgb', 0.20)} 0%, ${rgba('--color-primary-rgb', 0.06)} 100%)`,
-                  border: `1px solid ${rgba('--color-primary-rgb', 0.45)}`,
-                  boxShadow: `${isDark ? '0 2px 8px rgba(0,0,0,0.30)' : '0 2px 6px rgba(0,0,0,0.06)'}, inset 0 1px 0 ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.50)'}`,
-                  fontFamily: 'var(--font-display)',
-                  fontWeight: 800,
-                  fontSize: 13,
-                  letterSpacing: '-0.04em',
-                  color: 'var(--color-primary)',
-                  textShadow: `0 0 12px ${rgba('--color-primary-rgb', 0.45)}`,
-                }}
-              >
-                SF
-              </div>
-              <div className="flex items-baseline gap-[3px]">
-                <span
-                  style={{
-                    fontFamily: 'var(--font-display)',
-                    fontWeight: 700,
-                    fontSize: 15,
-                    letterSpacing: '-0.02em',
-                    color: 'var(--color-on-surface)',
-                  }}
-                >
-                  Solo
-                </span>
-                <span
-                  style={{
-                    fontFamily: 'var(--font-display)',
-                    fontWeight: 900,
-                    fontSize: 15,
-                    letterSpacing: '-0.02em',
-                    color: 'var(--color-primary)',
-                    textShadow: `0 0 14px ${rgba('--color-primary-rgb', 0.35)}`,
-                  }}
-                >
-                  Forge
-                </span>
-                <span
-                  className="ml-1 px-1.5 py-0.5 text-[8px] font-mono font-bold tracking-widest uppercase rounded"
-                  style={{
-                    color: rgba('--color-primary-rgb', 0.85),
-                  background: rgba('--color-primary-rgb', 0.08),
-                  border: `1px solid ${rgba('--color-primary-rgb', 0.25)}`,
-                    letterSpacing: '0.12em',
-                  }}
-                >
-                  IDE
-                </span>
-              </div>
-            </>
-          )}
+          </div>
+          <div className="flex items-baseline gap-[3px]">
+            <span
+              style={{
+                fontFamily: 'var(--font-display)',
+                fontWeight: 700,
+                fontSize: 15,
+                letterSpacing: '-0.02em',
+                color: 'var(--color-on-surface)',
+              }}
+            >
+              Solo
+            </span>
+            <span
+              style={{
+                fontFamily: 'var(--font-display)',
+                fontWeight: 900,
+                fontSize: 15,
+                letterSpacing: '-0.02em',
+                color: 'var(--color-primary)',
+                textShadow: `0 0 14px ${rgba('--color-primary-rgb', 0.35)}`,
+              }}
+            >
+              Forge
+            </span>
+          </div>
         </div>
       </div>
 

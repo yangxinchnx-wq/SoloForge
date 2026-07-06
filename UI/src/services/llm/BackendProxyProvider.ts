@@ -55,15 +55,17 @@ export class BackendProxyProvider implements LLMProvider {
     const url = `${this.config.apiBase}/api/llm/stream`;
     const model = req.model ?? this.config.defaultModel;
 
-    const messages = [
-      ...(req.systemPrompt ? [{ role: 'system' as const, content: req.systemPrompt }] : []),
-      ...(req.history ?? []),
-      { role: 'user' as const, content: req.userGoal },
-    ];
+    // 后端 llmProxyHandler.parseRequestBody() 要求的字段格式:
+    //   { userGoal (必填), systemPrompt?, history?, model?, temperature?, maxTokens?, jsonMode? }
+    // 而非 OpenAI 风格的 { messages: [...] }
+    // history 元素格式: { role: 'system'|'user'|'assistant', content: string }
+    const history = req.history ?? [];
 
     const body = {
+      systemPrompt: req.systemPrompt,
+      userGoal: req.userGoal,
+      history,
       model,
-      messages,
       temperature: req.temperature ?? 0.7,
       maxTokens: req.maxTokens ?? 4096,
       jsonMode: req.jsonMode === true,

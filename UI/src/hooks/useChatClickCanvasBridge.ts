@@ -82,10 +82,13 @@ export function useChatClickCanvasBridge(
   const [canvasId, setCanvasId] = useState<string | null>(null);
   const [canvases, setCanvases] = useState<CanvasResource[]>([]);
   const [maxCanvases, setMaxCanvases] = useState<number>(10);
-  const [ready, setReady] = useState(false);
+  const [ready, setReady] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const lastResolvedFor = useRef<string | null>(null);
   const aliveRef = useRef(true);
+  // 用 ref 跟踪 canvasId, 避免 resolve 闭包捕获过期的 state 值
+  const canvasIdRef = useRef<string | null>(null);
+  useEffect(() => { canvasIdRef.current = canvasId; }, [canvasId]);
 
   useEffect(() => {
     aliveRef.current = true;
@@ -101,11 +104,11 @@ export function useChatClickCanvasBridge(
       setReady(true);
       return null;
     }
-    if (lastResolvedFor.current === id && canvasId) {
+    if (lastResolvedFor.current === id && canvasIdRef.current) {
       // 同一个 chatId 已 resolve 过, 跳过重复请求
-      return canvasId;
+      return canvasIdRef.current;
     }
-    setReady(false);
+    // 不设 ready=false — 保持待机状态可见, 避免新建对话时画布闪烁
     setError(null);
 
     let resp = INFLIGHT.get(id);
@@ -152,6 +155,10 @@ export function useChatClickCanvasBridge(
       setReady(true);
       return;
     }
+    // chatId 变化时, 立即进入待机状态 (canvasId=null, ready=true)
+    // 避免经过 ready=false 的加载态导致画布闪烁
+    setCanvasId(null);
+    setReady(true);
     void resolve(chatId || '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId, enabled, allowCreate]);

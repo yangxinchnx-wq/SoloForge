@@ -289,22 +289,24 @@ export interface ToolCallRequest {
  * - eventName='tool_stdout' / 'tool_stderr' / 'tool_exit'
  * - payload.toolCallId 与 ToolCallRequest.id 对齐, 前端按此路由到对应终端页签
  */
+export type ToolStreamEmit = (
+  eventName: 'tool_stdout' | 'tool_stderr' | 'tool_exit',
+  payload: {
+    chatId: string;
+    subTaskId: string;
+    toolCallId: string;
+    tool: string;
+    chunk?: string;
+    exitCode?: number;
+    durationMs?: number;
+    ts: number;
+  },
+) => void;
+
 export interface ToolStreamHook {
   chatId: string;
   subTaskId: string;
-  emit: (
-    eventName: 'tool_stdout' | 'tool_stderr' | 'tool_exit',
-    payload: {
-      chatId: string;
-      subTaskId: string;
-      toolCallId: string;
-      tool: string;
-      chunk?: string;
-      exitCode?: number;
-      durationMs?: number;
-      ts: number;
-    }
-  ): void;
+  emit: ToolStreamEmit;
 }
 
 export interface ToolCallResult {

@@ -1,12 +1,16 @@
 /**
- * UserBadgeSelector — 顶部栏用户胶囊(头像 + 名字 + 在线点)
+ * UserBadgeSelector — 顶部栏用户胶囊(头像 + 名字)
  *
  * 设计:
  *   - 整个胶囊是一个 div 容器(不是 button), 避免与 header 的 onHeaderMouseDown 冲突
  *   - 头像区/名字区是两个 div(也不是 button), 各自 onClick 弹出/关闭对应下拉
  *   - 下拉面板内的选项才是 button, 点击后切换并关闭
  *   - 滚轮: 在头像区/名字区上滚动可无感切换(不开下拉)
+ *   - 双击名称: 进入自定义编辑模式, 输入文字回车保存到 names.txt [CUSTOM] 槽位
  *   - 选择持久化到 localStorage
+ *
+ * 名称优先级: customName (双击自定义) > localStorage.savedName > '问剑白玉京' > list[0]
+ * names.txt 格式: "原名称1 原名称2 ... [CUSTOM] 自定义名称"
  */
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
@@ -23,6 +27,7 @@ const AVATARS = [
 
 const STORAGE_AVATAR = 'soloforge_user_avatar_idx';
 const STORAGE_NAME = 'soloforge_user_name';
+const DEFAULT_NAME = '问剑白玉京';
 
 const panelVariants = {
   hidden: {
@@ -56,24 +61,40 @@ const itemVariants = {
 type OpenMenu = 'avatar' | 'name' | null;
 
 function UserBadgeSelectorImpl() {
-  const { glass, isDark, rgba, statusDotBorder } = useThemedSurface();
+  const { glass, isDark, rgba } = useThemedSurface();
   const [names, setNames] = useState<string[]>([]);
+  const [customName, setCustomName] = useState<string>('');
   const [avatarIdx, setAvatarIdx] = useState(0);
   const [name, setName] = useState('');
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState('');
   const rootRef = useRef<HTMLDivElement | null>(null);
   const lastWheelRef = useRef(0);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const editValueRef = useRef('');
+  const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── 加载名字列表 ──────────────────────────────────────
+  // ── 加载名字列表 + 自定义名称 ──────────────────────────
   useEffect(() => {
     fetch(encodeURI('/名字/names.txt'))
       .then((r) => r.text())
       .then((text) => {
-        const list = text.trim().split(/\s+/).filter(Boolean);
+        // 按 [CUSTOM] 分割: 前部是原列表, 后部是自定义名称槽位
+        const [origPart, customPart] = text.split(/\[CUSTOM\]/);
+        const list = (origPart || '').trim().split(/\s+/).filter(Boolean);
+        const custom = (customPart || '').trim();
         setNames(list);
+        if (custom) setCustomName(custom);
+
+        // 默认名称优先级: customName > localStorage.savedName > DEFAULT_NAME > list[0]
         const saved = localStorage.getItem(STORAGE_NAME);
-        if (saved && list.includes(saved)) {
+        if (custom) {
+          setName(custom);
+        } else if (saved && list.includes(saved)) {
           setName(saved);
+        } else if (list.includes(DEFAULT_NAME)) {
+          setName(DEFAULT_NAME);
         } else if (list.length > 0) {
           setName(list[0]);
         }
@@ -90,6 +111,14 @@ function UserBadgeSelectorImpl() {
     }
   }, []);
 
+  // ── 编辑模式: 自动聚焦 input ──────────────────────────
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isEditing]);
+
   // ── 滚轮切换(无感, 不开下拉) ────────────────────────
   const cycleAvatar = useCallback((dir: 1 | -1) => {
     setAvatarIdx((prev) => {
@@ -99,6 +128,17 @@ function UserBadgeSelectorImpl() {
     });
   }, []);
 
+  // 清除 [CUSTOM] 槽位 (用户选择列表名称 / 滚轮切换时调用)
+  const clearCustomSlot = useCallback(() => {
+    if (!customName) return;
+    setCustomName('');
+    fetch('/api/names/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customName: '' }),
+    }).catch((err) => console.error('[UserBadgeSelector] 清除自定义名称失败', err));
+  }, [customName]);
+
   const cycleName = useCallback((dir: 1 | -1) => {
     setName((prev) => {
       if (names.length === 0) return prev;
@@ -107,7 +147,8 @@ function UserBadgeSelectorImpl() {
       localStorage.setItem(STORAGE_NAME, next);
       return next;
     });
-  }, [names]);
+    clearCustomSlot();
+  }, [names, clearCustomSlot]);
 
   const onAvatarWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
@@ -130,16 +171,25 @@ function UserBadgeSelectorImpl() {
   // ── Esc + 外部点击关闭 ────────────────────────────────
   const close = useCallback(() => setOpenMenu(null), []);
   useEffect(() => {
-    if (!openMenu) return;
+    if (!openMenu && !isEditing) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        close();
+        if (isEditing) {
+          editValueRef.current = '';
+          setIsEditing(false);
+        } else {
+          close();
+        }
       }
     };
     const onDown = (e: MouseEvent) => {
       if (!rootRef.current) return;
       if (rootRef.current.contains(e.target as Node)) return;
+      if (isEditing) {
+        // 外部点击触发保存 (blur 也会触发, 但这里兜底)
+        return;
+      }
       close();
     };
     document.addEventListener('keydown', onKey);
@@ -148,7 +198,7 @@ function UserBadgeSelectorImpl() {
       document.removeEventListener('keydown', onKey);
       document.removeEventListener('mousedown', onDown);
     };
-  }, [openMenu, close]);
+  }, [openMenu, isEditing, close]);
 
   // ── 选择 & 切换 ───────────────────────────────────────
   const selectAvatar = useCallback((idx: number) => {
@@ -160,8 +210,9 @@ function UserBadgeSelectorImpl() {
   const selectName = useCallback((n: string) => {
     setName(n);
     localStorage.setItem(STORAGE_NAME, n);
+    clearCustomSlot();
     setOpenMenu(null);
-  }, []);
+  }, [clearCustomSlot]);
 
   const toggleAvatar = useCallback(
     () => setOpenMenu((o) => (o === 'avatar' ? null : 'avatar')),
@@ -171,6 +222,75 @@ function UserBadgeSelectorImpl() {
     () => setOpenMenu((o) => (o === 'name' ? null : 'name')),
     [],
   );
+
+  // ── 双击自定义编辑 ───────────────────────────────────
+  const startEditing = useCallback(() => {
+    setEditValue(name);
+    editValueRef.current = name;
+    setIsEditing(true);
+    setOpenMenu(null);
+  }, [name]);
+
+  const saveEdit = useCallback(async () => {
+    const trimmed = editValueRef.current.trim();
+    if (!trimmed || trimmed === name) {
+      setIsEditing(false);
+      return;
+    }
+    try {
+      const res = await fetch('/api/names/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customName: trimmed }),
+      });
+      if (res.ok) {
+        setCustomName(trimmed);
+        setName(trimmed);
+      } else {
+        console.error('[UserBadgeSelector] 保存自定义名称失败', res.status);
+      }
+    } catch (err) {
+      console.error('[UserBadgeSelector] 保存自定义名称失败', err);
+    }
+    setIsEditing(false);
+  }, [name]);
+
+  const handleEditKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      e.stopPropagation();
+      saveEdit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      editValueRef.current = '';
+      setIsEditing(false);
+    }
+  }, [saveEdit]);
+
+  const handleEditChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setEditValue(e.target.value);
+    editValueRef.current = e.target.value;
+  }, []);
+
+  // ── 单击/双击区分 (200ms 延迟检测) ────────────────────
+  const handleNameClick = useCallback(() => {
+    if (clickTimerRef.current) return;
+    clickTimerRef.current = setTimeout(() => {
+      clickTimerRef.current = null;
+      toggleName();
+    }, 200);
+  }, [toggleName]);
+
+  const handleNameDoubleClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+    }
+    startEditing();
+  }, [startEditing]);
 
   // ── 样式 ──────────────────────────────────────────────
   const capsuleStyle: React.CSSProperties = {
@@ -222,46 +342,62 @@ function UserBadgeSelectorImpl() {
           }}
           draggable={false}
         />
-        {/* 在线状态点 */}
-        <span
-          className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full pointer-events-none"
-          style={{
-            background: '#22c55e',
-            border: `2px solid ${statusDotBorder}`,
-            boxShadow: '0 0 0 1px rgba(34,197,94,0.35)',
-          }}
-        />
       </div>
 
-      {/* ── 名字容器(点击弹出下拉 · 滚轮切换) ─────────── */}
+      {/* ── 名字容器(点击弹出下拉 · 滚轮切换 · 双击自定义) ─────────── */}
       <div
         role="button"
         tabIndex={0}
         aria-haspopup="listbox"
         aria-expanded={openMenu === 'name'}
-        aria-label="选择名字(滚轮可切换)"
-        title="点击选择 · 滚轮切换"
-        onClick={toggleName}
+        aria-label="选择名字(滚轮可切换, 双击自定义)"
+        title="点击选择 · 滚轮切换 · 双击自定义"
+        onClick={handleNameClick}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleName(); } }}
         onWheel={onNameWheel}
+        onDoubleClick={handleNameDoubleClick}
         className="relative z-50 flex flex-col items-start leading-none cursor-pointer rounded-lg"
       >
         <div className="flex items-center gap-1">
-          <span
-            className="inline-block pointer-events-none"
-            style={{
-              fontSize: 14,
-              fontWeight: 700,
-              color: 'var(--color-on-surface)',
-              letterSpacing: '-0.005em',
-              maxWidth: 120,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {name || '—'}
-          </span>
+          {isEditing ? (
+            <input
+              ref={inputRef}
+              type="text"
+              value={editValue}
+              onChange={handleEditChange}
+              onKeyDown={handleEditKeyDown}
+              onBlur={saveEdit}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              onWheel={(e) => e.stopPropagation()}
+              className="bg-transparent outline-none border-b"
+              style={{
+                fontSize: 14,
+                fontWeight: 700,
+                color: 'var(--color-on-surface)',
+                letterSpacing: '-0.005em',
+                maxWidth: 160,
+                borderColor: 'var(--color-primary)',
+                background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+              }}
+            />
+          ) : (
+            <span
+              className="inline-block pointer-events-none"
+              style={{
+                fontSize: 14,
+                fontWeight: 700,
+                color: customName ? 'var(--color-primary)' : 'var(--color-on-surface)',
+                letterSpacing: '-0.005em',
+                maxWidth: 120,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {name || '—'}
+            </span>
+          )}
           <motion.span
             aria-hidden="true"
             initial={false}
@@ -272,19 +408,6 @@ function UserBadgeSelectorImpl() {
             <ChevronDown className="w-3 h-3 text-on-surface/40" />
           </motion.span>
         </div>
-        <span
-          className="font-mono pointer-events-none"
-          style={{
-            fontSize: 9,
-            fontWeight: 600,
-            letterSpacing: '0.10em',
-            textTransform: 'uppercase',
-            color: '#22c55e',
-            marginTop: 3,
-          }}
-        >
-          online
-        </span>
       </div>
 
       {/* ── 头像下拉框 ──────────────────────────────── */}

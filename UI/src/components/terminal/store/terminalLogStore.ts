@@ -45,6 +45,8 @@ export interface TerminalInstance {
 interface ChatTerminalState {
   instances: TerminalInstance[];
   activeInstanceId: string | null;
+  /** 自增计数器, 用于实例序号命名 (1, 2, 3...) — 不随删除回退 */
+  instanceCounter: number;
 }
 
 interface TerminalLogState {
@@ -71,11 +73,10 @@ interface TerminalLogState {
   setAutoScroll: (chatId: string, instanceId: string, val: boolean) => void;
 
   /**
-   * 确保该 chat 有一个默认实例 (id='default').
-   * 若已有非 default 实例, 不再创建 (说明 AI 已经在跑命令了).
-   * 若 default 实例已存在, 只更新 name (workdir 变化时同步).
+   * 用户主动输入命令时创建实例 — 序号命名 (1, 2, 3...)
+   * 与 AI 触发的 onToolStarted 区分, 但都使用同一套序号计数器
    */
-  ensureDefaultInstance: (chatId: string, workdir: string) => void;
+  createUserInstance: (chatId: string, toolCallId: string, command: string) => void;
 
   /** 切走/清空 chat 时释放内存 */
   removeChat: (chatId: string) => void;
@@ -96,7 +97,7 @@ function defaultInstanceName(tool: string, toolCallId: string): string {
 
 function ensureChat(state: TerminalLogState, chatId: string): ChatTerminalState {
   if (!state.chats[chatId]) {
-    return { instances: [], activeInstanceId: null };
+    return { instances: [], activeInstanceId: null, instanceCounter: 0 };
   }
   return state.chats[chatId];
 }
@@ -113,9 +114,10 @@ export const useTerminalLogStore = create<TerminalLogState>((set, get) => ({
         // 同一 toolCallId 收到两次 tool_started, 不重复创建
         return state;
       }
+      const seq = chat.instanceCounter + 1;
       const inst: TerminalInstance = {
         id: toolCallId,
-        name: defaultInstanceName(tool, toolCallId),
+        name: String(seq),
         tool,
         logItems: args
           ? [{ time: nowTime(), type: 'system', msg: `$ ${args.slice(0, 200)}` }]
@@ -131,7 +133,9 @@ export const useTerminalLogStore = create<TerminalLogState>((set, get) => ({
           ...state.chats,
           [chatId]: {
             instances: [...chat.instances, inst],
-            activeInstanceId: chat.activeInstanceId ?? toolCallId,
+            instanceCounter: seq,
+            // 用户/AI 新发起命令时自动切到该 instance
+            activeInstanceId: toolCallId,
           },
         },
       };
@@ -145,9 +149,10 @@ export const useTerminalLogStore = create<TerminalLogState>((set, get) => ({
       const inst = chat.instances.find((i) => i.id === toolCallId);
       if (!inst) {
         // 收到 stdout 但 instance 不存在 (tool_started 丢失), 自动创建
+        const seq = chat.instanceCounter + 1;
         const newInst: TerminalInstance = {
           id: toolCallId,
-          name: defaultInstanceName(tool, toolCallId),
+          name: String(seq),
           tool,
           logItems: [{ time: nowTime(), type: 'info', msg: chunk }],
           progress: 0,
@@ -161,7 +166,8 @@ export const useTerminalLogStore = create<TerminalLogState>((set, get) => ({
             ...state.chats,
             [chatId]: {
               instances: [...chat.instances, newInst],
-              activeInstanceId: chat.activeInstanceId ?? toolCallId,
+              instanceCounter: seq,
+              activeInstanceId: toolCallId,
             },
           },
         };
@@ -190,9 +196,10 @@ export const useTerminalLogStore = create<TerminalLogState>((set, get) => ({
       const isErr = /\b(error|fatal|failed|exception)\b/i.test(chunk);
       const inst = chat.instances.find((i) => i.id === toolCallId);
       if (!inst) {
+        const seq = chat.instanceCounter + 1;
         const newInst: TerminalInstance = {
           id: toolCallId,
-          name: defaultInstanceName(tool, toolCallId),
+          name: String(seq),
           tool,
           logItems: [{ time: nowTime(), type: isErr ? 'error' : 'warn', msg: chunk }],
           progress: 0,
@@ -206,6 +213,7 @@ export const useTerminalLogStore = create<TerminalLogState>((set, get) => ({
             ...state.chats,
             [chatId]: {
               instances: [...chat.instances, newInst],
+              instanceCounter: seq,
               activeInstanceId: chat.activeInstanceId ?? toolCallId,
             },
           },
@@ -289,40 +297,23 @@ export const useTerminalLogStore = create<TerminalLogState>((set, get) => ({
 
   // ─────────── 本地 UI 操作 ────────────────────────────
 
-  ensureDefaultInstance: (chatId, workdir) => {
+  /**
+   * 用户主动输入命令时创建实例.
+   * 与 AI 触发的 onToolStarted 共用 instanceCounter, 保证序号唯一递增.
+   */
+  createUserInstance: (chatId, toolCallId, command) => {
     set((state) => {
-      const chat = state.chats[chatId] ?? { instances: [], activeInstanceId: null };
-
-      // 已有 default 实例 → 只更新 name (workdir 变了)
-      const existing = chat.instances.find((i) => i.id === 'default');
-      if (existing) {
-        // 若用户手动重命名过, 不覆盖
-        if (existing.renamed) return state;
-        return {
-          chats: {
-            ...state.chats,
-            [chatId]: {
-              ...chat,
-              instances: chat.instances.map((i) =>
-                i.id === 'default' ? { ...i, name: workdir } : i
-              ),
-            },
-          },
-        };
-      }
-
-      // 没有 default 实例, 但已有 AI 创建的实例 → 不创建 (AI 已在跑)
-      if (chat.instances.length > 0) return state;
-
-      // 创建默认实例
+      const chat = ensureChat(state, chatId);
+      if (chat.instances.some((i) => i.id === toolCallId)) return state;
+      const seq = chat.instanceCounter + 1;
       const inst: TerminalInstance = {
-        id: 'default',
-        name: workdir,
-        tool: 'shell',
-        logItems: [],
+        id: toolCallId,
+        name: String(seq),
+        tool: 'execute_cmd',
+        logItems: [{ time: nowTime(), type: 'system', msg: `$ ${command}` }],
         progress: 0,
-        isBuilding: false,
-        statusText: '空闲',
+        isBuilding: true,
+        statusText: 'running',
         autoScroll: true,
         createdAt: Date.now(),
       };
@@ -330,8 +321,9 @@ export const useTerminalLogStore = create<TerminalLogState>((set, get) => ({
         chats: {
           ...state.chats,
           [chatId]: {
-            instances: [inst],
-            activeInstanceId: 'default',
+            instances: [...chat.instances, inst],
+            instanceCounter: seq,
+            activeInstanceId: toolCallId,
           },
         },
       };
@@ -371,14 +363,14 @@ export const useTerminalLogStore = create<TerminalLogState>((set, get) => ({
   closeInstance: (chatId, instanceId) => {
     set((state) => {
       const chat = state.chats[chatId];
-      if (!chat || chat.instances.length <= 1) return state;
+      if (!chat) return state;
       const remaining = chat.instances.filter((i) => i.id !== instanceId);
       const nextActive =
         chat.activeInstanceId === instanceId
-          ? remaining[remaining.length - 1].id
+          ? (remaining[remaining.length - 1]?.id ?? null)
           : chat.activeInstanceId;
       return {
-        chats: { ...state.chats, [chatId]: { instances: remaining, activeInstanceId: nextActive } },
+        chats: { ...state.chats, [chatId]: { ...chat, instances: remaining, activeInstanceId: nextActive } },
       };
     });
   },
@@ -436,3 +428,8 @@ export const useTerminalLogStore = create<TerminalLogState>((set, get) => ({
     return chat.instances.find((i) => i.id === chat.activeInstanceId) ?? chat.instances[0] ?? null;
   },
 }));
+
+// 调试导出 (生产环境可保留, 仅用于运行时状态检查)
+if (typeof window !== 'undefined') {
+  (window as any).__terminalLogStore = useTerminalLogStore;
+}

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, Trash2 } from '../utils/icons';
+import { Trash2 } from '../utils/icons';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { ModelIcon } from './ModelIcon';
@@ -93,11 +93,7 @@ export const ProviderCard = React.forwardRef<HTMLDivElement, ProviderCardProps>(
           }`}
         >
           <div className="flex items-center gap-2.5 truncate pointer-events-none">
-            {provider.id === 'custom' && !isCustom ? (
-              <Plus className="shrink-0 opacity-65" style={{ width: 22, height: 22 }} />
-            ) : (
-              <ModelIcon modelName={provider.id} size={22} className="shrink-0" />
-            )}
+            <ModelIcon modelName={provider.id} size={22} className="shrink-0" iconType={provider.iconType} />
             <span className="truncate">{provider.name}</span>
           </div>
           <div className="flex items-center gap-1.5 shrink-0 pointer-events-none">

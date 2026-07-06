@@ -67,6 +67,69 @@ export default function App() {
     }
   }, [chatsStoreSelectedId]); // 故意不依赖 selectedChatId, 避免循环
 
+  // ── modelProviderMap: 从 cherry_providers_v2 构建, 传给 ChatPanel ──
+  const [modelProviderMap, setModelProviderMap] = useState<Record<string, {
+    baseUrl: string; apiKey: string; model: string;
+    providerName: string; enabledInSettings: boolean;
+  }>>({});
+
+  useEffect(() => {
+    const buildMap = () => {
+      try {
+        const saved = localStorage.getItem('cherry_providers_v2');
+        if (!saved) return;
+        const parsed = JSON.parse(saved);
+        if (!Array.isArray(parsed)) return;
+        const map: Record<string, {
+          baseUrl: string; apiKey: string; model: string;
+          providerName: string; enabledInSettings: boolean;
+        }> = {};
+        for (const prov of parsed) {
+          if (!prov.enabled || !prov.apiKey) continue;
+          const enabledInSettings = prov.status === 'success';
+          // 注册该 provider 下所有启用的模型
+          if (Array.isArray(prov.models)) {
+            for (const m of prov.models) {
+              if (m.enabled) {
+                map[m.id] = {
+                  baseUrl: prov.baseUrl,
+                  apiKey: prov.apiKey,
+                  model: m.id,
+                  providerName: prov.name,
+                  enabledInSettings,
+                };
+              }
+            }
+          }
+          if (Array.isArray(prov.customModels)) {
+            for (const cm of prov.customModels) {
+              const id = typeof cm === 'string' ? cm : (cm?.id ?? '');
+              if (id && (typeof cm === 'string' || cm.enabled !== false)) {
+                map[id] = {
+                  baseUrl: prov.baseUrl,
+                  apiKey: prov.apiKey,
+                  model: id,
+                  providerName: prov.name,
+                  enabledInSettings,
+                };
+              }
+            }
+          }
+        }
+        setModelProviderMap(map);
+      } catch (e) {
+        console.error('Error building modelProviderMap', e);
+      }
+    };
+    buildMap();
+    window.addEventListener('storage', buildMap);
+    window.addEventListener('providers_updated', buildMap);
+    return () => {
+      window.removeEventListener('storage', buildMap);
+      window.removeEventListener('providers_updated', buildMap);
+    };
+  }, []);
+
   // Synchronize multi-model mixedTasks based on the active mode (only 'normal' mode needs it disabled)
   useEffect(() => {
     if (currentPermissionMode === 'normal') {
@@ -474,6 +537,7 @@ export default function App() {
       onOpenThemeCustomizer={onOpenThemeCustomizer}
       onOpenSettingsModal={onOpenSettingsModal}
       onOpenStatsModal={onOpenStatsModal}
+      modelProviderMap={modelProviderMap}
     />
     </LayoutProvider>
   );
@@ -531,6 +595,10 @@ interface MainLayoutProps {
   onOpenThemeCustomizer: () => void;
   onOpenSettingsModal: () => void;
   onOpenStatsModal: () => void;
+  modelProviderMap: Record<string, {
+    baseUrl: string; apiKey: string; model: string;
+    providerName: string; enabledInSettings: boolean;
+  }>;
 }
 
 const MainLayout: React.FC<MainLayoutProps> = ({
@@ -548,6 +616,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({
   handleFileChange, handleEditorChange, handleNewFile, editorContent,
   bridge, activeCanvasId,
   onOpenThemeCustomizer, onOpenSettingsModal, onOpenStatsModal,
+  modelProviderMap,
 }) => {
   const layoutState = useLayoutState();
   const layoutStatus = useLayoutStatus();
@@ -723,6 +792,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({
             mixedTasks={mixedTasks}
             selectedFile={selectedFile}
             editorContent={editorContent}
+            modelProviderMap={modelProviderMap}
           />
         </div>
 

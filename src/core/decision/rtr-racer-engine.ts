@@ -27,6 +27,13 @@ export interface SystemAdaptiveContext {
   globalFailureRate: number; 
 }
 
+/** RACER 流控结果：包含获胜者模型名、输出文本、获胜者得分 */
+export interface RacerFlowResult {
+  winnerModelName: string;
+  output: string;
+  winnerScore: number;
+}
+
 export class SoloForgeRTRRacerEngine {
   private kernel: RuntimeKernelInterface;
   private schedulerClient?: SoloForgeRustSchedulerClient;
@@ -104,7 +111,7 @@ export class SoloForgeRTRRacerEngine {
     taskComplexityMetrics: number,
     executionWorkerNode: (selectedTarget: ModelStrategyCandidate) => Promise<string>,
     adaptiveContext?: SystemAdaptiveContext
-  ): Promise<string> {
+  ): Promise<RacerFlowResult> {
     // 1. 严格契约拦截：执行所有权验证，不具备此状态所有权则拒绝变更执行
     if (!this.kernel.verifyOwnership(this.domainSignature, stateRegistryKey)) {
       throw new Error(`ERR_ACCESS_DENIED: Domain [${this.domainSignature}] has no strict write-ownership over [${stateRegistryKey}]`);
@@ -178,9 +185,10 @@ export class SoloForgeRTRRacerEngine {
     // 4. 三区间物理分层执行路由
     if (aggregateConfidenceIndex > 0.85) {
       // 确定性区间一：单路极速通过
-      const output = await executionWorkerNode(matrixScoringMap[0].instance);
-      this.kernel.getEventBus().emit(DecisionEvent.ROUTE_COMPLETED, { strategy: matrixScoringMap[0].instance.reasoningStrategy });
-      return output;
+      const winner = matrixScoringMap[0].instance;
+      const output = await executionWorkerNode(winner);
+      this.kernel.getEventBus().emit(DecisionEvent.ROUTE_COMPLETED, { strategy: winner.reasoningStrategy });
+      return { winnerModelName: winner.modelName, output, winnerScore: matrixScoringMap[0].score };
     } 
     
     if (aggregateConfidenceIndex < 0.60 && matrixScoringMap.length >= 3) {
@@ -221,12 +229,18 @@ export class SoloForgeRTRRacerEngine {
       const parallelResolutionPromises = targetedTopTrio.map(targetNode => executionWorkerNode(targetNode));
       const synchronousOutputs = await Promise.all(parallelResolutionPromises);
       
-      return this.compilePluralityVote(synchronousOutputs);
+      const votedOutput = this.compilePluralityVote(synchronousOutputs);
+      // 找到得票最多的输出对应的 candidate
+      const winnerIdx = synchronousOutputs.indexOf(votedOutput);
+      const winner = winnerIdx >= 0 ? targetedTopTrio[winnerIdx] : targetedTopTrio[0];
+      const winnerScore = matrixScoringMap.find(m => m.instance.modelName === winner.modelName)?.score ?? matrixScoringMap[0].score;
+      return { winnerModelName: winner.modelName, output: votedOutput, winnerScore };
     }
 
     // 均衡区间二
-    const output = await executionWorkerNode(matrixScoringMap[0].instance);
-    this.kernel.getEventBus().emit(DecisionEvent.ROUTE_COMPLETED, { strategy: matrixScoringMap[0].instance.reasoningStrategy });
-    return output;
+    const winner = matrixScoringMap[0].instance;
+    const output = await executionWorkerNode(winner);
+    this.kernel.getEventBus().emit(DecisionEvent.ROUTE_COMPLETED, { strategy: winner.reasoningStrategy });
+    return { winnerModelName: winner.modelName, output, winnerScore: matrixScoringMap[0].score };
   }
 }

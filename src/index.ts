@@ -34,6 +34,8 @@ import { initializeConsensusAuditConsumer } from './data/consumers/consensus-aud
 
 import { logger } from './core/logger';
 import { SoloForgeApiServer } from './api-server';
+import { AgentRegistry } from './core/agent/agent-registry';
+import { AgentDecisionOrchestrator } from './core/agent/agent-decision-orchestrator';
 
 /**
  * 🪐 SoloForge Distributed MARL Agent Governance OS - Production Entry Point
@@ -219,6 +221,17 @@ async function mainSystemIgnitionEngine(): Promise<void> {
 
     // Step 7: Start API Server for frontend connectivity
     const apiServer = new SoloForgeApiServer(kernel, telemetryExporter, surrealPersistence);
+
+    // Step 7.1: 实例化 Agent 基础设施并注入 API Server
+    const agentRegistry = new AgentRegistry(kernel);
+    await agentRegistry.boot();
+    logger.warn('SYSTEM_MAIN', `🤖 AgentRegistry booted: ${agentRegistry.listAgents().length} agents online`);
+
+    const agentOrchestrator = new AgentDecisionOrchestrator(kernel, agentRegistry);
+    apiServer.setAgentRegistry(agentRegistry);
+    apiServer.setAgentOrchestrator(agentOrchestrator);
+    logger.warn('SYSTEM_MAIN', '🤖 AgentDecisionOrchestrator injected into API Server');
+
     try {
       await apiServer.start();
       logger.warn('SYSTEM_MAIN', `🌐 API Server live at http://localhost:${apiServer.getPort()}`);

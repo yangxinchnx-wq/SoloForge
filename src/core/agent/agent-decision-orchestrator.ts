@@ -2,8 +2,7 @@
 // SoloForge Agent Core: Decision Orchestrator
 // Path: src/core/agent/agent-decision-orchestrator.ts
 //
-// v2: 使用 RacerFlowResult 显式返回 winner，消除反推猜测
-// v2: 集成 CAS 版本同步
+// v3: 真实 LLM 调用 — prompt 全链路透传，streamHook 后端直接创建
 // ─────────────────────────────────────────────────────────────────
 
 import crypto from 'crypto';
@@ -27,14 +26,21 @@ export class AgentDecisionOrchestrator {
 
   /**
    * 高层入口: 派发一个网络包任务，让 RACER 选 agent 执行
-   * v2: 使用 RacerFlowResult 显式获取 winner
-   * v3: 每步 emit phase 事件 → 自动通过 eventBus 广播 → SSE 推到前端流送区
+   * v3: prompt 全链路透传到真实 LLM，streamHook 后端直接创建（不依赖前端 bindSubTask）
    */
   public async dispatchPacket(req: AgentDispatchRequest): Promise<AgentDispatchResult> {
     const start = Date.now();
     const packetUuid = req.packetUuid ?? `pkt_${crypto.randomBytes(4).toString('hex')}`;
     const packetSizeKb = req.packetSizeKb ?? Math.floor(Math.random() * 64) + 1;
-    const chatId = req.chatId;
+    const chatId = req.chatId ?? '__no_chat__';
+    const prompt = req.prompt ?? '';
+    const history = req.history ?? [];
+    const activeFile = req.activeFile ?? null;
+    const mainProvider = req.mainProvider;
+
+    if (!prompt) {
+      throw new Error('DISPATCH_ERROR: prompt is required');
+    }
 
     // 1) 拉候选
     const candidates = this.registry.generateRoutingCandidates();
@@ -55,7 +61,6 @@ export class AgentDecisionOrchestrator {
     });
 
     // 3.1) 流送区 phase0 — 拆解为 N 个候选子任务
-    //      payload 与前端 phaseMappers.ts#phase0_subtask 对齐
     this.kernel.eventBus.emit('phase0_subtask', {
       packetUuid,
       chatId,
@@ -67,7 +72,7 @@ export class AgentDecisionOrchestrator {
       ts: Date.now(),
     });
 
-    // 4) RACER 选路 + 执行 — v2: 返回 RacerFlowResult
+    // 4) RACER 选路 + 执行
     const racerResult: RacerFlowResult = await this.racerEngine.coordinateRacerFlow(
       candidates,
       stateRegistryKey,
@@ -75,21 +80,47 @@ export class AgentDecisionOrchestrator {
       req.globalConfidenceMetric ?? 0.75,
       req.taskComplexityMetrics ?? 0.30,
       async (selected: ModelStrategyCandidate) => {
-        // 4.1) 流送区 phase1_worker_start — 每个 worker 开始执行
         const workerIdx = candidates.findIndex(c => c.modelName === selected.modelName);
+        const effectiveWorkerIdx = workerIdx >= 0 ? workerIdx : 0;
+
+        // 4.1) 流送区 phase1_worker_start
         this.kernel.eventBus.emit('phase1_worker_start', {
           packetUuid,
           chatId,
-          workerIdx: workerIdx >= 0 ? workerIdx : 0,
+          workerIdx: effectiveWorkerIdx,
           modelName: selected.modelName,
           ts: Date.now(),
         });
-        const out = await this.registry.executeOnAgent(selected.modelName, packetUuid, packetSizeKb, workerIdx >= 0 ? workerIdx : undefined);
-        // 4.2) 流送区 phase1_worker_done — worker 执行完
+
+        // 4.2) 后端直接创建 streamHook（不依赖前端 bindSubTask API 调用）
+        const subTaskId = `${packetUuid}_w${effectiveWorkerIdx}`;
+        this.registry.bindSubTask({
+          packetUuid,
+          workerIdx: effectiveWorkerIdx,
+          chatId,
+          subTaskId,
+          agentId: selected.modelName,
+        });
+
+        // 4.3) 执行 — 传递真实 prompt + LLM config
+        const out = await this.registry.executeOnAgent(
+          selected.modelName,
+          packetUuid,
+          packetSizeKb,
+          effectiveWorkerIdx,
+          {
+            prompt,
+            history,
+            activeFile,
+            mainProvider,
+          },
+        );
+
+        // 4.4) 流送区 phase1_worker_done
         this.kernel.eventBus.emit('phase1_worker_done', {
           packetUuid,
           chatId,
-          workerIdx: workerIdx >= 0 ? workerIdx : 0,
+          workerIdx: effectiveWorkerIdx,
           modelName: selected.modelName,
           content: out ?? '',
           ts: Date.now(),
@@ -99,7 +130,7 @@ export class AgentDecisionOrchestrator {
       req.adaptiveContext
     );
 
-    // 5) 直接使用 RACER 返回的 winner — 不再猜测
+    // 5) 使用 RACER 返回的 winner
     const winnerAgentId = racerResult.winnerModelName;
     const winnerCandidate = candidates.find(c => c.modelName === winnerAgentId) ?? candidates[0];
     const parallel = candidates.length >= 3 && this.isLowConfidence(req, candidates);
@@ -136,7 +167,7 @@ export class AgentDecisionOrchestrator {
       ts: Date.now(),
     });
 
-    // B+C 升级: 释放 subTaskBinding (防止内存泄漏)
+    // 释放 subTaskBinding
     try {
       this.registry.releasePacketBindings(packetUuid);
     } catch (e: any) {

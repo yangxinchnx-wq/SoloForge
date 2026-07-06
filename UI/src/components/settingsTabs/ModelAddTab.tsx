@@ -5,6 +5,7 @@ import * as DndKitModifiers from '@dnd-kit/modifiers';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, arrayMove, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { ModelIcon } from '../ModelIcon';
+import { AnimalAvatar, ANIMAL_IDS } from '../AnimalAvatar';
 import { ProviderCard } from '../ProviderCard';
 import type { ModelProvider, CloudModelScanResult } from '../../data/providersRegistry';
 
@@ -99,19 +100,6 @@ export default function ModelAddTab() {
         customModels: [],
         status: 'idle' as const,
         color: '#f43f5e'
-      },
-      {
-        id: 'custom',
-        name: '自定义提供商',
-        desc: '自定义/中转等兼容 OpenAI 接口标准的第三方服务商',
-        enabled: false,
-        apiKey: '',
-        baseUrl: '',
-        defaultUrl: 'http://localhost:3001/v1',
-        models: [],
-        customModels: [],
-        status: 'idle' as const,
-        color: '#64748b'
       }
     ];
 
@@ -120,7 +108,8 @@ export default function ModelAddTab() {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
           // Strip legacy 'groq' provider entries (no longer supported)
-          const filtered = parsed.filter((p: any) => p && p.id !== 'groq');
+          // Also strip old 'custom' placeholder provider and any existing 'custom_' providers
+          const filtered = parsed.filter((p: any) => p && p.id !== 'groq' && p.id !== 'custom' && !String(p.id).startsWith('custom_'));
           // Identify any base providers missing from the loaded parsed array, e.g. newly introduced providers like 'xiaomi'
           const existingIds = new Set(filtered.map((p: any) => p.id));
           const missingProviders = baseProviders.filter(bp => !existingIds.has(bp.id));
@@ -310,6 +299,10 @@ export default function ModelAddTab() {
 
   const updateProviderBaseUrl = (id: string, val: string) => {
     setProviders(prev => prev.map(p => p.id === id ? { ...p, baseUrl: val } : p));
+  };
+
+  const updateProviderIconType = (id: string, iconType: string | undefined) => {
+    setProviders(prev => prev.map(p => p.id === id ? { ...p, iconType } : p));
   };
 
   const resetProviderBaseUrl = (id: string) => {
@@ -645,7 +638,8 @@ export default function ModelAddTab() {
       models: [],
       customModels: [],
       status: 'idle',
-      color: '#64748b'
+      color: '#64748b',
+      iconType: 'animal:cat',
     };
     setProviders(prev => [...prev, newProvider]);
     setActiveProviderId(newId);
@@ -822,7 +816,16 @@ export default function ModelAddTab() {
             <div className="flex items-center justify-between pb-4 border-b border-[var(--color-outline)]/15 shrink-0">
               <div className="space-y-1">
                 <div className="flex items-center gap-3">
-                  <ModelIcon modelName={activeProvider.id} size={28} className="shrink-0" />
+                  {/* ── 图标: 内置服务商用固定图标; 自定义服务商(custom_)用图标选择器 ── */}
+                  {activeProvider.id.startsWith('custom_') ? (
+                    <IconPicker
+                      providerId={activeProvider.id}
+                      iconType={activeProvider.iconType}
+                      onChange={(v) => updateProviderIconType(activeProvider.id, v)}
+                    />
+                  ) : (
+                    <ModelIcon modelName={activeProvider.id} size={28} className="shrink-0" iconType={activeProvider.iconType} />
+                  )}
                   <h4 className="text-xl font-black text-[var(--color-on-surface)]">{activeProvider.name}</h4>
                 </div>
                 <p className="text-xs text-on-surface/50 leading-relaxed">{activeProvider.desc}</p>
@@ -1257,7 +1260,98 @@ const SortableModelItem: React.FC<SortableModelItemProps> = ({ id, name, onRemov
         title="从已选中列表移除"
       >
         <X className="w-3.5 h-3.5" />
-      </button>
+            </button>
     </div>
   );
 };
+
+// =====================================================
+// IconPicker — 自定义服务商图标选择器 (仅限 custom_ 开头的提供商)
+// 点击当前图标 → 弹出下拉面板: 12 个内置 SVG 动物头像
+// 选中后通过 onChange 回调写入 provider.iconType
+// =====================================================
+
+const IconPicker: React.FC<{
+  providerId: string;
+  iconType?: string;
+  onChange: (v: string | undefined) => void;
+}> = ({ providerId, iconType, onChange }) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const currentIcon = iconType ?? 'auto';
+  const isAnimal = currentIcon.startsWith('animal:');
+  const animalId = isAnimal ? currentIcon.slice(7) : '';
+
+  return (
+    <div ref={ref} className="relative shrink-0">
+      {/* 当前图标按钮 */}
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className="relative rounded-lg transition-transform hover:scale-105 active:scale-95 cursor-pointer"
+        title="点击选择图标"
+        style={{ width: 28, height: 28 }}
+      >
+        {isAnimal ? (
+          <AnimalAvatar id={animalId} size={28} />
+        ) : (
+          <ModelIcon modelName={providerId} size={28} className="shrink-0" iconType={iconType} />
+        )}
+        {/* 右下角小标识 */}
+        <span
+          className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full flex items-center justify-center text-[7px] font-bold"
+          style={{
+            background: 'var(--color-primary)',
+            color: '#fff',
+            border: '1px solid var(--color-surface)',
+          }}
+        >
+          ▾
+        </span>
+      </button>
+
+      {/* 下拉面板 — 仅动物头像选择 */}
+      {open && (
+        <div
+          className="absolute top-full left-0 mt-2 z-50 rounded-xl border border-[var(--color-outline)]/20 bg-[var(--color-surface-bright)] shadow-2xl p-3 space-y-2"
+          style={{ width: 200 }}
+        >
+          <p className="text-[10px] font-bold text-on-surface/50 px-1">选择头像</p>
+          <div className="grid grid-cols-6 gap-1.5">
+            {ANIMAL_IDS.map(aid => {
+              const selected = isAnimal && animalId === aid;
+              return (
+                <button
+                  key={aid}
+                  type="button"
+                  onClick={() => { onChange(`animal:${aid}`); setOpen(false); }}
+                  className={`rounded-lg p-1 transition-all ${
+                    selected
+                      ? 'bg-[var(--color-primary)]/20 ring-2 ring-[var(--color-primary)]/40 scale-110'
+                      : 'hover:bg-on-surface/8 hover:scale-105'
+                  }`}
+                  title={aid}
+                >
+                  <AnimalAvatar id={aid} size={24} />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+

@@ -9,9 +9,10 @@ import crypto from "crypto";
 import { createProxyMiddleware, fixRequestBody } from "http-proxy-middleware";
 import { registerBrowserUseRoutes } from "../src/core/browser-use/routes";
 import { bootstrapCanvasSessionLayer } from "./src/server/bootstrap/canvas";
-import { registerCanvasToolRoutes } from "./src/server/routes/canvasTools";
 import { registerChatSessionRoutes, flushChatStore } from "./src/server/routes/chatSession";
 import { registerConversationRoutes, flushConversationStore } from "./src/server/routes/conversationRoutes";
+import { registerSettingsRoutes, flushSettingsToDiskSync } from "./src/server/routes/settings";
+import { registerFileRoutes } from "./src/server/routes/fileRoutes";
 
 // Load Environment variables
 dotenv.config();
@@ -93,12 +94,31 @@ async function startServer() {
   registerConversationRoutes(app);
 
   // ============================================================
-  // Canvas Tools MCP (LLM 工具调用入口, /api/canvas/tools/*)
-  //   - GET  /api/canvas/tools          → 工具 schema 列表
-  //   - POST /api/canvas/tools/invoke   → 执行工具
+  // Settings API (3000 本地路由, JSON 文件持久化)
+  //   GET    /api/settings              → 返回整个 settings 对象
+  //   GET    /api/settings/:key         → 返回单个 key 值
+  //   PUT    /api/settings/:key         → 写入单个 key 值
+  //   PATCH  /api/settings              → 批量合并更新
+  //   DELETE /api/settings/:key         → 删除 key
   // 必须放在 backendApiProxy 之前,避免被代理到 3001
   // ============================================================
-  registerCanvasToolRoutes(app);
+  registerSettingsRoutes(app);
+
+  // ============================================================
+  // File System API (3000 本地路由, 直接读写宿主机磁盘)
+  //   GET    /api/files/read?path=xxx   → 读取文件内容
+  //   POST   /api/files/save            → 保存文件内容
+  //   GET    /api/files/list?dir=xxx    → 列出目录内容
+  //   POST   /api/files/create          → 创建文件/文件夹
+  //   DELETE /api/files/delete?path=xxx → 删除文件/文件夹
+  //   POST   /api/files/rename          → 重命名
+  //   GET    /api/files/stats           → 文件统计
+  // 必须放在 backendApiProxy 之前,避免被代理到 3001
+  // ============================================================
+  registerFileRoutes(app);
+
+  // Canvas Tools MCP 已在 bootstrapCanvasSessionLayer 内部注册 (canvas.ts L96)
+  // 不再重复调用 registerCanvasToolRoutes(app)
 
   // ============================================================
   // Browser-Use API (高层 LLM 任务编排, 走 Obscura CDP)
@@ -123,7 +143,9 @@ async function startServer() {
   // ============================================================
   // [本地端点声明见下方 — 已从原位置移动到这里]
 
-  // SSE 长连接（events/stream）需要特殊处理：禁用缓冲 + 流式透传
+  // SSE 长连接（events/stream + llm/stream）需要特殊处理：禁用缓冲 + 流式透传 + 无超时
+  // events/stream: GET, 后端事件总线广播
+  // llm/stream: POST, 后端 LLM 代理 SSE 回流 (可能持续 60-120s)
   const backendSseProxy = createProxyMiddleware({
     target: BACKEND_URL,
     changeOrigin: true,
@@ -138,6 +160,31 @@ async function startServer() {
       },
       proxyRes: (proxyRes) => {
         // SSE 必须禁用缓冲，且保持连接打开
+        proxyRes.headers["cache-control"] = "no-cache";
+        proxyRes.headers["x-accel-buffering"] = "no";
+      },
+    },
+    proxyTimeout: 0 as any,
+    timeout: 0 as any,
+  });
+
+  // LLM stream 专用代理 (POST, SSE 回流, 无超时)
+  // 必须放在 backendApiPrefixes 的 /api/llm filterProxy 之前
+  const llmStreamSseProxy = createProxyMiddleware({
+    target: BACKEND_URL,
+    changeOrigin: true,
+    ws: false,
+    pathFilter: (pathname, req) => {
+      return req.method === 'POST' && pathname === '/api/llm/stream';
+    },
+    on: {
+      proxyReq: (proxyReq, req) => {
+        proxyReq.setHeader("Connection", "close");
+        if ((req as any).body && Object.keys((req as any).body).length) {
+          fixRequestBody(proxyReq, req as any);
+        }
+      },
+      proxyRes: (proxyRes) => {
         proxyRes.headers["cache-control"] = "no-cache";
         proxyRes.headers["x-accel-buffering"] = "no";
       },
@@ -185,6 +232,8 @@ async function startServer() {
 
   // SSE 必须单独挂载（路径精确匹配）
   app.get("/api/events/stream", backendSseProxy);
+  // LLM stream SSE 代理 (POST, 无超时, 放在 /api/llm filterProxy 之前)
+  app.use(llmStreamSseProxy);
 
   // ============================================================
   // 数据库持久化：加载与保存云端大模型服务商配置
@@ -413,6 +462,9 @@ async function startServer() {
     '/api/vault',    // OS 钥匙串 vault 系统（apiKey 加密存储）
     '/api/providers', // 云端模型服务商连通性测试 & 模型扫描
     '/api/llm',       // LLM 代理流 (/api/llm/stream) — AST 预览管线走此通道
+    '/api/auth',      // Token bootstrap + 自动刷新 (/api/auth/bootstrap)
+    '/api/terminal',  // 真实终端命令执行 (spawn shell → SSE 推 stdout/stderr/exit)
+    '/api/names',     // 用户名称自定义 (双击胶囊名称 → 写入 names.txt [CUSTOM] 槽位)
   ];
   for (const p of backendApiPrefixes) {
     // 关键：用 pathFilter 精确过滤，且不修改 req.url（HPM 默认行为会改写为相对路径）
@@ -898,17 +950,19 @@ async function startServer() {
     console.log("Production static server route configured.");
   }
 
-  // 优雅退出: flush 对话列表 + 消息到磁盘
+  // 优雅退出: flush 对话列表 + 消息 + 设置到磁盘
   process.on('SIGINT', () => {
     console.log('[server] SIGINT received, flushing stores...');
     flushChatStore();
     flushConversationStore();
+    flushSettingsToDiskSync();
     process.exit(0);
   });
   process.on('SIGTERM', () => {
     console.log('[server] SIGTERM received, flushing stores...');
     flushChatStore();
     flushConversationStore();
+    flushSettingsToDiskSync();
     process.exit(0);
   });
 

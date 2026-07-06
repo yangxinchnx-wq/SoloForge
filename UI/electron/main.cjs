@@ -1227,6 +1227,10 @@ function psSetWindowPos(hwnd, x, y, w, h, flags) {
 }
 
 function createWindow() {
+  // 应用图标: 使用 build/icon/icon-666.png (256x256 高清版)
+  const iconPath = path.join(__dirname, '..', 'build', 'icon', 'icon-666.png');
+  const appIcon = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : null;
+
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -1249,6 +1253,7 @@ function createWindow() {
     resizable: true,
     fullscreenable: true,
     paintWhenInitiallyHidden: true,
+    icon: appIcon || undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -1256,6 +1261,11 @@ function createWindow() {
       sandbox: true,
     },
   });
+
+  // 任务栏图标兜底 (Windows 任务栏 + macOS Dock)
+  if (appIcon && !appIcon.isEmpty()) {
+    try { mainWindow.setIcon(appIcon); } catch {}
+  }
 
   // 2026-07-02 修复"强制刷新看到几个版本前的代码"问题:
   //   file:// 协议没有 Cache-Control 响应头,Chromium 把 dist/ 下的 JS/CSS

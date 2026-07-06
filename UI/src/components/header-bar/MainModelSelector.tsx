@@ -94,6 +94,7 @@ function MainModelSelectorImpl({
 
   const { list, fallback } = computeAvailableModels(availableModels);
   const safeMainModel = list.includes(mainModel) ? mainModel : (fallback ?? mainModel);
+  const displayModel = safeMainModel || '未配置模型';
 
   const close = useCallback(() => setOpen(false), []);
   const toggle = useCallback(() => setOpen((o) => !o), []);
@@ -169,13 +170,13 @@ function MainModelSelectorImpl({
         <ModelIcon modelName={safeMainModel} size={20} className="shrink-0" />
         <div className="h-4 overflow-hidden relative flex items-center justify-center min-w-[84px]">
           <motion.span
-            key={safeMainModel}
+            key={displayModel}
             initial={{ opacity: 0, x: 16 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
             className="inline-block whitespace-nowrap text-primary"
           >
-            {safeMainModel}
+            {displayModel}
           </motion.span>
         </div>
         <motion.span

@@ -488,6 +488,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
           }
           case 'error': {
             console.error('[aiBackend error]', evt.error);
+            set({ isGenerating: false });
             set((s) => {
               const currentList = s.conversations[activeChatId] || [];
               if (currentList.length === 0) return s;
@@ -562,8 +563,8 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     );
   },
 
-  handlePhase: (evt, currentChatMsgs) => {
-    // 2026-07-03 阶段5.B: 守卫 - 只处理 kind==='phase' 的事件
+  handlePhase: (evt, _currentChatMsgs) => {
+    // 守卫: 只处理 kind==='phase' 的事件
     //   aiBackend 推送的 ChatStreamEvent 有 4 种 kind: text/phase/error/done
     //   text/error/done 由调用方 (handleSend/handleAcceptEnable) 处理, 不进 handlePhase
     if (evt.kind !== 'phase') return;
@@ -573,133 +574,138 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     set((s) => {
       const prev = s.streamState;
       const next: StreamState = { ...prev };
+      // 事件名映射: 后端 emit 的事件名 (phase0_subtask 等) → 前端 switch case
       switch (evt.phase) {
+        // ── phase0: 子任务拆解 ──────────────────────────
+        case 'phase0_subtask': {
+          const subtasks = (evt as any).subtasks;
+          if (Array.isArray(subtasks)) {
+            next.workerOutputs = subtasks.map((st: any, i: number) => ({
+              workerIdx: st.workerIdx ?? i,
+              modelName: st.modelName ?? `Worker ${i}`,
+              content: '',
+              status: 'pending' as const,
+            }));
+          }
+          break;
+        }
         case 'phase0_skip':
           break;
         case 'suggest_enable':
           next.suggestEnables = [...prev.suggestEnables, {
-            candidateName: evt.candidateName,
-            expectedGain: evt.expectedGain,
-            reason: evt.reason ?? ''
+            candidateName: (evt as any).candidateName,
+            expectedGain: (evt as any).expectedGain,
+            reason: (evt as any).reason ?? ''
           }];
           break;
-        case 'dispatch':
-          next.workerOutputs = (evt.subtasks as string[]).map((m, i) => ({
-            workerIdx: i, modelName: m, content: '', status: 'pending'
-          }));
-          break;
-        case 'worker_start':
+        // ── phase1: Worker 执行 ─────────────────────────
+        case 'phase1_worker_start':
           next.workerOutputs = prev.workerOutputs.map(w =>
-            w.workerIdx === evt.workerIdx ? { ...w, status: 'streaming' } : w
+            w.workerIdx === (evt as any).workerIdx ? { ...w, status: 'streaming' as const } : w
           );
           break;
-        case 'worker_done':
+        case 'phase1_worker_done':
           next.workerOutputs = prev.workerOutputs.map(w =>
-            w.workerIdx === evt.workerIdx
-              ? { ...w, status: evt.content?.startsWith('⚠️') ? 'error' : 'done', content: evt.content ?? '' }
+            w.workerIdx === (evt as any).workerIdx
+              ? { ...w, status: ((evt as any).content?.startsWith('⚠️') ? 'error' : 'done') as 'error' | 'done', content: (evt as any).content ?? '' }
               : w
           );
           break;
-        case 'reply':
-          next.reply = prev.reply + (evt.delta ?? '');
+        case 'phase1_worker_error':
+          next.workerOutputs = prev.workerOutputs.map(w =>
+            w.workerIdx === (evt as any).workerIdx
+              ? { ...w, status: 'error' as const, content: (evt as any).content ?? (evt as any).error ?? '' }
+              : w
+          );
           break;
-        case 'audit_stream':
-          next.reply = prev.reply + (evt.delta ?? '');
+        // ── phase2: 评判 ────────────────────────────────
+        case 'phase2_judge':
+          next.judgeChosen = (evt as any).chosen ?? [];
+          next.judgeReasoning = '';
+          next.scores = (evt as any).score !== undefined
+            ? [{ workerIdx: 0, score: (evt as any).score, reason: '', modelName: (evt as any).chosen?.[0] }]
+            : prev.scores;
           break;
-        case 'score':
-          next.scores = evt.scores ?? [];
+        case 'phase2_judge_error':
+          console.error('[orchestrator judge error]', (evt as any).error);
           break;
-        case 'judge':
-          next.judgeChosen = evt.chosen ?? [];
-          next.judgeReasoning = evt.reasoning ?? '';
+        // ── phase3: 交付 ────────────────────────────────
+        case 'phase3_deliver_start':
           break;
-        case 'audit':
-          next.auditFindings = evt.findings ?? [];
+        case 'phase3_deliver_done':
+          // 终态: 后端 HTTP 响应也会携带 output, text 事件已处理对话写入
+          // 这里只更新 streamState, 不再覆盖 conversations (修复对话历史丢失 bug)
+          if ((evt as any).reply) {
+            next.deliver = (evt as any).reply;
+          }
           break;
-        case 'deliver':
-          next.deliver = prev.deliver + (evt.delta ?? '');
-          break;
-        case 'tool_call': {
-          const idx = prev.toolCalls.findIndex(t => t.id === evt.callId);
-          const status = evt.status;
-          const kind = evt.tool;
-          const stamp = evt.timestamp ?? Date.now();
+        // ── 工具调用事件 ────────────────────────────────
+        case 'tool_started': {
+          const callId = (evt as any).toolCallId ?? `tc-${Date.now()}`;
+          const toolName = (evt as any).tool ?? 'unknown';
           const baseList = [...prev.toolCalls];
-          if (kind === 'hashline.read') {
-            const tc: HashlineReadCall = {
-              id: evt.callId,
-              kind: 'hashline.read',
-              status,
-              filePath: evt.filePath ?? '',
-              version: evt.version,
-              errorCode: evt.errorCode,
-              timestamp: stamp,
-            };
-            if (idx >= 0) baseList[idx] = tc; else baseList.push(tc);
-          } else if (kind === 'hashline.edit') {
-            const tc: HashlineEditCall = {
-              id: evt.callId,
-              kind: 'hashline.edit',
-              status,
-              filePath: evt.filePath ?? '',
-              op: evt.op ?? 'replace',
-              diff: evt.diff,
-              diffSummary: evt.diffSummary,
-              removedLineCount: evt.removedLineCount,
-              insertedLineCount: evt.insertedLineCount,
-              newVersion: evt.version,
-              errorCode: evt.errorCode,
-              timestamp: stamp,
-            };
-            if (idx >= 0) baseList[idx] = tc; else baseList.push(tc);
-          } else {
-            const tc: HashlineBatchCall = {
-              id: evt.callId,
-              kind: 'hashline.batch',
-              status,
-              total: evt.results?.length ?? 1,
-              succeeded: status === 'success' ? (evt.results?.length ?? 0) : (evt.results?.length ?? 0),
-              failedAt: evt.failedAt,
-              errorCode: evt.errorCode,
-              results: evt.results as any,
-              timestamp: stamp,
-            };
-            if (idx >= 0) baseList[idx] = tc; else baseList.push(tc);
+          baseList.push({
+            id: callId,
+            kind: 'hashline.batch' as any,
+            status: 'running' as any,
+            total: 1,
+            succeeded: 0,
+            failedAt: undefined,
+            errorCode: undefined,
+            results: [{ tool: toolName, args: (evt as any).args, started: true }],
+            timestamp: (evt as any).ts ?? Date.now(),
+          } as any);
+          next.toolCalls = baseList;
+          break;
+        }
+        case 'tool_completed': {
+          const callId = (evt as any).toolCallId;
+          const baseList = [...prev.toolCalls];
+          const idx = baseList.findIndex(t => t.id === callId);
+          if (idx >= 0) {
+            baseList[idx] = {
+              ...baseList[idx],
+              status: (evt as any).success ? 'success' : 'error',
+            } as any;
           }
           next.toolCalls = baseList;
           break;
         }
+        // ── 旧版兼容 (某些代码路径可能仍用短名称) ──────────
+        case 'dispatch':
+          if (Array.isArray((evt as any).subtasks)) {
+            next.workerOutputs = (evt as any).subtasks.map((m: any, i: number) => ({
+              workerIdx: i, modelName: m, content: '', status: 'pending' as const,
+            }));
+          }
+          break;
+        case 'worker_start':
+          next.workerOutputs = prev.workerOutputs.map(w =>
+            w.workerIdx === (evt as any).workerIdx ? { ...w, status: 'streaming' as const } : w
+          );
+          break;
+        case 'worker_done':
+          next.workerOutputs = prev.workerOutputs.map(w =>
+            w.workerIdx === (evt as any).workerIdx
+              ? { ...w, status: ((evt as any).content?.startsWith('⚠️') ? 'error' : 'done') as 'error' | 'done', content: (evt as any).content ?? '' }
+              : w
+          );
+          break;
+        case 'score':
+          next.scores = (evt as any).scores ?? [];
+          break;
+        case 'judge':
+          next.judgeChosen = (evt as any).chosen ?? [];
+          next.judgeReasoning = (evt as any).reasoning ?? '';
+          break;
+        case 'audit':
+          next.auditFindings = (evt as any).findings ?? [];
+          break;
         case 'warn':
-          console.warn('[orchestrator warn]', evt.msg);
+          console.warn('[orchestrator warn]', (evt as any).msg);
           break;
-        case 'done': {
-          const finalReply = evt.reply ?? prev.deliver ?? prev.reply;
-          const findings = evt.audit ?? prev.auditFindings;
-          let content = finalReply;
-          if (findings && findings.length > 0) {
-            content += '\n\n---\n\n## ⚠️ 审计提示\n\n' +
-              findings.map((f: any) => `- **[${f.severity?.toUpperCase()}]** ${f.target}\n  建议：${f.suggestion}`).join('\n');
-          }
-          if (next.suggestEnables.length > 0) {
-            content += '\n\n---\n\n## 💡 建议启用\n\n' +
-              next.suggestEnables.map(s => `- **${s.candidateName}**（预期增益 ${(s.expectedGain * 100).toFixed(0)}%）：${s.reason}`).join('\n');
-          }
-          const assistantMsg: ChatMessage = {
-            sender: 'assistant',
-            content,
-            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-            avatar: '',
-            toolCalls: next.toolCalls.length > 0 ? next.toolCalls : undefined,
-          };
-          // 提交最终 assistant 消息 (覆盖中间流式 placeholder)
-          // zustand 允许在 set 回调内嵌套 set, 会触发两次 store 通知, 与原 useState 嵌套行为一致
-          set((s2) => ({
-            conversations: { ...s2.conversations, [activeChatId]: [...currentChatMsgs, assistantMsg] }
-          }));
-          break;
-        }
         case 'error':
-          console.error('[orchestrator error]', evt.msg);
+          console.error('[orchestrator error]', (evt as any).msg);
           break;
         default:
           break;

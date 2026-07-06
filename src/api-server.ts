@@ -8,7 +8,7 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { spawnSync } from 'child_process';
+import { spawnSync, spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { RuntimeKernel, RuntimeState } from './kernel/runtime-kernel';
@@ -64,6 +64,7 @@ import {
   handleVaultVerifyPassphrase,
   handleVaultReveal,
 } from './security/vaultHandler';
+import { handleLLMStreamProxy, handleLLMConfigGet, handleLLMHealth } from './llm/llmProxyHandler';
 
 // ============================================================
 // ç±»åå®ä¹
@@ -495,6 +496,22 @@ export class SoloForgeApiServer {
     }
 
     try {
+      // LLM SSE 流 — 需要直接操作 res 写 SSE, 不能走 route()→ApiResponse 常规路径
+      if (reqPath === '/api/llm/stream' && method === 'POST') {
+        const llmResult = await handleLLMStreamProxy(req, res, body);
+        // stream=true 时 handler 已经直接操作 res 写了 SSE, 无需再处理
+        // stream 非 true 时是错误返回 (400/401/503), 需要把 HTTP 响应发出去
+        if (!llmResult.stream) {
+          const errBody = typeof llmResult.body === 'string' ? llmResult.body : JSON.stringify(llmResult.body);
+          res.writeHead(llmResult.status, {
+            'Content-Type': llmResult.headers['Content-Type'] || 'application/json',
+            ...llmResult.headers,
+          });
+          res.end(errBody);
+        }
+        return;
+      }
+
       const apiRes = await this.route(apiReq);
 
       if (reqPath === '/api/events/stream' && method === 'GET') {
@@ -961,6 +978,31 @@ export class SoloForgeApiServer {
       return this.handleAnalyticsParquet(req.body);
     }
 
+    // LLM Proxy APIs (非 SSE 的常规 JSON 端点)
+    if (reqPath === '/api/llm/config' && method === 'GET') {
+      return handleLLMConfigGet();
+    }
+    if (reqPath === '/api/llm/health' && method === 'GET') {
+      return await handleLLMHealth(req);
+    }
+
+    // Terminal APIs — 用户在前端终端输入命令 → spawn 真实 shell → 通过 SSE 推 stdout/stderr/exit
+    // 流程:
+    //   1) 前端 POST { chatId, command, cwd, toolCallId }
+    //   2) 后端 spawn cmd.exe/sh -c, 异步执行
+    //   3) 后端 broadcastEvent('tool_started'/'tool_stdout'/'tool_stderr'/'tool_exit', payload)
+    //   4) 前端 sseBackend 收到后桥接到 terminalLogStore
+    if (reqPath === '/api/terminal/run' && method === 'POST') {
+      return this.handleTerminalRun(req.body);
+    }
+
+    // Names API — 用户双击胶囊名称自定义 → 写入 names.txt 末尾 [CUSTOM] 标记位
+    // 文件格式: "原名称1 原名称2 ... [CUSTOM] 自定义名称"
+    // 读取时按 [CUSTOM] 分割: 前部是原列表, 后部是 customName (单独槽位, 每次覆盖)
+    if (reqPath === '/api/names/update' && method === 'POST') {
+      return this.handleNamesUpdate(req.body);
+    }
+
     return { status: 404, headers: { 'Content-Type': 'application/json' }, body: { error: 'Not Found' } };
   }
 
@@ -1394,13 +1436,23 @@ export class SoloForgeApiServer {
     if (!this.agentOrchestrator) {
       return { status: 503, headers: { 'Content-Type': 'application/json' }, body: { error: 'AgentDecisionOrchestrator not initialized' } };
     }
+    const payload = body?.payload ?? {};
+    const mainProvider = body?.mainProvider ?? payload.mainProvider ?? null;
     const req: AgentDispatchRequest = {
       packetUuid: body?.packetUuid,
       packetSizeKb: body?.packetSizeKb,
       requiresDeepCognition: body?.requiresDeepCognition,
       globalConfidenceMetric: body?.globalConfidenceMetric,
       taskComplexityMetrics: body?.taskComplexityMetrics,
-      chatId: body?.chatId,  // 透传到 emit payload → 前端流送区路由
+      chatId: body?.chatId,
+      prompt: payload.prompt ?? body?.prompt,
+      history: payload.history ?? body?.history,
+      activeFile: payload.activeFile ?? body?.activeFile ?? null,
+      mainProvider: mainProvider ? {
+        baseUrl: mainProvider.baseUrl,
+        apiKey: mainProvider.apiKey,
+        model: mainProvider.model,
+      } : undefined,
     };
     try {
       const result = await this.agentOrchestrator.dispatchPacket(req);
@@ -1741,6 +1793,134 @@ soloforge_kernel_version{state="${this.kernel['state'] || 'READY'}"} ${this.kern
   /**
    * å¼å§è§æµ
    */
+  /**
+   * Terminal Run — 用户在终端输入命令 → spawn 真实 shell → SSE 推 stdout/stderr/exit
+   *
+   * 设计要点:
+   *   - 立即返回 200 + { ok: true, toolCallId }, 不阻塞 HTTP 响应
+   *   - spawn 子进程异步执行, 通过 broadcastEvent 把事件推到所有 SSE 客户端
+   *   - 前端 sseBackend 收到 tool_* 事件后桥接到 terminalLogStore
+   *   - toolCallId 由前端生成 (如 `user-${Date.now()}`), 后端透传使用
+   *   - 30s 超时兜底, 避免僵尸进程
+   *   - 命令执行不受 chat 流送状态影响 (用户可独立跑命令)
+   */
+  private handleTerminalRun(body: any): ApiResponse {
+    const chatId = String(body?.chatId || '').trim();
+    const command = String(body?.command || '').trim();
+    const cwd = String(body?.cwd || '').trim() || process.cwd();
+    const toolCallId = String(body?.toolCallId || `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+
+    if (!chatId) {
+      return { status: 400, headers: { 'Content-Type': 'application/json' }, body: { error: 'chatId required' } };
+    }
+    if (!command) {
+      return { status: 400, headers: { 'Content-Type': 'application/json' }, body: { error: 'command required' } };
+    }
+
+    // 异步 spawn — 不阻塞 HTTP 响应
+    const isWin = process.platform === 'win32';
+    const child = isWin
+      ? spawn('cmd.exe', ['/c', command], { cwd, windowsHide: true })
+      : spawn('sh', ['-c', command], { cwd });
+
+    const toolStart = Date.now();
+    const tool = 'execute_cmd';
+
+    // emit tool_started
+    this.broadcastEvent('tool_started', {
+      chatId, subTaskId: null, toolCallId, tool, args: command, ts: toolStart,
+    });
+
+    child.stdout?.on('data', (data: Buffer) => {
+      const chunk = data.toString('utf-8');
+      if (chunk) {
+        this.broadcastEvent('tool_stdout', {
+          chatId, subTaskId: null, toolCallId, tool, chunk, ts: Date.now(),
+        });
+      }
+    });
+
+    child.stderr?.on('data', (data: Buffer) => {
+      const chunk = data.toString('utf-8');
+      if (chunk) {
+        this.broadcastEvent('tool_stderr', {
+          chatId, subTaskId: null, toolCallId, tool, chunk, ts: Date.now(),
+        });
+      }
+    });
+
+    child.on('error', (err: Error) => {
+      this.broadcastEvent('tool_stderr', {
+        chatId, subTaskId: null, toolCallId, tool,
+        chunk: `\n[spawn error] ${err.message}\n`, ts: Date.now(),
+      });
+      this.broadcastEvent('tool_exit', {
+        chatId, subTaskId: null, toolCallId, tool,
+        exitCode: 1, durationMs: Date.now() - toolStart, ts: Date.now(),
+      });
+    });
+
+    child.on('close', (code: number | null) => {
+      this.broadcastEvent('tool_exit', {
+        chatId, subTaskId: null, toolCallId, tool,
+        exitCode: code ?? 0, durationMs: Date.now() - toolStart, ts: Date.now(),
+      });
+    });
+
+    // 兜底超时: 30s 后强制 kill
+    setTimeout(() => {
+      try { child.kill('SIGTERM'); } catch { /* ignore */ }
+    }, 30000);
+
+    return {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: { ok: true, toolCallId },
+    };
+  }
+
+  /**
+   * 处理用户自定义名称 — 双击胶囊名称 → 输入新文字 → 写入 names.txt [CUSTOM] 槽位
+   * 文件格式: "原名称1 原名称2 ... [CUSTOM] 自定义名称"
+   * 单独槽位: 每次双击保存都会覆盖上一个自定义名称, 原列表保持完整
+   */
+  private handleNamesUpdate(body: any): ApiResponse {
+    const customName = String(body?.customName || '').trim();
+
+    // 定位 names.txt — 从 src/ 向上一级到项目根, 再进入 UI/public/名字/
+    const namesPath = path.join(__dirname, '..', 'UI', 'public', '名字', 'names.txt');
+
+    try {
+      if (!fs.existsSync(namesPath)) {
+        return { status: 404, headers: { 'Content-Type': 'application/json' }, body: { error: 'names.txt not found' } };
+      }
+
+      const content = fs.readFileSync(namesPath, 'utf-8');
+      // 按 [CUSTOM] 分割, 只保留原列表部分
+      const [origPart] = content.split(/\[CUSTOM\]/);
+      const origText = (origPart || '').trim();
+
+      // customName 非空 → 追加 [CUSTOM] 槽位; 为空 → 只保留原列表 (清除自定义)
+      const newContent = customName
+        ? `${origText} [CUSTOM] ${customName}`
+        : origText;
+
+      fs.writeFileSync(namesPath, newContent, 'utf-8');
+
+      return {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: { ok: true, customName: customName || null },
+      };
+    } catch (err) {
+      return {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+        body: { error: String(err) },
+      };
+    }
+  }
+
   private handleObservationStart(): ApiResponse {
     if (this.isObserving) {
       return { status: 200, headers: { 'Content-Type': 'application/json' }, body: { success: true, message: 'Already observing' } };

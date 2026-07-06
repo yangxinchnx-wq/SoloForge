@@ -43,10 +43,12 @@ export interface CallWithToolsOptions {
   model?: string;
   temperature?: number;
   maxTokens?: number;
-  maxRounds?: number; // 最大 tool_calls 轮数，默认 10
+  maxRounds?: number;
   signal?: AbortSignal;
-  onToolCall?: (call: ToolCallRequest) => Promise<ToolCallResult>; // 自定义工具执行
-  onThinking?: (text: string) => void; // 每轮 assistant 文本回调
+  onToolCall?: (call: ToolCallRequest) => Promise<ToolCallResult>;
+  onThinking?: (text: string) => void;
+  /** 可选: LLM provider 覆盖 */
+  llmConfig?: { baseUrl: string; apiKey: string; model: string };
 }
 
 export interface CallWithToolsResult {
@@ -68,13 +70,25 @@ export interface CallWithToolsResult {
  *   4. 最多循环 maxRounds 轮
  */
 export async function callLLMWithTools(opts: CallWithToolsOptions): Promise<CallWithToolsResult> {
-  const cfg = getLLMProxyConfig();
-  const baseUrl = (cfg.baseUrl).replace(/\/$/, '');
-  const apiKey = cfg.apiKey;
-  const model = opts.model ?? cfg.defaultModel;
+  // 优先使用传入的 llmConfig, 否则回退到环境变量
+  let baseUrl: string;
+  let apiKey: string;
+  let model: string;
+
+  if (opts.llmConfig && opts.llmConfig.apiKey) {
+    baseUrl = opts.llmConfig.baseUrl.replace(/\/$/, '');
+    apiKey = opts.llmConfig.apiKey;
+    model = opts.model ?? opts.llmConfig.model;
+  } else {
+    const cfg = getLLMProxyConfig();
+    baseUrl = cfg.baseUrl.replace(/\/$/, '');
+    apiKey = cfg.apiKey;
+    model = opts.model ?? cfg.defaultModel;
+  }
+
   const maxRounds = opts.maxRounds ?? 10;
 
-  if (!apiKey) throw new Error('SOLOFORGE_LLM_API_KEY not set');
+  if (!apiKey) throw new Error('LLM API key not configured (neither in request nor env)');
   if (!model) throw new Error('LLM model not configured');
 
   const allMessages: LLMMessage[] = [...opts.messages];
