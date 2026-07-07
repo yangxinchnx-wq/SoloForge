@@ -38,11 +38,11 @@ interface ModelIconProps {
   className?: string;
   size?: number;
   /**
-   * 图标类型配置 (仅对 custom_ 开头的自定义服务商生效):
-   *   - undefined / 'auto': 自动匹配 @lobehub/icons
+   * 图标类型配置 (优先级高于 modelId 模糊匹配):
+   *   - undefined / 'auto': 走 modelId 匹配流程 (内置服务商图标 → LobeModelIcon → 兜底)
    *   - 'animal:<id>': 用内置动物头像 (20 种小动物)
    *   - 'custom:<dataUrl>': 用用户上传的自定义图标 (data:image/png;base64,...)
-   * 内置服务商 (openai/deepseek/anthropic 等) 始终用固定 lobehub 图标, 不受此参数影响
+   * 自定义服务商 (custom_xxx) 通过此参数渲染图标; 内置服务商一般不传此参数, 用固定 lobehub 图标
    */
   iconType?: string;
 }
@@ -134,26 +134,25 @@ export const ModelIcon: React.FC<ModelIconProps> = ({ modelName, className = "w-
     return <BuiltinIcon size={size} className={className} />;
   }
 
-  // 2) 自定义服务商 (custom_ 开头) 或 custom 占位符 → 检查 iconType
+  // 2) iconType 存在 → 按 iconType 渲染 (自定义服务商的模型名是真实名如 agnes-2.0-flash,
+  //    不能用 modelId.startsWith('custom') 判断, 必须直接看 iconType)
+  if (iconType?.startsWith('animal:')) {
+    const animalId = iconType.slice(7);
+    return <AnimalAvatar id={animalId} size={size} className={className} />;
+  }
+  if (iconType?.startsWith('custom:')) {
+    const dataUrl = iconType.slice(7);
+    return (
+      <img
+        src={dataUrl}
+        alt="icon"
+        className={className}
+        style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
+      />
+    );
+  }
+  // modelId 以 custom 开头但未设 iconType → 用默认头像
   if (modelId.startsWith('custom')) {
-    // animal: 开头 → 用内置动物头像
-    if (iconType?.startsWith('animal:')) {
-      const animalId = iconType.slice(7);
-      return <AnimalAvatar id={animalId} size={size} className={className} />;
-    }
-    // custom: 开头 → 用户上传的图标 (data URL)
-    if (iconType?.startsWith('custom:')) {
-      const dataUrl = iconType.slice(7);
-      return (
-        <img
-          src={dataUrl}
-          alt="icon"
-          className={className}
-          style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
-        />
-      );
-    }
-    // 未设置 iconType → 用默认头像
     return <AnimalAvatar id="cat" size={size} className={className} />;
   }
 

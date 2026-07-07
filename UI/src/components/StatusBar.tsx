@@ -14,7 +14,7 @@ export default function StatusBar({ currentThemeId = 'gruvbox', setCurrentThemeI
   const [isTerminalCollapsed, setIsTerminalCollapsed] = useState(false);
   const [isDriveMenuOpen, setIsDriveMenuOpen] = useState(false);
   const [order, setOrder] = useState<string[]>(() => {
-    const defaults = ['project', 'branch', 'spacer', 'memory', 'cpu', 'disk', 'progress', 'terminal', 'theme', 'encoding'];
+    const defaults = ['project', 'branch', 'spacer', 'memory', 'cpu', 'disk', 'terminal', 'theme', 'encoding'];
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('soloforge_statusbar_order_v4');
       if (saved) {
@@ -424,17 +424,6 @@ export default function StatusBar({ currentThemeId = 'gruvbox', setCurrentThemeI
             )}
           </div>
         );
-      case 'progress':
-        return (
-          <div id="status-bar-task-progress" className={`flex items-center gap-1.5 select-none shrink-0 ${applyThemeColor ? 'text-[var(--color-primary)]/90' : 'text-on-surface/45'}`}>
-            <span className="hidden sm:inline">进度:</span>
-            <div className={`w-16 h-1 rounded-full overflow-hidden border relative shrink-0 ${applyThemeColor ? 'bg-[var(--color-primary)]/10 border-[var(--color-primary)]/20' : 'bg-on-surface/5 border-on-surface/5'}`}>
-              <div className="bg-[var(--color-primary)] opacity-75 h-full w-[65%]" />
-            </div>
-            <span className={`font-bold font-mono ${applyThemeColor ? 'text-[var(--color-primary)]' : 'text-on-surface/75'}`}>65%</span>
-          </div>
-        );
-
       case 'terminal':
         return (
           <div

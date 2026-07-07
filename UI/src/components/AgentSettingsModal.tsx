@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { MountTransition } from './MountTransition';
 import {
   Bot, X, ShieldCheck, Hammer, Database, Shield,
   SlidersHorizontal, ChevronDown, Flame, Brain,
   Rocket, Workflow, FileText, Save, FolderOpen,
-  ZoomIn, ZoomOut
+  ZoomIn, ZoomOut, RefreshCw, Cpu
 } from '../utils/icons';
 import { useHotTheme } from '../context/ThemeContext';
 // 2026-07-03 阶段3.1.A: ChatSettingsItem + getSettingsSummary 复用 types/chat.ts (与 ChatPanel 共享)
@@ -43,7 +43,8 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
       personality: 'professional',
       tone: 'detailed',
       emojiEnabled: true,
-      emojiType: 'mixed'
+      emojiType: 'mixed',
+      agentId: 'code_agent'
     };
     return storeConfigs[chatId] || defaultSettings;
   }, [storeConfigs, chatId]);
@@ -60,6 +61,28 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
     // Notify other components (e.g. ChatPanel)
     window.dispatchEvent(new CustomEvent('soloforge-chat-configs-updated'));
   };
+
+  // Phase 4: 从 Java 服务拉取 Agent 列表 (用于 Agent 角色选择)
+  const [agentOptions, setAgentOptions] = useState<Array<{ id: string; name: string; role: string; strategy: string }>>([]);
+  const [agentLoading, setAgentLoading] = useState(false);
+
+  const fetchAgentOptions = useCallback(async () => {
+    setAgentLoading(true);
+    try {
+      const res = await fetch('/api/java-agent/api/agents');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data)) setAgentOptions(data);
+    } catch {
+      // Java 服务未启动时静默失败, 保留默认 code_agent
+    } finally {
+      setAgentLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchAgentOptions();
+  }, [fetchAgentOptions]);
 
   const [customRules, setCustomRules] = useState('');
   const [isSavingRules, setIsSavingRules] = useState(false);
@@ -614,6 +637,42 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
 
         {/* Scrollable Form Body */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+          {/* Phase 4: Agent 角色选择 (Java Spring AI AgentOrchestrator 路由) */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[10px] text-primary/80 font-bold uppercase tracking-wider block font-mono flex items-center gap-1">
+                <Cpu className="w-3 h-3" />
+                0. Agent 角色 (Java 编排)
+              </span>
+              <button
+                type="button"
+                onClick={fetchAgentOptions}
+                className="text-[9px] font-mono opacity-50 hover:opacity-100 flex items-center gap-1"
+                title="刷新 Agent 列表"
+              >
+                <RefreshCw className={`w-2.5 h-2.5 ${agentLoading ? 'animate-spin' : ''}`} />
+                刷新
+              </button>
+            </div>
+            <select
+              value={activeSettings.agentId || 'code_agent'}
+              onChange={(e) => handleUpdateSettings({ agentId: e.target.value })}
+              className="w-full text-[10px] font-semibold bg-bg border border-outline/40 hover:border-primary/50 text-on-surface rounded-lg p-1.5 cursor-pointer outline-none"
+            >
+              <option value="code_agent">code_agent (默认 · 代码开发)</option>
+              {agentOptions.map(ag => (
+                <option key={ag.id} value={ag.id}>
+                  {ag.id} · {ag.name} ({ag.role}/{ag.strategy})
+                </option>
+              ))}
+            </select>
+            {agentOptions.length === 0 && !agentLoading && (
+              <p className="text-[9px] text-on-surface/30 mt-1 font-mono">
+                · Java 服务未启动, 使用默认 code_agent (8770 离线)
+              </p>
+            )}
+          </div>
+
           {/* Skills Module */}
           <div>
             <span className="text-[10px] text-primary/80 font-bold uppercase tracking-wider block mb-2 font-mono">1. Skills 模组配置 ({activeSettings.enabledSkills.length})</span>

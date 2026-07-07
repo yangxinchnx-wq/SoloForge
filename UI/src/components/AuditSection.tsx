@@ -4,7 +4,7 @@
  */
 import React, { useState } from 'react';
 import { ChevronDown, Shield, Gavel, Scale, CheckCircle2, AlertTriangle, XCircle, RefreshCw } from '../utils/icons';
-import { MountTransition } from '../MountTransition';
+import { MountTransition } from './MountTransition';
 import type { AuditTask, AuditFinding, ArbitrationResult } from '../types/streaming';
 import type { PermissionMode } from '../types/streaming';
 

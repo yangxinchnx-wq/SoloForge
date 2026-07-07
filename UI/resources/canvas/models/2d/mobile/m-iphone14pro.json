@@ -1,0 +1,14 @@
+{
+  "key": "m-iphone14pro",
+  "label": "iPhone 14 Pro",
+  "type": "2d",
+  "nativeSize": { "w": 393, "h": 852 },
+  "frame": {
+    "bezel": { "top": 14, "bottom": 14, "left": 6, "right": 6 },
+    "cornerRadius": 32,
+    "hasStand": false,
+    "notch": "dynamicIsland",
+    "notchSize": { "w": 120, "h": 35 }
+  },
+  "note": "2D 占位描述符 — iPhone 14 Pro 边框参数（Dynamic Island）"
+}

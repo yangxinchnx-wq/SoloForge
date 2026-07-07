@@ -1,0 +1,14 @@
+{
+  "key": "m-galaxys23",
+  "label": "Galaxy S23",
+  "type": "2d",
+  "nativeSize": { "w": 360, "h": 780 },
+  "frame": {
+    "bezel": { "top": 10, "bottom": 10, "left": 5, "right": 5 },
+    "cornerRadius": 28,
+    "hasStand": false,
+    "notch": "punchHole",
+    "notchSize": { "w": 16, "h": 16 }
+  },
+  "note": "2D 占位描述符 — Galaxy S23 边框参数（中置打孔）"
+}

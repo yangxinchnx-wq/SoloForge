@@ -14,8 +14,11 @@ import {
   Settings,
   History,
   GitCommitHorizontal,
+  MessageSquare,
 } from '../utils/icons';
 import { useGit } from '../git/useGit';
+import { gitApi } from '../git/api';
+import { useChatsStore, type ChatItem, type ChatTag, TAG_STYLES } from '../state/chatsStore';
 
 // ── Diff Renderer ────────────────────────────────────────────────
 function DiffView({ content, hasConflict = false }: { content: string | null; hasConflict?: boolean }) {
@@ -126,6 +129,57 @@ function BranchSelector({
   );
 }
 
+// ── Chat Selector ─────────────────────────────────────────────
+function ChatSelector({
+  chats,
+  selectedId,
+  onSelect,
+  onClose,
+}: {
+  chats: ChatItem[];
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+  onClose: () => void;
+}) {
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-transparent" onClick={onClose} />
+      <div className="absolute left-0 bottom-full mb-1.5 w-56 bg-surface-bright border border-outline/35 rounded-xl shadow-[0_8px_24px_rgba(0,0,0,0.25)] p-1 z-50 flex flex-col gap-1 max-h-64 overflow-y-auto">
+        <div className="px-2 py-1 text-[9px] text-on-surface/40 font-bold border-b border-outline/10 uppercase tracking-wider">关联对话</div>
+        <button
+          type="button"
+          onClick={() => { onSelect(null); onClose(); }}
+          className={`w-full text-left px-2 py-1.5 rounded-lg text-[10.5px] flex items-center gap-1.5 transition-colors cursor-pointer ${
+            !selectedId ? 'bg-primary/15 text-primary font-bold' : 'hover:bg-on-surface/5 text-on-surface/70'
+          }`}
+        >
+          <span className="text-on-surface/40">无关联</span>
+          {!selectedId && <Check className="w-3 h-3 text-primary shrink-0 ml-auto" />}
+        </button>
+        {chats.map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => { onSelect(c.id); onClose(); }}
+            className={`w-full text-left px-2 py-1.5 rounded-lg text-[10.5px] flex items-center justify-between gap-1.5 transition-colors cursor-pointer ${
+              c.id === selectedId ? 'bg-primary/15 text-primary font-bold' : 'hover:bg-on-surface/5 text-on-surface/85'
+            }`}
+          >
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className={`shrink-0 text-[8.5px] px-1 py-0.5 rounded font-mono font-bold ${c.tagBg} ${c.tagText} border`}>{c.tag}</span>
+              <span className="truncate">{c.title}</span>
+            </div>
+            {c.id === selectedId && <Check className="w-3 h-3 text-primary shrink-0" />}
+          </button>
+        ))}
+        {chats.length === 0 && (
+          <div className="px-2 py-1.5 text-[10.5px] text-on-surface/50 italic">暂无对话</div>
+        )}
+      </div>
+    </>
+  );
+}
+
 // ── File Item Component ─────────────────────────────────────────
 function FileItem({
   file,
@@ -173,6 +227,15 @@ function FileItem({
   );
 }
 
+// ── Parse chat tag prefix from commit message ──────────────────
+function parseCommitChatTag(message: string): { chatTag: string | null; cleanMessage: string } {
+  const match = message.match(/^\[([A-Z]+)\]\s*/);
+  if (match) {
+    return { chatTag: match[1], cleanMessage: message.slice(match[0].length) };
+  }
+  return { chatTag: null, cleanMessage: message };
+}
+
 // ── History Item Component ──────────────────────────────────────
 function HistoryItem({
   commit,
@@ -181,6 +244,9 @@ function HistoryItem({
   commit: { hash: string; message: string; author: string; relativeTime: string };
   onShowDiff: () => void;
 }) {
+  const { chatTag, cleanMessage } = parseCommitChatTag(commit.message);
+  const tagStyle = chatTag ? TAG_STYLES[chatTag as ChatTag] : null;
+
   return (
     <button
       type="button"
@@ -188,10 +254,15 @@ function HistoryItem({
       className="w-full p-2.5 bg-surface-bright/40 border border-outline/15 rounded-xl hover:border-primary/40 hover:bg-on-surface/5 transition-all text-left flex flex-col gap-1 cursor-pointer group"
     >
       <div className="flex justify-between items-center w-full">
-        <span className="font-mono text-[9.5px] text-primary bg-primary/10 px-1.5 py-0.5 rounded font-bold group-hover:underline">{commit.hash}</span>
+        <div className="flex items-center gap-1.5">
+          <span className="font-mono text-[9.5px] text-primary bg-primary/10 px-1.5 py-0.5 rounded font-bold group-hover:underline">{commit.hash}</span>
+          {chatTag && tagStyle && (
+            <span className={`text-[8px] px-1 py-0.5 rounded font-mono font-bold ${tagStyle.bg} ${tagStyle.text} border`}>{chatTag}</span>
+          )}
+        </div>
         <span className="text-[9.5px] text-on-surface/40 font-mono">{commit.relativeTime}</span>
       </div>
-      <p className="text-[11px] font-bold text-on-surface leading-snug group-hover:text-primary">{commit.message}</p>
+      <p className="text-[11px] font-bold text-on-surface leading-snug group-hover:text-primary">{cleanMessage}</p>
       <div className="flex justify-between items-center w-full mt-1.5 text-[9px] text-on-surface/40 border-t border-outline/10 pt-1">
         <span className="font-mono">提交者: {commit.author}</span>
         <span className="text-primary font-bold group-hover:translate-x-0.5 transition-transform">查看 Diff {'\u2192'}</span>
@@ -292,12 +363,30 @@ interface GitPanelProps {
 
 export default function GitPanel({ onClose }: GitPanelProps) {
   const git = useGit();
+  const chats = useChatsStore((s) => s.chats);
+  const selectedChatId = useChatsStore((s) => s.selectedChatId);
+  const loadChats = useChatsStore((s) => s.loadFromBackend);
   const [showBranchSelector, setShowBranchSelector] = useState(false);
   const [viewMode, setViewMode] = useState<'changes' | 'history'>('changes');
   const [expandedStaged, setExpandedStaged] = useState(true);
   const [expandedUnstaged, setExpandedUnstaged] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
+  const [showChatSelector, setShowChatSelector] = useState(false);
+  const [linkedChatId, setLinkedChatId] = useState<string | null>(() => {
+    try { return localStorage.getItem('soloforge_git_linked_chat') || null; } catch { return null; }
+  });
   const commitInputRef = useRef<HTMLInputElement>(null);
+
+  // Load chats on mount
+  useEffect(() => { loadChats(); }, [loadChats]);
+
+  // Persist linked chat selection
+  useEffect(() => {
+    try {
+      if (linkedChatId) localStorage.setItem('soloforge_git_linked_chat', linkedChatId);
+      else localStorage.removeItem('soloforge_git_linked_chat');
+    } catch {}
+  }, [linkedChatId]);
 
   const currentBranch = git.targetBranch || git.statusData?.branch || 'main';
 
@@ -316,7 +405,31 @@ export default function GitPanel({ onClose }: GitPanelProps) {
   const handleCommitKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      git.handleCommit();
+      handleCommitWithPrefix();
+    }
+  };
+
+  const linkedChat = linkedChatId ? chats.find((c) => c.id === linkedChatId) : null;
+
+  const handleCommitWithPrefix = async () => {
+    if (!git.commitMessage.trim()) {
+      git.showFeedback('error', '提交信息不能为空');
+      return;
+    }
+    const finalMessage = linkedChat
+      ? `[${linkedChat.tag}] ${git.commitMessage}`
+      : git.commitMessage;
+    try {
+      const data = await gitApi.commit(finalMessage, git.userName, git.userEmail);
+      if (data.success) {
+        git.showFeedback('success', data.message || '提交成功！');
+        git.setCommitMessage('');
+        await git.fetchGitStatus();
+      } else {
+        git.showFeedback('error', data.error || '提交失败');
+      }
+    } catch {
+      git.showFeedback('error', '提交请求失败');
     }
   };
 
@@ -533,6 +646,38 @@ export default function GitPanel({ onClose }: GitPanelProps) {
 
                 {/* ── Commit Bar (fixed bottom) ── */}
                 <div className="border-t border-outline/30 bg-surface-bright p-3 space-y-2 shrink-0">
+                  {/* ── Chat Selector ── */}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setShowChatSelector(!showChatSelector)}
+                      className={`w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[10px] border transition-colors cursor-pointer ${
+                        linkedChat
+                          ? 'bg-primary/5 border-primary/25 text-primary hover:bg-primary/10'
+                          : 'bg-surface border-outline/25 text-on-surface/50 hover:border-outline/40'
+                      }`}
+                    >
+                      <MessageSquare className="w-3 h-3 shrink-0" />
+                      {linkedChat ? (
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className={`text-[8px] px-1 py-0.5 rounded font-mono font-bold ${linkedChat.tagBg} ${linkedChat.tagText} border`}>{linkedChat.tag}</span>
+                          <span className="truncate font-bold">{linkedChat.title}</span>
+                        </div>
+                      ) : (
+                        <span>关联对话 (可选)</span>
+                      )}
+                      <ChevronDown className="w-2.5 h-2.5 opacity-50 shrink-0 ml-auto" />
+                    </button>
+                    {showChatSelector && (
+                      <ChatSelector
+                        chats={chats}
+                        selectedId={linkedChatId}
+                        onSelect={setLinkedChatId}
+                        onClose={() => setShowChatSelector(false)}
+                      />
+                    )}
+                  </div>
+
                   <div className="flex gap-2">
                     <input
                       ref={commitInputRef}
@@ -544,7 +689,7 @@ export default function GitPanel({ onClose }: GitPanelProps) {
                       className="flex-1 text-[11px] p-2 bg-surface text-on-surface border border-outline/25 rounded-lg focus:border-primary outline-none"
                     />
                     <button
-                      onClick={git.handleCommit}
+                      onClick={handleCommitWithPrefix}
                       disabled={git.loading || git.stagedFiles.length === 0}
                       className="px-3 bg-primary hover:bg-primary-hover text-bg rounded-lg text-[10.5px] font-bold cursor-pointer transition-colors flex items-center justify-center gap-1 disabled:opacity-35 disabled:pointer-events-none"
                     >
@@ -553,7 +698,7 @@ export default function GitPanel({ onClose }: GitPanelProps) {
                   </div>
                   {git.stagedFiles.length > 0 && (
                     <button
-                      onClick={async () => { await git.handleCommit(); await git.handlePush(); }}
+                      onClick={async () => { await handleCommitWithPrefix(); await git.handlePush(); }}
                       disabled={git.loading || !git.remoteUrl}
                       className="w-full py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 rounded-lg text-[10px] font-bold cursor-pointer transition-colors flex items-center justify-center gap-1 disabled:opacity-35 disabled:pointer-events-none"
                     >

@@ -1,0 +1,13 @@
+{
+  "key": "t-surfacepro",
+  "label": "Surface Pro",
+  "type": "2d",
+  "nativeSize": { "w": 912, "h": 1368 },
+  "frame": {
+    "bezel": { "top": 12, "bottom": 12, "left": 12, "right": 12 },
+    "cornerRadius": 10,
+    "hasStand": true,
+    "standType": "kickstand"
+  },
+  "note": "2D 占位描述符 — Surface Pro 边框参数（支架）"
+}

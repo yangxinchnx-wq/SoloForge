@@ -1,0 +1,14 @@
+{
+  "key": "t-ipadmini",
+  "label": "iPad Mini",
+  "type": "2d",
+  "nativeSize": { "w": 768, "h": 1024 },
+  "frame": {
+    "bezel": { "top": 14, "bottom": 14, "left": 14, "right": 14 },
+    "cornerRadius": 14,
+    "hasStand": false,
+    "hasCamera": true,
+    "cameraPosition": "top"
+  },
+  "note": "2D 占位描述符 — iPad Mini 边框参数"
+}

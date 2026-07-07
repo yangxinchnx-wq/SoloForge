@@ -1,0 +1,14 @@
+{
+  "key": "m-xiaomi13",
+  "label": "Xiaomi 13",
+  "type": "2d",
+  "nativeSize": { "w": 393, "h": 873 },
+  "frame": {
+    "bezel": { "top": 11, "bottom": 11, "left": 5, "right": 5 },
+    "cornerRadius": 28,
+    "hasStand": false,
+    "notch": "punchHole",
+    "notchSize": { "w": 15, "h": 15 }
+  },
+  "note": "2D 占位描述符 — Xiaomi 13 边框参数（中置打孔）"
+}

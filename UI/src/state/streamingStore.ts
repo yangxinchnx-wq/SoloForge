@@ -549,6 +549,26 @@ const EVENT_HANDLERS: Record<StreamEventKind, EventHandler> = {
     });
   },
 
+  // ============== Text chunk (流式文本累积) ==============
+
+  text_chunk: (event, { set }) => {
+    if (!event.content) return;
+    updateTask(set, event.chatId, t => {
+      if (t.subTasks.length === 0) return t;
+      const targetId = event.subTaskId ?? t.subTasks[t.subTasks.length - 1].id;
+      const newSubTasks = t.subTasks.map(st => {
+        if (st.id !== targetId) return st;
+        return {
+          ...st,
+          textBuffer: (st.textBuffer ?? '') + event.content,
+          status: st.status === 'pending' ? 'running' as const : st.status,
+          updatedAt: event.ts,
+        };
+      });
+      return { ...t, subTasks: newSubTasks };
+    });
+  },
+
   // ============== Error ==============
 
   error: (event, { get, task }) => {

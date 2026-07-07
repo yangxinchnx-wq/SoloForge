@@ -26,6 +26,8 @@ export interface ChatSettingsItem {
   tone: 'detailed' | 'concise' | 'humorous';
   emojiEnabled: boolean;
   emojiType: 'standard' | 'kaomoji' | 'mixed';
+  /** Phase 4: Agent ID (手动选择, 默认 code_agent, 由 Java 服务 AgentOrchestrator 路由) */
+  agentId?: string;
 }
 
 export interface ChatPanelProps {
@@ -55,12 +57,13 @@ export interface ChatPanelProps {
 
 /**
  * ChatSettingsItem → 中文短串 formatter
- * 例: "专业 | 详尽 | 32k 窗口 | 表情开 (2 SK)"
+ * 例: "code_agent | 专业 | 详尽 | 32k 窗口 | 表情开 (2 SK)"
  */
 export function getSettingsSummary(s: ChatSettingsItem): string {
   const pMap = { professional: '专业', sarcastic: '毒舌', zen: '禅意', geek: '极客' };
   const tMap = { detailed: '详尽', concise: '简短', humorous: '幽默' };
   const em = s.emojiEnabled ? '表情开' : '表情关';
   const ctxStr = s.contextSize >= 132000 ? '无限制' : `${s.contextSize / 1000}k`;
-  return `${pMap[s.personality]} | ${tMap[s.tone]} | ${ctxStr} 窗口 | ${em} (${s.enabledSkills.length} SK)`;
+  const agent = s.agentId || 'code_agent';
+  return `${agent} | ${pMap[s.personality]} | ${tMap[s.tone]} | ${ctxStr} 窗口 | ${em} (${s.enabledSkills.length} SK)`;
 }

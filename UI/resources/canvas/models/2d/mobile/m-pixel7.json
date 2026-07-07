@@ -1,0 +1,14 @@
+{
+  "key": "m-pixel7",
+  "label": "Pixel 7",
+  "type": "2d",
+  "nativeSize": { "w": 412, "h": 915 },
+  "frame": {
+    "bezel": { "top": 12, "bottom": 12, "left": 5, "right": 5 },
+    "cornerRadius": 26,
+    "hasStand": false,
+    "notch": "punchHole",
+    "notchSize": { "w": 14, "h": 14 }
+  },
+  "note": "2D 占位描述符 — Pixel 7 边框参数（中置打孔）"
+}

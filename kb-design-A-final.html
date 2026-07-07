@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>方案 A — 主题对齐版</title>
+<style>
+:root {
+  --color-bg: #050505;
+  --color-surface: #121414;
+  --color-surface-bright: #383939;
+  --color-primary: #ffde82;
+  --color-primary-rgb: 255, 222, 130;
+  --color-on-surface: #e3e2e2;
+  --color-outline: #99907d;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--color-bg); color: var(--color-on-surface); font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif; display: flex; justify-content: center; min-height: 100vh; padding: 32px 20px; }
+.page { width: 716px; }
+.title-bar { margin-bottom: 20px; }
+.title-bar h1 { font-size: 16px; font-weight: 700; color: var(--color-on-surface); }
+.title-bar p { font-size: 12px; color: rgba(var(--color-primary-rgb), 0.6); margin-top: 4px; }
+.tags { display: flex; gap: 6px; margin-bottom: 16px; align-items: center; }
+.tag { font-size: 10px; padding: 3px 8px; border-radius: 5px; font-weight: 500; }
+.tag-a { background: rgba(var(--color-primary-rgb), 0.12); color: var(--color-primary); }
+.tag-b { background: rgba(var(--color-primary-rgb), 0.08); color: rgba(var(--color-primary-rgb), 0.7); }
+.tag-note { font-size: 11px; color: rgba(var(--color-primary-rgb), 0.5); margin-left: 8px; }
+
+/* Split layout */
+.split { display: flex; gap: 12px; height: 480px; }
+
+/* Left sidebar */
+.sidebar { width: 190px; flex-shrink: 0; background: var(--color-surface); border: 1px solid rgba(var(--color-primary-rgb), 0.15); border-radius: 10px; display: flex; flex-direction: column; overflow: hidden; }
+.sidebar-header { padding: 10px 12px; border-bottom: 1px solid rgba(var(--color-primary-rgb), 0.15); font-size: 11px; font-weight: 600; color: rgba(var(--color-primary-rgb), 0.6); display: flex; align-items: center; justify-content: space-between; }
+.sidebar-header .count { font-size: 9px; color: rgba(var(--color-primary-rgb), 0.4); }
+.sidebar-list { flex: 1; overflow-y: auto; padding: 6px; }
+.sidebar-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 7px; cursor: pointer; transition: all 0.12s; position: relative; border: 1px solid transparent; }
+.sidebar-item:hover { background: rgba(var(--color-primary-rgb), 0.05); }
+.sidebar-item.active { background: rgba(var(--color-primary-rgb), 0.1); border-color: rgba(var(--color-primary-rgb), 0.2); }
+.sidebar-item .icon { font-size: 14px; flex-shrink: 0; }
+.sidebar-item .name { font-size: 12px; font-weight: 600; color: var(--color-on-surface); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sidebar-item .meta { font-size: 9px; color: rgba(var(--color-primary-rgb), 0.4); flex-shrink: 0; }
+.sidebar-item .builtin-tag { font-size: 8px; color: var(--color-primary); background: rgba(var(--color-primary-rgb), 0.12); padding: 1px 5px; border-radius: 3px; flex-shrink: 0; }
+.sidebar-item .item-actions { display: flex; gap: 1px; opacity: 0; transition: opacity 0.1s; flex-shrink: 0; }
+.sidebar-item:hover .item-actions { opacity: 1; }
+.sidebar-item .item-actions button { background: none; border: none; color: rgba(var(--color-primary-rgb), 0.4); cursor: pointer; padding: 2px; border-radius: 3px; font-size: 10px; }
+.sidebar-item .item-actions button:hover { color: var(--color-on-surface); }
+.sidebar-item .item-actions button.danger:hover { color: #ef4444; }
+.sidebar-item.builtin:hover .item-actions { display: none; }
+
+.sidebar-add { padding: 8px; border-top: 1px solid rgba(var(--color-primary-rgb), 0.15); display: flex; gap: 4px; }
+.sidebar-add input { flex: 1; background: var(--color-bg); border: 1px solid rgba(var(--color-primary-rgb), 0.15); border-radius: 6px; padding: 5px 8px; font-size: 11px; color: var(--color-on-surface); outline: none; }
+.sidebar-add input:focus { border-color: var(--color-primary); }
+.sidebar-add button { background: var(--color-primary); color: var(--color-surface); border: none; border-radius: 6px; padding: 5px 10px; font-size: 11px; font-weight: 700; cursor: pointer; }
+
+/* Right content */
+.main { flex: 1; background: var(--color-surface); border: 1px solid rgba(var(--color-primary-rgb), 0.15); border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; }
+.main-header { padding: 12px 16px; border-bottom: 1px solid rgba(var(--color-primary-rgb), 0.15); display: flex; align-items: center; justify-content: space-between; }
+.main-header .left { display: flex; align-items: center; gap: 8px; }
+.main-header .left h3 { font-size: 14px; font-weight: 700; color: var(--color-on-surface); }
+.main-header .left .badge { font-size: 10px; color: rgba(var(--color-primary-rgb), 0.5); background: var(--color-bg); padding: 2px 7px; border-radius: 4px; border: 1px solid rgba(var(--color-primary-rgb), 0.15); }
+.main-header .left .badge-primary { color: var(--color-primary); }
+.main-header .desc { font-size: 10px; color: rgba(var(--color-primary-rgb), 0.5); padding: 0 16px; padding-top: 8px; }
+.main-body { flex: 1; overflow-y: auto; padding: 0 16px 12px; }
+
+/* Filters */
+.filters { display: flex; gap: 4px; padding: 10px 0; }
+.fbtn { font-size: 10px; padding: 3px 10px; border-radius: 5px; border: 1px solid rgba(var(--color-primary-rgb), 0.15); cursor: pointer; background: transparent; color: rgba(var(--color-primary-rgb), 0.5); font-weight: 500; }
+.fbtn.active { background: rgba(var(--color-primary-rgb), 0.12); color: var(--color-primary); border-color: rgba(var(--color-primary-rgb), 0.25); }
+
+/* Case row */
+.case-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 8px; margin-bottom: 3px; transition: background 0.1s; cursor: pointer; }
+.case-row:hover { background: rgba(var(--color-primary-rgb), 0.05); }
+.case-row .thumb { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+.case-row .info { flex: 1; min-width: 0; }
+.case-row .info .q { font-size: 11px; font-weight: 600; color: var(--color-on-surface); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.case-row .info .q span { color: rgba(var(--color-primary-rgb), 0.5); font-weight: 400; }
+.case-row .info .a { font-size: 10px; color: rgba(var(--color-primary-rgb), 0.5); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.case-row .info .a span { color: rgba(var(--color-primary-rgb), 0.35); }
+.case-row .info .meta { font-size: 9px; color: rgba(var(--color-primary-rgb), 0.35); margin-top: 3px; }
+.case-row .del { flex-shrink: 0; background: none; border: none; color: rgba(var(--color-primary-rgb), 0.3); cursor: pointer; padding: 4px; border-radius: 4px; font-size: 11px; opacity: 0; transition: opacity 0.1s; }
+.case-row:hover .del { opacity: 1; }
+.case-row .del:hover { color: #ef4444; background: rgba(239, 68, 68, 0.08); }
+
+.more-btn { width: 100%; text-align: center; padding: 8px; font-size: 11px; color: rgba(var(--color-primary-rgb), 0.5); background: transparent; border: 1px solid rgba(var(--color-primary-rgb), 0.15); border-radius: 6px; cursor: pointer; margin-top: 6px; }
+.more-btn:hover { color: var(--color-on-surface); border-color: rgba(var(--color-primary-rgb), 0.3); }
+
+.refresh-btn { background: rgba(var(--color-primary-rgb), 0.08); border: 1px solid rgba(var(--color-primary-rgb), 0.15); color: rgba(var(--color-primary-rgb), 0.6); font-size: 11px; padding: 5px 10px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; gap: 4px; }
+.refresh-btn:hover { color: var(--color-on-surface); border-color: rgba(var(--color-primary-rgb), 0.3); }
+
+/* Expanded detail */
+.case-detail { padding: 8px 12px 10px 36px; border-bottom: 1px solid rgba(var(--color-primary-rgb), 0.1); background: rgba(var(--color-primary-rgb), 0.03); margin: 0 12px 6px; border-radius: 0 0 6px 6px; }
+.case-detail .pair { margin-bottom: 6px; }
+.case-detail .pair .label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: rgba(var(--color-primary-rgb), 0.35); font-weight: 600; margin-bottom: 2px; }
+.case-detail .pair .text { font-size: 11px; color: var(--color-on-surface); line-height: 1.5; white-space: pre-wrap; opacity: 0.85; }
+.case-detail .meta { font-size: 9px; color: rgba(var(--color-primary-rgb), 0.3); margin-top: 4px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="title-bar">
+    <h1>知识库</h1>
+    <p>管理案例库与自定义知识库</p>
+  </div>
+
+  <div class="tags">
+    <span class="tag tag-a">方案 A</span>
+    <span class="tag tag-b">左侧导航 + 右侧内容</span>
+    <span class="tag-note">点击左侧库名切换右侧内容，库切换不丢滚动位置</span>
+  </div>
+
+  <div class="split">
+    <!-- Left sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <span>知识库</span>
+        <span class="count">3 个</span>
+      </div>
+      <div class="sidebar-list">
+        <div class="sidebar-item builtin active">
+          <span class="icon">📊</span>
+          <span class="name">案例库 (RAG)</span>
+          <span class="meta">47</span>
+          <span class="builtin-tag">内置</span>
+        </div>
+        <div class="sidebar-item">
+          <span class="icon">📁</span>
+          <span class="name">API 文档库</span>
+          <span class="meta">12</span>
+          <div class="item-actions">
+            <button title="重命名">✏️</button>
+            <button class="danger" title="删除">🗑</button>
+          </div>
+        </div>
+        <div class="sidebar-item">
+          <span class="icon">📁</span>
+          <span class="name">前端规范</span>
+          <span class="meta">8</span>
+          <div class="item-actions">
+            <button title="重命名">✏️</button>
+            <button class="danger" title="删除">🗑</button>
+          </div>
+        </div>
+        <div class="sidebar-item">
+          <span class="icon">📁</span>
+          <span class="name">团队知识库</span>
+          <span class="meta">3</span>
+          <div class="item-actions">
+            <button title="重命名">✏️</button>
+            <button class="danger" title="删除">🗑</button>
+          </div>
+        </div>
+      </div>
+      <div class="sidebar-add">
+        <input type="text" placeholder="新建库..." />
+        <button>+</button>
+      </div>
+    </div>
+
+    <!-- Right content -->
+    <div class="main">
+      <div class="main-header">
+        <div class="left">
+          <h3>案例库 (RAG)</h3>
+          <span class="badge">47 条</span>
+          <span class="badge badge-primary" style="font-size:9px;">内置</span>
+        </div>
+        <button class="refresh-btn">↻ 刷新</button>
+      </div>
+      <div class="desc">案例库自动收集 👍/👎 反馈供 Agent 检索参考</div>
+      <div class="main-body">
+        <div class="filters">
+          <button class="fbtn active">全部 47</button>
+          <button class="fbtn">正向 31</button>
+          <button class="fbtn">负向 16</button>
+        </div>
+
+        <div class="case-row">
+          <span class="thumb" style="color:#22c55e">👍</span>
+          <div class="info">
+            <div class="q"><span>问: </span>如何用 React 写一个防抖 hook？</div>
+            <div class="a"><span>答: </span>可以使用 useEffect + setTimeout 组合实现自定义 useDebounce hook...</div>
+            <div class="meta">code_agent · 2026-07-08 10:32</div>
+          </div>
+          <button class="del">🗑</button>
+        </div>
+
+        <div class="case-row">
+          <span class="thumb" style="color:#22c55e">👍</span>
+          <div class="info">
+            <div class="q"><span>问: </span>asyncio.gather 和 asyncio.wait 有什么区别</div>
+            <div class="a"><span>答: </span>gather() 按顺序等待所有任务完成并收集结果；wait() 返回已完成/未完成的集合...</div>
+            <div class="meta">code_agent · 2026-07-08 09:15</div>
+          </div>
+          <button class="del">🗑</button>
+        </div>
+
+        <div class="case-row">
+          <span class="thumb" style="color:#ef4444">👎</span>
+          <div class="info">
+            <div class="q"><span>问: </span>帮我写一个登录页面</div>
+            <div class="a"><span>答: </span>```html &lt;form&gt;...&lt;/form&gt; ```</div>
+            <div class="meta">code_agent · 2026-07-07 22:01</div>
+          </div>
+          <button class="del">🗑</button>
+        </div>
+
+        <div class="case-row">
+          <span class="thumb" style="color:#22c55e">👍</span>
+          <div class="info">
+            <div class="q"><span>问: </span>Spring Boot 中如何配置多数据源</div>
+            <div class="a"><span>答: </span>通过 @Configuration + @Bean 注册多个 DataSource，并用 @Primary 标注主数据源...</div>
+            <div class="meta">code_agent · 2026-07-07 18:44</div>
+          </div>
+          <button class="del">🗑</button>
+        </div>
+
+        <div class="case-row">
+          <span class="thumb" style="color:#ef4444">👎</span>
+          <div class="info">
+            <div class="q"><span>问: </span>如何优化大型列表的渲染性能</div>
+            <div class="a"><span>答: </span>可以使用虚拟滚动（virtual scrolling）技术...</div>
+            <div class="meta">code_agent · 2026-07-07 14:20</div>
+          </div>
+          <button class="del">🗑</button>
+        </div>
+
+        <div class="case-row">
+          <span class="thumb" style="color:#22c55e">👍</span>
+          <div class="info">
+            <div class="q"><span>问: </span>Docker 多阶段构建的最佳实践</div>
+            <div class="a"><span>答: </span>使用多阶段构建可以显著减小镜像大小，第一阶段用完整镜像编译...</div>
+            <div class="meta">code_agent · 2026-07-07 11:03</div>
+          </div>
+          <button class="del">🗑</button>
+        </div>
+
+        <button class="more-btn">加载更多 (已显示 6/47)</button>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

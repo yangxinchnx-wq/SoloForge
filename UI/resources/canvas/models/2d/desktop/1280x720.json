@@ -1,0 +1,13 @@
+{
+  "key": "1280x720",
+  "label": "HD",
+  "type": "2d",
+  "nativeSize": { "w": 1280, "h": 720 },
+  "frame": {
+    "bezel": { "top": 6, "bottom": 18, "left": 6, "right": 6 },
+    "cornerRadius": 4,
+    "hasStand": true,
+    "standHeight": 20
+  },
+  "note": "2D 占位描述符 — HD 显示器边框参数"
+}

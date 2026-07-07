@@ -79,7 +79,7 @@ void main(List<String> args) {
       parentHwnd = int.tryParse(args[i + 1]);
       i++;
     } else if (a.startsWith('--parent-hwnd=')) {
-      parentHwnd = int.tryParse(a.substring(13));
+      parentHwnd = int.tryParse(a.substring('--parent-hwnd='.length));
     }
   }
 

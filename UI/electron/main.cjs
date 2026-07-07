@@ -173,8 +173,11 @@ function findFreePort() {
 function execPs(script) {
   return new Promise((resolve) => {
     const { exec } = require('child_process');
+    // 用 -EncodedCommand (base64 UTF-16LE) 传递脚本,保留换行和特殊字符
+    // 之前用 -Command + .replace(/\n/g, ';') 会破坏 Add-Type here-string (@'...'@) 语法
+    const encoded = Buffer.from(script, 'utf16le').toString('base64');
     exec(
-      `powershell -NoProfile -ExecutionPolicy Bypass -Command "${script.replace(/"/g, '`"').replace(/\n/g, ';')}"`,
+      `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}`,
       { timeout: 15000, encoding: 'utf-8', windowsHide: true },
       (err, stdout, stderr) => {
         if (err) resolve({ ok: false, error: stderr || err.message });
@@ -220,12 +223,29 @@ public class W32 {
 // 改成保留换行,Add-Type 接受多行 C# 代码
 
 // 找指定 pid 的第一个顶层窗口
+// 优化: 优先用 Get-Process (无需 Add-Type 编译, ~100ms)
+//   失败时 fallback 到 EnumWindows (需要 Add-Type, ~2-5s)
+// 注意: 不检查 IsWindowVisible — spawn 时 windowsHide:true 会让窗口首次 ShowWindow
+//   被 OS 替换为 SW_HIDE, IsWindowVisible 返回 false, 导致永远找不到窗口。
 async function findWindowByPid(pid) {
+  // 快速路径: Get-Process 的 MainWindowHandle
+  // 缺点: windowsHide:true 时 MainWindowHandle 可能为 0, 但 Flutter 窗口创建后通常非 0
+  try {
+    const r = await execPs(
+      `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; if ($p -and $p.MainWindowHandle -ne 0) { Write-Output $p.MainWindowHandle.ToInt64() } else { Write-Output 0 }`
+    );
+    if (r.ok) {
+      const hwnd = parseInt(r.output, 10) || 0;
+      if (hwnd !== 0) return hwnd;
+    }
+  } catch {}
+
+  // 慢速 fallback: EnumWindows + GetParent == Zero + PID 匹配
   const script = `${PS_WIN32}
 $found = [IntPtr]::Zero
 $callback = {
   param($hwnd, $lparam)
-  if ([W32]::IsWindowVisible($hwnd) -and [W32]::GetParent($hwnd) -eq [IntPtr]::Zero) {
+  if ([W32]::GetParent($hwnd) -eq [IntPtr]::Zero) {
     $procId = 0
     [W32]::GetWindowThreadProcessId($hwnd, [ref]$procId) | Out-Null
     if ($procId -eq ${pid}) {
@@ -326,13 +346,50 @@ function waitForPort(port, timeoutMs = 8000) {
 }
 
 // ────────────────────────────────────────────
+// 确保画布宿主窗口存在 (懒创建)
+// ────────────────────────────────────────────
+function ensureCanvasHost() {
+  if (canvasHostWindow && !canvasHostWindow.isDestroyed()) {
+    return canvasHostWindow;
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    throw new Error('mainWindow not available; cannot create canvas host');
+  }
+  console.log('[canvas-host] lazy create (canvasHostWindow was null/destroyed)');
+  return createCanvasHostWindow(mainWindow);
+}
+
+// ────────────────────────────────────────────
+// Windows 进程树强制 kill
+//   child.kill() 在 Windows 上只杀主进程, 不杀子进程 (GPU worker 等)
+//   taskkill /T /F 杀整棵进程树
+// ────────────────────────────────────────────
+function killProcessTree(child) {
+  if (!child || child.killed) return;
+  const pid = child.pid;
+  if (!pid) { try { child.kill(); } catch {} return; }
+  if (process.platform === 'win32') {
+    try {
+      require('child_process').spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], {
+        stdio: 'ignore', windowsHide: true,
+      });
+    } catch {
+      try { child.kill(); } catch {}
+    }
+  } else {
+    try { process.kill(-pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch {} }
+  }
+}
+
+// ────────────────────────────────────────────
 // 启动画布
 // ────────────────────────────────────────────
 async function startCanvas(sessionId, width, height) {
   if (canvasSessions.has(sessionId)) {
     const existing = canvasSessions.get(sessionId);
     if (existing.process && !existing.process.killed) {
-      return { ok: true, session: existing, reused: true };
+      const { process: _omit, ...ipcSession } = existing;
+      return { ok: true, session: ipcSession, reused: true };
     }
     canvasSessions.delete(sessionId);
   }
@@ -342,12 +399,21 @@ async function startCanvas(sessionId, width, height) {
     return { ok: false, error: `canvas_preview.exe not found at ${exe}` };
   }
   const dataDir = resolveCanvasDataDir();
+
+  // 确保画布宿主窗口存在 (可能被 idle destroy 或外部销毁)
+  let host;
+  try {
+    host = ensureCanvasHost();
+  } catch (e) {
+    return { ok: false, error: `failed to create canvas host: ${e.message}` };
+  }
+
   const port = await findFreePort();
 
   // 启动参数：--port=... 提供 WebSocket；--parent-hwnd=... 由 canvas C++ 入口自己 SetParent
   // 注意：canvas 的 C++ 入口使用 ParseArg(--port, arg, val) 解析，只识别 --key=value 形式，
   //      单独的 --port <val> 形式会让 std::stoi("") 抛异常触发 STATUS_STACK_BUFFER_OVERRUN
-  const hostHwnd = canvasHostWindow.getNativeWindowHandle().readInt32LE(0);
+  const hostHwnd = host.getNativeWindowHandle().readInt32LE(0);
   // cwd 必须设为 binary 所在目录，因为 C++ 入口的 DartProject(L"data") 是相对 binary 目录的
   // 而 dataDir 是 binary 下的 data/ 子目录，binary 在它的父目录
   const exeDir = path.dirname(exe);
@@ -373,23 +439,34 @@ async function startCanvas(sessionId, width, height) {
   // 等待端口 ready
   const ready = await waitForPort(port, 10000);
   if (!ready) {
-    child.kill('SIGTERM');
+    killProcessTree(child);
     return { ok: false, error: `canvas WebSocket did not start on port ${port}` };
   }
 
-  // 找窗口 HWND（轮询最多 5s）— C++ 入口收到 --parent-hwnd= 后会自己 SetParent + 修改样式
+  // 找窗口 HWND（总超时 15s — 避免慢速 PowerShell 导致无限等待）
   let hwnd = 0;
   const pid = child.pid;
-  for (let i = 0; i < 25 && hwnd === 0; i++) {
+  const hwndDeadline = Date.now() + 15000;
+  for (let i = 0; i < 60 && hwnd === 0 && Date.now() < hwndDeadline; i++) {
     hwnd = await findWindowByPid(pid);
     if (hwnd === 0) await new Promise(r => setTimeout(r, 200));
   }
   if (hwnd === 0) {
-    child.kill('SIGTERM');
+    killProcessTree(child);
     return { ok: false, error: `canvas window HWND not found for pid ${pid}` };
   }
 
-  // 把画布窗口的子 Flutter 窗口尺寸对齐到最新 hostBounds（renderer 会在 start 前调用 reportBounds）
+  // ★ 关键: 将 Flutter 窗口嵌入到 canvasHostWindow (SetParent + WS_CHILD)
+  //   之前缺失这一步 → Flutter 窗口作为独立顶层窗口存在, 不在 Electron 内
+  try {
+    await embedWindow(hwnd, hostHwnd, 0, 0, hostBounds.width, hostBounds.height);
+    console.log(`[canvas:${sessionId}] embedded into host hwnd=${hostHwnd}`);
+  } catch (e) {
+    console.warn(`[canvas:${sessionId}] embedWindow failed:`, e?.message);
+    // embed 失败不阻止启动, 用户至少能看到独立窗口
+  }
+
+  // 把画布窗口尺寸对齐到最新 hostBounds
   try {
     await moveWindow(hwnd, 0, 0, hostBounds.width, hostBounds.height);
   } catch (e) {
@@ -406,7 +483,9 @@ async function startCanvas(sessionId, width, height) {
     height,
   };
   canvasSessions.set(sessionId, session);
-  return { ok: true, session, reused: false };
+  // IPC 返回时去掉 process 对象 (ChildProcess 无法 structured clone)
+  const { process: _omit, ...ipcSession } = session;
+  return { ok: true, session: ipcSession, reused: false };
 }
 
 async function resizeCanvas(sessionId, width, height) {
@@ -421,9 +500,9 @@ async function stopCanvas(sessionId) {
   const s = canvasSessions.get(sessionId);
   if (!s) return { ok: true, notFound: true };
   if (s.process && !s.process.killed) {
-    s.process.kill('SIGTERM');
+    killProcessTree(s.process);
     setTimeout(() => {
-      if (s.process && !s.process.killed) s.process.kill('SIGKILL');
+      if (s.process && !s.process.killed) killProcessTree(s.process);
     }, 3000);
   }
   canvasSessions.delete(sessionId);
@@ -1528,7 +1607,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   // 清理所有画布进程
   for (const [, s] of canvasSessions) {
-    if (s.process && !s.process.killed) s.process.kill('SIGTERM');
+    if (s.process && !s.process.killed) killProcessTree(s.process);
   }
   canvasSessions.clear();
   if (process.platform !== 'darwin') app.quit();
@@ -1536,6 +1615,6 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   for (const [, s] of canvasSessions) {
-    if (s.process && !s.process.killed) s.process.kill('SIGTERM');
+    if (s.process && !s.process.killed) killProcessTree(s.process);
   }
 });

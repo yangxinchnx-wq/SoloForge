@@ -1,0 +1,14 @@
+{
+  "key": "m-iphone14promax",
+  "label": "iPhone 14 Pro Max",
+  "type": "2d",
+  "nativeSize": { "w": 430, "h": 932 },
+  "frame": {
+    "bezel": { "top": 15, "bottom": 15, "left": 6, "right": 6 },
+    "cornerRadius": 34,
+    "hasStand": false,
+    "notch": "dynamicIsland",
+    "notchSize": { "w": 130, "h": 36 }
+  },
+  "note": "2D 占位描述符 — iPhone 14 Pro Max 边框参数"
+}

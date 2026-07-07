@@ -12,6 +12,7 @@ import { registerChatSessionRoutes, flushChatStore } from "./src/server/routes/c
 import { registerConversationRoutes, flushConversationStore } from "./src/server/routes/conversationRoutes";
 import { registerSettingsRoutes, flushSettingsToDiskSync } from "./src/server/routes/settings";
 import { registerFileRoutes } from "./src/server/routes/fileRoutes";
+import { registerTrainingRoutes } from "./src/server/routes/trainingRoutes";
 
 // Load Environment variables
 dotenv.config();
@@ -140,6 +141,13 @@ async function startServer() {
   // 必须放在 backendApiProxy 之前,避免被代理到 3001
   // ============================================================
   registerFileRoutes(app);
+
+  // ============================================================
+  // Training Data Routes (3000 本地路由, URL 抓取等)
+  //   POST /api/training/fetch-url   → 抓取 URL 内容 (绕过 CORS)
+  // 必须放在 backendApiProxy 之前,避免被代理到 3001
+  // ============================================================
+  registerTrainingRoutes(app);
 
   // Canvas Tools MCP 已在 bootstrapCanvasSessionLayer 内部注册 (canvas.ts L96)
   // 不再重复调用 registerCanvasToolRoutes(app)

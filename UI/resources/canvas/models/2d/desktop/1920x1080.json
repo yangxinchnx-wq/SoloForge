@@ -1,0 +1,13 @@
+{
+  "key": "1920x1080",
+  "label": "Full HD 显示器",
+  "type": "2d",
+  "nativeSize": { "w": 1920, "h": 1080 },
+  "frame": {
+    "bezel": { "top": 6, "bottom": 18, "left": 6, "right": 6 },
+    "cornerRadius": 4,
+    "hasStand": true,
+    "standHeight": 24
+  },
+  "note": "2D 占位描述符 — Full HD 显示器边框参数"
+}

@@ -1,0 +1,47 @@
+[
+  {
+    "id": "doc-001",
+    "domain": "documentation",
+    "difficulty": "easy",
+    "input": "为以下函数写 JSDoc 注释：\n```javascript\nfunction formatDate(date, format) {\n  return format.replace('YYYY', date.getFullYear())\n    .replace('MM', String(date.getMonth() + 1).padStart(2, '0'))\n    .replace('DD', String(date.getDate()).padStart(2, '0'));\n}\n```",
+    "expectedKeywords": ["/**", "@param", "@returns", "formatDate", "date", "format"],
+    "expectedActions": [],
+    "weight": 1.0
+  },
+  {
+    "id": "doc-002",
+    "domain": "documentation",
+    "difficulty": "medium",
+    "input": "为一个 REST API 写文档，端点是 POST /api/users，接受 name/email/password，返回用户对象",
+    "expectedKeywords": ["POST", "/api/users", "name", "email", "password", "Response", "Body"],
+    "expectedActions": [],
+    "weight": 1.5
+  },
+  {
+    "id": "doc-003",
+    "domain": "documentation",
+    "difficulty": "medium",
+    "input": "为一个 npm 包写 README.md，包名 'json-flatten'，功能是把嵌套 JSON 扁平化为点分隔键值对",
+    "expectedKeywords": ["# json-flatten", "安装", "用法", "npm", "示例", "flatten"],
+    "expectedActions": [],
+    "weight": 1.5
+  },
+  {
+    "id": "doc-004",
+    "domain": "documentation",
+    "difficulty": "easy",
+    "input": "把这段代码逻辑用一句话注释说明：\n```python\ndef is_palindrome(s):\n    s = s.lower().replace(' ', '')\n    return s == s[::-1]\n```",
+    "expectedKeywords": ["回文", "palindrome", "判断", "反转"],
+    "expectedActions": [],
+    "weight": 1.0
+  },
+  {
+    "id": "doc-005",
+    "domain": "documentation",
+    "difficulty": "hard",
+    "input": "为一个开源项目写 CONTRIBUTING.md，包括代码规范、PR 流程、测试要求、Commit Message 规范",
+    "expectedKeywords": ["贡献", "CONTRIBUTING", "PR", "Commit", "测试", "分支", "规范"],
+    "expectedActions": [],
+    "weight": 2.0
+  }
+]

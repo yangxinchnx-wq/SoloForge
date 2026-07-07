@@ -182,62 +182,12 @@ export class SoloForgeRTRRacerEngine {
 
     this.kernel.getEventBus().emit(DecisionEvent.CONFIDENCE_CALCULATED, { confidence: aggregateConfidenceIndex });
 
-    // 4. 三区间物理分层执行路由
-    if (aggregateConfidenceIndex > 0.85) {
-      // 确定性区间一：单路极速通过
-      const winner = matrixScoringMap[0].instance;
-      const output = await executionWorkerNode(winner);
-      this.kernel.getEventBus().emit(DecisionEvent.ROUTE_COMPLETED, { strategy: winner.reasoningStrategy });
-      return { winnerModelName: winner.modelName, output, winnerScore: matrixScoringMap[0].score };
-    } 
-    
-    if (aggregateConfidenceIndex < 0.60 && matrixScoringMap.length >= 3) {
-      // 风险区间三：真正激活 3 路并行探索并触发多数归集判定
-      this.kernel.getEventBus().emit(DecisionEvent.VOTE_TRIGGERED, { subsetExpandedSize: 3 });
-      
-      let targetedTopTrio: ModelStrategyCandidate[] = [];
-
-      // 🔗 熔接核心：如果注入了 Rust 高性能常驻守护进程客户端，则将抉择主导权物理交割给 Rust 最大堆
-      if (this.schedulerClient) {
-        // 将所有候选者批量打入 Rust 老化优先队列中
-        for (const item of matrixScoringMap) {
-          // 将评分放大 1000 倍转化为 Rust 所需的 u32 基础优先级
-          const u32Priority = Math.floor(item.score * 1000);
-          // 动态注入老化系数
-          const agingFactor = taskComplexityMetrics * 10.0;
-          await this.schedulerClient.pushTask(item.instance.modelName, u32Priority, agingFactor);
-        }
-
-        // 从 Rust 进程中顺序弹出当前时序下最优先级最高的 3 个智能体节点
-        const poppedNames: string[] = [];
-        for (let i = 0; i < 3; i++) {
-          const name = await this.schedulerClient.popTask();
-          if (name) poppedNames.push(name);
-        }
-
-        // 根据 Rust 弹出的物理名字，对齐还原回原生的 Candidate 实例引用
-        targetedTopTrio = poppedNames
-          .map(name => candidates.find(c => c.modelName === name)!)
-          .filter(Boolean);
-      }
-
-      // 🛡️ 防御降级：如果没有注入客户端，或者 Rust 弹出异常空槽，则优雅平滑退回原生的内存序列切片
-      if (targetedTopTrio.length < 3) {
-        targetedTopTrio = matrixScoringMap.slice(0, 3).map(wrapper => wrapper.instance);
-      }
-      
-      const parallelResolutionPromises = targetedTopTrio.map(targetNode => executionWorkerNode(targetNode));
-      const synchronousOutputs = await Promise.all(parallelResolutionPromises);
-      
-      const votedOutput = this.compilePluralityVote(synchronousOutputs);
-      // 找到得票最多的输出对应的 candidate
-      const winnerIdx = synchronousOutputs.indexOf(votedOutput);
-      const winner = winnerIdx >= 0 ? targetedTopTrio[winnerIdx] : targetedTopTrio[0];
-      const winnerScore = matrixScoringMap.find(m => m.instance.modelName === winner.modelName)?.score ?? matrixScoringMap[0].score;
-      return { winnerModelName: winner.modelName, output: votedOutput, winnerScore };
-    }
-
-    // 均衡区间二
+    // 4. 单路执行路由 (2026-07-07: 砍掉三路并行)
+    //    原区间三 (confidence < 0.60 && candidates >= 3) 的三路并行逻辑已删除:
+    //    - 3 路用同一个 mainProvider 是 3 倍浪费,不是真正的多模型择优
+    //    - 业界共识 (Claude Code/Cursor/Aider) 均不这样做
+    //    - LLM 自主 Function Calling 已隐含"需要思考时就多调几轮工具"
+    //    保留区间一和区间二,都走单路执行
     const winner = matrixScoringMap[0].instance;
     const output = await executionWorkerNode(winner);
     this.kernel.getEventBus().emit(DecisionEvent.ROUTE_COMPLETED, { strategy: winner.reasoningStrategy });

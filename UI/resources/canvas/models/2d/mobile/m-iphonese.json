@@ -1,0 +1,14 @@
+{
+  "key": "m-iphonese",
+  "label": "iPhone SE",
+  "type": "2d",
+  "nativeSize": { "w": 375, "h": 667 },
+  "frame": {
+    "bezel": { "top": 50, "bottom": 50, "left": 6, "right": 6 },
+    "cornerRadius": 20,
+    "hasStand": false,
+    "notch": "homeButton",
+    "notchSize": { "w": 40, "h": 40 }
+  },
+  "note": "2D 占位描述符 — iPhone SE 边框参数（Home 键）"
+}

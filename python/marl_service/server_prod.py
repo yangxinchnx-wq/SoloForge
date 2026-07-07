@@ -462,6 +462,22 @@ async def main():
         import traceback
         traceback.print_exc()
 
+    # Phase 5: 启动 8767 本地 LLM 推理服务 (用于 PromptOptimizer 实时训练)
+    try:
+        from marl_service.llm_inference_server import start_llm_http_server
+        llm_thread = start_llm_http_server(host="127.0.0.1", port=8767)
+        if llm_thread is None:
+            print("⚠️  Local LLM server not started (model not found or llama-cpp-python missing)")
+            print("    运行 python tools/download_small_llm.py 下载模型")
+            print("    运行 pip install llama-cpp-python 安装推理库")
+        else:
+            print("✅ Local LLM server will be used by PromptOptimizer (训练无需外部 API)")
+    except ImportError:
+        print("⚠️  llama-cpp-python 未安装, 本地 LLM 服务跳过")
+        print("    pip install llama-cpp-python")
+    except Exception as e:
+        print(f"⚠️  Failed to start Local LLM server: {e}")
+
     print()
     print(f"Server binding to: tcp://{server.host}:{server.port}")
     print("TypeScript cluster should connect to this endpoint.")

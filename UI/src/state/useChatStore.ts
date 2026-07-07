@@ -159,7 +159,8 @@ const fallbackActiveSettings: ChatSettingsItem = {
   personality: 'professional',
   tone: 'detailed',
   emojiEnabled: true,
-  emojiType: 'mixed'
+  emojiType: 'mixed',
+  agentId: 'code_agent'
 };
 
 export const emptyStreamState: StreamState = {
@@ -485,7 +486,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
 
   handleSend: async (inputRef) => {
     const state = get();
-    const { inputValue, pendingAttachment, conversations, options, hashlineAgentEnabled } = state;
+    const { inputValue, pendingAttachment, conversations, options, hashlineAgentEnabled, configs } = state;
     const { permissionMode = 'normal', mainModel = 'GPT-4o', secModels = [], selectedFile, editorContent, modelProviderMap = {}, selectedChatId = '1' } = options;
 
     if (!inputValue.trim() && !pendingAttachment) return;
@@ -633,23 +634,11 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
       conversations: { ...s.conversations, [activeChatId]: [...currentChatMsgs, assistantMsg] },
     }));
 
-    // 2026-07-06 阶段3: 派发 AST 预览触发事件 → usePreviewBridge 接收
-    //   - 预览流并行于主聊天 SSE, 独立 LLM 调用生成 UniversalAST
-    //   - PreviewPanel 订阅 previewStreamStore 展示流式状态
-    //   - 2026-07-07: 传递 provider 配置, 避免预览流走 backend proxy 503
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('soloforge-preview-trigger', {
-        detail: {
-          chatId: activeChatId,
-          message: finalContent,
-          provider: mainEntry ? {
-            baseUrl: mainEntry.baseUrl,
-            apiKey: mainEntry.apiKey,
-            model: mainEntry.model,
-          } : undefined,
-        }
-      }));
-    }
+    // 2026-07-07: 预览触发改为 LLM 自标记模式
+    //   - 之前: 每次聊天无条件触发预览(浪费额度)
+    //   - 现在: LLM 在回复末尾加 <<<PREVIEW_NEEDED:语言>>> 标记,前端解析后才触发
+    //   - 简单任务(如"你好")无标记 → 无预览调用
+    let accumulatedText = '';
 
     // StreamPanel 桥接: 创建 streamingStore 任务, 后续事件同步推送
     const streamBridge = createStreamBridge(activeChatId, mainModel, finalContent, permissionMode);
@@ -682,11 +671,15 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
         activeTools: activeTools.length > 0 ? activeTools : undefined,
         activeSkills: activeSkills.length > 0 ? activeSkills : undefined,
         activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined,
+        // Phase 3: 透传 activeSettings (personality/tone/emoji) + agentId 给 Java Spring AI
+        activeSettings: configs[activeChatId] || fallbackActiveSettings,
       } as any,
       (evt: ChatStreamEvent) => {
         switch (evt.kind) {
           case 'text': {
             streamBridge.onText(evt.text);
+            // 累积完整文本,用于 done 事件中解析预览标记
+            accumulatedText += evt.text;
             // 流式增量文本 → 追加到当前 assistant 消息
             // 合并为单个 set 调用, 避免两次独立重渲染之间的空帧
             set((s) => {
@@ -760,6 +753,39 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
             streamBridge.onDone();
             // 清理 streamState, 避免残留的流送面板在下次发送时闪现
             set({ isGenerating: false, streamState: { ...emptyStreamState } });
+
+            // 2026-07-07: 解析 LLM 回复末尾的预览触发标记
+            // LLM 在 system prompt 中被指示: 需要生成 UI 代码时在回复末尾加 <<<PREVIEW_NEEDED:语言>>>
+            const previewMatch = accumulatedText.match(/<<<PREVIEW_NEEDED:(\w+)>>>/);
+            if (previewMatch && typeof window !== 'undefined') {
+              // 从回复中移除标记,不让用户看到
+              const cleanText = accumulatedText.replace(/\n*<<<PREVIEW_NEEDED:\w+>>>\s*$/, '');
+              set((s) => {
+                const currentList = s.conversations[activeChatId] || [];
+                if (currentList.length === 0) return {};
+                const newList = [...currentList];
+                const lastMsg = { ...newList[newList.length - 1] };
+                if (lastMsg.sender === 'assistant') {
+                  lastMsg.content = cleanText;
+                  newList[newList.length - 1] = lastMsg;
+                }
+                return { conversations: { ...s.conversations, [activeChatId]: newList } };
+              });
+
+              // 触发预览流
+              window.dispatchEvent(new CustomEvent('soloforge-preview-trigger', {
+                detail: {
+                  chatId: activeChatId,
+                  message: finalContent,
+                  language: previewMatch[1],
+                  provider: mainEntry ? {
+                    baseUrl: mainEntry.baseUrl,
+                    apiKey: mainEntry.apiKey,
+                    model: mainEntry.model,
+                  } : undefined,
+                }
+              }));
+            }
             break;
           }
         }
@@ -769,7 +795,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
 
   handleAcceptEnable: (candidateName) => {
     const state = get();
-    const { lastReqBody, options } = state;
+    const { lastReqBody, options, configs } = state;
     if (!lastReqBody) return;
     const entry = (options.modelProviderMap || {})[candidateName];
     if (!entry || !entry.apiKey) return;
@@ -803,6 +829,8 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
         activeTools: lastReqBody.activeTools,
         activeSkills: lastReqBody.activeSkills,
         activeKnowledge: lastReqBody.activeKnowledge,
+        // Phase 3: 透传 activeSettings 给 Java Spring AI
+        activeSettings: configs[activeChatId] || fallbackActiveSettings,
       } as any,
       (evt: ChatStreamEvent) => {
         switch (evt.kind) {

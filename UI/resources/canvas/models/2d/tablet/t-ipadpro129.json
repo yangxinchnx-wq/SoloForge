@@ -1,0 +1,14 @@
+{
+  "key": "t-ipadpro129",
+  "label": "iPad Pro 12.9\"",
+  "type": "2d",
+  "nativeSize": { "w": 1024, "h": 1366 },
+  "frame": {
+    "bezel": { "top": 12, "bottom": 12, "left": 12, "right": 12 },
+    "cornerRadius": 18,
+    "hasStand": false,
+    "hasCamera": true,
+    "cameraPosition": "top"
+  },
+  "note": "2D 占位描述符 — iPad Pro 12.9 边框参数"
+}

@@ -1,0 +1,87 @@
+# SoloForge Agent Service 配置
+server:
+  port: 8770
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: solo-forge-agent
+
+  # Spring AI OpenAI 兼容配置（默认占位，实际从请求体动态注入）
+  ai:
+    openai:
+      api-key: ${SOLOFORGE_LLM_API_KEY:placeholder}
+      base-url: ${SOLOFORGE_LLM_BASE_URL:https://api.openai.com}
+      chat:
+        options:
+          model: ${SOLOFORGE_LLM_MODEL:gpt-4o}
+          temperature: 0.3
+
+  # Garnet (Redis 协议) - ChatMemory 持久化
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+
+  # SQLite (AI Society 共享数据库) - AgentConfig + 业务表
+  datasource:
+    url: jdbc:sqlite:../python/data/ai_society/ai_society.db
+    driver-class-name: org.sqlite.JDBC
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+      connection-timeout: 5000
+
+# AI Society 服务地址
+ai-society:
+  # 8766 HTTP - reputation 推送
+  reputation-url: http://127.0.0.1:8766/sync/reputation
+  # 8765 TCP - MARL 训练数据推送
+  marl-host: 127.0.0.1
+  marl-port: 8765
+  # 8766 HTTP - 业务表查询（通过 Python 暴露的只读 API）
+  query-url: http://127.0.0.1:8766
+
+# Actuator 监控
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: solo-forge-agent
+
+# Phase 5: 离线训练配置
+soloforge:
+  training:
+    enabled: true                    # 训练功能总开关
+    scheduler:
+      enabled: false                 # 定时调度已禁用 (改为手动/反馈触发)
+    improvement-threshold: 0.05      # reward 提升 5% 以上才采纳新 prompt
+    feedback:
+      trigger-threshold: 5           # 累积 5 条 negative 反馈后触发优化
+    llm:
+      # 本地小模型 (Python MARL 服务 8767 端口, llama-cpp-python + GGUF)
+      # 无需外部 API key, 离线可用
+      base-url: ${SOLOFORGE_TRAINING_LLM_BASE_URL:http://127.0.0.1:8767}
+      api-key: local                 # 占位, 本地服务不需要鉴权
+      model: ${SOLOFORGE_TRAINING_LLM_MODEL:qwen2.5-0.5b-instruct}
+
+# 日志
+logging:
+  level:
+    com.soloforge.agent: INFO
+    org.springframework.ai: DEBUG
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"

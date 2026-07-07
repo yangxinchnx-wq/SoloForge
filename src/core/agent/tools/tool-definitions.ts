@@ -583,31 +583,32 @@ export const EXTENDED_TOOL_SCHEMAS: ToolSchema[] = [
 /**
  * 根据前端选中的工具 ID 列表, 构建传给 LLM 的 tools 数组
  *
- * 规则:
+ * 缓存稳定性设计 (2026-07-07):
  *   - 核心工具 (read_file, write_file, execute_cmd, search_code, list_files) 始终包含
  *   - 画布工具 (solo_canvas_*) 始终包含
- *   - 如果 activeToolIds 为空/null → 返回全部 AGENT_TOOLS (向后兼容)
- *   - 如果 activeToolIds 有值 → 只包含核心工具 + 匹配的扩展工具
+ *   - 核心工具构成稳定缓存前缀,不随 activeTools 变化而变化
+ *   - 扩展工具 (browser_*, bu_*, win_*) 默认不加载,只在 activeTools 显式启用时才加
+ *   - 用户切换 activeTools 只影响扩展工具,核心工具缓存前缀保持稳定
  *
  * @param activeToolIds 前端 ResourceManagerBar 中选中的工具 ID (含父级 ID 如 obscura)
  */
 export function getToolsForActiveIds(activeToolIds?: string[] | null): ToolSchema[] {
   if (!activeToolIds || activeToolIds.length === 0) {
-    // 向后兼容: 没有传 activeTools 时, 返回全部内置工具
+    // 无 activeTools 时,只返回核心工具+画布工具 (稳定缓存前缀)
     return AGENT_TOOLS;
   }
 
   const activeSet = new Set(activeToolIds);
   const result: ToolSchema[] = [];
 
-  // 1) 始终包含核心工具和画布工具
+  // 1) 始终包含核心工具和画布工具 (构成稳定缓存前缀)
   for (const tool of AGENT_TOOLS) {
     if (CORE_TOOL_NAMES.has(tool.function.name) || tool.function.name.startsWith('solo_canvas_')) {
       result.push(tool);
     }
   }
 
-  // 2) 添加匹配的扩展工具
+  // 2) 添加匹配的扩展工具 (按需加载,不影响核心工具缓存)
   for (const tool of EXTENDED_TOOL_SCHEMAS) {
     if (activeSet.has(tool.function.name)) {
       result.push(tool);
@@ -615,6 +616,68 @@ export function getToolsForActiveIds(activeToolIds?: string[] | null): ToolSchem
   }
 
   return result;
+}
+
+// ─── 工具结果预算 (L2 优化: 防止单个工具结果撑爆上下文) ──────────────
+// Claude Code 的 L1 压缩: 每个 tool_result 限制最大字符数,
+// 超出时截断并标注原始长度,引导 LLM 用 offset/limit 分页查看。
+// 参考: Claude Code Agent Loop 的 tool result budget 机制。
+//
+// 不同工具的预算不同:
+//   read_file:     4000 字符 (约 1000 token,一个中等文件的前 100 行)
+//   execute_cmd:   3000 字符 (约 750 token,保留最后 N 行输出)
+//   search_code:   2000 字符 (约 500 token,匹配结果摘要)
+//   其他工具:      4000 字符 (通用上限)
+export const TOOL_RESULT_BUDGET: Record<string, number> = {
+  read_file: 4000,
+  execute_cmd: 3000,
+  search_code: 2000,
+  list_files: 3000,
+};
+export const DEFAULT_TOOL_RESULT_BUDGET = 4000;
+
+/**
+ * 按预算裁剪工具输出。超出时截断并附加分页提示。
+ * 与直接 slice 的区别: 保留尾部信息(execute_cmd 的错误通常在最后),
+ * 并告知 LLM 如何获取剩余内容(read_file 用 offset/limit)。
+ */
+function applyToolResultBudget(
+  toolName: string,
+  output: string,
+  extraInfo?: string,
+): string {
+  const budget = TOOL_RESULT_BUDGET[toolName] ?? DEFAULT_TOOL_RESULT_BUDGET;
+  if (output.length <= budget) return output;
+
+  // read_file: 截断头部,提示用 offset/limit 分页
+  if (toolName === 'read_file') {
+    const truncated = output.slice(0, budget);
+    const totalChars = output.length;
+    const totalLines = output.split('\n').length;
+    const shownLines = truncated.split('\n').length;
+    return (
+      truncated +
+      `\n\n... [TRUNCATED by Agent Loop Budget] ` +
+      `showing first ${shownLines} of ~${totalLines} lines (${totalChars} chars total). ` +
+      `Use offset=${shownLines + 1} and limit=100 to read the next section.`
+    );
+  }
+
+  // execute_cmd: 保留尾部 (错误信息通常在最后)
+  if (toolName === 'execute_cmd') {
+    const tail = output.slice(-budget);
+    return (
+      `... [TRUNCATED: first ${output.length - budget} chars omitted, showing last ${budget}] ...\n` +
+      tail
+    );
+  }
+
+  // 其他工具: 截断头部
+  const truncated = output.slice(0, budget);
+  return (
+    truncated +
+    `\n\n... [TRUNCATED by Agent Loop Budget] ${output.length} chars total, showing first ${budget}.`
+  );
 }
 
 // ─── Tool 执行器 ────────────────────────────────────────────────────
@@ -803,9 +866,8 @@ export async function executeToolCall(request: ToolCallRequest): Promise<ToolCal
         const limit = request.arguments.limit ?? lines.length;
         const slice = lines.slice(offset, offset + limit);
         output = slice.join('\n');
-        if (output.length > 10000) {
-          output = output.slice(0, 10000) + '\n... (truncated, total ' + content.length + ' chars)';
-        }
+        // L2 优化: 统一走 applyToolResultBudget (4000 字符预算 + 分页提示)
+        output = applyToolResultBudget('read_file', output);
         break;
       }
 
@@ -907,9 +969,8 @@ export async function executeToolCall(request: ToolCallRequest): Promise<ToolCal
         }
 
         output = (stdoutBuf + (stderrBuf ? `\n[stderr]\n${stderrBuf}` : '')).trim();
-        if (output.length > 5000) {
-          output = output.slice(-5000) + '\n... (truncated)';
-        }
+        // L2 优化: 统一走 applyToolResultBudget (3000 字符预算,保留尾部)
+        output = applyToolResultBudget('execute_cmd', output);
         if (exitCode !== 0) {
           // 仍走 isError 分支, 让 LLM 知道命令失败
           return {
@@ -961,6 +1022,8 @@ export async function executeToolCall(request: ToolCallRequest): Promise<ToolCal
 
         await searchDir(PROJECT_ROOT, 0);
         output = matches.length > 0 ? matches.join('\n') : 'No matches found.';
+        // L2 优化: 搜索结果预算裁剪
+        output = applyToolResultBudget('search_code', output);
         break;
       }
 
@@ -1001,6 +1064,10 @@ export async function executeToolCall(request: ToolCallRequest): Promise<ToolCal
         }
         output = `Unknown tool: ${request.name}`;
     }
+
+    // L2 优化: 对未单独处理的工具(画布/扩展)统一应用预算裁剪
+    // 已在各 case 内部裁剪过的工具,此处 output.length <= budget,不会二次截断
+    output = applyToolResultBudget(request.name, output);
 
     return {
       tool_call_id: request.id,

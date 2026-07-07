@@ -1,0 +1,13 @@
+{
+  "key": "2560x1440",
+  "label": "2K",
+  "type": "2d",
+  "nativeSize": { "w": 2560, "h": 1440 },
+  "frame": {
+    "bezel": { "top": 4, "bottom": 16, "left": 4, "right": 4 },
+    "cornerRadius": 6,
+    "hasStand": true,
+    "standHeight": 22
+  },
+  "note": "2D 占位描述符 — 2K 显示器边框参数（窄边框）"
+}

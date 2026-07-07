@@ -1,17 +1,20 @@
 /**
  * aiBackend — 统一 AI 流式后端接口
- *   dev (浏览器 / Vite dev server) → fetch('/api/agents/dispatch') (POST 触发)
- *                                  + sseBackend 订阅 '/api/events/stream' (phase 流送)
+ *   dev (浏览器 / Vite dev server) → fetch('/api/java-agent/chat/send') (POST 触发)
+ *                                  → Node.js(3001) 透传到 Java Spring AI Agent(8770)
  *   prod (Electron) → window.soloforge.ai.chatViaPort (MessagePortMain 零拷贝)
+ *                     (注: 当前 preload.cjs 未暴露 dispatchAgent, IPC 路径为预留)
  *
  * ChatPanel 只见这一个接口, 不知道底层是 fetch 还是 IPC
  *
  * 接口规范:
  *   startChat(req, onEvent) → { abort(): void }
  *   onEvent 收到的事件: { kind: 'text' | 'phase' | 'error' | 'done', ... }
+ *
+ * 2026-07-08 Phase 3: 运行时从 Node.js /api/agents/dispatch 切换到
+ *            Java Spring AI /api/java-agent/chat/send (Node.js 透传到 8770)
+ *            Java 服务当前为非流式 (单 JSON 响应), 仅 emit text + done
  */
-
-import { sseBackend } from './sseBackend';
 
 export type ChatStreamEvent =
   | { kind: 'text'; text: string; taskId?: string }
@@ -39,6 +42,8 @@ export interface ChatRequest {
   activeSkills?: string[];
   /** 前端资源管理器选中的知识库 ID 列表 */
   activeKnowledge?: string[];
+  /** Agent ID (手动选择, 默认 code_agent, 由 Java 服务 AgentOrchestrator 路由) */
+  agentId?: string;
   // 多模型场景下透传到 phaseMappers
   [k: string]: any;
 }
@@ -56,50 +61,61 @@ export function isElectronIpcAvailable(): boolean {
 }
 
 /**
- * dev (fetch 触发 + sseBackend 订阅 phase) 实现
+ * 将前端 ChatRequest 映射为 Java Spring AI ChatRequest DTO
+ *   POST /api/java-agent/api/chat/send (Node.js 透传到 8770/api/chat/send)
+ *   Response: { success: boolean, content?: string, error?: string, sessionId, agentId }
+ */
+function buildJavaRequestBody(req: ChatRequest): any {
+  const settings = req.activeSettings || {};
+  return {
+    message: req.prompt,
+    sessionId: req.chatId ?? null,
+    provider: req.mainProvider
+      ? {
+          baseUrl: req.mainProvider.baseUrl,
+          apiKey: req.mainProvider.apiKey,
+          model: req.mainProvider.model,
+        }
+      : null,
+    settings: {
+      agentId: req.agentId || settings.agentId || 'code_agent',
+      personality: settings.personality || 'professional',
+      tone: settings.tone || 'detailed',
+      emojiMode: settings.emojiMode || (settings.emojiEnabled ? settings.emojiType || 'standard' : 'off'),
+      emojiEnabled: settings.emojiEnabled ?? false,
+      emojiType: settings.emojiType || 'standard',
+      enabledSkills: req.activeSkills || settings.enabledSkills || [],
+      enabledKnowledge: req.activeKnowledge || [],
+      workspaceFolder: req.workspaceFolder || null,
+    },
+    stream: false, // Java 服务当前为非流式
+  };
+}
+
+/**
+ * dev (fetch 触发) 实现
  * 流程:
- *   1) 启动 sseBackend 订阅, phase 事件经 onEvent 推送
- *   2) fetch POST /api/agents/dispatch 触发后端 Orchestrator
- *   3) Orchestrator emit phase0/1/2/3 事件 → eventBus → SSE 广播 → 前端收到
- *   4) 终态 JSON 返回 → emit done
+ *   1) fetch POST /api/java-agent/chat/send → Node.js(3001) 透传到 Java(8770)
+ *   2) Java AgentOrchestrator 复杂度分流 (单 Agent / 多 Agent 协作)
+ *   3) 终态 JSON 返回 → emit text + done
  */
 async function startChatViaFetch(req: ChatRequest, onEvent: (e: ChatStreamEvent) => void): Promise<ChatHandle> {
-  const taskId = `dispatch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const chatId = req.chatId;
+  const taskId = `java-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const controller = new AbortController();
   const signal = controller.signal;
 
   // 超时保护: LLM 调用可能挂起 (如服务商不可达), 120s 后自动 abort
-  // 避免 fetch 永久挂起 → SSE 订阅不释放 → 内存泄漏 → 渲染进程崩溃黑屏
   const timeoutId = setTimeout(() => {
     controller.abort();
-    onEvent({ kind: 'error', error: '请求超时 (120s)：后端响应时间过长，请检查 LLM 服务商连通性或重试。', taskId });
+    onEvent({ kind: 'error', error: '请求超时 (120s)：Java Agent 服务响应时间过长，请检查 8770 端口与 LLM 服务商连通性。', taskId });
   }, 120_000);
-
-  // 1) 订阅本 chatId 的 phase 事件 (多 chat 并发隔离)
-  sseBackend.subscribe(chatId ?? '__no_chat__', onEvent);
 
   (async () => {
     try {
-      // 2) 触发后端 Orchestrator
-      const res = await fetch('/api/agents/dispatch', {
+      const res = await fetch('/api/java-agent/api/chat/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          agentId: 'agent-001',
-          taskType: 'execute',
-          payload: { 
-            prompt: req.prompt, 
-            history: req.history, 
-            activeFile: req.activeFile ?? req.fileContext ?? null,
-          },
-          chatId,
-          mainProvider: req.mainProvider ?? null,
-          workspaceFolder: req.workspaceFolder ?? null,
-          activeTools: req.activeTools ?? null,
-          activeSkills: req.activeSkills ?? null,
-          activeKnowledge: req.activeKnowledge ?? null,
-        }),
+        body: JSON.stringify(buildJavaRequestBody(req)),
         signal,
       });
 
@@ -109,13 +125,15 @@ async function startChatViaFetch(req: ChatRequest, onEvent: (e: ChatStreamEvent)
         return;
       }
 
-      // 3) Orchestrator 终态返回, emit text + done
-      //    (中间 phase 由 sseBackend 通过 EventSource 推过来)
       const result = await res.json().catch(() => null);
       if (!signal.aborted) {
-        // 后端返回的 output 就是 LLM 的最终回答文本
-        if (result?.output) {
-          onEvent({ kind: 'text', text: result.output, taskId });
+        if (result?.success === false) {
+          onEvent({ kind: 'error', error: result?.error || 'Java Agent 返回失败', taskId });
+          return;
+        }
+        // Java 返回 { success, content, sessionId, agentId }
+        if (result?.content) {
+          onEvent({ kind: 'text', text: result.content, taskId });
         }
         onEvent({ kind: 'done', taskId });
       }
@@ -124,8 +142,6 @@ async function startChatViaFetch(req: ChatRequest, onEvent: (e: ChatStreamEvent)
       onEvent({ kind: 'error', error: err?.message || String(err), taskId });
     } finally {
       clearTimeout(timeoutId);
-      // 4) 取消本 chatId 订阅 (其他 chat 不受影响)
-      if (chatId) sseBackend.unsubscribe(chatId);
     }
   })();
 
@@ -134,18 +150,14 @@ async function startChatViaFetch(req: ChatRequest, onEvent: (e: ChatStreamEvent)
     abort: () => {
       clearTimeout(timeoutId);
       controller.abort();
-      if (chatId) sseBackend.unsubscribe(chatId);
     },
   };
 }
 
 /**
- * prod (Electron IPC) 实现
- * 流程:
- *   1) 订阅 onAgentEvent IPC, 收到 phase 事件 (含 chatId) 路由后转 onEvent
- *   2) dispatchAgent IPC 调 /api/agents/dispatch 触发后端 Orchestrator
- *   3) 终态返回 → emit done
- *   4) abort 时取消 IPC 订阅 + 不再处理结果
+ * prod (Electron IPC) 实现 — 预留路径
+ * 当前 preload.cjs 未暴露 dispatchAgent/onAgentEvent, 此函数不会被调用。
+ * 未来若启用 IPC, main 进程应转发到 /api/java-agent/chat/send。
  */
 async function startChatViaIpc(req: ChatRequest, onEvent: (e: ChatStreamEvent) => void): Promise<ChatHandle> {
   const sf = (window as any).soloforge;
@@ -154,15 +166,11 @@ async function startChatViaIpc(req: ChatRequest, onEvent: (e: ChatStreamEvent) =
   }
 
   const taskId = `ipc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const chatId = req.chatId;
 
-  // 1) 订阅 agent 事件, 只把本 chatId 的 phase 路由到 onEvent
-  const unsubscribeAgent = sf.onAgentEvent((msg: any) => {
+  // 订阅 agent 事件 (预留, Java 服务当前不推送 phase 事件)
+  const unsubscribeAgent = sf.onAgentEvent?.((msg: any) => {
     if (!msg || typeof msg.type !== 'string') return;
-    // 只关心 phase 事件 (其他 agent.* / court.* 忽略)
     if (!msg.type.startsWith('phase')) return;
-    // chatId 路由
-    if (chatId && msg.payload?.chatId && msg.payload.chatId !== chatId) return;
     onEvent({
       kind: 'phase',
       phase: msg.type,
@@ -171,31 +179,19 @@ async function startChatViaIpc(req: ChatRequest, onEvent: (e: ChatStreamEvent) =
     });
   });
 
-  // 2) 触发 dispatch (忽略响应, phase 走 IPC 推过来, 终态由 done 标识)
   (async () => {
     try {
       const resp = await sf.dispatchAgent({
-        agentId: 'agent-001',
-        taskType: 'execute',
-        payload: { 
-          prompt: req.prompt, 
-          history: req.history, 
-          activeFile: req.activeFile ?? req.fileContext ?? null,
-        },
-        chatId,
-        mainProvider: req.mainProvider ?? null,
-        workspaceFolder: req.workspaceFolder ?? null,
-        activeTools: req.activeTools ?? null,
-        activeSkills: req.activeSkills ?? null,
-        activeKnowledge: req.activeKnowledge ?? null,
+        // main 进程应识别此标记并转发到 /api/java-agent/chat/send
+        _target: 'java-agent',
+        ...buildJavaRequestBody(req),
       });
       if (!resp?.ok) {
         onEvent({ kind: 'error', error: `IPC dispatch failed: HTTP ${resp?.status} ${resp?.error ?? ''}`, taskId });
         return;
       }
-      // IPC 返回的 body 中包含 output (LLM 回答)
-      if (resp?.body?.output) {
-        onEvent({ kind: 'text', text: resp.body.output, taskId });
+      if (resp?.body?.content) {
+        onEvent({ kind: 'text', text: resp.body.content, taskId });
       }
       onEvent({ kind: 'done', taskId });
     } catch (err: any) {
@@ -206,9 +202,7 @@ async function startChatViaIpc(req: ChatRequest, onEvent: (e: ChatStreamEvent) =
   return {
     taskId,
     abort: () => {
-      // IPC dispatch 是 fire-and-forget, 没法中断后端在跑的 Orchestrator
-      // 仅取消前端 phase 事件订阅
-      try { unsubscribeAgent(); } catch {}
+      try { unsubscribeAgent?.(); } catch {}
     },
   };
 }

@@ -22,6 +22,12 @@ msgpack>=1.0.0
 # 3.13 兼容: 0.61.0+ (llvmlite 0.44+)
 numba>=0.61.0
 
+# Local LLM Inference - llama-cpp-python (Phase 5 实时训练)
+# 用于本地小模型推理 (Qwen2.5-0.5B-Instruct GGUF), 驱动 PromptOptimizer
+# Windows 预编译 wheel: pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+# 模型下载: python tools/download_small_llm.py
+llama-cpp-python>=0.3.0
+
 # Development Dependencies
 pytest>=8.0.0
 pytest-asyncio>=0.23.0

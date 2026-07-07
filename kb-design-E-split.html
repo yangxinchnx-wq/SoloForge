@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>方案 E — 分栏面板 + 列表行</title>
+<style>
+:root {
+  --bg: #111114; --surface: #1a1a1e; --surface2: #222226; --border: #2e2e33;
+  --on: #e4e4e7; --on2: #a1a1aa; --on3: #71717a; --on4: #52525b;
+  --primary: #3b82f6; --green: #22c55e; --red: #ef4444;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--bg); color: var(--on); font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif; display: flex; justify-content: center; min-height: 100vh; padding: 32px 20px; }
+.page { width: 960px; }
+.title-bar { margin-bottom: 24px; }
+.title-bar h1 { font-size: 16px; font-weight: 700; color: var(--on); letter-spacing: -0.3px; }
+.title-bar p { font-size: 12px; color: var(--on3); margin-top: 4px; }
+.tags { display: flex; gap: 6px; margin-bottom: 16px; align-items: center; }
+.tag { font-size: 10px; padding: 3px 8px; border-radius: 5px; font-weight: 500; }
+.tag-a { background: #22c55e18; color: #4ade80; }
+.tag-b { background: #f59e0b18; color: #fbbf24; }
+.tag-note { font-size: 11px; color: #555; margin-left: 8px; }
+
+/* Split layout */
+.split { display: flex; gap: 12px; height: 480px; }
+
+/* Left sidebar */
+.sidebar { width: 220px; flex-shrink: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; overflow: hidden; }
+.sidebar-header { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 11px; font-weight: 600; color: var(--on2); display: flex; align-items: center; justify-content: space-between; }
+.sidebar-header .count { font-size: 9px; color: var(--on4); }
+.sidebar-list { flex: 1; overflow-y: auto; padding: 6px; }
+.sidebar-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 7px; cursor: pointer; transition: all 0.12s; position: relative; }
+.sidebar-item:hover { background: var(--surface2); }
+.sidebar-item.active { background: #3b82f614; border: 1px solid #3b82f628; }
+.sidebar-item .icon { font-size: 14px; flex-shrink: 0; }
+.sidebar-item .name { font-size: 12px; font-weight: 600; color: var(--on); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sidebar-item .meta { font-size: 9px; color: var(--on4); flex-shrink: 0; }
+.sidebar-item .builtin-tag { font-size: 8px; color: var(--green); background: #22c55e12; padding: 1px 4px; border-radius: 3px; flex-shrink: 0; }
+.sidebar-item .item-actions { display: flex; gap: 1px; opacity: 0; transition: opacity 0.1s; flex-shrink: 0; }
+.sidebar-item:hover .item-actions { opacity: 1; }
+.sidebar-item .item-actions button { background: none; border: none; color: var(--on4); cursor: pointer; padding: 2px; border-radius: 3px; font-size: 10px; }
+.sidebar-item .item-actions button:hover { color: var(--on); }
+.sidebar-item .item-actions button.danger:hover { color: var(--red); }
+.sidebar-item .item-actions .builtin-hide { display: none; }
+.sidebar-item.builtin:hover .item-actions { display: none; }
+
+.sidebar-add { padding: 8px; border-top: 1px solid var(--border); display: flex; gap: 4px; }
+.sidebar-add input { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 11px; color: var(--on); outline: none; }
+.sidebar-add input:focus { border-color: var(--primary); }
+.sidebar-add button { background: var(--primary); color: #fff; border: none; border-radius: 6px; padding: 5px 10px; font-size: 11px; font-weight: 600; cursor: pointer; }
+
+/* Right content */
+.main { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; }
+.main-header { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.main-header .left { display: flex; align-items: center; gap: 8px; }
+.main-header .left h3 { font-size: 14px; font-weight: 700; }
+.main-header .left .badge { font-size: 10px; color: var(--on3); background: var(--bg); padding: 2px 7px; border-radius: 4px; border: 1px solid var(--border); }
+.main-header .left .badge-green { color: var(--green); }
+.main-header .desc { font-size: 10px; color: var(--on3); padding: 0 16px; padding-top: 8px; }
+.main-body { flex: 1; overflow-y: auto; padding: 0 16px 12px; }
+
+/* Filters */
+.filters { display: flex; gap: 4px; padding: 10px 0; }
+.fbtn { font-size: 10px; padding: 3px 10px; border-radius: 5px; border: 1px solid var(--border); cursor: pointer; background: transparent; color: var(--on3); font-weight: 500; }
+.fbtn.active { background: #3b82f618; color: var(--primary); border-color: #3b82f630; }
+
+/* Case row */
+.case-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 8px; margin-bottom: 3px; transition: background 0.1s; cursor: pointer; }
+.case-row:hover { background: var(--surface2); }
+.case-row .thumb { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+.case-row .info { flex: 1; min-width: 0; }
+.case-row .info .q { font-size: 11px; font-weight: 600; color: var(--on); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.case-row .info .q span { color: var(--on3); font-weight: 400; }
+.case-row .info .a { font-size: 10px; color: var(--on3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.case-row .info .a span { color: var(--on4); }
+.case-row .info .meta { font-size: 9px; color: var(--on4); margin-top: 3px; }
+.case-row .del { flex-shrink: 0; background: none; border: none; color: var(--on4); cursor: pointer; padding: 4px; border-radius: 4px; font-size: 11px; opacity: 0; transition: opacity 0.1s; }
+.case-row:hover .del { opacity: 1; }
+.case-row .del:hover { color: var(--red); background: #ef444412; }
+
+.more-btn { width: 100%; text-align: center; padding: 8px; font-size: 11px; color: var(--on3); background: transparent; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; margin-top: 6px; }
+.more-btn:hover { color: var(--on); border-color: var(--on2); }
+
+.refresh-btn { background: var(--surface2); border: 1px solid var(--border); color: var(--on3); font-size: 11px; padding: 5px 10px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; gap: 4px; }
+.refresh-btn:hover { color: var(--on); border-color: var(--on2); }
+
+/* Empty state */
+.empty-state { text-align: center; padding: 60px 20px; color: var(--on4); }
+.empty-state .icon { font-size: 28px; margin-bottom: 10px; opacity: 0.3; }
+.empty-state .text { font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="title-bar">
+    <h1>知识库</h1>
+    <p>管理案例库与自定义知识库 · 案例库自动收集反馈供 Agent 检索参考</p>
+  </div>
+
+  <div class="tags">
+    <span class="tag tag-a">分栏面板</span>
+    <span class="tag tag-b">左侧列表 + 右侧内容</span>
+    <span class="tag-note">左侧列库名，右侧显示选中库的案例列表。库切换不丢滚动位置。</span>
+  </div>
+
+  <div class="split">
+    <!-- Left sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <span>知识库</span>
+        <span class="count">3 个库</span>
+      </div>
+      <div class="sidebar-list">
+        <!-- Builtin case lib -->
+        <div class="sidebar-item builtin active">
+          <span class="icon">📊</span>
+          <span class="name">案例库 (RAG)</span>
+          <span class="meta">47</span>
+          <span class="builtin-tag">内置</span>
+        </div>
+        <!-- Custom lib 1 -->
+        <div class="sidebar-item">
+          <span class="icon">📁</span>
+          <span class="name">API 文档库</span>
+          <span class="meta">12</span>
+          <div class="item-actions">
+            <button title="重命名">✏️</button>
+            <button class="danger" title="删除">🗑</button>
+          </div>
+        </div>
+        <!-- Custom lib 2 -->
+        <div class="sidebar-item">
+          <span class="icon">📁</span>
+          <span class="name">前端规范</span>
+          <span class="meta">8</span>
+          <div class="item-actions">
+            <button title="重命名">✏️</button>
+            <button class="danger" title="删除">🗑</button>
+          </div>
+        </div>
+        <!-- Custom lib 3 -->
+        <div class="sidebar-item">
+          <span class="icon">📁</span>
+          <span class="name">团队知识库</span>
+          <span class="meta">3</span>
+          <div class="item-actions">
+            <button title="重命名">✏️</button>
+            <button class="danger" title="删除">🗑</button>
+          </div>
+        </div>
+      </div>
+      <div class="sidebar-add">
+        <input type="text" placeholder="新建库..." />
+        <button>+</button>
+      </div>
+    </div>
+
+    <!-- Right content -->
+    <div class="main">
+      <div class="main-header">
+        <div class="left">
+          <h3>案例库 (RAG)</h3>
+          <span class="badge">47 条</span>
+          <span class="badge badge-green" style="font-size:9px;">内置</span>
+        </div>
+        <button class="refresh-btn">↻ 刷新</button>
+      </div>
+      <div class="desc">案例库自动收集 👍/👎 反馈供 Agent 检索参考</div>
+      <div class="main-body">
+        <div class="filters">
+          <button class="fbtn active">全部 47</button>
+          <button class="fbtn">正向 31</button>
+          <button class="fbtn">负向 16</button>
+        </div>
+
+        <div class="case-row">
+          <span class="thumb" style="color:#22c55e">👍</span>
+          <div class="info">
+            <div class="q"><span>问: </span>如何用 React 写一个防抖 hook？</div>
+            <div class="a"><span>答: </span>可以使用 useEffect + setTimeout 组合实现自定义 useDebounce hook...</div>
+            <div class="meta">code_agent · 2026-07-08 10:32</div>
+          </div>
+          <button class="del">🗑</button>
+        </div>
+
+        <div class="case-row">
+          <span class="thumb" style="color:#22c55e">👍</span>
+          <div class="info">
+            <div class="q"><span>问: </span>asyncio.gather 和 asyncio.wait 有什么区别</div>
+            <div class="a"><span>答: </span>gather() 按顺序等待所有任务完成并收集结果；wait() 返回已完成/未完成的集合...</div>
+            <div class="meta">code_agent · 2026-07-08 09:15</div>
+          </div>
+          <button class="del">🗑</button>
+        </div>
+
+        <div class="case-row">
+          <span class="thumb" style="color:#ef4444">👎</span>
+          <div class="info">
+            <div class="q"><span>问: </span>帮我写一个登录页面</div>
+            <div class="a"><span>答: </span>```html &lt;form&gt;...&lt;/form&gt; ```</div>
+            <div class="meta">code_agent · 2026-07-07 22:01</div>
+          </div>
+          <button class="del">🗑</button>
+        </div>
+
+        <div class="case-row">
+          <span class="thumb" style="color:#22c55e">👍</span>
+          <div class="info">
+            <div class="q"><span>问: </span>Spring Boot 中如何配置多数据源</div>
+            <div class="a"><span>答: </span>通过 @Configuration + @Bean 注册多个 DataSource，并用 @Primary 标注主数据源...</div>
+            <div class="meta">code_agent · 2026-07-07 18:44</div>
+          </div>
+          <button class="del">🗑</button>
+        </div>
+
+        <div class="case-row">
+          <span class="thumb" style="color:#ef4444">👎</span>
+          <div class="info">
+            <div class="q"><span>问: </span>如何优化大型列表的渲染性能</div>
+            <div class="a"><span>答: </span>可以使用虚拟滚动（virtual scrolling）技术...</div>
+            <div class="meta">code_agent · 2026-07-07 14:20</div>
+          </div>
+          <button class="del">🗑</button>
+        </div>
+
+        <button class="more-btn">加载更多 (已显示 5/47)</button>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

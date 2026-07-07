@@ -280,12 +280,9 @@ export class SpecializedAgent {
   }
 
   private getDefaultMaxRounds(): number {
-    switch (this.config.level) {
-      case 'master': return 15;
-      case 'expert': return 10;
-      case 'senior': return 8;
-      case 'junior': return 5;
-    }
+    // 统一返回 20 作为硬上限(hardCap),LLM 自主决定何时停止
+    // 之前按 level 分级(5/8/10/15),改为统一值让 LLM 自主判断任务完成度
+    return 20;
   }
 
   private getTemperature(strategy: ExecutionStrategy): number {

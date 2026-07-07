@@ -113,6 +113,8 @@ export interface SubTask {
   screenshot_b64?: string;
   maxSteps?: number;
   currentStepIndex?: number;
+  // 流式文本累积缓冲 (text_chunk 事件写入)
+  textBuffer?: string;
 }
 
 // ==================== 步骤记录 ====================
@@ -202,6 +204,7 @@ export type StreamEventKind =
   | 'tool_enabled'
   | 'tool_skipped'
   | 'tool_timeout'
+  | 'text_chunk'
   | 'error';
 
 export interface StreamEvent {

@@ -1,0 +1,13 @@
+{
+  "key": "w-apple41",
+  "label": "Apple Watch 41mm",
+  "type": "2d",
+  "nativeSize": { "w": 176, "h": 176 },
+  "frame": {
+    "bezel": { "top": 22, "bottom": 22, "left": 22, "right": 22 },
+    "cornerRadius": 38,
+    "shape": "roundedSquare",
+    "crownPosition": "right"
+  },
+  "note": "2D 占位描述符 — Apple Watch 41mm 边框参数"
+}

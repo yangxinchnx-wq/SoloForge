@@ -26,6 +26,7 @@ html, body {
   --color-surface: #121414;
   --color-surface-bright: #383939;
   --color-primary: #ffde82;
+  --color-primary-rgb: 255, 222, 130;
   --color-on-surface: #e3e2e2;
   --color-outline: #99907d;
 }

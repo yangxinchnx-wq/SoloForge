@@ -3,10 +3,9 @@ import {
   RefreshCw, Play, Square, Loader2,
   CircleDot, AlertCircle, Monitor, Smartphone, Tablet, Watch,
   Palette, MonitorSmartphone, Info, ChevronDown, Check, Maximize2,
-  Code2
+  Code2, Box
 } from '../utils/icons';
 import { MountTransition } from './MountTransition';
-import { CanvasResourceBar } from './CanvasResourceBar';
 import { CanvasNotificationStack } from './CanvasNotificationBubble';
 import { usePreviewStreamStore } from '../state/previewStreamStore';
 import WebAstPreview from './WebAstPreview';
@@ -24,16 +23,6 @@ interface PreviewPanelProps {
   canvasId?: string | null;
   /** P0: 画布 ID 是否已就绪 (首次进入 chat 时, 后台拉取+建画布可能耗时) */
   canvasReady?: boolean;
-  /** P0: 当前 chat 可访问的所有画布 (用于顶部资源池条) */
-  canvases?: import('../services/canvas/sessionApi').CanvasResource[];
-  /** P0: 上限 (默认 10) */
-  maxCanvases?: number;
-  /** P0: 用户点 chip 切画布 */
-  onSelectCanvas?: (canvasId: string) => void;
-  /** P0: 用户点 + 新建画布 */
-  onCreateCanvas?: () => Promise<string | null>;
-  /** P0: 用户双击 chip 改名 */
-  onRenameCanvas?: (canvasId: string, description: string) => Promise<boolean>;
 }
 
 type CanvasState = 'idle' | 'starting' | 'running' | 'error';
@@ -109,7 +98,7 @@ function getSizePreset(key: string) {
   return SIZE_PRESETS.find(p => p.key === key);
 }
 
-export default function PreviewPanel({ width = 385, isResizing = false, dragStartWidth = 385, selectedChatId, canvasId, canvasReady, canvases = [], maxCanvases = 10, onSelectCanvas, onCreateCanvas, onRenameCanvas }: PreviewPanelProps) {
+export default function PreviewPanel({ width = 385, isResizing = false, dragStartWidth = 385, selectedChatId, canvasId, canvasReady }: PreviewPanelProps) {
   // 2026-07-06 阶段3: 订阅 AST 预览流状态
   const previewEntry = usePreviewStreamStore(s => selectedChatId ? s.entries[selectedChatId] : undefined);
   const previewIsStreaming = previewEntry?.isStreaming ?? false;
@@ -128,32 +117,32 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
   //   - canvasReady 后再切到真实 ID (canvas.stop 老 + canvas.start 新)
   const fallbackId = `canvas-${selectedChatId || 'default'}`;
   const effectiveCanvasId = canvasId || fallbackId;
-  // 待机状态: bridge 已就绪但当前对话无关联画布
-  const noCanvas = !!canvasReady && !canvasId;
+  // 待机状态已废弃: 始终显示工具栏 + 占位区, 用户可手动启动画布
+  const noCanvas = false;
   const sessionIdRef = useRef<string>(effectiveCanvasId);
   const [canvasInfo, setCanvasInfo] = useState<{ port: number; pid: number } | null>(null);
   const [bgColor, setBgColor] = useState<string>(BG_PRESETS[0].value);
   const [customColor, setCustomColor] = useState<string>('#FFFFFF');
   const [activeSizeKey, setActiveSizeKey] = useState<string>(DEFAULT_SIZE_KEY);
   const [showColorPicker, setShowColorPicker] = useState(false);
-  const [showSizeMenu, setShowSizeMenu] = useState(false);
+  const [renderMode, setRenderMode] = useState<'2D' | '3D'>('2D');
   const [showElectronHint, setShowElectronHint] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const sizeMenuRef = useRef<HTMLDivElement | null>(null);
 
   const activePreset = getSizePreset(activeSizeKey) || SIZE_PRESETS[0];
 
-  // 点外面关闭尺寸下拉
+  // 画布跟随应用默认启用 — Electron 环境下自动启动
+  // 防重入: autoStartRef 防止同一生命周期内重复触发
+  // 失败不重试: autoStartFailed 标记防止 error→idle 循环
+  const autoStartRef = useRef(false);
+  const autoStartFailedRef = useRef(false);
   useEffect(() => {
-    if (!showSizeMenu) return;
-    const close = (e: MouseEvent) => {
-      if (sizeMenuRef.current && !sizeMenuRef.current.contains(e.target as Node)) {
-        setShowSizeMenu(false);
-      }
-    };
-    document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
-  }, [showSizeMenu]);
+    if (autoStartRef.current || autoStartFailedRef.current) return;
+    if (isElectron() && canvasState === 'idle' && selectedChatId && sessionIdRef.current) {
+      autoStartRef.current = true;
+      void startCanvas();
+    }
+  }, [canvasState, selectedChatId]);
 
   useEffect(() => {
     // P0: 仅在 canvasReady 后才切到真实画布 ID
@@ -261,7 +250,7 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
     return { w: Math.max(320, Math.floor(width - 32)), h: 640 };
   }, [width]);
 
-  // 启动画布
+  // 启动画布 — 带 30s 超时保护，防止 IPC 卡死导致 UI 永远停在 "启动中"
   const startCanvas = useCallback(async () => {
     if (!isElectron()) {
       setCanvasError('需要 Electron 环境运行画布（请使用 npm run dev 启动 IDE）');
@@ -274,10 +263,18 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
     setShowElectronHint(false);
     try {
       const { w: frameW, h: frameH } = computeFrame(activePreset);
-      const res = await window.soloforge!.canvas.start(sessionIdRef.current, frameW, frameH);
+      // 30s 超时：主进程 findWindowByPid 循环 + embed 可能慢，但不能无限等
+      const timeoutP = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('画布启动超时（30s），请检查 canvas_preview.exe 是否正常运行')), 30000)
+      );
+      const res = await Promise.race([
+        window.soloforge!.canvas.start(sessionIdRef.current, frameW, frameH),
+        timeoutP,
+      ]);
       if (!res.ok) {
         setCanvasError(res.error || '启动失败');
         setCanvasState('error');
+        autoStartFailedRef.current = true;
         return;
       }
       setCanvasInfo({ port: res.session.port, pid: res.session.pid });
@@ -286,6 +283,7 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
     } catch (e: any) {
       setCanvasError(e?.message || String(e));
       setCanvasState('error');
+      autoStartFailedRef.current = true;
     }
   }, [activePreset, bgColor, pushBackground, computeFrame]);
 
@@ -295,18 +293,6 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
     setCanvasState('idle');
     setCanvasInfo(null);
   }, []);
-
-  // 切换尺寸预设：画布运行中时实时 resize，否则只更新 state
-  const pickSize = useCallback((key: string) => {
-    const preset = getSizePreset(key);
-    if (!preset) return;
-    setActiveSizeKey(key);
-    setShowSizeMenu(false);
-    if (isElectron() && canvasState === 'running') {
-      const { w, h } = computeFrame(preset);
-      window.soloforge!.canvas.resize(sessionIdRef.current, w, h).catch(() => {});
-    }
-  }, [canvasState, computeFrame]);
 
   const handlePickColor = (color: string) => {
     setBgColor(color);
@@ -319,12 +305,6 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
     setShowColorPicker(false);
     if (canvasState === 'running') pushBackground(customColor);
   };
-
-  // 按 groupLabel 聚合
-  const groupedSizes = SIZE_PRESETS.reduce<Record<string, typeof SIZE_PRESETS>>((acc, p) => {
-    (acc[p.groupLabel] = acc[p.groupLabel] || []).push(p);
-    return acc;
-  }, {});
 
   // 画布状态指示器
   const renderCanvasStatus = () => {
@@ -434,27 +414,26 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
         </div>
       );
     }
-    if (canvasState === 'error' || (canvasState === 'idle' && !isElectron())) {
+    if (canvasState === 'error' || canvasState === 'idle') {
       return (
         <div
-          className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 select-none"
+          className="absolute inset-0 flex items-center justify-center select-none"
           style={{ background: bgColor, transition: 'background 200ms ease' }}
         >
-          <div className="w-14 h-14 rounded-2xl border-2 border-dashed flex items-center justify-center mb-3"
-               style={{ borderColor: pickFg(bgColor) + '40', color: pickFg(bgColor) + 'AA' }}>
-            <MonitorSmartphone className="w-7 h-7" />
-          </div>
-          <div className="font-display font-bold text-sm mb-1" style={{ color: pickFg(bgColor) }}>
-            画布区域
-          </div>
-          <div className="text-[11px] max-w-[260px] leading-relaxed mb-4" style={{ color: pickFg(bgColor) + 'AA' }}>
-            {showElectronHint
-              ? '当前不是 Electron 环境，画布无法启动。请用 npm run dev 启动 IDE 后再打开此面板。'
-              : '点击"启动画布"开始实时预览；左下角切换底色。'}
-          </div>
-          <div className="text-[9px] font-mono uppercase tracking-widest" style={{ color: pickFg(bgColor) + '55' }}>
-            {isElectron() ? `底色: ${bgColor}` : 'Requires Electron'}
-          </div>
+          <div
+            className="w-16 h-16 opacity-40 transition-opacity duration-300"
+            style={{
+              backgroundColor: 'var(--color-primary)',
+              maskImage: 'url(/lightning_logo.png)',
+              maskSize: 'contain',
+              maskPosition: 'center',
+              maskRepeat: 'no-repeat',
+              WebkitMaskImage: 'url(/lightning_logo.png)',
+              WebkitMaskSize: 'contain',
+              WebkitMaskPosition: 'center',
+              WebkitMaskRepeat: 'no-repeat',
+            }}
+          />
         </div>
       );
     }
@@ -484,19 +463,15 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
     <div
       ref={containerRef}
       style={{
-        // 2026-07-02 性能修复: 拖动期间 width 锁在 dragStartWidth, 用 transform 偏移
-        //   - width 变化触发 PreviewPanel 内部 canvas 重新 layout, 大画布尤其卡
-        //   - transform 走 GPU 合成层, 不触发 layout
-        width: isResizing ? `${dragStartWidth}px` : `${width}px`,
-        transform: isResizing ? `translate3d(${width - dragStartWidth}px, 0, 0)` : undefined,
-        willChange: isResizing ? 'transform' : 'auto',
+        // 拖动期间 width 直接跟随鼠标实时变化, 让用户看到边缘被拉伸而非整体平移
+        width: `${width}px`,
         transition: isResizing ? 'none' : 'width 250ms cubic-bezier(0.16, 1, 0.3, 1)'
       }}
       className="h-full bg-surface border-l border-outline/50 flex flex-col shrink-0 select-none z-10 overflow-hidden relative"
     >
       <div
         style={{
-          width: isResizing ? `${dragStartWidth}px` : '100%',
+          width: '100%',
           height: '100%',
           display: 'flex',
           flexDirection: 'column',
@@ -504,17 +479,6 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
           overflow: 'hidden'
         }}
       >
-        {/* P0: 画布资源池条 — 顶部独立 chip 栏 */}
-        <CanvasResourceBar
-          canvases={canvases}
-          activeCanvasId={canvasId ?? null}
-          maxCanvases={maxCanvases}
-          loading={!canvasReady}
-          onSelect={(id) => onSelectCanvas?.(id)}
-          onCreate={async () => (onCreateCanvas ? onCreateCanvas() : null)}
-          onRename={async (id, desc) => (onRenameCanvas ? onRenameCanvas(id, desc) : false)}
-        />
-
         {/* TOP BAR — 无画布待机时隐藏 */}
         {!noCanvas && (
         <div className="p-2.5 px-3 border-b border-outline/40 flex items-center justify-between bg-surface shrink-0">
@@ -544,7 +508,7 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
         <div className="px-3 py-2 bg-surface-bright/35 border-b border-outline/30 flex items-center gap-1.5 shrink-0 flex-wrap">
           {canvasState !== 'running' ? (
             <button
-              onClick={startCanvas}
+              onClick={() => { autoStartFailedRef.current = false; void startCanvas(); }}
               disabled={canvasState === 'starting'}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-500 text-[10px] font-mono font-semibold disabled:opacity-50 transition-colors"
             >
@@ -615,6 +579,34 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
             </MountTransition>
           </div>
 
+          {/* 2D / 3D 渲染模式切换 — 并排两个按钮 */}
+          <div className="flex items-center rounded-md overflow-hidden border border-outline/30">
+            <button
+              onClick={() => setRenderMode('2D')}
+              className={`flex items-center gap-1 px-2 py-1 text-[10px] font-mono font-semibold transition-colors ${
+                renderMode === '2D'
+                  ? 'bg-primary/15 text-primary'
+                  : 'bg-surface-bright/60 text-on-surface/50 hover:text-on-surface'
+              }`}
+              title="2D 渲染模式"
+            >
+              <Square className="w-3 h-3" />
+              <span>2D</span>
+            </button>
+            <button
+              onClick={() => setRenderMode('3D')}
+              className={`flex items-center gap-1 px-2 py-1 text-[10px] font-mono font-semibold transition-colors border-l border-outline/30 ${
+                renderMode === '3D'
+                  ? 'bg-primary/15 text-primary'
+                  : 'bg-surface-bright/60 text-on-surface/50 hover:text-on-surface'
+              }`}
+              title="3D 渲染模式"
+            >
+              <Box className="w-3 h-3" />
+              <span>3D</span>
+            </button>
+          </div>
+
           {canvasError && (
             <span className="flex-1 text-[10px] text-red-400 font-mono truncate min-w-0" title={canvasError}>
               {canvasError}
@@ -626,67 +618,6 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
         {/* CANVAS AREA — 整个剩余空间都是画布区 */}
         <div className="flex-1 relative overflow-hidden">
           {noCanvas ? renderStandby() : renderPlaceholder()}
-
-          {/* 内置尺寸选择器 — 画布右下角悬浮 */}
-          {canvasState === 'running' && (
-            <div ref={sizeMenuRef} className="absolute bottom-2 right-2 z-40">
-              <button
-                onClick={() => setShowSizeMenu(s => !s)}
-                title="画布尺寸"
-                className={`flex items-center gap-1.5 px-2 py-1 rounded-md backdrop-blur-md text-[10px] font-mono transition-colors border ${
-                  showSizeMenu
-                    ? 'bg-primary/80 border-primary text-white'
-                    : 'bg-black/50 hover:bg-black/65 border-white/15 text-white'
-                }`}
-              >
-                <Maximize2 className="w-3 h-3" />
-                <span>
-                  {activePreset.w === 0
-                    ? `填满 · ${computeFrame(activePreset).w}×${computeFrame(activePreset).h}`
-                    : `${activePreset.w} × ${activePreset.h}`}
-                </span>
-                <ChevronDown className={`w-3 h-3 transition-transform ${showSizeMenu ? 'rotate-180' : ''}`} />
-              </button>
-
-              <MountTransition show={showSizeMenu} variant="fade" duration={140}>
-                <div
-                  className="absolute bottom-full right-0 mb-1.5 bg-surface border border-outline rounded-lg shadow-2xl min-w-[220px] max-h-[420px] overflow-y-auto"
-                >
-                  {Object.entries(groupedSizes).map(([groupLabel, items]) => {
-                    const firstIcon = items[0].icon;
-                    const Icon = firstIcon;
-                    return (
-                      <div key={groupLabel} className="border-b border-outline/40 last:border-b-0">
-                        <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-surface-bright/30 sticky top-0">
-                          <Icon className="w-3 h-3 text-on-surface/70" />
-                          <span className="text-[10px] font-display font-semibold text-on-surface/80 uppercase tracking-wider">{groupLabel}</span>
-                          <span className="text-[9px] text-on-surface/40 font-mono ml-auto">{items.length}</span>
-                        </div>
-                        {items.map(p => {
-                          const isSel = p.key === activeSizeKey;
-                          return (
-                            <button
-                              key={p.key}
-                              onClick={() => pickSize(p.key)}
-                              className={`w-full flex items-center gap-2 px-2.5 py-1.5 hover:bg-surface-bright/60 transition-colors text-left ${isSel ? 'bg-primary/10' : ''}`}
-                            >
-                              <span className="flex-1 min-w-0">
-                                <span className="block text-[10px] text-on-surface truncate">{p.label}</span>
-                                <span className="block text-[9px] text-on-surface/50 font-mono">
-                                  {p.w === 0 ? '与面板等宽' : `${p.w} × ${p.h}`}
-                                </span>
-                              </span>
-                              {isSel && <Check className="w-3 h-3 text-primary shrink-0" />}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    );
-                  })}
-                </div>
-              </MountTransition>
-            </div>
-          )}
 
           {/* 2026-07-06 阶段3: AST 源码查看 toggle — 左下角悬浮 */}
           {(previewSourceCode || previewPayload?.source_code) && (
@@ -728,7 +659,7 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
         </div>
       </div>
 
-      {/* P0: 画布修改通知气泡层 — 覆盖整个 PreviewPanel (排除 CanvasResourceBar 由 absolute top 控制) */}
+      {/* P0: 画布修改通知气泡层 — 覆盖整个 PreviewPanel */}
       <CanvasNotificationStack notes={notifQueue} onExpire={handleNotifExpire} />
     </div>
   );

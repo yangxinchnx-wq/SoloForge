@@ -1,0 +1,14 @@
+{
+  "key": "1366x768",
+  "label": "标准笔记本",
+  "type": "2d",
+  "nativeSize": { "w": 1366, "h": 768 },
+  "frame": {
+    "bezel": { "top": 8, "bottom": 16, "left": 8, "right": 8 },
+    "cornerRadius": 4,
+    "hasStand": false,
+    "hasBottomBar": true,
+    "bottomBarHeight": 6
+  },
+  "note": "2D 占位描述符 — 标准笔记本边框参数"
+}

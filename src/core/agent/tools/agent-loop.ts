@@ -19,7 +19,6 @@ import {
   type CallWithToolsResult,
 } from './function-calling-client';
 import {
-  AGENT_TOOLS,
   getToolsForActiveIds,
   type ToolCallRequest,
   type ToolCallResult,
@@ -77,6 +76,12 @@ export interface AgentExecutionContext {
   activeSkills?: string[];
   /** 前端选中的知识库 ID 列表 */
   activeKnowledge?: string[];
+  /**
+   * L4: Token 预算上限 (估算值)。
+   * 传给 callLLMWithTools,默认 50000 token。
+   * 设为 0 或 Infinity 可禁用预算控制。
+   */
+  tokenBudget?: number;
 }
 
 // ─── Agent 执行结果 ─────────────────────────────────────────────────
@@ -94,6 +99,12 @@ export interface AgentLoopResult {
   usedTools: boolean;
   /** 每步工具调用的摘要 */
   toolSteps: Array<{ round: number; tool: string; args: string; success: boolean }>;
+  /** L4: 累计估算 token 消耗 */
+  totalTokensEstimated: number;
+  /** L3: 是否因无进展检测提前退出 */
+  exitedByStallDetection: boolean;
+  /** L4: 是否因超预算提前退出 */
+  exitedByTokenBudget: boolean;
 }
 
 // ─── 核心循环 ───────────────────────────────────────────────────────
@@ -120,14 +131,23 @@ export async function runAgentLoop(ctx: AgentExecutionContext, userTask: string)
   // 根据 activeTools 动态构建工具列表
   const effectiveTools = getToolsForActiveIds(ctx.activeTools);
 
-  // 构建 System Prompt
-  const systemPrompt = buildFullSystemPrompt(ctx, effectiveTools);
+  // 构建消息列表 (按稳定性严格排序,配合 Prompt Caching)
+  // 顺序: system(稳定) → system(动态:技能/知识库) → user(任务)
+  const stableSystemPrompt = buildStableSystemPrompt(ctx);
+  const dynamicContext = buildDynamicContext(ctx);
 
-  // 构建初始消息
   const messages: LLMMessage[] = [
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: userTask },
+    // 第 1 层: 稳定 system prompt (角色 + 画布ACL + 预览指令) - 构成缓存前缀
+    { role: 'system', content: stableSystemPrompt },
   ];
+
+  // 第 2 层: 动态上下文 (技能/知识库/工作区) - 独立 system message,变化不影响第 1 层缓存
+  if (dynamicContext) {
+    messages.push({ role: 'system', content: dynamicContext });
+  }
+
+  // 第 3 层: 用户任务 (每轮变化)
+  messages.push({ role: 'user', content: userTask });
 
   logger.info('AgentLoop', `[${ctx.agentId}] Starting: "${userTask.slice(0, 80)}..."`);
 
@@ -138,7 +158,8 @@ export async function runAgentLoop(ctx: AgentExecutionContext, userTask: string)
     model: ctx.model,
     temperature: ctx.temperature ?? 0.2,
     maxTokens: ctx.maxTokens ?? 4096,
-    maxRounds: ctx.maxRounds ?? 10,
+    maxRounds: ctx.maxRounds ?? 20,
+    tokenBudget: ctx.tokenBudget,
     llmConfig: ctx.llmConfig,
     onToolCall: async (call: ToolCallRequest) => {
       logger.info('AgentLoop', `[${ctx.agentId}] Tool: ${call.name}(${JSON.stringify(call.arguments).slice(0, 100)})`);
@@ -215,9 +236,16 @@ export async function runAgentLoop(ctx: AgentExecutionContext, userTask: string)
 
   const finalAnswer = result.finalMessage.content ?? '';
 
+  // L3/L4 日志: 记录退出原因,方便调试和监控
+  const exitReason = result.exitedByStallDetection
+    ? 'STALL_DETECTION'
+    : result.exitedByTokenBudget
+      ? 'TOKEN_BUDGET'
+      : 'NORMAL';
   logger.info('AgentLoop',
     `[${ctx.agentId}] Done: ${result.toolCallCount} tool calls, ` +
-    `${result.totalDurationMs}ms, answer=${finalAnswer.length} chars`
+    `${result.totalDurationMs}ms, ~${result.totalTokensEstimated} tokens, ` +
+    `exit=${exitReason}, answer=${finalAnswer.length} chars`
   );
 
   return {
@@ -227,90 +255,84 @@ export async function runAgentLoop(ctx: AgentExecutionContext, userTask: string)
     durationMs: result.totalDurationMs,
     usedTools: result.toolCallCount > 0,
     toolSteps,
+    totalTokensEstimated: result.totalTokensEstimated,
+    exitedByStallDetection: result.exitedByStallDetection,
+    exitedByTokenBudget: result.exitedByTokenBudget,
   };
 }
 
 // ─── System Prompt 构建 ─────────────────────────────────────────────
+// 2026-07-07 重构: 拆分为稳定/动态两部分,配合 Prompt Caching
+//   - buildStableSystemPrompt: 角色定义 + 画布ACL + 预览指令 (极少变化,构成缓存前缀)
+//   - buildDynamicContext: 技能/知识库/工作区 (可能变化,独立 system message)
 
-function buildFullSystemPrompt(ctx: AgentExecutionContext, effectiveTools: typeof AGENT_TOOLS): string {
-const parts: string[] = [];
+/**
+ * 构建稳定的 system prompt (构成 Prompt Caching 前缀)
+ * 只包含极少变化的内容:
+ *   1. 角色定义
+ *   2. 画布 ACL (chatId,每对话固定)
+ *   3. 预览触发指令
+ */
+function buildStableSystemPrompt(ctx: AgentExecutionContext): string {
+  const parts: string[] = [];
 
-// 1. 角色定义
-parts.push(ctx.systemPrompt);
+  // 1. 角色定义
+  parts.push(ctx.systemPrompt);
 
-// 1.5 工作区限制 (如果有绑定)
-if (ctx.workspaceFolder) {
-parts.push(`
-## 工作区范围限制
-当前对话已绑定工作区文件夹: \`${ctx.workspaceFolder}\`
-- 你的所有文件操作 (read_file / write_file / search_code 等) 应限制在此文件夹范围内
-- 如果任务需要操作此文件夹外的资源, 请在回复中明确说明原因并询问用户是否允许
-- 绝不要在未告知用户的情况下修改文件夹外的文件
-`);
-}
-
-// 2. 工具说明
-  parts.push(`
-## 可用工具
-
-你可以使用以下工具来完成任务：
-
-${effectiveTools.map(t => `- **${t.function.name}**: ${t.function.description}`).join('\n')}
-
-**重要规则：**
-- 不要猜测文件内容，先用 read_file 或 search_code 查看现有代码
-- 写文件前先确认目录结构
-- 生成代码后用 execute_cmd 运行测试验证
-- 如果遇到错误，分析原因并修复
-- 给出最终答案时，说明你做了什么、为什么这样做`);
-
-  // 2.5 画布上下文注入（P0 修复: 避免 LLM 瞎编 requesterChatSessionId / canvasId）
-  //   - streamHook.chatId 是真实的对话 ID（来自前端 appStore.selectedChatId）
-  //   - 注入后 LLM 调画布工具时必须原样回填这个值，否则 ACL 会失败
-  //   - canvasId 不在这里硬编码，因为画布可能动态切换；告诉 LLM "可以不传 canvasId"
+  // 2. 画布 ACL (必需,否则 LLM 会编造 chatId)
   const chatId = ctx.streamHook?.chatId;
   if (chatId) {
-    parts.push(`
-## 画布工作上下文（重要）
-
-- 当前对话的 \`requesterChatSessionId\` = \`${chatId}\`
-- 调用所有 \`solo_canvas_*\` 工具时，**必须** 把 \`requesterChatSessionId\` 参数填成上面这个值，不要编造其他值
-- 所有 \`solo_canvas_*\` 工具的 \`canvasId\` 参数都是**可选**的：不传时系统会自动用当前对话绑定的画布
-- 推荐做法：第一次操作画布前先调 \`solo_canvas_list\` 看当前对话有哪些画布；之后的设备增删改操作**不用传 canvasId**，让系统自动定位
-- 只有需要操作"非当前对话"的画布时，才显式传 \`canvasId\``);
+    parts.push(`## 画布上下文
+requesterChatSessionId: ${chatId}
+调用 solo_canvas_* 工具时,必须把 requesterChatSessionId 参数填成上面这个值。canvasId 参数可选,不传时系统自动用当前对话绑定的画布。`);
   }
 
-  // 3. 技能库经验注入
-  if (ctx.skills.length > 0) {
-    parts.push(`
-## 历史经验（从过去的任务中学习）
+  // 3. 预览触发指令 (让 LLM 自主判断是否需要生成 UI 代码)
+  parts.push(`## 预览触发
+如果用户的请求明确需要生成 UI 代码(如"写一个页面/界面/组件/可视化"),在你的回复末尾添加一行:
+<<<PREVIEW_NEEDED:语言>>>
+其中语言可以是 python/typescript/go/rust/c/java。否则不要添加。`);
 
-${ctx.skills.map((s, i) => `${i + 1}. ${s}`).join('\n')}
+  return parts.join('\n\n');
+}
 
-请参考这些经验，但不要盲目套用。根据当前任务的具体情况调整方案。`);
+/**
+ * 构建动态上下文 (作为独立 system message,变化不影响稳定层缓存)
+ * 包含:
+ *   1. 工作区限制
+ *   2. 技能库历史经验
+ *   3. 前端选中的技能
+ *   4. 前端选中的知识库
+ */
+function buildDynamicContext(ctx: AgentExecutionContext): string | null {
+  const parts: string[] = [];
+
+  // 1. 工作区限制
+  if (ctx.workspaceFolder) {
+    parts.push(`## 工作区
+当前对话已绑定工作区: ${ctx.workspaceFolder}
+文件操作限制在此文件夹范围内。路径校验由工具执行时强制检查,无需手动判断。`);
   }
 
-  // 3.5 前端选中的技能注入
+  // 2. 技能库历史经验
+  if (ctx.skills && ctx.skills.length > 0) {
+    parts.push(`## 历史经验
+${ctx.skills.map((s, i) => `${i + 1}. ${s}`).join('\n')}`);
+  }
+
+  // 3. 前端选中的技能
   if (ctx.activeSkills && ctx.activeSkills.length > 0) {
-    parts.push(`
-## 用户启用的技能
-
-用户在资源管理器中启用了以下技能，请在任务中参考：
-${ctx.activeSkills.map((s, i) => `${i + 1}. ${s}`).join('\n')}
-
-请根据任务需求主动使用这些技能。`);
+    parts.push(`## 用户启用的技能
+${ctx.activeSkills.map((s, i) => `${i + 1}. ${s}`).join('\n')}`);
   }
 
-  // 3.6 前端选中的知识库注入
+  // 4. 前端选中的知识库
   if (ctx.activeKnowledge && ctx.activeKnowledge.length > 0) {
-    parts.push(`
-## 用户启用的知识库
-
-用户在资源管理器中启用了以下知识库条目，请在任务中参考：
+    parts.push(`## 用户启用的知识库
 ${ctx.activeKnowledge.map((k, i) => `${i + 1}. ${k}`).join('\n')}`);
   }
 
-  return parts.join('\n\n');
+  return parts.length > 0 ? parts.join('\n\n') : null;
 }
 
 // ─── 便捷函数 ──────────────────────────────────────────────────────

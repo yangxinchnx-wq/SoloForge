@@ -581,6 +581,31 @@ export class SoloForgeApiServer {
   private async route(req: ApiRequest): Promise<ApiResponse> {
     const { path: reqPath, method } = req;
 
+    // Java Agent 服务代理转发 (/api/java-agent/* → http://127.0.0.1:8770/*)
+    if (reqPath.startsWith('/api/java-agent/')) {
+      const javaPath = reqPath.replace('/api/java-agent', '');
+      const javaUrl = `http://127.0.0.1:8770${javaPath}`;
+      try {
+        const fetchOptions: any = { method, headers: { 'Content-Type': 'application/json' } };
+        if (method === 'POST' && req.body) {
+          fetchOptions.body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+        }
+        const javaRes = await fetch(javaUrl, fetchOptions);
+        const javaBody = await javaRes.text();
+        return {
+          status: javaRes.status,
+          headers: { 'Content-Type': 'application/json' },
+          body: javaBody,
+        };
+      } catch (err: any) {
+        return {
+          status: 502,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ success: false, error: `Java Agent 服务未启动: ${err.message}` }),
+        };
+      }
+    }
+
     // UI éææä»¶ï¼å¿é¡»æ¾å¨åé¢ï¼é¿åè¢« /ui è·¯ç±æè·ï¼
     if (reqPath.startsWith('/ui/') && method === 'GET') {
       const fileName = reqPath.slice(4);

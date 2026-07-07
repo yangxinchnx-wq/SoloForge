@@ -25,7 +25,7 @@ from soloforge_ai_society.database.pool import apply_p6_baseline
 logger = logging.getLogger(__name__)
 
 # 当前 Schema 版本
-CURRENT_VERSION = 2
+CURRENT_VERSION = 3
 
 
 @dataclass
@@ -128,6 +128,150 @@ def downgrade_from_v2(conn: sqlite3.Connection) -> None:
     logger.info("Database rolled back from v2")
 
 
+# =============================================================================
+# v3 迁移: Agent 身份表 + 训练历史表 + 4 个预置 Agent
+# =============================================================================
+
+def upgrade_to_v3(conn: sqlite3.Connection) -> None:
+    """升级到 v3: 添加 agent_identity + agent_training_history 表 + 预置 4 个 Agent"""
+    cursor = conn.cursor()
+
+    # Agent 身份表 (Java AgentConfig 的权威源)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS agent_identity (
+            id TEXT PRIMARY KEY,
+            role TEXT NOT NULL,
+            model_binding TEXT NOT NULL,
+            system_prompt TEXT DEFAULT '',
+            system_prompt_version INTEGER DEFAULT 0,
+            current_checkpoint_path TEXT,
+            checkpoint_version INTEGER DEFAULT 0,
+            task_count INTEGER DEFAULT 0,
+            reputation_id TEXT,
+            status TEXT DEFAULT 'active',
+            name TEXT,
+            domain TEXT,
+            capabilities TEXT DEFAULT '[]',
+            strategy TEXT DEFAULT 'direct',
+            level TEXT DEFAULT 'senior',
+            temperature REAL DEFAULT 0.3,
+            max_rounds INTEGER DEFAULT 8,
+            enabled INTEGER DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+    # Agent 训练历史表
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS agent_training_history (
+            id TEXT PRIMARY KEY,
+            agent_id TEXT NOT NULL,
+            trained_at TEXT NOT NULL,
+            trigger_reason TEXT NOT NULL,
+            sample_count INTEGER,
+            reward_before REAL,
+            reward_after REAL,
+            prompt_version_before INTEGER,
+            prompt_version_after INTEGER,
+            checkpoint_path TEXT,
+            notes TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+
+    # 索引
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_identity_role ON agent_identity(role)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_identity_status ON agent_identity(status)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_training_history_agent ON agent_training_history(agent_id)")
+
+    # 预置 4 个默认 Agent (与 Java AgentConfig 对齐)
+    now = datetime.now().isoformat()
+    preset_agents = [
+        {
+            "id": "code_agent",
+            "role": "EXECUTOR",
+            "model_binding": "gpt-4o",
+            "system_prompt": "你是 SoloForge 的代码工程师 Agent。专精代码编写、重构、调试、架构设计。优先使用工具查看真实代码,不要猜测。",
+            "name": "代码工程师",
+            "domain": "code-dev",
+            "capabilities": '["read","write","search","execute","analyze"]',
+            "strategy": "direct",
+            "level": "senior",
+            "temperature": 0.3,
+            "max_rounds": 8,
+        },
+        {
+            "id": "plan_agent",
+            "role": "PLANNER",
+            "model_binding": "gpt-4o",
+            "system_prompt": "你是 SoloForge 的规划师 Agent。专精任务拆解、方案设计、技术选型。先理解需求再给方案,避免直接编码。",
+            "name": "规划师",
+            "domain": "planning",
+            "capabilities": '["read","search","analyze"]',
+            "strategy": "chain_of_thought",
+            "level": "master",
+            "temperature": 0.2,
+            "max_rounds": 12,
+        },
+        {
+            "id": "debug_agent",
+            "role": "REVIEWER",
+            "model_binding": "gpt-4o",
+            "system_prompt": "你是 SoloForge 的调试专家 Agent。专精 bug 定位、根因分析、修复验证。系统化排查,不要瞎猜。",
+            "name": "调试专家",
+            "domain": "debugging",
+            "capabilities": '["read","search","execute","analyze"]',
+            "strategy": "chain_of_thought",
+            "level": "expert",
+            "temperature": 0.1,
+            "max_rounds": 10,
+        },
+        {
+            "id": "doc_agent",
+            "role": "EXECUTOR",
+            "model_binding": "gpt-4o",
+            "system_prompt": "你是 SoloForge 的文档作家 Agent。专精文档撰写、注释、README。语言简洁清晰。",
+            "name": "文档作家",
+            "domain": "documentation",
+            "capabilities": '["read","write","search"]',
+            "strategy": "direct",
+            "level": "senior",
+            "temperature": 0.5,
+            "max_rounds": 6,
+        },
+    ]
+
+    for agent in preset_agents:
+        cursor.execute("""
+            INSERT OR IGNORE INTO agent_identity
+            (id, role, model_binding, system_prompt, system_prompt_version,
+             task_count, status, name, domain, capabilities, strategy, level,
+             temperature, max_rounds, enabled, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 0, 0, 'active', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+        """, (
+            agent["id"], agent["role"], agent["model_binding"],
+            agent["system_prompt"], agent["name"], agent["domain"],
+            agent["capabilities"], agent["strategy"], agent["level"],
+            agent["temperature"], agent["max_rounds"], now, now
+        ))
+
+    conn.commit()
+    logger.info("Database upgraded to v3: agent_identity + agent_training_history tables created, 4 preset agents inserted")
+
+
+def downgrade_from_v3(conn: sqlite3.Connection) -> None:
+    """从 v3 回滚"""
+    cursor = conn.cursor()
+    cursor.execute("DROP TABLE IF EXISTS agent_identity")
+    cursor.execute("DROP TABLE IF EXISTS agent_training_history")
+    cursor.execute("DROP INDEX IF EXISTS idx_agent_identity_role")
+    cursor.execute("DROP INDEX IF EXISTS idx_agent_identity_status")
+    cursor.execute("DROP INDEX IF EXISTS idx_agent_training_history_agent")
+    conn.commit()
+    logger.info("Database rolled back from v3")
+
+
 # 迁移注册表
 MIGRATIONS: list[Migration] = [
     Migration(
@@ -135,6 +279,12 @@ MIGRATIONS: list[Migration] = [
         description="添加治理记录表、交易表、索引优化",
         upgrade=upgrade_to_v2,
         downgrade=downgrade_from_v2,
+    ),
+    Migration(
+        version=3,
+        description="添加 Agent 身份表、训练历史表 + 4 个预置 Agent",
+        upgrade=upgrade_to_v3,
+        downgrade=downgrade_from_v3,
     ),
 ]
 

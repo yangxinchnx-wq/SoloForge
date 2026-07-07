@@ -1,0 +1,13 @@
+{
+  "key": "1024x768",
+  "label": "XGA",
+  "type": "2d",
+  "nativeSize": { "w": 1024, "h": 768 },
+  "frame": {
+    "bezel": { "top": 8, "bottom": 24, "left": 8, "right": 8 },
+    "cornerRadius": 2,
+    "hasStand": true,
+    "standHeight": 28
+  },
+  "note": "2D 占位描述符 — XGA 老式显示器边框参数"
+}

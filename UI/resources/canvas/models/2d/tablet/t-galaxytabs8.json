@@ -1,0 +1,14 @@
+{
+  "key": "t-galaxytabs8",
+  "label": "Galaxy Tab S8",
+  "type": "2d",
+  "nativeSize": { "w": 800, "h": 1280 },
+  "frame": {
+    "bezel": { "top": 10, "bottom": 10, "left": 10, "right": 10 },
+    "cornerRadius": 12,
+    "hasStand": false,
+    "hasCamera": true,
+    "cameraPosition": "top"
+  },
+  "note": "2D 占位描述符 — Galaxy Tab S8 边框参数"
+}

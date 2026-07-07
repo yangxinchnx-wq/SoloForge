@@ -1,0 +1,12 @@
+{
+  "key": "fill",
+  "label": "填满当前宽度",
+  "type": "2d",
+  "nativeSize": { "w": 0, "h": 0 },
+  "frame": {
+    "bezel": { "top": 0, "bottom": 0, "left": 0, "right": 0 },
+    "cornerRadius": 0,
+    "hasStand": false
+  },
+  "note": "2D 占位描述符 — 填满宽度，无边框"
+}

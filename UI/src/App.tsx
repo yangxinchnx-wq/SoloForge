@@ -667,27 +667,19 @@ const MainLayout: React.FC<MainLayoutProps> = ({
           data-theme-region="editor-explorer"
           className="h-full bg-surface flex flex-col shrink-0 overflow-hidden select-none border-r border-[var(--color-primary)]/20"
           style={{
-            // 2026-07-02 性能修复: 拖动期间不要直接改 column width, 否则 313 元素子树 layout 100ms+
-            //   - isResizingSidebar 期间 width 锁在 dragStartSidebarWidth (不变), 用 transform 视觉偏移
-            //   - mouseup 时 width 才真正变为 sidebarWidth (commit 一次 layout)
-            //   - transform 走 GPU 合成层, 完全跳过 layout/paint
-            // 2026-07-03 主题优化: --color-primary 改由 data-theme-region + :root dataset 驱动,
-            //   primaryColorTargets 变化不再触发 React 重渲染 (CSS 变量级联)
+            // 拖动期间 width 直接跟随鼠标实时变化, 让用户看到边缘被拉伸而非整体平移
+            // 拖动期间关闭 transition 避免动画滞后于鼠标
             width: (activeTab === 'explorer' || activeTab === 'git' || showCodeEditor)
-              ? (isResizingSidebar ? `${dragStartSidebarWidth}px` : `${sidebarWidth}px`)
+              ? `${sidebarWidth}px`
               : '0px',
-            transform: isResizingSidebar
-              ? `translate3d(${sidebarWidth - dragStartSidebarWidth}px, 0, 0)`
-              : undefined,
-            willChange: isResizingSidebar ? 'transform' : 'auto',
             opacity: (activeTab === 'explorer' || activeTab === 'git' || showCodeEditor) ? 1 : 0,
             pointerEvents: (activeTab === 'explorer' || activeTab === 'git' || showCodeEditor) ? 'auto' : 'none',
-            transition: isResizingSidebar ? 'none' : 'width 250ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease-out',
+            transition: isResizingSidebar ? 'none' : 'opacity 200ms ease-out',
           } as React.CSSProperties}
         >
           <div
             style={{
-              width: isResizingSidebar ? `${dragStartSidebarWidth}px` : '100%',
+              width: '100%',
               height: '100%',
               display: 'flex',
               flexDirection: 'column',
@@ -735,25 +727,16 @@ const MainLayout: React.FC<MainLayoutProps> = ({
           data-theme-region="editor-explorer"
           className="absolute left-[48px] top-0 bottom-0 z-40 flex flex-col overflow-hidden border-r border-[var(--color-primary)]/20 shadow-[4px_0_15px_rgba(0,0,0,0.22)]"
           style={{
-            // 2026-07-02 性能修复: 拖动期间 History 面板 width 锁在 dragStart, 用 transform 偏移
-            //   - width 变化 → HistoryPanel 内部所有消息重新 layout, 大列表尤其卡
-            //   - transform 走 GPU 合成层, 不触发 layout
-            // 2026-07-03 主题优化: --color-primary 由 data-theme-region 驱动 (CSS 变量级联)
-            width: showHistory
-              ? (isResizingSidebar ? `${dragStartSidebarWidth}px` : `${sidebarWidth}px`)
-              : '0px',
-            transform: isResizingSidebar
-              ? `translate3d(${sidebarWidth - dragStartSidebarWidth}px, 0, 0)`
-              : undefined,
-            willChange: isResizingSidebar ? 'transform' : 'auto',
+            // 拖动期间 width 直接跟随鼠标实时变化, 让用户看到边缘被拉伸而非整体平移
+            width: showHistory ? `${sidebarWidth}px` : '0px',
             opacity: showHistory ? 1 : 0,
             pointerEvents: showHistory ? 'auto' : 'none',
-            transition: isResizingSidebar ? 'none' : 'width 250ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms ease-out',
+            transition: isResizingSidebar ? 'none' : 'opacity 200ms ease-out',
           } as React.CSSProperties}
         >
           <div
             style={{
-              width: isResizingSidebar ? `${dragStartSidebarWidth}px` : '100%',
+              width: '100%',
               height: '100%',
               display: 'flex',
               flexDirection: 'column',
@@ -807,11 +790,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({
           selectedChatId={selectedChatId}
           canvasId={activeCanvasId}
           canvasReady={bridge.ready}
-          canvases={bridge.canvases}
-          maxCanvases={bridge.maxCanvases}
-          onSelectCanvas={(id) => bridge.selectCanvas(id)}
-          onCreateCanvas={() => bridge.createCanvasForChat()}
-          onRenameCanvas={(id, desc) => bridge.renameCanvas(id, desc)}
         />
       </div>
 

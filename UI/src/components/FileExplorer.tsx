@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { 
   ChevronDown, 
   ChevronRight, 
@@ -34,6 +34,13 @@ interface FileExplorerProps {
   onNewFile: () => void;
   onClose?: () => void;
   isFloatingEditorOpen?: boolean;
+}
+
+interface WorkspaceTab {
+  id: string;
+  name: string;
+  tree: FileNode;
+  openFolders: Record<string, boolean>;
 }
 
 // Deep path update helper
@@ -180,13 +187,57 @@ const getFileSize = (path: string): string => {
 };
 
 export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile, onClose, isFloatingEditorOpen }: FileExplorerProps) {
-  const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({
-    'BlogSystem': true,
-    'BlogSystem/src': true,
-    'BlogSystem/src/components': false,
-    'BlogSystem/src/pages': false,
-    'BlogSystem/src/styles': false,
+  // ── Workspace Tabs ──────────────────────────────────────────
+  const [tabs, setTabs] = useState<WorkspaceTab[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('soloforge_workspace_tabs');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            // Migrate: clear old BlogSystem tabs
+            const migrated = parsed.map((t: any) => t.tree?.name === 'BlogSystem' ? { ...t, tree: { name: '工作区', type: 'folder', path: '工作区', children: [] } } : t);
+            return migrated;
+          }
+        }
+      } catch {}
+    }
+    return [{ id: 'tab-1', name: '工作区', tree: { name: '工作区', type: 'folder', path: '工作区', children: [] }, openFolders: {} }];
   });
+  const [activeTabIndex, setActiveTabIndex] = useState(0);
+
+  // Persist tabs
+  useEffect(() => {
+    try { localStorage.setItem('soloforge_workspace_tabs', JSON.stringify(tabs)); } catch {}
+  }, [tabs]);
+
+  // Derived: active tab's tree and openFolders (stable references)
+  const activeTab = tabs[activeTabIndex] || tabs[0];
+  const tree = activeTab.tree;
+  const openFolders = activeTab.openFolders;
+
+  // Custom setters that update the active tab in the tabs array
+  const setTree = useCallback((updater: FileNode | ((prev: FileNode) => FileNode)) => {
+    setTabs(prev => {
+      const idx = prev.length > activeTabIndex ? activeTabIndex : 0;
+      const current = prev[idx];
+      const next = typeof updater === 'function' ? (updater as (p: FileNode) => FileNode)(current.tree) : updater;
+      const updated = [...prev];
+      updated[idx] = { ...current, tree: next };
+      return updated;
+    });
+  }, [activeTabIndex]);
+
+  const setOpenFolders = useCallback((updater: Record<string, boolean> | ((prev: Record<string, boolean>) => Record<string, boolean>)) => {
+    setTabs(prev => {
+      const idx = prev.length > activeTabIndex ? activeTabIndex : 0;
+      const current = prev[idx];
+      const next = typeof updater === 'function' ? (updater as (p: Record<string, boolean>) => Record<string, boolean>)(current.openFolders) : updater;
+      const updated = [...prev];
+      updated[idx] = { ...current, openFolders: next };
+      return updated;
+    });
+  }, [activeTabIndex]);
 
   const [refreshKey, setRefreshKey] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -202,221 +253,14 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
     return false;
   };
 
-  // Tree State
-  // ==========================================
-  // 【后端对接提示 - 文件树初始加载方案】
-  // 原先通过 localStorage 来储存静态模拟文件树。
-  // 后期接入真实后端磁盘或云存储（如网盘/工程空间）时：
-  // 1. 可以发出 API Get 接口请求: GET /api/files/tree
-  // 2. 后端递归读取宿主物理路径，返回符合 FileNode 标准的树状 JSON 结构并执行 setTree
-  // ==========================================
-  // Function to ensure assets/fonts and rules folders always exist with core files
-  const ensureRequiredFolders = (root: FileNode) => {
-    if (!root.children) {
-      root.children = [];
-    }
-    
-    // 1. Ensure assets/fonts exists
-    let assetsNode = root.children.find(c => c.name === 'assets');
-    if (!assetsNode) {
-      assetsNode = {
-        name: 'assets',
-        type: 'folder',
-        path: `${root.path}/assets`,
-        children: []
-      };
-      root.children.push(assetsNode);
-    }
-    
-    if (!assetsNode.children) {
-      assetsNode.children = [];
-    }
-    
-    let fontsNode = assetsNode.children.find(c => c.name === 'fonts');
-    if (!fontsNode) {
-      fontsNode = {
-        name: 'fonts',
-        type: 'folder',
-        path: `${assetsNode.path}/fonts`,
-        children: []
-      };
-      assetsNode.children.push(fontsNode);
-    }
-    
-    if (!fontsNode.children) {
-      fontsNode.children = [];
-    }
-    
-    const requiredFontFiles = [
-      'Custom-GeekFont.ttf',
-      'TechMono-Retro.woff2'
-    ];
-    
-    requiredFontFiles.forEach(filename => {
-      if (!fontsNode!.children!.some(c => c.name === filename)) {
-        fontsNode!.children!.push({
-          name: filename,
-          type: 'file',
-          path: `${fontsNode!.path}/${filename}`
-        });
-      }
-    });
-
-    // 2. Ensure rules exists
-    let rulesNode = root.children.find(c => c.name === 'rules');
-    if (!rulesNode) {
-      rulesNode = {
-        name: 'rules',
-        type: 'folder',
-        path: `${root.path}/rules`,
-        children: []
-      };
-      root.children.push(rulesNode);
-    }
-    
-    if (!rulesNode.children) {
-      rulesNode.children = [];
-    }
-    
-    const requiredRuleFiles = [
-      'normal_rules.md',
-      'performance_rules.md',
-      'expert_rules.md',
-      'ultimate_rules.md'
-    ];
-    
-    requiredRuleFiles.forEach(filename => {
-      if (!rulesNode!.children!.some(c => c.name === filename)) {
-        rulesNode!.children!.push({
-          name: filename,
-          type: 'file',
-          path: `${rulesNode!.path}/${filename}`
-        });
-      }
-    });
-  };
-
-  const getDefaultTree = (): FileNode => {
-    return {
-      name: 'BlogSystem',
-      type: 'folder',
-      path: 'BlogSystem',
-      children: [
-        {
-          name: 'docs',
-          type: 'folder',
-          path: 'BlogSystem/docs',
-          children: []
-        },
-        {
-          name: 'public',
-          type: 'folder',
-          path: 'BlogSystem/public',
-          children: []
-        },
-        {
-          name: 'src',
-          type: 'folder',
-          path: 'BlogSystem/src',
-          children: [
-            {
-              name: 'components',
-              type: 'folder',
-              path: 'BlogSystem/src/components',
-              children: []
-            },
-            {
-              name: 'pages',
-              type: 'folder',
-              path: 'BlogSystem/src/pages',
-              children: []
-            },
-            {
-              name: 'styles',
-              type: 'folder',
-              path: 'BlogSystem/src/styles',
-              children: []
-            },
-            {
-              name: 'App.vue',
-              type: 'file',
-              path: 'BlogSystem/src/App.vue'
-            },
-            {
-              name: 'main.js',
-              type: 'file',
-              path: 'BlogSystem/src/main.js'
-            }
-          ]
-        },
-        {
-          name: '.gitignore',
-          type: 'file',
-          path: 'BlogSystem/.gitignore'
-        },
-        {
-          name: 'package.json',
-          type: 'file',
-          path: 'BlogSystem/package.json'
-        },
-        {
-          name: 'README.md',
-          type: 'file',
-          path: 'BlogSystem/README.md'
-        },
-        {
-          name: 'vite.config.js',
-          type: 'file',
-          path: 'BlogSystem/vite.config.js'
-        }
-      ]
-    };
-  };
-
-  const [tree, setTree] = useState<FileNode>(() => {
-    let base: FileNode;
-    if (typeof window !== 'undefined') {
-      try {
-        const saved = localStorage.getItem('soloforge_fileTree');
-        if (saved) {
-          base = JSON.parse(saved);
-        } else {
-          base = getDefaultTree();
-        }
-      } catch (e) {
-        console.warn(e);
-        base = getDefaultTree();
-      }
-    } else {
-      base = getDefaultTree();
-    }
-    
-    ensureRequiredFolders(base);
-    return base;
-  });
-
-  // Keep tree in sync with localStorage and trigger channel broadcast
-  // ==========================================
-  // 【后端对接提示 - 文件树同步与变动回调】
-  // 此处在 tree 变化时在 localStorage 中进行了持久化并向广播通道同步。
-  // 后期后端介入时，可将 tree 的变更操作通过 API 同步至服务器。
-  // 考虑到部分复杂操作（如批量剪切、创建、删除、重命名文件），
-  // 应该直接在前端向特定的文件操作 API 发送请求，成功后再更新 tree 的状态。
-  // ==========================================
+  // Broadcast channel sync for tree changes
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem('soloforge_fileTree', JSON.stringify(tree));
-        const channel = new BroadcastChannel('soloforge-editor-sync-channel');
-        channel.postMessage({
-          type: 'TREE_UPDATE',
-          tree: tree
-        });
-        channel.close();
-      } catch (e) {
-        console.warn(e);
-      }
-    }
+    if (typeof window === 'undefined') return;
+    try {
+      const channel = new BroadcastChannel('soloforge-editor-sync-channel');
+      channel.postMessage({ type: 'TREE_UPDATE', tree });
+      channel.close();
+    } catch {}
   }, [tree]);
 
   // Listen to external tree changes
@@ -427,18 +271,11 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
       const handleMessage = (event: MessageEvent) => {
         const msg = event.data;
         if (msg && msg.type === 'TREE_UPDATE') {
-          // Compare JSON representation to avoid infinite loop
           setTree(prev => {
             if (JSON.stringify(prev) !== JSON.stringify(msg.tree)) {
               return msg.tree;
             }
             return prev;
-          });
-        } else if (msg && msg.type === 'REQUEST_SYNC') {
-          // Send current tree state when other window requests it
-          channel.postMessage({
-            type: 'TREE_UPDATE',
-            tree: tree
           });
         }
       };
@@ -447,10 +284,130 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
         channel.removeEventListener('message', handleMessage);
         channel.close();
       };
-    } catch (e) {
-      console.warn(e);
+    } catch {}
+  }, []);
+
+  // ── Tab management helpers ─────────────────────────────────
+  const tabCounterRef = useRef(1);
+  const [editingTabId, setEditingTabId] = useState<string | null>(null);
+  const [editingTabName, setEditingTabName] = useState('');
+  const [isLoadingFolder, setIsLoadingFolder] = useState(false);
+
+  // Recursively read a directory handle into a FileNode tree
+  const readDirectoryRecursive = async (
+    dirHandle: FileSystemDirectoryHandle,
+    dirName: string,
+    parentPath: string,
+    depth: number = 0,
+  ): Promise<FileNode> => {
+    const children: FileNode[] = [];
+    // Limit depth to avoid extremely deep recursion on large repos
+    if (depth < 12) {
+      try {
+        for await (const entry of dirHandle.values()) {
+          // Skip hidden files/folders and node_modules
+          if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === '__pycache__') continue;
+          const entryPath = `${parentPath}/${entry.name}`;
+          if (entry.kind === 'file') {
+            children.push({ name: entry.name, type: 'file', path: entryPath });
+          } else if (entry.kind === 'directory') {
+            const subTree = await readDirectoryRecursive(entry, entry.name, entryPath, depth + 1);
+            children.push(subTree);
+          }
+        }
+      } catch {
+        // Permission errors on some subdirs are non-fatal
+      }
     }
-  }, [tree]);
+    // Sort: folders first, then files, alphabetically
+    children.sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    return { name: dirName, type: 'folder', path: parentPath, children };
+  };
+
+  const addTab = useCallback(async () => {
+    // Try native folder picker first
+    if (typeof window !== 'undefined' && 'showDirectoryPicker' in window) {
+      try {
+        setIsLoadingFolder(true);
+        const dirHandle = await (window as any).showDirectoryPicker({ mode: 'read' });
+        const folderName = dirHandle.name;
+        const treeData = await readDirectoryRecursive(dirHandle, folderName, folderName);
+
+        tabCounterRef.current++;
+        const id = `tab-${Date.now()}-${tabCounterRef.current}`;
+        setTabs(prev => [...prev, {
+          id,
+          name: folderName,
+          tree: treeData,
+          openFolders: { [folderName]: true },
+        }]);
+        setActiveTabIndex(tabs.length);
+        setIsLoadingFolder(false);
+        return;
+      } catch (err: any) {
+        setIsLoadingFolder(false);
+        // User cancelled the picker — do nothing
+        if (err.name === 'AbortError') return;
+        console.warn('[FileExplorer] showDirectoryPicker failed:', err.message);
+      }
+    }
+
+    // Fallback: prompt for folder name
+    const name = prompt('输入工作区名称:');
+    if (!name?.trim()) return;
+    tabCounterRef.current++;
+    const id = `tab-${Date.now()}-${tabCounterRef.current}`;
+    setTabs(prev => [...prev, {
+      id,
+      name: name.trim(),
+      tree: { name: name.trim(), type: 'folder', path: name.trim(), children: [] },
+      openFolders: {},
+    }]);
+    setActiveTabIndex(tabs.length);
+  }, [tabs.length]);
+
+  const closeTab = useCallback((index: number) => {
+    if (tabs.length <= 1) return;
+    setTabs(prev => prev.filter((_, i) => i !== index));
+    setActiveTabIndex(prev => {
+      if (prev >= tabs.length - 1) return Math.max(0, tabs.length - 2);
+      if (prev > index) return prev - 1;
+      return prev;
+    });
+  }, [tabs.length]);
+
+  const commitTabRename = useCallback((tabId: string) => {
+    const newName = editingTabName.trim();
+    if (!newName) { setEditingTabId(null); return; }
+    setTabs(prev => prev.map(t => {
+      if (t.id !== tabId) return t;
+      const updateRootPaths = (node: FileNode, oldRoot: string, newRoot: string): FileNode => {
+        if (!node.path) return node;
+        const newPath = node.path === oldRoot ? newRoot : node.path.replace(oldRoot + '/', newRoot + '/');
+        return {
+          ...node,
+          path: newPath,
+          name: node.path === oldRoot ? newName : node.name,
+          children: node.children?.map(c => updateRootPaths(c, oldRoot, newRoot)),
+        };
+      };
+      return {
+        ...t,
+        name: newName,
+        tree: updateRootPaths(t.tree, t.tree.path, newName),
+        openFolders: Object.fromEntries(
+          Object.entries(t.openFolders).map(([k, v]) => [
+            k === t.tree.path ? newName : k.replace(t.tree.path + '/', newName + '/'),
+            v,
+          ])
+        ),
+      };
+    }));
+    setEditingTabId(null);
+  }, [editingTabName]);
 
   // Context Menu State
   const [contextMenu, setContextMenu] = useState<{
@@ -463,7 +420,7 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
     x: 0,
     y: 0,
     visible: false,
-    targetPath: 'BlogSystem',
+    targetPath: tree.path,
     targetType: 'root_blank',
   });
 
@@ -604,13 +561,22 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
   };
 
   // Close context menu on global click
+  // NOTE: Use mousedown instead of click to avoid race condition with contextmenu:
+  // right-click fires contextmenu -> mouseup -> click, closing the menu immediately.
+  // mousedown fires BEFORE contextmenu, so we use a timestamp guard.
+  const contextMenuOpenTime = useRef(0);
   useEffect(() => {
-    const handleGlobalClick = () => {
+    const handleMouseDown = (e: MouseEvent) => {
+      // Ignore if the click is inside the context menu itself
+      const target = e.target as HTMLElement;
+      if (target.closest('[data-context-menu]')) return;
+      // Suppress close within 200ms of opening (right-click sequence)
+      if (Date.now() - contextMenuOpenTime.current < 200) return;
       setContextMenu(prev => prev.visible ? { ...prev, visible: false } : prev);
     };
-    window.addEventListener('click', handleGlobalClick);
+    window.addEventListener('mousedown', handleMouseDown);
     return () => {
-      window.removeEventListener('click', handleGlobalClick);
+      window.removeEventListener('mousedown', handleMouseDown);
     };
   }, []);
 
@@ -638,6 +604,7 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
   const openCustomMenu = (e: React.MouseEvent, path: string, type: 'file' | 'folder' | 'root_blank') => {
     e.preventDefault();
     e.stopPropagation();
+    contextMenuOpenTime.current = Date.now();
 
     const rect = scrollContainerRef.current?.getBoundingClientRect();
     const menuWidth = 190;
@@ -687,14 +654,14 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
     setContextMenu(prev => ({ ...prev, visible: false }));
 
     if (action === 'new_file') {
-      const activeFolder = targetType === 'folder' ? targetPath : 'BlogSystem';
+      const activeFolder = targetType === 'folder' ? targetPath : tree.path;
       setDialog({
         type: 'new_file',
         targetPath: activeFolder,
         inputValue: 'index.js'
       });
     } else if (action === 'new_folder') {
-      const activeFolder = targetType === 'folder' ? targetPath : 'BlogSystem';
+      const activeFolder = targetType === 'folder' ? targetPath : tree.path;
       setDialog({
         type: 'new_folder',
         targetPath: activeFolder,
@@ -708,13 +675,13 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
         inputValue: node ? node.name : ''
       });
     } else if (action === 'delete') {
-      if (targetPath === 'BlogSystem') {
+      if (targetPath === tree.path) {
         triggerToast("不可删除工作区根节点！");
         return;
       }
       setTree(prev => deleteNodeByPath(prev, targetPath));
       if (selectedFile === targetPath) {
-        setSelectedFile('BlogSystem/package.json');
+        setSelectedFile('');
       }
       triggerToast(`已成功删除: ${targetPath.split('/').pop()}`);
     } else if (action === 'copy' || action === 'cut') {
@@ -728,7 +695,7 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
       }
     } else if (action === 'paste') {
       if (!clipboard) return;
-      const destFolder = targetType === 'folder' ? targetPath : 'BlogSystem';
+      const destFolder = targetType === 'folder' ? targetPath : tree.path;
       
       // Perform deep duplication
       const duplicatedNode = JSON.parse(JSON.stringify(clipboard.node)) as FileNode;
@@ -752,7 +719,7 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
       
       triggerToast(`已粘贴 ${duplicatedNode.name} 至 ${destFolder.split('/').pop()}`);
     } else if (action === 'copy_path') {
-      const pseudoPath = `D:\\AI-Projects\\BlogSystem\\${targetPath.replace(/\//g, '\\')}`;
+      const pseudoPath = `${tree.path}\\${targetPath.replace(/\//g, '\\')}`;
       navigator.clipboard.writeText(pseudoPath)
         .then(() => triggerToast("本地绝对路径复制成功！"))
         .catch(() => triggerToast("复制失败，请重试"));
@@ -938,7 +905,7 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
     <div className="w-full h-full bg-surface flex flex-col select-none relative">
       {/* Search Header / Resource Management */}
       <div className="p-3 border-b border-outline/50 flex items-center justify-between shrink-0">
-        <span className="font-display font-bold text-[12px] text-on-surface">资源管理</span>
+        <span className="font-display font-bold text-[12px] text-on-surface truncate max-w-[120px]">{activeTab.name}</span>
         <div className="flex items-center gap-1.5">
           <button 
             type="button"
@@ -960,6 +927,64 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
             </button>
           )}
         </div>
+      </div>
+
+      {/* ─── Workspace Tabs ─── */}
+      <div className="flex items-center border-b border-outline/30 bg-surface-bright/50 shrink-0 overflow-x-auto scrollbar-none">
+        {tabs.map((tab, idx) => (
+          <div
+            key={tab.id}
+            onClick={() => { setActiveTabIndex(idx); setSearchQuery(''); }}
+            className={`flex items-center gap-1 px-2.5 py-1.5 text-[10px] cursor-pointer border-r border-outline/15 shrink-0 transition-colors group ${
+              idx === activeTabIndex
+                ? 'bg-surface text-primary font-bold border-b-2 border-b-primary'
+                : 'text-on-surface/50 hover:text-on-surface/80 hover:bg-surface/50'
+            }`}
+          >
+            <Folder className="w-3 h-3 shrink-0" />
+            {editingTabId === tab.id ? (
+              <input
+                autoFocus
+                value={editingTabName}
+                onChange={(e) => setEditingTabName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') commitTabRename(tab.id); if (e.key === 'Escape') setEditingTabId(null); }}
+                onBlur={() => commitTabRename(tab.id)}
+                className="w-16 bg-transparent border-b border-primary/50 text-[10px] outline-none px-0.5"
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <span
+                onDoubleClick={(e) => { e.stopPropagation(); setEditingTabId(tab.id); setEditingTabName(tab.name); }}
+                className="truncate max-w-[80px]"
+              >
+                {tab.name}
+              </span>
+            )}
+            {tabs.length > 1 && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); closeTab(idx); }}
+                className="p-0.5 rounded hover:bg-on-surface/10 text-on-surface/30 hover:text-on-surface opacity-0 group-hover:opacity-100 transition-opacity"
+                title="关闭选项卡"
+              >
+                <X className="w-2.5 h-2.5" />
+              </button>
+            )}
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={addTab}
+          disabled={isLoadingFolder}
+          className={`p-1.5 text-on-surface/40 hover:text-primary hover:bg-surface/50 transition-colors cursor-pointer shrink-0 ${isLoadingFolder ? 'animate-pulse' : ''}`}
+          title="打开文件夹"
+        >
+          {isLoadingFolder ? (
+            <RefreshCw className="w-3 h-3 animate-spin" />
+          ) : (
+            <FolderPlus className="w-3 h-3" />
+          )}
+        </button>
       </div>
 
       {/* Search Input and Documentation Helper Trigger */}
@@ -1000,7 +1025,7 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
       {/* Directory file trees scroll container */}
       <div 
         ref={scrollContainerRef}
-        onContextMenu={(e) => openCustomMenu(e, 'BlogSystem', 'root_blank')}
+        onContextMenu={(e) => openCustomMenu(e, tree.path, 'root_blank')}
         className="flex-1 overflow-y-auto p-1.5 space-y-0.5 scrollbar-thin scrollbar-thumb-[#2c2f33] relative min-h-[150px]"
       >
         <div
@@ -1014,6 +1039,7 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
       {/* Context Menu Overlay Option Cards */}
       <MountTransition show={contextMenu.visible} variant="fade-scale" duration={120}>
           <div
+            data-context-menu
             style={{ 
               position: 'fixed',
               left: `${contextMenu.x}px`,
@@ -1133,7 +1159,7 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
                     由于系统浏览器沙箱机制限制，无法直接调用本地文件管理器窗口。已经为您在虚拟宿主机 D 盘映射对应目录：
                   </p>
                   <div className="bg-black/40 border border-[#222426] p-2.5 rounded text-[10px] text-amber-300 font-mono break-all mb-4">
-                    {`D:\\AI-Projects\\BlogSystem\\${dialog.targetPath.replace(/\//g, '\\')}`}
+                    {`${tree.path}\\${dialog.targetPath.replace(/\//g, '\\')}`}
                   </div>
                   <div className="flex justify-end">
                     <button

@@ -1,0 +1,14 @@
+{
+  "key": "m-iphone14",
+  "label": "iPhone 14",
+  "type": "2d",
+  "nativeSize": { "w": 390, "h": 844 },
+  "frame": {
+    "bezel": { "top": 14, "bottom": 14, "left": 6, "right": 6 },
+    "cornerRadius": 30,
+    "hasStand": false,
+    "notch": "dynamicIsland",
+    "notchSize": { "w": 110, "h": 32 }
+  },
+  "note": "2D 占位描述符 — iPhone 14 边框参数"
+}
