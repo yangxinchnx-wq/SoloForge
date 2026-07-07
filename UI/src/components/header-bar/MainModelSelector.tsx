@@ -24,6 +24,8 @@ export interface MainModelSelectorProps {
   mainModel: string;
   onChange: (model: string) => void;
   availableModels: readonly string[];
+  /** modelId → { providerId, iconType } 映射, 用于自定义服务商图标与设置页对齐 */
+  modelIconMap?: Record<string, { providerId: string; iconType?: string }>;
   draggable?: boolean;
   emptyHint?: string;
   className?: string;
@@ -72,6 +74,7 @@ function MainModelSelectorImpl({
   mainModel,
   onChange,
   availableModels,
+  modelIconMap,
   draggable = true,
   emptyHint = '尚未配置可用模型',
   className = '',
@@ -94,7 +97,10 @@ function MainModelSelectorImpl({
 
   const { list, fallback } = computeAvailableModels(availableModels);
   const safeMainModel = list.includes(mainModel) ? mainModel : (fallback ?? mainModel);
-  const displayModel = safeMainModel || '未配置模型';
+  const hasModel = !!safeMainModel;
+
+  // 从 modelIconMap 获取当前模型的 iconType (与设置页对齐)
+  const currentIconInfo = hasModel ? modelIconMap?.[safeMainModel] : undefined;
 
   const close = useCallback(() => setOpen(false), []);
   const toggle = useCallback(() => setOpen((o) => !o), []);
@@ -167,16 +173,22 @@ function MainModelSelectorImpl({
           boxShadow: `inset 0 1px 0 ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.60)'}, 0 0 0 3px ${rgba('--color-primary-rgb', isDark ? 0.10 : 0.14)}`,
         }}
       >
-        <ModelIcon modelName={safeMainModel} size={20} className="shrink-0" />
+        {hasModel ? (
+          <ModelIcon modelName={safeMainModel} size={20} className="shrink-0" iconType={currentIconInfo?.iconType} />
+        ) : (
+          <div className="shrink-0 w-5 h-5 rounded-full border border-on-surface/20 flex items-center justify-center">
+            <span className="text-[10px] text-on-surface/30 font-bold">—</span>
+          </div>
+        )}
         <div className="h-4 overflow-hidden relative flex items-center justify-center min-w-[84px]">
           <motion.span
-            key={displayModel}
+            key={safeMainModel || 'empty'}
             initial={{ opacity: 0, x: 16 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-            className="inline-block whitespace-nowrap text-primary"
+            className={`inline-block whitespace-nowrap ${hasModel ? 'text-primary' : 'text-on-surface/35'}`}
           >
-            {displayModel}
+            {hasModel ? safeMainModel : '未选择'}
           </motion.span>
         </div>
         <motion.span
@@ -211,16 +223,14 @@ function MainModelSelectorImpl({
               initial="hidden"
               animate="visible"
               exit="hidden"
+              className="absolute left-0 mt-3.5 w-64 p-1 flex flex-col gap-0.5"
               style={{
+                // ── 弹出面板(实色不透明, 主题色对齐) ──────────────────
                 transformOrigin: '50% 50%',
                 willChange: 'clip-path, transform, opacity',
                 transform: 'translateZ(0)',
                 backfaceVisibility: 'hidden',
                 WebkitBackfaceVisibility: 'hidden',
-              }}
-              className="absolute left-0 mt-3.5 w-64 p-1 flex flex-col gap-0.5"
-              style={{
-                // ── 弹出面板(实色不透明, 主题色对齐) ──────────────────
                 background: isDark ? 'var(--color-surface-bright)' : 'var(--color-surface)',
                 border: `1px solid ${rgba('--color-primary-rgb', glass.hairlineAlpha)}`,
                 borderRadius: 14,
@@ -241,6 +251,7 @@ function MainModelSelectorImpl({
               ) : (
                 list.map((m) => {
                   const isSelected = safeMainModel === m;
+                  const iconInfo = modelIconMap?.[m];
                   return (
                     <motion.button
                       key={m}
@@ -258,7 +269,7 @@ function MainModelSelectorImpl({
                       }`}
                     >
                       <span className="relative z-10 flex items-center gap-2">
-                        <ModelIcon modelName={m} size={20} className="shrink-0" />
+                        <ModelIcon modelName={m} size={20} className="shrink-0" iconType={iconInfo?.iconType} />
                         <span>{m}</span>
                       </span>
                       {isSelected && (

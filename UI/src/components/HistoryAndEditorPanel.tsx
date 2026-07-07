@@ -1,5 +1,5 @@
-import React, { useState, useMemo, useCallback } from 'react';
-import { Search, X, Plus, Trash2 } from '../utils/icons';
+import React, { useState, useMemo, useCallback, useRef, useLayoutEffect } from 'react';
+import { Search, X, Plus, Trash2, FolderPlus, Eraser } from '../utils/icons';
 import {
   DndContext,
   closestCenter,
@@ -24,6 +24,7 @@ import { DefaultChatIcon } from './brandIcons';
 import { Code, Key, Brain, Database, CreditCard, HelpCircle } from '../utils/icons';
 import { AndroidIcon, WindowsIcon, HarmonyOSIcon } from './brandIcons';
 import { useChatsStore, type ChatItem, type ChatTag } from '../state/chatsStore';
+import { useChatStore, emptyStreamState } from '../state/useChatStore';
 
 // 兼容性 re-export
 export { AndroidIcon, WindowsIcon, HarmonyOSIcon, DefaultChatIcon } from './brandIcons';
@@ -54,6 +55,7 @@ function chatItemToDraggable(chat: ChatItem): DraggableChatHistoryItem {
     tagText: chat.tagText,
     icon: TAG_ICON_MAP[chat.tag] || DefaultChatIcon,
     permission: chat.permission,
+    workspaceFolder: chat.workspaceFolder,
   };
 }
 
@@ -86,12 +88,83 @@ export default function HistoryAndEditorPanel({
 }: HistoryAndEditorPanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
 
+  // ── 手动输入文件夹路径 (fallback) ─────────────────────────
+  const [showManualFolderInput, setShowManualFolderInput] = useState(false);
+  const [manualPathValue, setManualPathValue] = useState('');
+
+  const seenChatIdsRef = useRef<Set<string> | null>(null);
+  const [animatingIds, setAnimatingIds] = useState<ReadonlySet<string>>(
+    () => new Set<string>()
+  );
+  const animatingTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
   // ── 从 useChatsStore 读取对话列表 ──────────────────────────
   const rawChats = useChatsStore((s) => s.chats);
   const chats: DraggableChatHistoryItem[] = useMemo(
     () => rawChats.map(chatItemToDraggable),
     [rawChats]
   );
+
+  // ── 新建对话入场动画: useLayoutEffect 在浏览器绘制前检测新项 ──────
+  // 核心原理: useLayoutEffect 在 DOM 提交后、浏览器绘制前同步执行。
+  // 在此处检测新 ID 并 setState, React 会同步重渲染, 动画类在首次
+  // 绘制时就存在, 不会出现全不透明→透明→不透明的闪烁。
+  // 必须放在 chats 定义之后, 否则 TDZ (暂时性死区) 会报 ReferenceError。
+  useLayoutEffect(() => {
+    const currentIds = new Set(chats.map((c) => c.id));
+
+    // 首次渲染: 记录所有现有 ID, 不播放动画
+    if (seenChatIdsRef.current === null) {
+      seenChatIdsRef.current = currentIds;
+      return;
+    }
+
+    // 检测新出现的 ID
+    const newOnes: string[] = [];
+    for (const id of currentIds) {
+      if (!seenChatIdsRef.current.has(id)) {
+        newOnes.push(id);
+      }
+    }
+
+    // 检测已删除的 ID (清理对应的 timer)
+    for (const id of seenChatIdsRef.current) {
+      if (!currentIds.has(id)) {
+        const t = animatingTimersRef.current.get(id);
+        if (t) {
+          clearTimeout(t);
+          animatingTimersRef.current.delete(id);
+        }
+      }
+    }
+
+    seenChatIdsRef.current = currentIds;
+
+    if (newOnes.length === 0) return;
+
+    // 标记新项为动画中
+    setAnimatingIds((prev) => {
+      const next = new Set(prev);
+      newOnes.forEach((id) => next.add(id));
+      return next;
+    });
+
+    // 动画完成后移除标记 (400ms 动画 + 100ms buffer)
+    for (const id of newOnes) {
+      const existing = animatingTimersRef.current.get(id);
+      if (existing) clearTimeout(existing);
+      const timer = setTimeout(() => {
+        setAnimatingIds((prev) => {
+          if (!prev.has(id)) return prev;
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+        animatingTimersRef.current.delete(id);
+      }, 500);
+      animatingTimersRef.current.set(id, timer);
+    }
+  }, [chats]);
 
   const currentChat = chats.find(c => c.id === selectedChatId) || chats[0];
   const permissionMode = currentChat?.permission || 'normal';
@@ -169,13 +242,105 @@ export default function HistoryAndEditorPanel({
     setActiveDragId(null);
   }, []);
 
-  // ── 创建新对话 ──────────────────────────────────────────────
+  // ── 创建新对话 ─────────────────────────────────────────────
   const handleCreateNewChat = useCallback(async () => {
     const newChat = await useChatsStore.getState().createChat();
     if (newChat) {
       setSelectedChatId(newChat.id);
     }
   }, [setSelectedChatId]);
+
+  // ── 从文件夹创建对话 ──────────────────────────────────────────
+  const handleCreateFolderChat = useCallback(async () => {
+    let folderPath: string | null = null;
+    let folderName: string | null = null;
+    let userCanceled = false;
+
+    const sf = (window as any).soloforge;
+
+    // 1. 尝试 Electron IPC (需要重启 Electron 生效)
+    if (sf?.selectFolder) {
+      try {
+        const result = await sf.selectFolder();
+        if (result) {
+          folderPath = result.path;
+          folderName = result.name;
+        } else {
+          userCanceled = true; // IPC 返回 null = 用户取消
+        }
+      } catch (e) {
+        console.warn('[HistoryAndEditorPanel] Electron IPC selectFolder 失败:', e);
+        // IPC 出错 — 继续尝试 fallback
+      }
+    }
+
+    // 2. 如果 IPC 不可用或出错, 尝试浏览器 showDirectoryPicker
+    if (!folderName && !userCanceled && typeof window !== 'undefined' && (window as any).showDirectoryPicker) {
+      try {
+        const handle = await (window as any).showDirectoryPicker();
+        folderPath = handle.name;
+        folderName = handle.name;
+      } catch {
+        userCanceled = true; // showDirectoryPicker 取消时会 throw
+      }
+    }
+
+    // 3. 如果以上方式都不可用, 弹出手动输入对话框
+    if (!folderName && !userCanceled) {
+      setShowManualFolderInput(true);
+      return;
+    }
+
+    if (!folderName) return; // 用户取消了选择
+
+    const newChat = await useChatsStore.getState().createChat(folderName, 'normal', folderPath ?? undefined);
+    if (newChat) {
+      setSelectedChatId(newChat.id);
+    }
+  }, [setSelectedChatId]);
+
+  // ── 手动输入路径确认 ───────────────────────────────────────
+  const handleManualPathSubmit = useCallback(async () => {
+    const trimmed = manualPathValue.trim();
+    if (!trimmed) return;
+
+    // 从路径提取文件夹名
+    const parts = trimmed.replace(/\\/g, '/').split('/').filter(Boolean);
+    const folderName = parts[parts.length - 1] || trimmed;
+
+    setShowManualFolderInput(false);
+    setManualPathValue('');
+
+    const newChat = await useChatsStore.getState().createChat(folderName, 'normal', trimmed);
+    if (newChat) {
+      setSelectedChatId(newChat.id);
+    }
+  }, [manualPathValue, setSelectedChatId]);
+
+  // ── 清除当前会话 ──────────────────────────────────────────────
+  const handleClearSession = useCallback(async (id: string) => {
+    // 清除对话消息
+    useChatStore.setState((s) => {
+      const convos = { ...s.conversations };
+      convos[id] = [];
+      const configs = { ...s.configs };
+      // 保留 configs 中的设置, 不清除
+      return { conversations: convos, configs, streamState: { ...emptyStreamState }, isGenerating: false };
+    });
+
+    // 清除终端日志
+    const { useTerminalLogStore } = await import('../components/terminal/store/terminalLogStore');
+    useTerminalLogStore.getState().removeChat(id);
+
+    // 清除画布预览流
+    const { usePreviewStreamStore } = await import('../state/previewStreamStore');
+    usePreviewStreamStore.getState().clearEntry(id);
+
+    // 清除 liveState
+    useChatsStore.getState().clearLiveState(id);
+
+    console.log('[HistoryAndEditorPanel] 已清除会话', id, '的上下文/流送/画布/终端');
+  }, []);
 
   // ── 删除对话 ────────────────────────────────────────────────
   const executeDelete = useCallback(async (id: string) => {
@@ -201,6 +366,13 @@ export default function HistoryAndEditorPanel({
             <span className="font-mono text-[10px] text-on-surface/50 tracking-wider">对话历史 ({filteredChats.length})</span>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                onClick={handleCreateFolderChat}
+                className="p-1 hover:bg-surface-bright rounded text-primary hover:text-primary-bright transition-colors cursor-pointer flex items-center justify-center"
+                title="从文件夹创建对话"
+              >
+                <FolderPlus className="w-3.5 h-3.5 text-primary" />
+              </button>
               <button
                 onClick={handleCreateNewChat}
                 className="p-1 hover:bg-surface-bright rounded text-primary hover:text-primary-bright transition-colors cursor-pointer flex items-center justify-center"
@@ -268,7 +440,9 @@ export default function HistoryAndEditorPanel({
                       onDelete={handleDelete}
                       onRename={handleRename}
                       onOpenSettings={handleOpenSettings}
+                      onClearSession={handleClearSession}
                       isFloatingEditorOpen={isFloatingEditorOpen}
+                      isNew={animatingIds.has(c.id)}
                     />
                   ))}
                 </div>
@@ -334,6 +508,55 @@ export default function HistoryAndEditorPanel({
                 className="px-3 py-1.5 rounded-lg bg-red-500/20 border border-red-500/35 text-red-400 hover:bg-red-500/40 hover:text-white transition-colors cursor-pointer font-bold"
               >
                 彻底删除
+              </button>
+            </div>
+          </div>
+        </div>
+      </MountTransition>
+
+      {/* 手动输入文件夹路径 (fallback) */}
+      <MountTransition show={showManualFolderInput} variant="fade-scale">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-[9999]">
+          <div className="bg-surface border border-outline/35 rounded-2xl p-5 max-w-sm w-full shadow-2xl flex flex-col gap-4 font-sans text-on-surface">
+            <div className="flex flex-col gap-2">
+              <h3 className="text-[13px] font-bold text-primary flex items-center gap-2">
+                <FolderPlus className="w-4 h-4" />
+                输入工作区文件夹路径
+              </h3>
+              <p className="text-[11px] text-on-surface/65 leading-relaxed">
+                系统文件夹选择器不可用，请手动输入文件夹的完整路径：
+              </p>
+            </div>
+            <input
+              type="text"
+              placeholder="例如: C:\Users\...\my-project"
+              value={manualPathValue}
+              onChange={(e) => setManualPathValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleManualPathSubmit();
+                if (e.key === 'Escape') {
+                  setShowManualFolderInput(false);
+                  setManualPathValue('');
+                }
+              }}
+              autoFocus
+              className="bg-bg border border-outline rounded-lg px-3 py-2 text-[12px] text-on-surface outline-none focus:border-primary/50 w-full font-mono"
+            />
+            <div className="flex items-center justify-end gap-2 text-[11px]">
+              <button
+                onClick={() => {
+                  setShowManualFolderInput(false);
+                  setManualPathValue('');
+                }}
+                className="px-3 py-1.5 rounded-lg border border-outline/20 hover:bg-surface-bright text-on-surface/75 hover:text-on-surface transition-colors cursor-pointer"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleManualPathSubmit}
+                className="px-3 py-1.5 rounded-lg bg-primary/20 border border-primary/35 text-primary hover:bg-primary/40 hover:text-white transition-colors cursor-pointer font-bold"
+              >
+                确认
               </button>
             </div>
           </div>

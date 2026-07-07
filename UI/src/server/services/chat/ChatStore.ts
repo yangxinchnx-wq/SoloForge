@@ -29,6 +29,7 @@ export interface ChatItem {
   updatedAt: number;
   time?: string;
   lastMessagePreview?: string;
+  workspaceFolder?: string;
 }
 
 export interface ChatLiveState {
@@ -152,7 +153,7 @@ export class ChatStore {
 
   // ── 写操作 ──────────────────────────────────────────────────
 
-  createChat(title?: string, permission: ChatPermission = 'normal'): ChatItem {
+  createChat(title?: string, permission: ChatPermission = 'normal', workspaceFolder?: string): ChatItem {
     this.counter++;
     const id = `chat-${Date.now()}-${this.counter}`;
     const tag = DEFAULT_TAG;
@@ -167,6 +168,7 @@ export class ChatStore {
       createdAt: now,
       updatedAt: now,
       time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+      workspaceFolder,
     };
     this.chats.set(id, chat);
     this.order.unshift(id);
@@ -175,7 +177,7 @@ export class ChatStore {
     return chat;
   }
 
-  updateChat(id: string, patch: Partial<Pick<ChatItem, 'title' | 'tag' | 'permission' | 'lastMessagePreview'>>): ChatItem | null {
+  updateChat(id: string, patch: Partial<Pick<ChatItem, 'title' | 'tag' | 'permission' | 'lastMessagePreview' | 'workspaceFolder'>>): ChatItem | null {
     const chat = this.chats.get(id);
     if (!chat) return null;
     const updated: ChatItem = {

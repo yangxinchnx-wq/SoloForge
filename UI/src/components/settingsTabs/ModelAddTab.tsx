@@ -5,204 +5,454 @@ import * as DndKitModifiers from '@dnd-kit/modifiers';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, arrayMove, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { ModelIcon } from '../ModelIcon';
-import { AnimalAvatar, ANIMAL_IDS } from '../AnimalAvatar';
-import { ProviderCard } from '../ProviderCard';
+import { AnimalAvatar, loadIconRegistry, addCustomIconToRegistry, removeIconFromRegistry, processUploadedIcon } from '../AnimalAvatar';
+import type { IconRegistryItem } from '../AnimalAvatar';
+import { SortableProviderCard, ProviderCardInner } from '../ProviderCard';
 import type { ModelProvider, CloudModelScanResult } from '../../data/providersRegistry';
 
 const { DndContext, DragOverlay, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors } = DndKitCore;
-const { restrictToVerticalAxis } = DndKitModifiers;
+const { restrictToVerticalAxis, restrictToFirstScrollableAncestor } = DndKitModifiers;
 type DragEndEvent = DndKitCore.DragEndEvent;
 type DragStartEvent = DndKitCore.DragStartEvent;
-type DragOverEvent = DndKitCore.DragOverEvent;
-type Modifier = DndKitCore.Modifier;
+
+// --- 内置服务商列表（与 providers_db.json 保持同步）---
+const BASE_PROVIDERS: ModelProvider[] = [
+  {
+    id: 'xiaomi',
+    name: 'XIAOMIMIMO',
+    desc: '小米自研多模态与端侧通用智能模型系列',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://api.xiaomimimo.com/v1',
+    defaultUrl: 'https://api.xiaomimimo.com/v1',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#ff6700'
+  },
+  {
+    id: 'openai',
+    name: 'OpenAI',
+    desc: 'GPT 系列大语言模型官方服务商',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://api.openai.com/v1',
+    defaultUrl: 'https://api.openai.com/v1',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#10a37f'
+  },
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    desc: '深度求索：超高性价比与硬核推理模型商',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://api.deepseek.com/v1',
+    defaultUrl: 'https://api.deepseek.com/v1',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#0d6efd'
+  },
+  {
+    id: 'anthropic',
+    name: 'Anthropic Claude',
+    desc: 'Claude 顶尖逻辑和多模态理解专家',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://api.anthropic.com/v1',
+    defaultUrl: 'https://api.anthropic.com/v1',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#d97706'
+  },
+  {
+    id: 'gemini',
+    name: 'Google Gemini',
+    desc: 'Google 顶尖多模态智能体基础模型系列',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    defaultUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#1a73e8'
+  },
+  {
+    id: 'siliconflow',
+    name: '硅基流动 SiliconFlow',
+    desc: '千亿参数模型一键加速接入平台',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    defaultUrl: 'https://api.siliconflow.cn/v1',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#a855f7'
+  },
+  {
+    id: 'moonshot',
+    name: '月之暗面 Kimi',
+    desc: '支持超长无损上下文特性的高品质智能服务',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://api.moonshot.cn/v1',
+    defaultUrl: 'https://api.moonshot.cn/v1',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#f43f5e'
+  },
+  // ── 国内大模型厂商 ──
+  {
+    id: 'qwen',
+    name: '通义千问',
+    desc: '阿里云百炼平台 · Qwen 系列模型',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    defaultUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#615ced'
+  },
+  {
+    id: 'zhipu',
+    name: '智谱 GLM',
+    desc: '智谱 AI 开放平台 · GLM 系列模型',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    defaultUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#3859ff'
+  },
+  {
+    id: 'wenxin',
+    name: '百度文心',
+    desc: '百度千帆平台 · ERNIE 系列模型',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://qianfan.baidubce.com/v2',
+    defaultUrl: 'https://qianfan.baidubce.com/v2',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#2932e1'
+  },
+  {
+    id: 'doubao',
+    name: '字节豆包',
+    desc: '火山引擎 · 豆包系列模型',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    defaultUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#325ab4'
+  },
+  {
+    id: 'hunyuan',
+    name: '腾讯混元',
+    desc: '腾讯云 · 混元大模型系列',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://api.hunyuan.cloud.tencent.com/v1',
+    defaultUrl: 'https://api.hunyuan.cloud.tencent.com/v1',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#0053e0'
+  },
+  {
+    id: 'spark',
+    name: '讯飞星火',
+    desc: '科大讯飞 · Spark 系列模型',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://spark-api-open.xf-yun.com/v1',
+    defaultUrl: 'https://spark-api-open.xf-yun.com/v1',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#0070f0'
+  },
+  {
+    id: 'minimax',
+    name: 'MiniMax',
+    desc: '稀宇科技 · MiniMax / abab 系列模型',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://api.minimaxi.com/v1',
+    defaultUrl: 'https://api.minimaxi.com/v1',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#ff2d55'
+  },
+  {
+    id: 'baichuan',
+    name: '百川智能',
+    desc: 'Baichuan 系列大语言模型',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://api.baichuan-ai.com/v1',
+    defaultUrl: 'https://api.baichuan-ai.com/v1',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#f79420'
+  },
+  {
+    id: 'yi',
+    name: '零一万物',
+    desc: '01.ai · Yi 系列模型',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://api.lingyiwanwu.com/v1',
+    defaultUrl: 'https://api.lingyiwanwu.com/v1',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#0094a8'
+  },
+  {
+    id: 'stepfun',
+    name: '阶跃星辰',
+    desc: 'StepFun · step 系列模型',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://api.stepfun.com/v1',
+    defaultUrl: 'https://api.stepfun.com/v1',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#7c3aed'
+  },
+  // ── 国外大模型厂商 ──
+  {
+    id: 'mistral',
+    name: 'Mistral AI',
+    desc: 'Mistral · 欧洲开源大模型系列',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://api.mistral.ai/v1',
+    defaultUrl: 'https://api.mistral.ai/v1',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#ff7000'
+  },
+  {
+    id: 'groq',
+    name: 'Groq',
+    desc: 'Groq · 超低延迟推理加速平台',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://api.groq.com/openai/v1',
+    defaultUrl: 'https://api.groq.com/openai/v1',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#f55036'
+  },
+  {
+    id: 'openrouter',
+    name: 'OpenRouter',
+    desc: 'OpenRouter · 统一聚合路由 200+ 模型',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    defaultUrl: 'https://openrouter.ai/api/v1',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#6469f1'
+  },
+  {
+    id: 'together',
+    name: 'Together AI',
+    desc: 'Together · 开源模型托管与推理',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://api.together.xyz/v1',
+    defaultUrl: 'https://api.together.xyz/v1',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#0f6fff'
+  },
+  {
+    id: 'fireworks',
+    name: 'Fireworks AI',
+    desc: 'Fireworks · 高速开源模型推理',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://api.fireworks.ai/inference/v1',
+    defaultUrl: 'https://api.fireworks.ai/inference/v1',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#e8330a'
+  },
+  {
+    id: 'perplexity',
+    name: 'Perplexity',
+    desc: 'Perplexity · 联网搜索增强模型',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://api.perplexity.ai',
+    defaultUrl: 'https://api.perplexity.ai',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#20808d'
+  },
+  {
+    id: 'cohere',
+    name: 'Cohere',
+    desc: 'Cohere · Command 系列企业级模型',
+    enabled: false,
+    apiKey: '',
+    baseUrl: 'https://api.cohere.ai/v1',
+    defaultUrl: 'https://api.cohere.ai/v1',
+    models: [],
+    customModels: [],
+    status: 'idle',
+    color: '#39594d'
+  }
+];
+
+const KNOWN_PROVIDER_IDS = new Set(BASE_PROVIDERS.map(p => p.id));
+
+/** 合并已加载数据与 BASE_PROVIDERS：白名单过滤、补齐缺失、排序、清理脏数据 */
+function mergeProviders(loaded: any[]): ModelProvider[] {
+  // 白名单过滤：只保留已知内置服务商 + 用户创建的 custom_*
+  const filtered = loaded.filter((p: any) =>
+    p && (KNOWN_PROVIDER_IDS.has(p.id) || String(p.id).startsWith('custom_'))
+  );
+  const existingIds = new Set(filtered.map((p: any) => p.id));
+  const missing = BASE_PROVIDERS.filter(bp => !existingIds.has(bp.id));
+  const combined = [...filtered, ...missing];
+  const baseOrder = BASE_PROVIDERS.map(bp => bp.id);
+  combined.sort((a, b) => {
+    const idxA = baseOrder.indexOf(a.id);
+    const idxB = baseOrder.indexOf(b.id);
+    if (idxA === -1 && idxB === -1) return 0;
+    if (idxA === -1) return 1;
+    if (idxB === -1) return -1;
+    return idxA - idxB;
+  });
+  return combined.map((p: any) => {
+    const hasFakeKey =
+      p.apiKey === 'sk-proj-4jKls9XjLk9AsDFgHJKLaSDFgHJK' ||
+      p.apiKey === 'sk-ds-3jPlkHskOlO8asR9AkjsSJdkOsa9' ||
+      p.apiKey === 'AIzaSyA4_PklshSjLkaO8skJdKsa9Ska' ||
+      (p.apiKey && p.apiKey.startsWith('sk-proj-4jKls9XjLk9As')) ||
+      (p.apiKey && p.apiKey.startsWith('sk-ds-')) ||
+      (p.apiKey && p.apiKey.startsWith('AIzaSyA4_'));
+    const finalName = p.id === 'xiaomi' ? 'XIAOMIMIMO' : p.name;
+    const cleanedModels = (p.scanned && p.models)
+      ? p.models.filter((m: any) => {
+          const idLower = m.id.toLowerCase();
+          return !idLower.startsWith('custom-') &&
+                 !idLower.includes('placeholder') &&
+                 !idLower.includes('dummy') &&
+                 !idLower.includes('fake') &&
+                 !idLower.includes('test') &&
+                 !idLower.includes('temp');
+        })
+      : [];
+    const cleanedCustomModels = (p.scanned && p.customModels)
+      ? p.customModels.filter((m: string) => {
+          const idLower = m.toLowerCase();
+          return !idLower.startsWith('custom-') &&
+                 !idLower.includes('placeholder') &&
+                 !idLower.includes('dummy') &&
+                 !idLower.includes('fake') &&
+                 !idLower.includes('test') &&
+                 !idLower.includes('temp');
+        })
+      : [];
+    if (hasFakeKey) {
+      return { ...p, name: finalName, apiKey: '', status: 'idle' as const, delay: undefined, scanned: p.scanned || false, models: cleanedModels, customModels: cleanedCustomModels };
+    }
+    return { ...p, name: finalName, scanned: p.scanned || false, models: cleanedModels, customModels: cleanedCustomModels };
+  });
+}
 
 // 02. 云端大模型服务商配置
 export default function ModelAddTab() {
+  const serverLoadedRef = useRef(false);
+
   const [providers, setProviders] = useState<ModelProvider[]>(() => {
     const saved = localStorage.getItem('cherry_providers_v2');
-    let baseProviders = [
-      {
-        id: 'xiaomi',
-        name: 'XIAOMIMIMO',
-        desc: '小米自研多模态与端侧通用智能模型系列',
-        enabled: false,
-        apiKey: '',
-        baseUrl: 'https://api.xiaomimimo.com/v1',
-        defaultUrl: 'https://api.xiaomimimo.com/v1',
-        models: [],
-        customModels: [],
-        status: 'idle' as const,
-        color: '#ff6700'
-      },
-      {
-        id: 'openai',
-        name: 'OpenAI',
-        desc: 'GPT 系列大语言模型官方服务商',
-        enabled: true,
-        apiKey: '',
-        baseUrl: 'https://api.openai.com/v1',
-        defaultUrl: 'https://api.openai.com/v1',
-        models: [],
-        customModels: [],
-        status: 'idle' as const,
-        delay: undefined,
-        color: '#10a37f'
-      },
-      {
-        id: 'deepseek',
-        name: 'DeepSeek',
-        desc: '深度求索：超高性价比与硬核推理模型商',
-        enabled: true,
-        apiKey: '',
-        baseUrl: 'https://api.deepseek.com/v1',
-        defaultUrl: 'https://api.deepseek.com/v1',
-        models: [],
-        customModels: [],
-        status: 'idle' as const,
-        delay: undefined,
-        color: '#0d6efd'
-      },
-      {
-        id: 'anthropic',
-        name: 'Anthropic Claude',
-        desc: 'Claude 顶尖逻辑和多模态理解专家',
-        enabled: false,
-        apiKey: '',
-        baseUrl: 'https://api.anthropic.com/v1',
-        defaultUrl: 'https://api.anthropic.com/v1',
-        models: [],
-        customModels: [],
-        status: 'idle' as const,
-        color: '#d97706'
-      },
-      {
-        id: 'siliconflow',
-        name: '硅基流动 SiliconFlow',
-        desc: '千亿参数模型一键加速接入平台',
-        enabled: false,
-        apiKey: '',
-        baseUrl: 'https://api.siliconflow.cn/v1',
-        defaultUrl: 'https://api.siliconflow.cn/v1',
-        models: [],
-        customModels: [],
-        status: 'idle' as const,
-        color: '#a855f7'
-      },
-      {
-        id: 'moonshot',
-        name: '月之暗面 Kimi',
-        desc: '支持超长无损上下文特性的高品质智能服务',
-        enabled: false,
-        apiKey: '',
-        baseUrl: 'https://api.moonshot.cn/v1',
-        defaultUrl: 'https://api.moonshot.cn/v1',
-        models: [],
-        customModels: [],
-        status: 'idle' as const,
-        color: '#f43f5e'
-      }
-    ];
-
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          // Strip legacy 'groq' provider entries (no longer supported)
-          // Also strip old 'custom' placeholder provider and any existing 'custom_' providers
-          const filtered = parsed.filter((p: any) => p && p.id !== 'groq' && p.id !== 'custom' && !String(p.id).startsWith('custom_'));
-          // Identify any base providers missing from the loaded parsed array, e.g. newly introduced providers like 'xiaomi'
-          const existingIds = new Set(filtered.map((p: any) => p.id));
-          const missingProviders = baseProviders.filter(bp => !existingIds.has(bp.id));
-          const combined = [...filtered, ...missingProviders];
-
-          // Sort combined based on baseOrder to match the exact sequence in baseProviders
-          const baseOrder = baseProviders.map(bp => bp.id);
-          combined.sort((a, b) => {
-            const idxA = baseOrder.indexOf(a.id);
-            const idxB = baseOrder.indexOf(b.id);
-            if (idxA === -1 && idxB === -1) return 0;
-            if (idxA === -1) return 1;
-            if (idxB === -1) return -1;
-            return idxA - idxB;
-          });
-
-          return combined.map((p: any) => {
-            const hasFakeKey =
-              p.apiKey === 'sk-proj-4jKls9XjLk9AsDFgHJKLaSDFgHJK' ||
-              p.apiKey === 'sk-ds-3jPlkHskOlO8asR9AkjsSJdkOsa9' ||
-              p.apiKey === 'AIzaSyA4_PklshSjLkaO8skJdKsa9Ska' ||
-              (p.apiKey && p.apiKey.startsWith('sk-proj-4jKls9XjLk9As')) ||
-              (p.apiKey && p.apiKey.startsWith('sk-ds-')) ||
-              (p.apiKey && p.apiKey.startsWith('AIzaSyA4_'));
-
-            // Force XIAOMIMIMO name if it's xiaomi provider
-            let finalName = p.name;
-            if (p.id === 'xiaomi') {
-              finalName = 'XIAOMIMIMO';
-            }
-
-            const cleanedModels = (p.scanned && p.models)
-              ? p.models.filter((m: any) => {
-                  const idLower = m.id.toLowerCase();
-                  return !idLower.startsWith('custom-') &&
-                         !idLower.includes('placeholder') &&
-                         !idLower.includes('dummy') &&
-                         !idLower.includes('fake') &&
-                         !idLower.includes('test') &&
-                         !idLower.includes('temp');
-                })
-              : [];
-
-            const cleanedCustomModels = (p.scanned && p.customModels)
-              ? p.customModels.filter((m: string) => {
-                  const idLower = m.toLowerCase();
-                  return !idLower.startsWith('custom-') &&
-                         !idLower.includes('placeholder') &&
-                         !idLower.includes('dummy') &&
-                         !idLower.includes('fake') &&
-                         !idLower.includes('test') &&
-                         !idLower.includes('temp');
-                })
-              : [];
-
-            if (hasFakeKey) {
-              return {
-                ...p,
-                name: finalName,
-                apiKey: '',
-                status: 'idle',
-                delay: undefined,
-                scanned: p.scanned || false,
-                models: cleanedModels,
-                customModels: cleanedCustomModels
-              };
-            }
-            return {
-              ...p,
-              name: finalName,
-              scanned: p.scanned || false,
-              models: cleanedModels,
-              customModels: cleanedCustomModels
-            };
-          });
-        }
-      } catch (e) {
-        console.error('Error loading providers from localStorage', e);
-      }
+    if (!saved) return BASE_PROVIDERS;
+    try {
+      const parsed = JSON.parse(saved);
+      if (!Array.isArray(parsed)) return BASE_PROVIDERS;
+      return mergeProviders(parsed);
+    } catch (e) {
+      console.error('Error loading providers from localStorage', e);
+      return BASE_PROVIDERS;
     }
-    return baseProviders;
   });
 
+  // 挂载时从服务端加载 providers_db.json（权威数据源）
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // WIP: secrets.ts untracked, 暂时按明文持久化 (build 才能通过)
-      const persisted = providers.map((p) => ({ ...p }));
-      if (cancelled) return;
-      localStorage.setItem('cherry_providers_v2', JSON.stringify(persisted));
-      window.dispatchEvent(new CustomEvent('providers_updated'));
+      try {
+        const r = await fetch('/api/providers/config');
+        const data = await r.json();
+        if (!cancelled && data?.success && Array.isArray(data.providers) && data.providers.length > 0) {
+          setProviders(prev => {
+            // 服务端为权威源，但保留本地已有的 apiKey
+            const serverMap = new Map(data.providers.map((p: any) => [p.id, p]));
+            const merged = prev.map(localP => {
+              const serverP = serverMap.get(localP.id);
+              if (serverP) {
+                return { ...serverP, apiKey: localP.apiKey || serverP.apiKey || '' };
+              }
+              return localP;
+            });
+            const existingIds = new Set(merged.map(p => p.id));
+            for (const sp of data.providers) {
+              if (!existingIds.has(sp.id)) merged.push(sp);
+            }
+            return mergeProviders(merged);
+          });
+        }
+      } catch {
+        // 服务端不可用，继续使用 localStorage 数据
+      } finally {
+        serverLoadedRef.current = true;
+      }
     })();
     return () => { cancelled = true; };
+  }, []);
+
+  // 持久化：localStorage + 服务端（等服务端初始加载完成后才开始）
+  useEffect(() => {
+    if (!serverLoadedRef.current) return;
+    const persisted = providers.map((p) => ({ ...p }));
+    localStorage.setItem('cherry_providers_v2', JSON.stringify(persisted));
+    window.dispatchEvent(new CustomEvent('providers_updated'));
+    fetch('/api/providers/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ providers: persisted }),
+    }).catch(() => {});
   }, [providers]);
 
   const [activeProviderId, setActiveProviderId] = useState<string>('xiaomi');
@@ -289,8 +539,33 @@ export default function ModelAddTab() {
     }
   };
 
+  // 启用/禁用时自动排序：
+  // - 启用：排到列表最顶部（在所有已启用的前面）
+  // - 禁用：沉到底部，组内保持原顺序
+  // 在同一次 setProviders 中完成，不使用 useEffect 监听，避免无限循环。
   const toggleProviderEnabled = (id: string) => {
-    setProviders(prev => prev.map(p => p.id === id ? { ...p, enabled: !p.enabled } : p));
+    setProviders(prev => {
+      const target = prev.find(p => p.id === id);
+      if (!target) return prev;
+      const newEnabled = !target.enabled;
+      const toggled = prev.map(p => p.id === id ? { ...p, enabled: newEnabled } : p);
+      if (newEnabled) {
+        // 新启用的 → 提到最前面，其余已启用的保持原顺序跟在后面
+        const targetItem = toggled.find(p => p.id === id)!;
+        const rest = toggled.filter(p => p.id !== id);
+        rest.sort((a, b) => {
+          if (a.enabled === b.enabled) return 0;
+          return a.enabled ? -1 : 1;
+        });
+        return [targetItem, ...rest];
+      } else {
+        // 禁用的 → 排序后自然沉到底部
+        return toggled.sort((a, b) => {
+          if (a.enabled === b.enabled) return 0;
+          return a.enabled ? -1 : 1;
+        });
+      }
+    });
   };
 
   const updateProviderApiKey = (id: string, val: string) => {
@@ -384,216 +659,50 @@ export default function ModelAddTab() {
   }, []);
 
   // ==========================================
-  // 【服务商列表拖拽基础结构 — 对齐主界面 HistoryAndEditorPanel】
-  // - sensors: PointerSensor (distance 5) + KeyboardSensor
-  // - modifiers: vertical-axis + parent-element + lockAboveFirst (禁止顶出首项)
-  // - transition: Apple HIG spring curve (380ms cubic-bezier(0.34,1.56,0.64,1))
-  // - drop animation: 260ms cubic-bezier(0.22,1,0.36,1)
-  // - reduced-motion: 自动降级到 180/140ms legacy curve，无 spring overshoot
-  // - 自定义 window 'mousemove' + rAF 自动滚动 (EDGE=56, MAX_SPEED=14, k=power(d/EDGE,1.6))
-  // - visibility:hidden 源卡 + DragOverlay 克隆 → 永不透明
-  // - 滚动容器 sf-scroll-contain + sf-drag-context is-dimming → 拖拽中整列变暗
-  // - 目标槽 sf-drop-target 蓝色环 + sf-drop-pulse 落下后脉冲
+  // 【服务商列表拖拽 — 与 HistoryAndEditorPanel 完全对齐】
+  // 极简实现：无 onDragOver / 无 pulse / 无自定义 auto-scroll / 无 dropAnimation
+  // 依靠 dnd-kit 内置 auto-scroll + restrictToFirstScrollableAncestor
   // ==========================================
   const providerScrollRef = useRef<HTMLDivElement>(null);
-  const providerDragMoveHandlerRef = useRef<((ev: MouseEvent) => void) | null>(null);
-  const providerWheelHandlerRef = useRef<((ev: WheelEvent) => void) | null>(null);
-  const providerDragRafRef = useRef<number | null>(null);
   const [activeDragProviderId, setActiveDragProviderId] = React.useState<string | null>(null);
-  const [overProviderId, setOverProviderId] = React.useState<string | null>(null);
-  const [pulsingProviderIds, setPulsingProviderIds] = React.useState<Set<string>>(new Set());
-  const providerPulseTimerRef = React.useRef<number | null>(null);
   const activeDragProvider = activeDragProviderId ? providers.find(p => p.id === activeDragProviderId) : null;
 
-  // Honour user OS-level motion preference (Apple HIG + WCAG 2.3.3)
   const providerReducedMotion = React.useMemo(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return false;
     return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   }, []);
   const providerItemTransition = providerReducedMotion
-    ? 'transform 180ms cubic-bezier(0.22, 1, 0.36, 1)'
-    : 'transform 380ms cubic-bezier(0.34, 1.56, 0.64, 1)';
-  const providerDropAnimation = React.useMemo(
-    () => ({
-      duration: providerReducedMotion ? 140 : 260,
-      easing: 'cubic-bezier(0.22, 1, 0.36, 1)' as const,
-    }),
-    [providerReducedMotion],
-  );
-
-  // Hard-prevent the dragged card from crossing ABOVE the first item.
-  const providerLockAboveFirst: Modifier = React.useCallback(
-    (args) => {
-      const { active, containerNodeRect, activeNodeRect, transform } = args;
-      if (!active || !activeNodeRect || !containerNodeRect) return transform;
-      const activeId = String(active.id);
-      const activeIndex = providers.findIndex((p) => p.id === activeId);
-      if (activeIndex <= 0) {
-        return { ...transform, y: Math.max(0, transform.y) };
-      }
-      const projectedTop = activeNodeRect.top + transform.y;
-      if (projectedTop < containerNodeRect.top) {
-        const dy = containerNodeRect.top - activeNodeRect.top;
-        return { ...transform, y: dy };
-      }
-      return transform;
-    },
-    [providers],
-  );
+    ? 'transform 150ms cubic-bezier(0.22, 1, 0.36, 1)'
+    : 'transform 200ms cubic-bezier(0.22, 1, 0.36, 1)';
 
   const providerSensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  const handleProviderDragOver = (event: DragOverEvent) => {
-    const overIdStr = event.over ? String(event.over.id) : null;
-    if (overIdStr !== overProviderId) setOverProviderId(overIdStr);
-  };
+  // useCallback — 稳定引用，配合 React.memo 防止拖拽时全量重渲染
+  const handleProviderSelect = React.useCallback((id: string) => {
+    setActiveProviderId(id);
+    setCustomModelVal('');
+  }, []);
 
-  const triggerProviderPulse = (ids: Iterable<string>) => {
-    if (providerPulseTimerRef.current !== null) {
-      window.clearTimeout(providerPulseTimerRef.current);
-    }
-    setPulsingProviderIds(new Set(ids));
-    providerPulseTimerRef.current = window.setTimeout(() => {
-      setPulsingProviderIds(new Set());
-      providerPulseTimerRef.current = null;
-    }, 600);
-  };
-
-  const handleProviderDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (over && active.id !== over.id) {
-      const oldIndex = providers.findIndex((p) => p.id === active.id);
-      const newIndex = providers.findIndex((p) => p.id === over.id);
-      if (oldIndex !== -1 && newIndex !== -1) {
-        reorderProviders(arrayMove(providers, oldIndex, newIndex));
-        // Reorder succeeded: pulse slot + 1-hop neighbours for a sense of
-        // "wave" sweeping through the affected area of the list.
-        const impacted = new Set<string>();
-        impacted.add(String(over.id));
-        const lower = Math.max(0, Math.min(oldIndex, newIndex) - 1);
-        const upper = Math.min(providers.length - 1, Math.max(oldIndex, newIndex) + 1);
-        for (let i = lower; i <= upper; i++) {
-          if (i !== oldIndex) impacted.add(providers[i].id);
-        }
-        triggerProviderPulse(impacted);
-      }
-    } else {
-      // No reorder happened (dropped on self, or on no target).
-      // Still play a brief pulse on the source card so the user gets
-      // visual confirmation that the drag was received and resolved.
-      const droppedId = String(active.id);
-      if (providers.some((p) => p.id === droppedId)) {
-        triggerProviderPulse([droppedId]);
-      }
-    }
-    setActiveDragProviderId(null);
-    setOverProviderId(null);
-    if (providerDragMoveHandlerRef.current) {
-      window.removeEventListener('mousemove', providerDragMoveHandlerRef.current);
-      providerDragMoveHandlerRef.current = null;
-    }
-    if (providerWheelHandlerRef.current) {
-      providerScrollRef.current?.removeEventListener('wheel', providerWheelHandlerRef.current);
-      providerWheelHandlerRef.current = null;
-    }
-    if (providerDragRafRef.current !== null) {
-      cancelAnimationFrame(providerDragRafRef.current);
-      providerDragRafRef.current = null;
-    }
-  };
-
-  const handleProviderDragStart = (event: DragStartEvent) => {
+  const handleProviderDragStart = React.useCallback((event: DragStartEvent) => {
     setActiveDragProviderId(String(event.active.id));
-    // If a previous dragEnd's pulse is still ticking, cancel it so it
-    // doesn't fight with the new drag's visuals.
-    if (providerPulseTimerRef.current !== null) {
-      window.clearTimeout(providerPulseTimerRef.current);
-      providerPulseTimerRef.current = null;
-    }
-    setPulsingProviderIds(new Set());
-    // Synchronous addEventListener in handleDragStart (no React effect delay).
-    // Apple-style exponential auto-scroll: softer near center, exponential ramp near edge.
-    const onMove = (ev: MouseEvent) => {
-      if (providerDragRafRef.current !== null) return; // already a frame scheduled
-      providerDragRafRef.current = requestAnimationFrame(() => {
-        providerDragRafRef.current = null;
-        const sc = providerScrollRef.current;
-        if (!sc) return;
-        const r = sc.getBoundingClientRect();
-        const EDGE = 56;
-        const MAX_SPEED = 14;
-        const py = ev.clientY;
-        if (py < r.top + EDGE) {
-          const distance = Math.max(0, r.top + EDGE - py);
-          const k = Math.pow(distance / EDGE, 1.6);
-          sc.scrollTop -= Math.max(1, Math.round(MAX_SPEED * k));
-        } else if (py > r.bottom - EDGE) {
-          const distance = Math.max(0, py - (r.bottom - EDGE));
-          const k = Math.pow(distance / EDGE, 1.6);
-          sc.scrollTop += Math.max(1, Math.round(MAX_SPEED * k));
-        }
-      });
-    };
-    providerDragMoveHandlerRef.current = onMove;
-    window.addEventListener('mousemove', onMove);
+  }, []);
 
-    // Block horizontal wheel events (Mac trackpad two-finger horizontal swipe)
-    // from being misinterpreted as vertical scroll while dragging.
-    const onWheel = (ev: WheelEvent) => {
-      if (Math.abs(ev.deltaX) > Math.abs(ev.deltaY) * 1.5) {
-        ev.preventDefault();
-      }
-    };
-    providerWheelHandlerRef.current = onWheel;
-    providerScrollRef.current?.addEventListener('wheel', onWheel, { passive: false });
-  };
-
-  const handleProviderDragCancel = () => {
+  const handleProviderDragEnd = React.useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
     setActiveDragProviderId(null);
-    setOverProviderId(null);
-    if (providerDragMoveHandlerRef.current) {
-      window.removeEventListener('mousemove', providerDragMoveHandlerRef.current);
-      providerDragMoveHandlerRef.current = null;
+    if (!over || active.id === over.id) return;
+    const oldIndex = providers.findIndex((p) => p.id === active.id);
+    const newIndex = providers.findIndex((p) => p.id === over.id);
+    if (oldIndex !== -1 && newIndex !== -1) {
+      reorderProviders(arrayMove(providers, oldIndex, newIndex));
     }
-    if (providerWheelHandlerRef.current) {
-      providerScrollRef.current?.removeEventListener('wheel', providerWheelHandlerRef.current);
-      providerWheelHandlerRef.current = null;
-    }
-    if (providerDragRafRef.current !== null) {
-      cancelAnimationFrame(providerDragRafRef.current);
-      providerDragRafRef.current = null;
-    }
-    // Defensive: cancel any in-flight pulse from a prior dragEnd that
-    // might still be ticking when the user starts a new drag.
-    if (providerPulseTimerRef.current !== null) {
-      window.clearTimeout(providerPulseTimerRef.current);
-      providerPulseTimerRef.current = null;
-    }
-    setPulsingProviderIds(new Set());
-  };
+  }, [providers]);
 
-  React.useEffect(() => {
-    return () => {
-      if (providerDragMoveHandlerRef.current) {
-        window.removeEventListener('mousemove', providerDragMoveHandlerRef.current);
-        providerDragMoveHandlerRef.current = null;
-      }
-      if (providerWheelHandlerRef.current) {
-        providerScrollRef.current?.removeEventListener('wheel', providerWheelHandlerRef.current);
-        providerWheelHandlerRef.current = null;
-      }
-      if (providerDragRafRef.current !== null) {
-        cancelAnimationFrame(providerDragRafRef.current);
-        providerDragRafRef.current = null;
-      }
-      if (providerPulseTimerRef.current !== null) {
-        window.clearTimeout(providerPulseTimerRef.current);
-        providerPulseTimerRef.current = null;
-      }
-    };
+  const handleProviderDragCancel = React.useCallback(() => {
+    setActiveDragProviderId(null);
   }, []);
 
   const addCustomModel = (providerId: string) => {
@@ -627,6 +736,16 @@ export default function ModelAddTab() {
   const createNewCustomProvider = () => {
     const customCount = providers.filter(p => p.id.startsWith('custom_')).length;
     const newId = `custom_${Date.now()}`;
+
+    // 从图标注册表中分配第一个未被使用的图标
+    const registry = loadIconRegistry();
+    const usedIconTypes = new Set(
+      providers
+        .filter(p => p.id.startsWith('custom_') && p.iconType)
+        .map(p => p.iconType!)
+    );
+    const nextItem = registry.find(item => !usedIconTypes.has(item.iconType)) ?? registry[0];
+
     const newProvider: ModelProvider = {
       id: newId,
       name: `自定义提供商 #${customCount + 1}`,
@@ -639,24 +758,27 @@ export default function ModelAddTab() {
       customModels: [],
       status: 'idle',
       color: '#64748b',
-      iconType: 'animal:cat',
+      iconType: nextItem?.iconType ?? 'animal:cat',
     };
     setProviders(prev => [...prev, newProvider]);
     setActiveProviderId(newId);
     setCustomModelVal('');
   };
 
-  const removeCustomProvider = (providerId: string) => {
-    const target = providers.find(p => p.id === providerId);
-    // 仅允许删除自定义服务商（id 以 custom_ 开头），保护内置服务商
-    if (!target || !providerId.startsWith('custom_')) return;
-    const filtered = providers.filter(p => p.id !== providerId);
+  // 使用 ref 保持稳定引用，配合 React.memo
+  const providersRef = useRef(providers);
+  providersRef.current = providers;
+  const activeProviderIdRef = useRef(activeProviderId);
+  activeProviderIdRef.current = activeProviderId;
+
+  const removeCustomProvider = React.useCallback((providerId: string) => {
+    if (!providerId.startsWith('custom_')) return;
+    const filtered = providersRef.current.filter(p => p.id !== providerId);
     setProviders(filtered);
-    // 如果删除的是当前选中的服务商，回退到第一个
-    if (activeProviderId === providerId) {
+    if (activeProviderIdRef.current === providerId) {
       setActiveProviderId(filtered[0]?.id ?? 'xiaomi');
     }
-  };
+  }, []);
 
   const testProviderConnection = async (providerId: string) => {
     setProviders(prev => prev.map(p => p.id === providerId ? { ...p, status: 'loading', errorMessage: undefined } : p));
@@ -742,9 +864,8 @@ export default function ModelAddTab() {
       <DndContext
         sensors={providerSensors}
         collisionDetection={closestCenter}
-        modifiers={[restrictToVerticalAxis, providerLockAboveFirst]}
+        modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
         onDragStart={handleProviderDragStart}
-        onDragOver={handleProviderDragOver}
         onDragEnd={handleProviderDragEnd}
         onDragCancel={handleProviderDragCancel}
       >
@@ -763,28 +884,25 @@ export default function ModelAddTab() {
           {/* Scrollable: Provider list only */}
           <div
             ref={providerScrollRef}
-            className={`sf-scroll-contain sf-drag-context flex-1 min-h-0 overflow-y-auto p-2.5 select-none relative [&::-webkit-scrollbar]:hidden ${activeDragProviderId ? 'is-dimming' : ''}`}
+            className="sf-scroll-contain flex-1 min-h-0 overflow-y-auto p-2.5 select-none relative [&::-webkit-scrollbar]:hidden"
             style={{
               overscrollBehavior: 'contain',
-              willChange: activeDragProviderId ? 'scroll-position' : 'auto',
               scrollbarWidth: 'none',
               msOverflowStyle: 'none',
             }}
           >
             <SortableContext items={providers.map((p) => p.id)} strategy={verticalListSortingStrategy}>
-              <div className="space-y-1">
+              {/* is-dimming 放在 SortableContext 内部，不放在滚动容器上。
+                  DragOverlay 用 position:fixed 跟随鼠标，如果 filter/opacity
+                  在祖先元素上，fixed 会退化成 absolute，导致 overlay 不跟鼠标。 */}
+              <div className={`sf-drag-context space-y-1 ${activeDragProviderId ? 'is-dimming' : ''}`}>
                 {providers.map((p) => (
-                  <ProviderCard
+                  <SortableProviderCard
                     key={p.id}
                     provider={p}
                     isSelected={activeProvider.id === p.id}
                     itemTransition={providerItemTransition}
-                    isOverTarget={overProviderId === p.id && activeDragProviderId !== p.id}
-                    isPulsing={pulsingProviderIds.has(p.id)}
-                    onSelect={(id) => {
-                      setActiveProviderId(id);
-                      setCustomModelVal('');
-                    }}
+                    onSelect={handleProviderSelect}
                     onDelete={removeCustomProvider}
                   />
                 ))}
@@ -1175,29 +1293,20 @@ export default function ModelAddTab() {
       </div>
 
       <DragOverlay
-        dropAnimation={providerDropAnimation}
+        dropAnimation={null}
         zIndex={9999}
       >
         {activeDragProvider ? (
           <div
-            className="sf-drag-overlay"
-            style={{
-              width: 'var(--sf-overlay-w, auto)',
-              willChange: 'transform',
-              transform: 'translateZ(0)',
-              backfaceVisibility: 'hidden',
-              WebkitBackfaceVisibility: 'hidden',
-              contain: 'layout paint style',
-              pointerEvents: 'none',
-            }}
+            className="cursor-grabbing"
+            style={{ width: 'var(--sf-overlay-w, auto)', pointerEvents: 'none' }}
           >
-            <ProviderCard
+            <ProviderCardInner
               provider={activeDragProvider}
               isSelected={activeProvider.id === activeDragProvider.id}
-              itemTransition={providerItemTransition}
               isOverlayClone
               onSelect={() => {}}
-              onDelete={removeCustomProvider}
+              onDelete={() => {}}
             />
           </div>
         ) : null}
@@ -1267,8 +1376,13 @@ const SortableModelItem: React.FC<SortableModelItemProps> = ({ id, name, onRemov
 
 // =====================================================
 // IconPicker — 自定义服务商图标选择器 (仅限 custom_ 开头的提供商)
-// 点击当前图标 → 弹出下拉面板: 12 个内置 SVG 动物头像
-// 选中后通过 onChange 回调写入 provider.iconType
+// 功能:
+//   1. 从图标注册表加载所有可用图标 (内置动物 + 用户上传)
+//   2. 鼠标悬停显示动物名称/文件名
+//   3. 末尾 "+" 按钮上传自定义图标 (格式检查器自动校验)
+//   4. 删除模式: 点击切换按钮 → 所有图标中心出现删除标记
+//      再点一次取消删除模式
+//   5. 删除后剩余图标自动补位
 // =====================================================
 
 const IconPicker: React.FC<{
@@ -1277,22 +1391,90 @@ const IconPicker: React.FC<{
   onChange: (v: string | undefined) => void;
 }> = ({ providerId, iconType, onChange }) => {
   const [open, setOpen] = useState(false);
+  const [deleteMode, setDeleteMode] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [registry, setRegistry] = useState<IconRegistryItem[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const ref = useRef<HTMLDivElement>(null);
 
+  // 打开面板时加载注册表
+  useEffect(() => {
+    if (open) {
+      setRegistry(loadIconRegistry());
+      setUploadError(null);
+    }
+  }, [open]);
+
+  // 点击外部关闭
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) {
         setOpen(false);
+        setDeleteMode(false);
       }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
-  const currentIcon = iconType ?? 'auto';
-  const isAnimal = currentIcon.startsWith('animal:');
-  const animalId = isAnimal ? currentIcon.slice(7) : '';
+  // 当前图标展示
+  const currentIconType = iconType;
+  const isAnimal = currentIconType?.startsWith('animal:');
+  const isCustom = currentIconType?.startsWith('custom:');
+  const animalId = isAnimal ? currentIconType!.slice(7) : '';
+  const customDataUrl = isCustom ? currentIconType!.slice(7) : '';
+
+  // 渲染单个图标缩略图
+  const renderIconThumb = (item: IconRegistryItem, size: number) => {
+    if (item.type === 'builtin') {
+      return <AnimalAvatar id={item.id} size={size} />;
+    }
+    // custom → 从 iconType 提取 dataUrl
+    const dataUrl = item.iconType.startsWith('custom:') ? item.iconType.slice(7) : '';
+    return (
+      <img
+        src={dataUrl}
+        alt={item.name}
+        style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover' }}
+      />
+    );
+  };
+
+  // 处理文件上传
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const { dataUrl, name } = await processUploadedIcon(file);
+      const updated = addCustomIconToRegistry(registry, dataUrl, name);
+      setRegistry(updated);
+    } catch (err) {
+      setUploadError((err as Error).message);
+    } finally {
+      setUploading(false);
+      // 重置 input 以便可以再次上传同一文件
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  // 删除图标
+  const handleDeleteIcon = (item: IconRegistryItem) => {
+    const updated = removeIconFromRegistry(registry, item.id);
+    setRegistry(updated);
+    // 如果当前 provider 正好用了被删的图标, 重置为默认
+    if (iconType === item.iconType) {
+      onChange(undefined);
+    }
+  };
+
+  // 判断当前是否选中
+  const isItemSelected = (item: IconRegistryItem) => {
+    return item.iconType === currentIconType;
+  };
 
   return (
     <div ref={ref} className="relative shrink-0">
@@ -1306,6 +1488,8 @@ const IconPicker: React.FC<{
       >
         {isAnimal ? (
           <AnimalAvatar id={animalId} size={28} />
+        ) : isCustom ? (
+          <img src={customDataUrl} alt="icon" style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }} />
         ) : (
           <ModelIcon modelName={providerId} size={28} className="shrink-0" iconType={iconType} />
         )}
@@ -1322,33 +1506,116 @@ const IconPicker: React.FC<{
         </span>
       </button>
 
-      {/* 下拉面板 — 仅动物头像选择 */}
+      {/* 下拉面板 */}
       {open && (
         <div
           className="absolute top-full left-0 mt-2 z-50 rounded-xl border border-[var(--color-outline)]/20 bg-[var(--color-surface-bright)] shadow-2xl p-3 space-y-2"
-          style={{ width: 200 }}
+          style={{ width: 280 }}
         >
-          <p className="text-[10px] font-bold text-on-surface/50 px-1">选择头像</p>
-          <div className="grid grid-cols-6 gap-1.5">
-            {ANIMAL_IDS.map(aid => {
-              const selected = isAnimal && animalId === aid;
+          {/* 头部: 标题 + 删除模式切换 */}
+          <div className="flex items-center justify-between px-1">
+            <p className="text-[10px] font-bold text-on-surface/50">选择图标</p>
+            <button
+              type="button"
+              onClick={() => setDeleteMode(v => !v)}
+              className={`flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md transition-colors cursor-pointer ${
+                deleteMode
+                  ? 'bg-rose-500/20 text-rose-400 ring-1 ring-rose-500/40'
+                  : 'text-on-surface/40 hover:text-rose-400 hover:bg-rose-500/10'
+              }`}
+              title={deleteMode ? '取消删除模式' : '进入删除模式'}
+            >
+              <Trash2 className="w-3 h-3" />
+              {deleteMode ? '取消删除' : '删除图标'}
+            </button>
+          </div>
+
+          {/* 上传错误提示 */}
+          {uploadError && (
+            <div className="text-[10px] text-rose-400 bg-rose-500/10 rounded-md px-2 py-1">
+              {uploadError}
+            </div>
+          )}
+
+          {/* 图标网格 */}
+          <div className="grid grid-cols-6 gap-1.5" style={{ maxHeight: 240, overflowY: 'auto' }}>
+            {registry.map(item => {
+              const selected = isItemSelected(item);
               return (
-                <button
-                  key={aid}
-                  type="button"
-                  onClick={() => { onChange(`animal:${aid}`); setOpen(false); }}
-                  className={`rounded-lg p-1 transition-all ${
-                    selected
-                      ? 'bg-[var(--color-primary)]/20 ring-2 ring-[var(--color-primary)]/40 scale-110'
-                      : 'hover:bg-on-surface/8 hover:scale-105'
-                  }`}
-                  title={aid}
-                >
-                  <AnimalAvatar id={aid} size={24} />
-                </button>
+                <div key={item.id} className="relative">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (deleteMode) {
+                        handleDeleteIcon(item);
+                      } else {
+                        onChange(item.iconType);
+                        setOpen(false);
+                      }
+                    }}
+                    className={`w-full rounded-lg p-1 transition-all ${
+                      deleteMode
+                        ? 'hover:bg-rose-500/20'
+                        : selected
+                          ? 'bg-[var(--color-primary)]/20 ring-2 ring-[var(--color-primary)]/40 scale-110'
+                          : 'hover:bg-on-surface/8 hover:scale-105'
+                    }`}
+                    title={item.name}
+                  >
+                    {renderIconThumb(item, 24)}
+                  </button>
+                  {/* 删除模式: 中心红色 X */}
+                  {deleteMode && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteIcon(item);
+                      }}
+                      className="absolute inset-0 flex items-center justify-center rounded-lg bg-rose-500/30 hover:bg-rose-500/50 transition-colors"
+                      title={`删除 ${item.name}`}
+                    >
+                      <span className="w-5 h-5 rounded-full bg-rose-500 flex items-center justify-center text-white">
+                        <X className="w-3 h-3" />
+                      </span>
+                    </button>
+                  )}
+                </div>
               );
             })}
+
+            {/* 末尾 "+" 上传按钮 */}
+            {!deleteMode && (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className="rounded-lg p-1 transition-all hover:bg-[var(--color-primary)]/10 hover:scale-105 flex items-center justify-center"
+                style={{ width: '100%', aspectRatio: '1' }}
+                title="上传自定义图标"
+              >
+                {uploading ? (
+                  <RefreshCw className="w-5 h-5 animate-spin text-[var(--color-primary)]" />
+                ) : (
+                  <Plus className="w-5 h-5 text-[var(--color-primary)]" />
+                )}
+              </button>
+            )}
           </div>
+
+          {/* 提示文字 */}
+          <p className="text-[9px] text-on-surface/30 px-1">
+            {deleteMode ? '点击图标删除，剩余自动补位' : '支持 PNG/JPG/SVG/WebP，非标准尺寸将自动重绘为 64×64'}
+          </p>
+
+          {/* 隐藏文件输入 */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/svg+xml,image/webp,image/gif,image/bmp"
+            onChange={handleFileUpload}
+            style={{ display: 'none' }}
+          />
         </div>
       )}
     </div>

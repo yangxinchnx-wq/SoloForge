@@ -69,8 +69,32 @@ export function sanitizeChatMessage(input: unknown): SanitizedChatMessage | null
 }
 
 /**
+ * 判断一条 assistant 消息是否是旧格式的错误消息。
+ *
+ * 旧格式示例:
+ *   ❌ **AI 调用失败**：HTTP 500 {"error":"LLM_EXECUTION_FAILED..."}
+ *   ❌ **主模型未配置**：请在「设置 → 模型」中...
+ *
+ * 这些消息在错误处理逻辑升级前生成, 已持久化到后端。
+ * 加载时自动清除, 避免用户反复看到过时错误。
+ */
+function isStaleErrorMessage(msg: SanitizedChatMessage): boolean {
+  if (msg.sender !== 'assistant') return false;
+  const c = msg.content?.trim() ?? '';
+  if (!c) return true; // 空内容也是无效消息
+  // 旧格式错误消息特征: 以 ❌ 开头
+  if (c.startsWith('❌')) return true;
+  // 残留的 "请检查后端" 提示行
+  if (c.startsWith('请检查后端')) return true;
+  return false;
+}
+
+/**
  * 把整段会话记录（Record<chatId, ChatMessage[]>）归一化。
- * 跳过非法条目；空数组保留 key（避免切走对话时被吞掉）。
+ * - 跳过非法条目
+ * - 清除旧格式错误消息 (❌ 开头的 assistant 消息 + 空消息)
+ * - 如果清理后对话中没有有效的 assistant 回复 (全是 user 消息),
+ *   则清空整个对话 — 让闪电空状态显示出来
  */
 export function sanitizeConversations(
   input: unknown,
@@ -82,9 +106,19 @@ export function sanitizeConversations(
     const sanitized: SanitizedChatMessage[] = [];
     for (const m of msgs) {
       const s = sanitizeChatMessage(m);
-      if (s) sanitized.push(s);
+      if (!s) continue;
+      // 跳过旧格式错误消息
+      if (isStaleErrorMessage(s)) continue;
+      sanitized.push(s);
     }
-    out[chatId] = sanitized;
+    // 如果清理后只剩 user 消息 (没有任何有效 assistant 回复),
+    // 清空对话 — 比显示一堆没有回复的用户消息更干净
+    const hasValidAssistant = sanitized.some(m => m.sender === 'assistant' && m.content.trim().length > 0);
+    if (!hasValidAssistant) {
+      out[chatId] = [];
+    } else {
+      out[chatId] = sanitized;
+    }
   }
   return out;
 }

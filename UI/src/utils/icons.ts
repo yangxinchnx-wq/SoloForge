@@ -202,6 +202,7 @@ export const Folder = FolderIcon;
 export const FolderOpen = FolderOpenIcon;
 export const FolderPlus = FolderPlusIcon;
 export const FolderTree = QueueListIcon;          // 目录树 → 队列列表
+export const Eraser = PaintBrushIcon;              // 橡皮擦 → 画刷 (清除会话用)
 export const Clipboard = ClipboardIcon;
 export const ClipboardPaste = ClipboardDocumentListIcon;
 

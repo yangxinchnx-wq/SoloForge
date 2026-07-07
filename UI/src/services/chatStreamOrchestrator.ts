@@ -222,7 +222,11 @@ export function streamPreviewForChat(opts: StreamPreviewOptions): StreamPreviewH
         lastActivityAt: Date.now(),
       });
       // eslint-disable-next-line no-console
-      console.error('streamPreviewForChat error:', err);
+      // 2026-07-07: 预览流是可选功能, 429/503/网络错误静默处理
+      const isExpectedError = message.includes('HTTP 429') || message.includes('HTTP 503') || message.includes('rate limit') || message.includes('Failed to fetch');
+      if (!isExpectedError) {
+        console.error('streamPreviewForChat error:', err);
+      }
       return null;
     }
   })();

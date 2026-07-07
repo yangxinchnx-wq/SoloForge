@@ -37,6 +37,7 @@ export class AgentDecisionOrchestrator {
     const history = req.history ?? [];
     const activeFile = req.activeFile ?? null;
     const mainProvider = req.mainProvider;
+    const workspaceFolder = req.workspaceFolder;
 
     if (!prompt) {
       throw new Error('DISPATCH_ERROR: prompt is required');
@@ -113,6 +114,7 @@ export class AgentDecisionOrchestrator {
             history,
             activeFile,
             mainProvider,
+            workspaceFolder,
           },
         );
 

@@ -1,16 +1,58 @@
 [
   {
+    "id": "custom_1783369608359",
+    "name": "自定义提供商 #1",
+    "desc": "自定义/中转等兼容 OpenAI 接口标准的第三方服务商",
+    "enabled": true,
+    "apiKey": "sk-c19qgAljhI04pfL37DW0Ni6Xv41ElYzj3eq0QBG4iElqC7hC",
+    "baseUrl": "https://apihub.agnes-ai.com/v1",
+    "defaultUrl": "http://localhost:3001/v1",
+    "models": [
+      {
+        "id": "agnes-1.5-flash",
+        "name": "agnes-1.5-flash",
+        "enabled": false
+      },
+      {
+        "id": "agnes-video-v2.0",
+        "name": "agnes-video-v2.0",
+        "enabled": false
+      },
+      {
+        "id": "agnes-image-2.1-flash",
+        "name": "agnes-image-2.1-flash",
+        "enabled": false
+      },
+      {
+        "id": "agnes-2.0-flash",
+        "name": "agnes-2.0-flash",
+        "enabled": true
+      },
+      {
+        "id": "agnes-image-2.0-flash",
+        "name": "agnes-image-2.0-flash",
+        "enabled": false
+      }
+    ],
+    "customModels": [],
+    "status": "success",
+    "color": "#64748b",
+    "iconType": "animal:lion",
+    "scanned": true
+  },
+  {
     "id": "xiaomi",
     "name": "XIAOMIMIMO",
     "desc": "小米自研多模态与端侧通用智能模型系列",
-    "enabled": false,
+    "enabled": true,
     "apiKey": "",
     "baseUrl": "https://api.milm.xiaomi.com/v1",
     "defaultUrl": "https://api.milm.xiaomi.com/v1",
     "models": [],
     "customModels": [],
     "status": "idle",
-    "color": "#ff6700"
+    "color": "#ff6700",
+    "scanned": false
   },
   {
     "id": "openai",
@@ -20,42 +62,11 @@
     "apiKey": "",
     "baseUrl": "https://api.openai.com/v1",
     "defaultUrl": "https://api.openai.com/v1",
-    "models": [
-      {
-        "id": "gpt-4o",
-        "name": "GPT-4o",
-        "enabled": true
-      },
-      {
-        "id": "gpt-4o-mini",
-        "name": "GPT-4o Mini",
-        "enabled": true
-      },
-      {
-        "id": "gpt-4-turbo",
-        "name": "GPT-4 Turbo",
-        "enabled": true
-      },
-      {
-        "id": "gpt-3.5-turbo",
-        "name": "GPT-3.5 Turbo",
-        "enabled": true
-      },
-      {
-        "id": "o1-preview",
-        "name": "O1 Preview",
-        "enabled": true
-      },
-      {
-        "id": "o1-mini",
-        "name": "O1 Mini",
-        "enabled": true
-      }
-    ],
+    "models": [],
     "customModels": [],
-    "scanned": true,
     "status": "idle",
-    "color": "#10a37f"
+    "color": "#10a37f",
+    "scanned": false
   },
   {
     "id": "deepseek",
@@ -68,20 +79,8 @@
     "models": [],
     "customModels": [],
     "status": "idle",
-    "color": "#0d6efd"
-  },
-  {
-    "id": "anthropic",
-    "name": "Anthropic Claude",
-    "desc": "Claude 顶尖逻辑和多模态理解专家",
-    "enabled": false,
-    "apiKey": "",
-    "baseUrl": "https://api.anthropic.com/v1",
-    "defaultUrl": "https://api.anthropic.com/v1",
-    "models": [],
-    "customModels": [],
-    "status": "idle",
-    "color": "#d97706"
+    "color": "#0d6efd",
+    "scanned": false
   },
   {
     "id": "gemini",
@@ -94,7 +93,22 @@
     "models": [],
     "customModels": [],
     "status": "idle",
-    "color": "#1a73e8"
+    "color": "#1a73e8",
+    "scanned": false
+  },
+  {
+    "id": "anthropic",
+    "name": "Anthropic Claude",
+    "desc": "Claude 顶尖逻辑和多模态理解专家",
+    "enabled": false,
+    "apiKey": "",
+    "baseUrl": "https://api.anthropic.com/v1",
+    "defaultUrl": "https://api.anthropic.com/v1",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#d97706",
+    "scanned": false
   },
   {
     "id": "siliconflow",
@@ -107,7 +121,8 @@
     "models": [],
     "customModels": [],
     "status": "idle",
-    "color": "#a855f7"
+    "color": "#a855f7",
+    "scanned": false
   },
   {
     "id": "moonshot",
@@ -120,19 +135,245 @@
     "models": [],
     "customModels": [],
     "status": "idle",
-    "color": "#f43f5e"
+    "color": "#f43f5e",
+    "scanned": false
   },
   {
-    "id": "custom",
-    "name": "自定义提供商",
-    "desc": "自定义/中转等兼容 OpenAI 接口标准的第三方服务商",
+    "id": "qwen",
+    "name": "通义千问",
+    "desc": "阿里云百炼平台 · Qwen 系列模型",
     "enabled": false,
     "apiKey": "",
-    "baseUrl": "",
-    "defaultUrl": "http://localhost:3001/v1",
+    "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "defaultUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "models": [],
     "customModels": [],
     "status": "idle",
-    "color": "#64748b"
+    "color": "#615ced",
+    "scanned": false
+  },
+  {
+    "id": "zhipu",
+    "name": "智谱 GLM",
+    "desc": "智谱 AI 开放平台 · GLM 系列模型",
+    "enabled": false,
+    "apiKey": "",
+    "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+    "defaultUrl": "https://open.bigmodel.cn/api/paas/v4",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#3859ff",
+    "scanned": false
+  },
+  {
+    "id": "wenxin",
+    "name": "百度文心",
+    "desc": "百度千帆平台 · ERNIE 系列模型",
+    "enabled": false,
+    "apiKey": "",
+    "baseUrl": "https://qianfan.baidubce.com/v2",
+    "defaultUrl": "https://qianfan.baidubce.com/v2",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#2932e1",
+    "scanned": false
+  },
+  {
+    "id": "doubao",
+    "name": "字节豆包",
+    "desc": "火山引擎 · 豆包系列模型",
+    "enabled": false,
+    "apiKey": "",
+    "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+    "defaultUrl": "https://ark.cn-beijing.volces.com/api/v3",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#325ab4",
+    "scanned": false
+  },
+  {
+    "id": "hunyuan",
+    "name": "腾讯混元",
+    "desc": "腾讯云 · 混元大模型系列",
+    "enabled": false,
+    "apiKey": "",
+    "baseUrl": "https://api.hunyuan.cloud.tencent.com/v1",
+    "defaultUrl": "https://api.hunyuan.cloud.tencent.com/v1",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#0053e0",
+    "scanned": false
+  },
+  {
+    "id": "spark",
+    "name": "讯飞星火",
+    "desc": "科大讯飞 · Spark 系列模型",
+    "enabled": false,
+    "apiKey": "",
+    "baseUrl": "https://spark-api-open.xf-yun.com/v1",
+    "defaultUrl": "https://spark-api-open.xf-yun.com/v1",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#0070f0",
+    "scanned": false
+  },
+  {
+    "id": "minimax",
+    "name": "MiniMax",
+    "desc": "稀宇科技 · MiniMax / abab 系列模型",
+    "enabled": false,
+    "apiKey": "",
+    "baseUrl": "https://api.minimaxi.com/v1",
+    "defaultUrl": "https://api.minimaxi.com/v1",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#ff2d55",
+    "scanned": false
+  },
+  {
+    "id": "baichuan",
+    "name": "百川智能",
+    "desc": "Baichuan 系列大语言模型",
+    "enabled": false,
+    "apiKey": "",
+    "baseUrl": "https://api.baichuan-ai.com/v1",
+    "defaultUrl": "https://api.baichuan-ai.com/v1",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#f79420",
+    "scanned": false
+  },
+  {
+    "id": "yi",
+    "name": "零一万物",
+    "desc": "01.ai · Yi 系列模型",
+    "enabled": false,
+    "apiKey": "",
+    "baseUrl": "https://api.lingyiwanwu.com/v1",
+    "defaultUrl": "https://api.lingyiwanwu.com/v1",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#0094a8",
+    "scanned": false
+  },
+  {
+    "id": "stepfun",
+    "name": "阶跃星辰",
+    "desc": "StepFun · step 系列模型",
+    "enabled": false,
+    "apiKey": "",
+    "baseUrl": "https://api.stepfun.com/v1",
+    "defaultUrl": "https://api.stepfun.com/v1",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#7c3aed",
+    "scanned": false
+  },
+  {
+    "id": "mistral",
+    "name": "Mistral AI",
+    "desc": "Mistral · 欧洲开源大模型系列",
+    "enabled": false,
+    "apiKey": "",
+    "baseUrl": "https://api.mistral.ai/v1",
+    "defaultUrl": "https://api.mistral.ai/v1",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#ff7000",
+    "scanned": false
+  },
+  {
+    "id": "groq",
+    "name": "Groq",
+    "desc": "Groq · 超低延迟推理加速平台",
+    "enabled": false,
+    "apiKey": "",
+    "baseUrl": "https://api.groq.com/openai/v1",
+    "defaultUrl": "https://api.groq.com/openai/v1",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#f55036",
+    "scanned": false
+  },
+  {
+    "id": "openrouter",
+    "name": "OpenRouter",
+    "desc": "OpenRouter · 统一聚合路由 200+ 模型",
+    "enabled": false,
+    "apiKey": "",
+    "baseUrl": "https://openrouter.ai/api/v1",
+    "defaultUrl": "https://openrouter.ai/api/v1",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#6469f1",
+    "scanned": false
+  },
+  {
+    "id": "together",
+    "name": "Together AI",
+    "desc": "Together · 开源模型托管与推理",
+    "enabled": false,
+    "apiKey": "",
+    "baseUrl": "https://api.together.xyz/v1",
+    "defaultUrl": "https://api.together.xyz/v1",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#0f6fff",
+    "scanned": false
+  },
+  {
+    "id": "fireworks",
+    "name": "Fireworks AI",
+    "desc": "Fireworks · 高速开源模型推理",
+    "enabled": false,
+    "apiKey": "",
+    "baseUrl": "https://api.fireworks.ai/inference/v1",
+    "defaultUrl": "https://api.fireworks.ai/inference/v1",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#e8330a",
+    "scanned": false
+  },
+  {
+    "id": "perplexity",
+    "name": "Perplexity",
+    "desc": "Perplexity · 联网搜索增强模型",
+    "enabled": false,
+    "apiKey": "",
+    "baseUrl": "https://api.perplexity.ai",
+    "defaultUrl": "https://api.perplexity.ai",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#20808d",
+    "scanned": false
+  },
+  {
+    "id": "cohere",
+    "name": "Cohere",
+    "desc": "Cohere · Command 系列企业级模型",
+    "enabled": false,
+    "apiKey": "",
+    "baseUrl": "https://api.cohere.ai/v1",
+    "defaultUrl": "https://api.cohere.ai/v1",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#39594d",
+    "scanned": false
   }
 ]

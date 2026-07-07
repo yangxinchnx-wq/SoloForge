@@ -57,6 +57,8 @@ export interface AgentDispatchRequest {
   activeFile?: { name: string; content: string } | null;
   /** 前端配置的 LLM provider (apiKey + baseUrl + model) */
   mainProvider?: LLMProviderConfig;
+  /** 工作区文件夹路径 (用于 AI 作用域限制) */
+  workspaceFolder?: string;
 }
 
 export interface AgentDispatchResult {
@@ -241,6 +243,7 @@ export class AgentRegistry {
       history?: Array<{ sender: string; content: string }>;
       activeFile?: { name: string; content: string } | null;
       mainProvider?: { baseUrl: string; apiKey: string; model: string };
+      workspaceFolder?: string;
     },
   ): Promise<string> {
     const agent = this.agents.get(agentId);
@@ -281,6 +284,7 @@ export class AgentRegistry {
     const history = taskContext?.history ?? [];
     const activeFile = taskContext?.activeFile ?? null;
     const mainProvider = taskContext?.mainProvider;
+    const workspaceFolder = taskContext?.workspaceFolder;
 
     let taskDesc = prompt;
     if (history.length > 0) {
@@ -293,6 +297,9 @@ export class AgentRegistry {
     if (activeFile) {
       taskDesc += `\n\n## 当前文件: ${activeFile.name}\n\`\`\`\n${activeFile.content.slice(0, 4000)}\n\`\`\``;
     }
+    if (workspaceFolder) {
+      taskDesc += `\n\n## 工作区\n当前对话已绑定工作区文件夹: \`${workspaceFolder}\`\n你的所有文件操作 (读写/创建/删除) 必须限制在此文件夹范围内。如果需要操作文件夹外的资源, 请在回复中明确说明原因并询问用户。`;
+    }
 
     // 4) 始终走真实 LLM (SpecializedAgent)
     const specialized = this.getOrCreateSpecializedAgent(agentId, agent.strategyType);
@@ -304,6 +311,7 @@ export class AgentRegistry {
         description: taskDesc,
         streamHook,
         llmConfig: mainProvider,
+        workspaceFolder,
       });
       output = result.answer ?? '';
       logger.info(this.moduleName, `executeOnAgent [${agentId}] via LLM packet=${packetUuid} tools=${result.toolCallCount}`);

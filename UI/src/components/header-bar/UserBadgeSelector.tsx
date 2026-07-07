@@ -29,35 +29,6 @@ const STORAGE_AVATAR = 'soloforge_user_avatar_idx';
 const STORAGE_NAME = 'soloforge_user_name';
 const DEFAULT_NAME = '问剑白玉京';
 
-const panelVariants = {
-  hidden: {
-    clipPath: 'ellipse(0% 0% at 50% 0%)',
-    opacity: 0,
-    scale: 0.92,
-    transition: { duration: 0.16, ease: [0.4, 0, 1, 1] as [number, number, number, number] },
-  },
-  visible: {
-    clipPath: 'ellipse(150% 150% at 50% 0%)',
-    opacity: 1,
-    scale: 1,
-    transition: {
-      duration: 0.28,
-      ease: [0.16, 1, 0.3, 1] as [number, number, number, number],
-      staggerChildren: 0.02,
-      delayChildren: 0.04,
-    },
-  },
-};
-
-const itemVariants = {
-  hidden: { opacity: 0, y: -4 },
-  visible: {
-    opacity: 1,
-    y: 0,
-    transition: { duration: 0.16, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] },
-  },
-};
-
 type OpenMenu = 'avatar' | 'name' | null;
 
 function UserBadgeSelectorImpl() {
@@ -124,6 +95,7 @@ function UserBadgeSelectorImpl() {
     setAvatarIdx((prev) => {
       const next = (prev + dir + AVATARS.length) % AVATARS.length;
       localStorage.setItem(STORAGE_AVATAR, String(next));
+      window.dispatchEvent(new CustomEvent('soloforge-user-badge-updated'));
       return next;
     });
   }, []);
@@ -145,6 +117,7 @@ function UserBadgeSelectorImpl() {
       const idx = names.indexOf(prev);
       const next = names[(idx + dir + names.length) % names.length];
       localStorage.setItem(STORAGE_NAME, next);
+      window.dispatchEvent(new CustomEvent('soloforge-user-badge-updated'));
       return next;
     });
     clearCustomSlot();
@@ -205,6 +178,7 @@ function UserBadgeSelectorImpl() {
     setAvatarIdx(idx);
     localStorage.setItem(STORAGE_AVATAR, String(idx));
     setOpenMenu(null);
+    window.dispatchEvent(new CustomEvent('soloforge-user-badge-updated'));
   }, []);
 
   const selectName = useCallback((n: string) => {
@@ -212,6 +186,7 @@ function UserBadgeSelectorImpl() {
     localStorage.setItem(STORAGE_NAME, n);
     clearCustomSlot();
     setOpenMenu(null);
+    window.dispatchEvent(new CustomEvent('soloforge-user-badge-updated'));
   }, [clearCustomSlot]);
 
   const toggleAvatar = useCallback(
@@ -246,6 +221,7 @@ function UserBadgeSelectorImpl() {
       if (res.ok) {
         setCustomName(trimmed);
         setName(trimmed);
+        window.dispatchEvent(new CustomEvent('soloforge-user-badge-updated'));
       } else {
         console.error('[UserBadgeSelector] 保存自定义名称失败', res.status);
       }
@@ -315,7 +291,7 @@ function UserBadgeSelectorImpl() {
   return (
     <div
       ref={rootRef}
-      className={`relative flex items-center gap-3 h-11 pl-1.5 pr-4 mr-12 rounded-full ${openMenu ? 'z-50' : 'z-10'}`}
+      className={`relative flex items-center gap-3 h-11 pl-1.5 pr-4 mr-12 rounded-full overflow-visible ${openMenu ? 'z-50' : 'z-10'}`}
       style={capsuleStyle}
     >
       {/* ── 头像容器(点击弹出下拉 · 滚轮切换) ─────────── */}
@@ -417,20 +393,17 @@ function UserBadgeSelectorImpl() {
             key="panel-avatar"
             role="listbox"
             aria-label="选择头像"
-            variants={panelVariants}
-            initial="hidden"
-            animate="visible"
-            exit="hidden"
+            initial={{ opacity: 0, scale: 0.9, y: -4 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: -4 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
             onMouseDown={(e) => e.stopPropagation()}
             style={{
               ...panelStyle,
-              transformOrigin: '50% 0%',
-              willChange: 'clip-path, transform, opacity',
-              backfaceVisibility: 'hidden',
-              WebkitBackfaceVisibility: 'hidden',
+              transformOrigin: '20% 0%',
               zIndex: 60,
             }}
-            className="absolute left-0 top-full mt-3 p-2 flex gap-2"
+            className="absolute left-0 top-full mt-3 p-2 flex gap-2 w-max overflow-visible"
           >
             {AVATARS.map((src, idx) => (
               <motion.button
@@ -439,11 +412,12 @@ function UserBadgeSelectorImpl() {
                 role="option"
                 aria-selected={avatarIdx === idx}
                 aria-label={`头像 ${idx + 1}`}
-                variants={itemVariants}
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1], delay: idx * 0.02 }}
                 onClick={() => selectAvatar(idx)}
                 whileHover={{ scale: 1.08 }}
                 whileTap={{ scale: 0.94 }}
-                transition={{ type: 'spring', stiffness: 700, damping: 28 }}
                 className="relative shrink-0 rounded-xl overflow-hidden cursor-pointer"
                 style={{
                   border: avatarIdx === idx
@@ -468,20 +442,17 @@ function UserBadgeSelectorImpl() {
             key="panel-name"
             role="listbox"
             aria-label="选择名字"
-            variants={panelVariants}
-            initial="hidden"
-            animate="visible"
-            exit="hidden"
+            initial={{ opacity: 0, scale: 0.9, y: -4 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: -4 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
             onMouseDown={(e) => e.stopPropagation()}
             style={{
               ...panelStyle,
-              transformOrigin: '50% 0%',
-              willChange: 'clip-path, transform, opacity',
-              backfaceVisibility: 'hidden',
-              WebkitBackfaceVisibility: 'hidden',
+              transformOrigin: '20% 0%',
               zIndex: 60,
             }}
-            className="absolute left-0 top-full mt-3 p-1 flex flex-col gap-0.5 max-h-64 overflow-y-auto"
+            className="absolute left-0 top-full mt-3 p-1 flex flex-col gap-0.5 max-h-64 overflow-y-auto w-max min-w-[160px]"
           >
             {names.length === 0 ? (
               <div className="px-3 py-4 text-center text-[11px] text-on-surface/55 select-none">
@@ -496,10 +467,11 @@ function UserBadgeSelectorImpl() {
                     type="button"
                     role="option"
                     aria-selected={isSelected}
-                    variants={itemVariants}
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1], delay: Math.min(idx * 0.015, 0.3) }}
                     onClick={() => selectName(n)}
                     whileHover={{ x: 2 }}
-                    transition={{ type: 'spring', stiffness: 700, damping: 30 }}
                     className={`relative w-full text-left px-3 py-2 rounded-lg text-xs font-semibold flex items-center justify-between select-none cursor-pointer hover:bg-primary/10 ${
                       isSelected
                         ? 'text-primary font-bold'

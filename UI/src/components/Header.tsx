@@ -47,8 +47,9 @@ export default function Header({
     return `clamp(180px, ${sidebarWidth}px, ${maxLeft})`;
   }, [sidebarWidth, mixedTasks]);
 
-  // ── Providers 持久化读取(主模型可用列表 + 副模型候选) ──────────────
+  // ── Providers 持久化读取(主模型可用列表 + 副模型候选 + 图标映射) ──────────────
   // 只显示在「设置 → 云端模型」中测试通过 (status === 'success') 且启用的模型
+  // 同时构建 modelIconMap: modelId → { providerId, iconType } 用于主选择器图标对齐
   const getDynamicModels = (): string[] => {
     try {
       const saved = localStorage.getItem('cherry_providers_v2');
@@ -80,6 +81,33 @@ export default function Header({
     return [];
   };
 
+  // 构建 modelId → { providerId, iconType } 映射, 用于主选择器图标与设置页对齐
+  const getModelIconMap = (): Record<string, { providerId: string; iconType?: string }> => {
+    const map: Record<string, { providerId: string; iconType?: string }> = {};
+    try {
+      const saved = localStorage.getItem('cherry_providers_v2');
+      if (!saved) return map;
+      const parsed = JSON.parse(saved);
+      if (!Array.isArray(parsed)) return map;
+      parsed.forEach((prov: any) => {
+        if (!prov.enabled || !prov.apiKey) return;
+        const info = { providerId: prov.id, iconType: prov.iconType };
+        if (Array.isArray(prov.models)) {
+          prov.models.forEach((m: any) => {
+            if (m.enabled) map[m.id] = info;
+          });
+        }
+        if (Array.isArray(prov.customModels)) {
+          prov.customModels.forEach((cm: any) => {
+            const id = typeof cm === 'string' ? cm : (cm?.id ?? '');
+            if (id && (typeof cm === 'string' || cm.enabled !== false)) map[id] = info;
+          });
+        }
+      });
+    } catch { /* ignore */ }
+    return map;
+  };
+
   const getDynamicSecondarySubmodels = (): string[] => {
     try {
       const saved = localStorage.getItem('cherry_providers_v2');
@@ -107,12 +135,14 @@ export default function Header({
 
   const [availableModels, setAvailableModels] = useState<string[]>(() => getDynamicModels());
   const [allAvailableModelsList, setAllAvailableModelsList] = useState<string[]>(() => getDynamicSecondarySubmodels());
+  const [modelIconMap, setModelIconMap] = useState<Record<string, { providerId: string; iconType?: string }>>(() => getModelIconMap());
 
   useEffect(() => {
     const refreshLists = () => {
       const models = getDynamicModels();
       setAvailableModels(models);
       setAllAvailableModelsList(getDynamicSecondarySubmodels());
+      setModelIconMap(getModelIconMap());
       // 自动选中第一个可用模型 (当 mainModel 为空或不在可用列表中时)
       if (models.length > 0 && !models.includes(mainModel)) {
         setMainModel(models[0]);
@@ -262,12 +292,13 @@ export default function Header({
           >
             主模型
           </span>
-          <MainModelSelector
-            mainModel={mainModel}
-            onChange={setMainModel}
-            availableModels={availableModels}
-            onOpenChange={setHasMainModelOpen}
-            draggable
+<MainModelSelector
+mainModel={mainModel}
+onChange={setMainModel}
+availableModels={availableModels}
+modelIconMap={modelIconMap}
+onOpenChange={setHasMainModelOpen}
+draggable
           />
         </div>
 

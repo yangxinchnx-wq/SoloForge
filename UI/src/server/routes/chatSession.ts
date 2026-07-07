@@ -39,16 +39,17 @@ export function handleListChats(_req: Request, res: Response): Response {
 }
 
 /**
- * POST /api/chats
- * body: { title?: string, permission?: ChatPermission }
- */
+* POST /api/chats
+* body: { title?: string, permission?: ChatPermission, workspaceFolder?: string }
+*/
 export function handleCreateChat(req: Request, res: Response): Response {
-  const body = (req.body && typeof req.body === 'object') ? req.body : {};
-  const title = typeof body.title === 'string' ? body.title : undefined;
-  const permission: ChatPermission = VALID_PERMS.includes(body.permission) ? body.permission : 'normal';
-  const store = getChatStore();
-  const chat = store.createChat(title, permission);
-  return ok(res, { chat, selectedId: store.getSelectedId() });
+const body = (req.body && typeof req.body === 'object') ? req.body : {};
+const title = typeof body.title === 'string' ? body.title : undefined;
+const permission: ChatPermission = VALID_PERMS.includes(body.permission) ? body.permission : 'normal';
+const workspaceFolder = typeof body.workspaceFolder === 'string' ? body.workspaceFolder : undefined;
+const store = getChatStore();
+const chat = store.createChat(title, permission, workspaceFolder);
+return ok(res, { chat, selectedId: store.getSelectedId() });
 }
 
 /**
@@ -64,6 +65,7 @@ export function handleUpdateChat(req: Request, res: Response): Response {
   if (typeof body.tag === 'string' && VALID_TAGS.includes(body.tag as ChatTag)) patch.tag = body.tag;
   if (typeof body.permission === 'string' && VALID_PERMS.includes(body.permission as ChatPermission)) patch.permission = body.permission;
   if (typeof body.lastMessagePreview === 'string') patch.lastMessagePreview = body.lastMessagePreview;
+if (typeof body.workspaceFolder === 'string') patch.workspaceFolder = body.workspaceFolder;
   if (Object.keys(patch).length === 0) return err(res, 400, 'no valid fields to update');
   const store = getChatStore();
   const updated = store.updateChat(id, patch as any);

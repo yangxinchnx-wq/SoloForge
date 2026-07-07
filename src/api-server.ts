@@ -1453,12 +1453,26 @@ export class SoloForgeApiServer {
         apiKey: mainProvider.apiKey,
         model: mainProvider.model,
       } : undefined,
+      workspaceFolder: body?.workspaceFolder ?? payload.workspaceFolder,
     };
     try {
       const result = await this.agentOrchestrator.dispatchPacket(req);
       return { status: 200, headers: { 'Content-Type': 'application/json' }, body: result };
     } catch (e: any) {
-      return { status: 500, headers: { 'Content-Type': 'application/json' }, body: { error: e.message } };
+      const errMsg = e?.message ?? String(e);
+      // 智能映射 HTTP 状态码: LLM 上游错误不应返回 500 (后端自身没崩)
+      let status = 500;
+      if (errMsg.includes('LLM HTTP 429') || errMsg.includes('rate limit')) {
+        status = 429; // 上游限速 → 透传 429
+      } else if (errMsg.includes('LLM HTTP 401') || errMsg.includes('Unauthorized')) {
+        status = 401; // 上游认证失败
+      } else if (errMsg.includes('LLM HTTP 404')) {
+        status = 404; // 上游模型不存在
+      } else if (errMsg.includes('LLM HTTP')) {
+        // 其他 LLM 上游错误 → 502 Bad Gateway
+        status = 502;
+      }
+      return { status, headers: { 'Content-Type': 'application/json' }, body: { error: errMsg } };
     }
   }
 

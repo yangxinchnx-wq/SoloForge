@@ -282,6 +282,8 @@ export interface ToolCallRequest {
    * 由 agent-loop → kernel.eventBus → SSE → 前端 TerminalPanel 实时显示。
    */
   streamHook?: ToolStreamHook;
+  /** 工作区文件夹路径 (用于路径强制校验, 为空则不校验) */
+  workspaceFolder?: string;
 }
 
 /**
@@ -327,6 +329,28 @@ const PROJECT_ROOT = path.resolve(
 function resolvePath(filePath: string): string {
   if (path.isAbsolute(filePath)) return filePath;
   return path.resolve(PROJECT_ROOT, filePath);
+}
+
+/**
+ * 检查目标路径是否在工作区文件夹范围内
+ * @returns true 如果路径在工作区内或没有工作区限制
+ */
+function isPathWithinWorkspace(targetPath: string, workspaceFolder?: string): boolean {
+  if (!workspaceFolder) return true; // 没有绑定工作区, 不限制
+  const resolved = path.isAbsolute(targetPath) ? targetPath : path.resolve(workspaceFolder, targetPath);
+  const normalizedTarget = path.normalize(resolved);
+  const normalizedWs = path.normalize(workspaceFolder);
+  // 检查 target 是否以 workspace 开头
+  return normalizedTarget === normalizedWs || normalizedTarget.startsWith(normalizedWs + path.sep);
+}
+
+/**
+ * 如果路径不在工作区内, 返回错误消息
+ */
+function checkWorkspaceBoundary(targetPath: string, workspaceFolder?: string): string | null {
+  if (!workspaceFolder) return null;
+  if (isPathWithinWorkspace(targetPath, workspaceFolder)) return null;
+  return `路径 "${targetPath}" 不在工作区文件夹 "${workspaceFolder}" 范围内。当前对话已绑定工作区, 文件操作仅限于此文件夹内。如需操作外部文件, 请在对话中告知用户并请求授权。`;
 }
 
 // ─── 画布 HTTP 转发 ────────────────────────────────────────────────
@@ -387,6 +411,11 @@ export async function executeToolCall(request: ToolCallRequest): Promise<ToolCal
     switch (request.name) {
       case 'read_file': {
         const filePath = resolvePath(request.arguments.file_path);
+        const boundaryErr = checkWorkspaceBoundary(filePath, request.workspaceFolder);
+        if (boundaryErr) {
+          output = boundaryErr;
+          break;
+        }
         const content = await fs.readFile(filePath, 'utf-8');
         const lines = content.split('\n');
         const offset = (request.arguments.offset ?? 1) - 1;
@@ -401,6 +430,11 @@ export async function executeToolCall(request: ToolCallRequest): Promise<ToolCal
 
       case 'write_file': {
         const filePath = resolvePath(request.arguments.file_path);
+        const boundaryErr = checkWorkspaceBoundary(filePath, request.workspaceFolder);
+        if (boundaryErr) {
+          output = boundaryErr;
+          break;
+        }
         await fs.mkdir(path.dirname(filePath), { recursive: true });
         await fs.writeFile(filePath, request.arguments.content, 'utf-8');
         output = `Successfully wrote ${request.arguments.content.length} chars to ${request.arguments.file_path}`;
@@ -410,7 +444,12 @@ export async function executeToolCall(request: ToolCallRequest): Promise<ToolCal
       case 'execute_cmd': {
         const cwd = request.arguments.cwd
           ? resolvePath(request.arguments.cwd)
-          : PROJECT_ROOT;
+          : (request.workspaceFolder || PROJECT_ROOT);
+        const boundaryErr = checkWorkspaceBoundary(cwd, request.workspaceFolder);
+        if (boundaryErr) {
+          output = boundaryErr;
+          break;
+        }
         const command = String(request.arguments.command || '');
         const hook = request.streamHook;
         const toolStart = Date.now();
@@ -547,7 +586,12 @@ export async function executeToolCall(request: ToolCallRequest): Promise<ToolCal
       case 'list_files': {
         const dirPath = request.arguments.dir_path
           ? resolvePath(request.arguments.dir_path)
-          : PROJECT_ROOT;
+          : (request.workspaceFolder || PROJECT_ROOT);
+        const boundaryErr = checkWorkspaceBoundary(dirPath, request.workspaceFolder);
+        if (boundaryErr) {
+          output = boundaryErr;
+          break;
+        }
         const pattern = request.arguments.pattern ?? '*';
         const entries = await fs.readdir(dirPath, { withFileTypes: true });
         output = entries

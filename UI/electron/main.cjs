@@ -5,7 +5,7 @@
 // 原 SoloForge 后端（tsx src/index.ts，端口 3001）需独立启动，不由本进程拉起
 // ─────────────────────────────────────────────────────────────────
 
-const { app, BrowserWindow, shell, Menu, session, ipcMain, nativeImage, screen } = require('electron');
+const { app, BrowserWindow, shell, Menu, session, ipcMain, nativeImage, screen, dialog } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const net = require('net');
@@ -517,6 +517,19 @@ function registerIpc() {
 
 let _customMaximized = false;
 let _savedBounds = null;
+
+  // ── 文件夹选择器 (用于工作区绑定) ──
+  ipcMain.handle('dialog:select-folder', async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return null;
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory'],
+      title: '选择工作区文件夹',
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    const folderPath = result.filePaths[0];
+    const folderName = path.basename(folderPath);
+    return { path: folderPath, name: folderName };
+  });
 
 ipcMain.handle('window:minimize', () => {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize();
@@ -1325,6 +1338,31 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+  });
+
+  // ── 渲染进程崩溃恢复 ──────────────────────────────────────────
+  // 2026-07-07: 用户反馈"过一会黑屏" — 渲染进程可能因 GPU 崩溃或 OOM 被杀。
+  // 监听 render-process-gone 事件, 自动重载页面而非显示黑屏。
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    console.error('[electron] 渲染进程崩溃:', details.reason, details.exitCode);
+    // 给用户一秒看到日志, 然后重载
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        console.log('[electron] 尝试重载渲染进程...');
+        mainWindow.webContents.reload();
+      }
+    }, 1000);
+  });
+
+  mainWindow.on('unresponsive', () => {
+    console.warn('[electron] 渲染进程无响应, 等待恢复...');
+    // 不强制杀掉, 给用户机会保存数据。10 秒后如果仍无响应才重载。
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isResponsive()) {
+        console.warn('[electron] 渲染进程 10 秒后仍无响应, 强制重载');
+        mainWindow.webContents.reload();
+      }
+    }, 10_000);
   });
 }
 

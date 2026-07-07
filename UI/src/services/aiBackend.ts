@@ -31,6 +31,8 @@ export interface ChatRequest {
   activeSettings?: any;
   /** 前端配置的 LLM provider (apiKey + baseUrl + model), 传递给后端 */
   mainProvider?: { baseUrl: string; apiKey: string; model: string };
+  /** 工作区文件夹路径 (用于 AI 作用域限制) */
+  workspaceFolder?: string;
   // 多模型场景下透传到 phaseMappers
   [k: string]: any;
 }
@@ -61,6 +63,13 @@ async function startChatViaFetch(req: ChatRequest, onEvent: (e: ChatStreamEvent)
   const controller = new AbortController();
   const signal = controller.signal;
 
+  // 超时保护: LLM 调用可能挂起 (如服务商不可达), 120s 后自动 abort
+  // 避免 fetch 永久挂起 → SSE 订阅不释放 → 内存泄漏 → 渲染进程崩溃黑屏
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+    onEvent({ kind: 'error', error: '请求超时 (120s)：后端响应时间过长，请检查 LLM 服务商连通性或重试。', taskId });
+  }, 120_000);
+
   // 1) 订阅本 chatId 的 phase 事件 (多 chat 并发隔离)
   sseBackend.subscribe(chatId ?? '__no_chat__', onEvent);
 
@@ -80,6 +89,7 @@ async function startChatViaFetch(req: ChatRequest, onEvent: (e: ChatStreamEvent)
           },
           chatId,
           mainProvider: req.mainProvider ?? null,
+          workspaceFolder: req.workspaceFolder ?? null,
         }),
         signal,
       });
@@ -104,6 +114,7 @@ async function startChatViaFetch(req: ChatRequest, onEvent: (e: ChatStreamEvent)
       if (err?.name === 'AbortError') return;
       onEvent({ kind: 'error', error: err?.message || String(err), taskId });
     } finally {
+      clearTimeout(timeoutId);
       // 4) 取消本 chatId 订阅 (其他 chat 不受影响)
       if (chatId) sseBackend.unsubscribe(chatId);
     }
@@ -112,6 +123,7 @@ async function startChatViaFetch(req: ChatRequest, onEvent: (e: ChatStreamEvent)
   return {
     taskId,
     abort: () => {
+      clearTimeout(timeoutId);
       controller.abort();
       if (chatId) sseBackend.unsubscribe(chatId);
     },
@@ -163,6 +175,7 @@ async function startChatViaIpc(req: ChatRequest, onEvent: (e: ChatStreamEvent) =
         },
         chatId,
         mainProvider: req.mainProvider ?? null,
+        workspaceFolder: req.workspaceFolder ?? null,
       });
       if (!resp?.ok) {
         onEvent({ kind: 'error', error: `IPC dispatch failed: HTTP ${resp?.status} ${resp?.error ?? ''}`, taskId });

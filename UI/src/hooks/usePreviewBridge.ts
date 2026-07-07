@@ -24,6 +24,7 @@
 import { useEffect, useRef } from 'react';
 import { streamPreviewForChat, type StreamPreviewHandle } from '../services/chatStreamOrchestrator';
 import { LLMClient } from '../services/llm/LLMClient';
+import { OpenAICompatibleProvider } from '../services/llm/OpenAICompatibleProvider';
 import { usePreviewStreamStore } from '../state/previewStreamStore';
 
 // ── 语言检测 ──
@@ -53,6 +54,12 @@ export interface PreviewTriggerDetail {
   message: string;
   language?: string;
   deviceId?: string;
+  /** LLM provider 配置 (从 useChatStore 传入, 避免走 backend proxy 503) */
+  provider?: {
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+  };
 }
 
 export const PREVIEW_TRIGGER_EVENT = 'soloforge-preview-trigger';
@@ -61,25 +68,40 @@ export const PREVIEW_TRIGGER_EVENT = 'soloforge-preview-trigger';
 
 export function usePreviewBridge(): void {
   const handleRef = useRef<StreamPreviewHandle | null>(null);
-  const llmClientRef = useRef<LLMClient | null>(null);
+  const startDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const onTrigger = (e: Event) => {
       const detail = (e as CustomEvent<PreviewTriggerDetail>).detail;
       if (!detail?.chatId || !detail?.message) return;
 
-      // Cancel previous preview
+      // Cancel previous preview + pending delay
+      if (startDelayRef.current) {
+        clearTimeout(startDelayRef.current);
+        startDelayRef.current = null;
+      }
       if (handleRef.current) {
         handleRef.current.cancel();
         handleRef.current = null;
       }
 
-      // Lazy-init LLM client (backend proxy, relative URL through 3000)
-      if (!llmClientRef.current) {
+      // 2026-07-07: 优先用事件携带的 provider 配置直连 LLM (避免 backend proxy 503)
+      // 如果没有 provider 配置, 静默跳过预览 (不再走 fromEnv → backend proxy → 503)
+      let llmClient: LLMClient | null = null;
+      if (detail.provider?.apiKey && detail.provider?.baseUrl) {
+        llmClient = new LLMClient(
+          new OpenAICompatibleProvider('preview', {
+            baseUrl: detail.provider.baseUrl,
+            apiKey: detail.provider.apiKey,
+            defaultModel: detail.provider.model || 'gpt-4o-mini',
+          })
+        );
+      } else {
+        // 降级: 尝试 fromEnv (可能在 Electron 环境有 IPC 可用)
         try {
-          llmClientRef.current = LLMClient.fromEnv();
+          llmClient = LLMClient.fromEnv();
         } catch {
-          console.warn('[previewBridge] LLMClient init failed, skipping preview');
+          // 静默跳过 — 预览是可选功能, 不应阻塞主聊天
           return;
         }
       }
@@ -90,41 +112,48 @@ export function usePreviewBridge(): void {
       // Clear old entry for this chat
       usePreviewStreamStore.getState().clearEntry(detail.chatId);
 
-      // Fire and forget — orchestrator handles all state updates
-      try {
-        const handle = streamPreviewForChat({
-          chatId: detail.chatId,
-          language,
-          userGoal,
-          deviceId: detail.deviceId,
-          llmClient: llmClientRef.current,
-          // canvasClient: undefined → orchestrator will skip IPC pushes
-          // (PreviewPanel subscribes to previewStreamStore directly)
-        });
-
-        handleRef.current = handle;
-
-        // Clean up ref when done
-        handle.done
-          .then(() => {
-            if (handleRef.current === handle) {
-              handleRef.current = null;
-            }
-          })
-          .catch(() => {
-            if (handleRef.current === handle) {
-              handleRef.current = null;
-            }
+      // 延迟 1.5s 启动预览流, 避免与主聊天同时请求 LLM 导致 429 速率限制
+      startDelayRef.current = setTimeout(() => {
+        startDelayRef.current = null;
+        try {
+          const handle = streamPreviewForChat({
+            chatId: detail.chatId,
+            language,
+            userGoal,
+            deviceId: detail.deviceId,
+            llmClient,
+            // canvasClient: undefined → orchestrator will skip IPC pushes
+            // (PreviewPanel subscribes to previewStreamStore directly)
           });
-      } catch (err) {
-        console.error('[previewBridge] streamPreviewForChat failed:', err);
-      }
+
+          handleRef.current = handle;
+
+          // Clean up ref when done (静默处理错误, 不打印到控制台)
+          handle.done
+            .then(() => {
+              if (handleRef.current === handle) {
+                handleRef.current = null;
+              }
+            })
+            .catch(() => {
+              if (handleRef.current === handle) {
+                handleRef.current = null;
+              }
+            });
+        } catch {
+          // 预览失败不影响主聊天
+        }
+      }, 1500);
     };
 
     window.addEventListener(PREVIEW_TRIGGER_EVENT, onTrigger as EventListener);
 
     return () => {
       window.removeEventListener(PREVIEW_TRIGGER_EVENT, onTrigger as EventListener);
+      if (startDelayRef.current) {
+        clearTimeout(startDelayRef.current);
+        startDelayRef.current = null;
+      }
       if (handleRef.current) {
         handleRef.current.cancel();
         handleRef.current = null;

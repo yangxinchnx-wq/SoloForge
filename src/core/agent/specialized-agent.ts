@@ -67,6 +67,8 @@ export interface AgentTask {
    * 不传时 agent-loop 使用环境变量中的配置
    */
   llmConfig?: { baseUrl: string; apiKey: string; model: string };
+  /** 工作区文件夹路径 (用于 AI 作用域限制) */
+  workspaceFolder?: string;
 }
 
 // ─── Agent 任务结果 ────────────────────────────────────────────────
@@ -125,6 +127,7 @@ export class SpecializedAgent {
       maxTokens: this.getMaxTokens(task.strategy ?? this.config.defaultStrategy),
       streamHook: task.streamHook,
       llmConfig: task.llmConfig,
+      workspaceFolder: task.workspaceFolder,
     };
 
     // 执行 Agent Loop

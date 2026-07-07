@@ -1,5 +1,5 @@
-import React, { useRef, useEffect, useMemo } from 'react';
-import { Send, Loader2, ChevronDown, ChevronUp, FileCode, X, SlidersHorizontal, Check } from '../utils/icons';
+import React, { useRef, useEffect, useMemo, useState } from 'react';
+import { Send, ChevronDown, ChevronUp, FileCode, X, SlidersHorizontal, Check, ShieldAlert } from '../utils/icons';
 import { MountTransition } from './MountTransition';
 import TerminalPanelWithWorkdir from './terminal/TerminalPanelWithWorkdir';
 // 2026-07-03 阶段3.1.C: DocsGeneratorModal 抽出为独立子应用, 状态收敛到 useDocsGeneratorStore
@@ -82,12 +82,14 @@ export default function ChatPanel({
   const streamState = useChatStore(s => s.streamState);
   const inputValue = useChatStore(s => s.inputValue);
   const showModeDropdown = useChatStore(s => s.showModeDropdown);
+  const workspaceApproval = useChatStore(s => s.workspaceApproval);
 
   // setters / actions (函数引用稳定, 不需 selector)
   const setInputValue = useChatStore(s => s.setInputValue);
   const setPendingAttachment = useChatStore(s => s.setPendingAttachment);
   const setIsPendingAttachmentExpanded = useChatStore(s => s.setIsPendingAttachmentExpanded);
   const setShowModeDropdown = useChatStore(s => s.setShowModeDropdown);
+  const resolveWorkspaceApproval = useChatStore(s => s.resolveWorkspaceApproval);
   const syncRuntimeOptions = useChatStore(s => s.syncRuntimeOptions);
   const loadChatsList = useChatStore(s => s.loadChatsList);
   const loadChatConfigs = useChatStore(s => s.loadChatConfigs);
@@ -173,6 +175,69 @@ export default function ChatPanel({
   // ==========================================
   const activeChatId = selectedChatId || '1';
   const localChatInfo = useMemo(() => chatsList.find(c => c.id === activeChatId) || null, [chatsList, activeChatId]);
+  // ── 用户头像 + 名字 (与右上角 UserBadgeSelector 同步) ──────────────
+  const [userAvatarIdx, setUserAvatarIdx] = useState(0);
+  const [userName, setUserName] = useState('');
+  useEffect(() => {
+    const syncUserBadge = () => {
+      const savedAvatar = localStorage.getItem('soloforge_user_avatar_idx');
+      if (savedAvatar !== null) {
+        const idx = parseInt(savedAvatar, 10);
+        if (idx >= 0 && idx < 4) setUserAvatarIdx(idx);
+      }
+      const savedName = localStorage.getItem('soloforge_user_name');
+      if (savedName) setUserName(savedName);
+    };
+    syncUserBadge();
+    window.addEventListener('storage', syncUserBadge);
+    window.addEventListener('soloforge-user-badge-updated', syncUserBadge);
+    return () => {
+      window.removeEventListener('storage', syncUserBadge);
+      window.removeEventListener('soloforge-user-badge-updated', syncUserBadge);
+    };
+  }, []);
+
+  // ── 模型图标映射: 从 cherry_providers_v2 构建 modelId → { providerId, iconType } ──
+  // 与 Header.tsx 的 getModelIconMap 逻辑一致, 确保聊天区头像与模型选择器图标完全对齐
+  const [modelIconMap, setModelIconMap] = useState<Record<string, { providerId: string; iconType?: string }>>({});
+  useEffect(() => {
+    const buildIconMap = () => {
+      try {
+        const saved = localStorage.getItem('cherry_providers_v2');
+        if (!saved) return;
+        const parsed = JSON.parse(saved);
+        if (!Array.isArray(parsed)) return;
+        const map: Record<string, { providerId: string; iconType?: string }> = {};
+        parsed.forEach((prov: any) => {
+          if (!prov.enabled || !prov.apiKey) return;
+          const info = { providerId: prov.id, iconType: prov.iconType };
+          if (Array.isArray(prov.models)) {
+            prov.models.forEach((m: any) => {
+              if (m.enabled) map[m.id] = info;
+            });
+          }
+          if (Array.isArray(prov.customModels)) {
+            prov.customModels.forEach((cm: any) => {
+              const id = typeof cm === 'string' ? cm : (cm?.id ?? '');
+              if (id && (typeof cm === 'string' || cm.enabled !== false)) map[id] = info;
+            });
+          }
+        });
+        setModelIconMap(map);
+      } catch { /* ignore */ }
+    };
+    buildIconMap();
+    window.addEventListener('storage', buildIconMap);
+    window.addEventListener('providers_updated', buildIconMap);
+    return () => {
+      window.removeEventListener('storage', buildIconMap);
+      window.removeEventListener('providers_updated', buildIconMap);
+    };
+  }, []);
+
+  // 当前主模型的 iconType (与设置页/模型选择器对齐)
+  const mainModelIconType = mainModel ? modelIconMap[mainModel]?.iconType : undefined;
+
   const activeMessages = useMemo(() => {
     return conversations[activeChatId]
       || useChatStore.getState().getFallbackMessages(localChatInfo);
@@ -253,8 +318,31 @@ export default function ChatPanel({
         className="flex-1 overflow-y-auto p-4 select-text scrollbar-thin scrollbar-thumb-outline/50"
       >
         <div className="max-w-5xl lg:max-w-[94%] xl:max-w-[90%] mx-auto w-full flex flex-col space-y-5 py-2 px-4 md:px-6">
+          {activeMessages.length === 0 && !isGenerating && (
+            <div className="flex-1 flex flex-col items-center justify-center min-h-[300px] select-none">
+              <div
+                className="w-20 h-20 opacity-30 transition-opacity duration-300"
+                style={{
+                  backgroundColor: 'var(--color-primary)',
+                  maskImage: 'url(/lightning_logo.png)',
+                  maskSize: 'contain',
+                  maskPosition: 'center',
+                  maskRepeat: 'no-repeat',
+                  WebkitMaskImage: 'url(/lightning_logo.png)',
+                  WebkitMaskSize: 'contain',
+                  WebkitMaskPosition: 'center',
+                  WebkitMaskRepeat: 'no-repeat',
+                }}
+              />
+            </div>
+          )}
           {activeMessages.map((msg, index) => {
             const isUser = msg.sender === 'user';
+            // 隐藏空的 assistant 占位消息: 当 isGenerating 时, 空的 assistant
+            // 气泡 + 流式 UI 看起来像"两个模型对话"。跳过它, 只显示流式 UI。
+            if (!isUser && isGenerating && !msg.content.trim() && index === activeMessages.length - 1) {
+              return null;
+            }
             return (
               <div
                 key={index}
@@ -264,31 +352,26 @@ export default function ChatPanel({
                 <div className={`flex gap-3 items-center mb-1 ${isUser ? 'flex-row-reverse' : ''}`}>
                   {/* Avatar block — 始终使用本地兜底，不加载外链头像 (CSP 安全) */}
                   {isUser ? (
-                    <div
-                      role="img"
-                      aria-label="User"
-                      className="w-11 h-11 rounded-full shrink-0 border border-primary/25 shadow-sm flex items-center justify-center"
-                      style={{
-                        background:
-                          'linear-gradient(135deg, #ffde82 0%, #f5b461 50%, #c97f3a 100%)',
-                        color: '#121414',
-                        fontSize: 20,
-                        fontWeight: 700,
-                        lineHeight: 1,
-                      }}
-                    >
-                      U
-                    </div>
+                    <img
+                      src={`/头像/avatar${userAvatarIdx + 1}.svg`}
+                      alt="用户头像"
+                      className="w-11 h-11 rounded-full shrink-0 object-cover pointer-events-none border border-primary/25 shadow-sm"
+                      draggable={false}
+                    />
                   ) : (
                     <div className="w-11 h-11 rounded-full bg-on-surface/5 border border-on-surface/10 flex items-center justify-center shrink-0">
-                      <ModelIcon modelName={mainModel || '未配置'} size={32} className="shrink-0" />
+                      {mainModel ? (
+                        <ModelIcon modelName={mainModel} size={32} className="shrink-0" iconType={mainModelIconType} />
+                      ) : (
+                        <span className="text-on-surface/20 text-xs font-bold">—</span>
+                      )}
                     </div>
                   )}
 
                   {/* Info block (Username/Model + Time) */}
                   <div className={`flex items-center gap-2 ${isUser ? 'flex-row-reverse' : ''}`}>
                     <span className={`text-[11px] font-bold ${isUser ? 'text-primary/95 text-right' : 'text-[#3b82f6]'}`}>
-                      {isUser ? '你' : (mainModel || '未配置模型')}
+                      {isUser ? (userName || '你') : (mainModel || '未选择')}
                     </span>
                     <span className="text-[9px] text-on-surface/30 font-mono tracking-wide">{msg.time}</span>
                   </div>
@@ -324,19 +407,23 @@ export default function ChatPanel({
             <div
               className="sf-anim sf-anim-slide-up flex flex-col gap-2.5 text-left"
             >
-              {/* Header Row: Avatar + Loading info (Center-aligned) */}
+              {/* Header Row: Avatar + Loading info */}
               <div className="flex gap-3.5 items-center mb-1">
-                {/* Avatar block with overlapping spinner */}
-                <div className="relative w-11 h-11 rounded-full bg-on-surface/5 border border-on-surface/10 flex items-center justify-center shrink-0">
-                  <ModelIcon modelName={mainModel || '未配置'} size={32} className="shrink-0 opacity-40 animate-pulse" />
-                  <Loader2 className="absolute inset-0 w-full h-full text-primary/80 animate-spin p-2" />
+                {/* Avatar block — 与模型选择器图标一致, 无旋转箭头 */}
+                <div className="w-11 h-11 rounded-full bg-on-surface/5 border border-on-surface/10 flex items-center justify-center shrink-0">
+                  {mainModel ? (
+                    <ModelIcon modelName={mainModel} size={32} className="shrink-0" iconType={mainModelIconType} />
+                  ) : (
+                    <span className="text-on-surface/20 text-xs font-bold">—</span>
+                  )}
                 </div>
 
-                {/* Info block (Username/Model + Loading status) */}
-                <div className="flex items-center gap-2 animate-pulse font-sans">
+                {/* Info block (Model name + Loading status) */}
+                <div className="flex items-center gap-2 font-sans">
                   <span className="text-[11px] font-bold text-[#3b82f6]">
                     {mainModel} 正在响应中
                   </span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse shrink-0" />
                   <span className="text-[9px] text-on-surface/30 font-mono">排队分析中</span>
                 </div>
               </div>
@@ -595,6 +682,43 @@ export default function ChatPanel({
 
       {/* Integrated Terminal Panel Stacked — workdir 自动跟随 activeChatId */}
       <TerminalPanelWithWorkdir chatId={activeChatId} permissionMode={permissionMode} />
+
+      {/* 工作区越界审批对话框 */}
+      <MountTransition show={!!workspaceApproval} variant="fade">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-[9999]">
+          <div className="bg-surface border border-amber-500/35 rounded-2xl p-5 max-w-sm w-full shadow-2xl flex flex-col gap-4 font-sans text-on-surface">
+            <div className="flex flex-col gap-2">
+              <h3 className="text-[13px] font-bold text-amber-400 flex items-center gap-2">
+                <ShieldAlert className="w-4 h-4" />
+                工作区越界确认
+              </h3>
+              <p className="text-[11px] text-on-surface/65 leading-relaxed">
+                {workspaceApproval?.message}
+              </p>
+            </div>
+            <div className="flex flex-col gap-2 text-[11px]">
+              <button
+                onClick={() => workspaceApproval && resolveWorkspaceApproval(workspaceApproval.chatId, 'deny')}
+                className="px-3 py-1.5 rounded-lg border border-red-500/35 bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors cursor-pointer font-bold text-left"
+              >
+                拒绝 — 不允许离开当前文件夹范围
+              </button>
+              <button
+                onClick={() => workspaceApproval && resolveWorkspaceApproval(workspaceApproval.chatId, 'allow')}
+                className="px-3 py-1.5 rounded-lg border border-primary/35 bg-primary/10 text-primary hover:bg-primary/20 transition-colors cursor-pointer font-bold text-left"
+              >
+                允许 — 仅本次允许
+              </button>
+              <button
+                onClick={() => workspaceApproval && resolveWorkspaceApproval(workspaceApproval.chatId, 'always')}
+                className="px-3 py-1.5 rounded-lg border border-emerald-500/35 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors cursor-pointer font-bold text-left"
+              >
+                允许并不再询问 — 接下来一直允许
+              </button>
+            </div>
+          </div>
+        </div>
+      </MountTransition>
     </div>
   );
 }

@@ -60,6 +60,8 @@ contextBridge.exposeInMainWorld('soloforge', {
     ipcRenderer.on('drag-state', handler);
     return () => ipcRenderer.removeListener('drag-state', handler);
   },
+  // ── 文件夹选择器 (用于工作区绑定) ──
+  selectFolder: () => ipcRenderer.invoke('dialog:select-folder'),
   // 旧 API 保留作为 fallback (调试/特殊场景)
   moveWindow: (x, y) => ipcRenderer.invoke('window:move-to', { x, y }),
   getWindowBounds: () => ipcRenderer.invoke('window:get-bounds'),

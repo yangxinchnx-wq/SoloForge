@@ -68,6 +68,8 @@ export interface AgentExecutionContext {
    * 不传时 function-calling-client 使用环境变量配置
    */
   llmConfig?: { baseUrl: string; apiKey: string; model: string };
+  /** 工作区文件夹路径 (用于路径强制校验) */
+  workspaceFolder?: string;
 }
 
 // ─── Agent 执行结果 ─────────────────────────────────────────────────
@@ -161,6 +163,7 @@ export async function runAgentLoop(ctx: AgentExecutionContext, userTask: string)
               emit: (eventName, payload) => hook.emit(eventName, payload),
             }
           : undefined,
+        workspaceFolder: ctx.workspaceFolder,
       } as ToolCallRequest);
       const toolDurationMs = Date.now() - toolStart;
 
@@ -220,12 +223,23 @@ export async function runAgentLoop(ctx: AgentExecutionContext, userTask: string)
 // ─── System Prompt 构建 ─────────────────────────────────────────────
 
 function buildFullSystemPrompt(ctx: AgentExecutionContext): string {
-  const parts: string[] = [];
+const parts: string[] = [];
 
-  // 1. 角色定义
-  parts.push(ctx.systemPrompt);
+// 1. 角色定义
+parts.push(ctx.systemPrompt);
 
-  // 2. 工具说明
+// 1.5 工作区限制 (如果有绑定)
+if (ctx.workspaceFolder) {
+parts.push(`
+## 工作区范围限制
+当前对话已绑定工作区文件夹: \`${ctx.workspaceFolder}\`
+- 你的所有文件操作 (read_file / write_file / search_code 等) 应限制在此文件夹范围内
+- 如果任务需要操作此文件夹外的资源, 请在回复中明确说明原因并询问用户是否允许
+- 绝不要在未告知用户的情况下修改文件夹外的文件
+`);
+}
+
+// 2. 工具说明
   parts.push(`
 ## 可用工具
 

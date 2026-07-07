@@ -9,10 +9,29 @@ import {
   Moonshot,
   Kimi,
   XiaomiMiMo,
+  Gemini,
+  Qwen,
+  Zhipu,
+  Wenxin,
+  Doubao,
+  Hunyuan,
+  Spark,
+  Minimax,
+  Baichuan,
+  Yi,
+  ZeroOne,
+  Stepfun,
+  Mistral,
+  Groq,
+  OpenRouter,
+  Together,
+  Fireworks,
+  Perplexity,
+  Cohere,
   // 通用 ModelIcon (用于扫描到的模型列表, 按 model name 匹配)
   ModelIcon as LobeModelIcon,
 } from '@lobehub/icons';
-import { AnimalAvatar, ANIMAL_IDS } from './AnimalAvatar';
+import { AnimalAvatar } from './AnimalAvatar';
 
 interface ModelIconProps {
   modelName: string;
@@ -21,7 +40,8 @@ interface ModelIconProps {
   /**
    * 图标类型配置 (仅对 custom_ 开头的自定义服务商生效):
    *   - undefined / 'auto': 自动匹配 @lobehub/icons
-   *   - 'animal:<id>': 用动物头像
+   *   - 'animal:<id>': 用内置动物头像 (20 种小动物)
+   *   - 'custom:<dataUrl>': 用用户上传的自定义图标 (data:image/png;base64,...)
    * 内置服务商 (openai/deepseek/anthropic 等) 始终用固定 lobehub 图标, 不受此参数影响
    */
   iconType?: string;
@@ -29,18 +49,42 @@ interface ModelIconProps {
 
 /**
  * 内置服务商 ID → lobehub 图标组件 的直接映射
+ * 优先使用 .Color 子组件 (彩色), 无 Color 的退回 Mono (单色)
  * 不走 LobeModelIcon 模糊匹配, 避免未知模型名触发 @lobehub/ui 无限循环
  */
 const BUILTIN_PROVIDER_ICONS: Record<string, React.FC<{ size?: number; className?: string }>> = {
-  openai: OpenAI,
-  deepseek: DeepSeek,
-  anthropic: Anthropic,
-  claude: Claude,
-  siliconflow: SiliconCloud,
-  siliconcloud: SiliconCloud,
-  moonshot: Moonshot,
-  kimi: Kimi,
-  xiaomi: XiaomiMiMo,
+  // ── 原有服务商 ──
+  openai: OpenAI,               // 无 Color, 用 Mono
+  deepseek: DeepSeek.Color ?? DeepSeek,
+  anthropic: Anthropic,         // 无 Color, 用 Mono
+  claude: Claude.Color ?? Claude,
+  gemini: Gemini.Color ?? Gemini,
+  siliconflow: SiliconCloud.Color ?? SiliconCloud,
+  siliconcloud: SiliconCloud.Color ?? SiliconCloud,
+  moonshot: Moonshot,           // 无 Color, 用 Mono
+  kimi: Kimi.Color ?? Kimi,
+  xiaomi: XiaomiMiMo,           // 无 Color, 用 Mono
+  // ── 国内大模型厂商 ──
+  qwen: Qwen.Color ?? Qwen,
+  zhipu: Zhipu.Color ?? Zhipu,
+  wenxin: Wenxin.Color ?? Wenxin,
+  baidu: Wenxin.Color ?? Wenxin,
+  doubao: Doubao.Color ?? Doubao,
+  hunyuan: Hunyuan.Color ?? Hunyuan,
+  spark: Spark.Color ?? Spark,
+  minimax: Minimax.Color ?? Minimax,
+  baichuan: Baichuan.Color ?? Baichuan,
+  yi: Yi.Color ?? Yi,
+  zeroone: ZeroOne.Color ?? ZeroOne,
+  stepfun: Stepfun.Color ?? Stepfun,
+  // ── 国外大模型厂商 ──
+  mistral: Mistral.Color ?? Mistral,
+  groq: Groq,                   // 无 Color, 用 Mono
+  openrouter: OpenRouter,       // 无 Color, 用 Mono
+  together: Together.Color ?? Together,
+  fireworks: Fireworks.Color ?? Fireworks,
+  perplexity: Perplexity.Color ?? Perplexity,
+  cohere: Cohere.Color ?? Cohere,
 };
 
 /**
@@ -67,6 +111,23 @@ function isKnownModel(modelId: string): boolean {
 export const ModelIcon: React.FC<ModelIconProps> = ({ modelName, className = "w-4 h-4", size = 16, iconType }) => {
   const modelId = (modelName || '').trim().toLowerCase();
 
+  // 0) 空模型名 → 静默占位 (不显示 "AI" 兜底)
+  if (!modelId) {
+    return (
+      <div
+        className={className}
+        style={{
+          width: size,
+          height: size,
+          borderRadius: '50%',
+          border: '1px solid currentColor',
+          opacity: 0.2,
+          flexShrink: 0,
+        }}
+      />
+    );
+  }
+
   // 1) 内置服务商 → 直接用固定 lobehub 图标组件 (不走 iconType, 不走模糊匹配)
   const BuiltinIcon = BUILTIN_PROVIDER_ICONS[modelId];
   if (BuiltinIcon) {
@@ -75,12 +136,24 @@ export const ModelIcon: React.FC<ModelIconProps> = ({ modelName, className = "w-
 
   // 2) 自定义服务商 (custom_ 开头) 或 custom 占位符 → 检查 iconType
   if (modelId.startsWith('custom')) {
-    // animal: 开头 → 用动物头像
+    // animal: 开头 → 用内置动物头像
     if (iconType?.startsWith('animal:')) {
       const animalId = iconType.slice(7);
       return <AnimalAvatar id={animalId} size={size} className={className} />;
     }
-    // 未设置 iconType → 用默认动物头像 (cat)
+    // custom: 开头 → 用户上传的图标 (data URL)
+    if (iconType?.startsWith('custom:')) {
+      const dataUrl = iconType.slice(7);
+      return (
+        <img
+          src={dataUrl}
+          alt="icon"
+          className={className}
+          style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
+        />
+      );
+    }
+    // 未设置 iconType → 用默认头像
     return <AnimalAvatar id="cat" size={size} className={className} />;
   }
 
@@ -130,4 +203,3 @@ export const ModelIcon: React.FC<ModelIconProps> = ({ modelName, className = "w-
   );
 };
 
-export { ANIMAL_IDS };

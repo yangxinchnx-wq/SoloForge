@@ -25,6 +25,8 @@ export interface ChatItem {
   updatedAt: number;
   time?: string;
   lastMessagePreview?: string;
+  /** 绑定的工作区文件夹路径 (可选, 未绑定为 undefined) */
+  workspaceFolder?: string;
 }
 
 export interface ChatLiveState {
@@ -63,8 +65,8 @@ interface ChatsState {
   refresh: () => Promise<void>;
 
   // ===== 写操作 (乐观更新 + 后端同步) =====
-  createChat: (title?: string, permission?: ChatPermission) => Promise<ChatItem | null>;
-  updateChat: (id: string, patch: Partial<Pick<ChatItem, 'title' | 'tag' | 'permission' | 'lastMessagePreview'>>) => Promise<void>;
+  createChat: (title?: string, permission?: ChatPermission, workspaceFolder?: string) => Promise<ChatItem | null>;
+  updateChat: (id: string, patch: Partial<Pick<ChatItem, 'title' | 'tag' | 'permission' | 'lastMessagePreview' | 'workspaceFolder'>>) => Promise<void>;
   deleteChat: (id: string) => Promise<void>;
   reorderChats: (orderedIds: string[]) => Promise<void>;
   selectChat: (id: string | null) => Promise<void>;
@@ -131,7 +133,7 @@ export const useChatsStore = create<ChatsState>()(subscribeWithSelector((set, ge
     await get().loadFromBackend();
   },
 
-  createChat: async (title, permission = 'normal') => {
+  createChat: async (title, permission = 'normal', workspaceFolder) => {
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const optimistic: ChatItem = {
       id: tempId,
@@ -143,6 +145,7 @@ export const useChatsStore = create<ChatsState>()(subscribeWithSelector((set, ge
       createdAt: Date.now(),
       updatedAt: Date.now(),
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      workspaceFolder,
     };
     set((s) => ({
       chats: [optimistic, ...s.chats],
@@ -152,7 +155,7 @@ export const useChatsStore = create<ChatsState>()(subscribeWithSelector((set, ge
     try {
       const data = await apiFetch<{ success: boolean; chat: ChatItem; selectedId: string }>(
         '/api/chats',
-        { method: 'POST', body: JSON.stringify({ title: optimistic.title, permission }) }
+        { method: 'POST', body: JSON.stringify({ title: optimistic.title, permission, workspaceFolder }) }
       );
       set((s) => ({
         chats: s.chats.map((c) => (c.id === tempId ? data.chat : c)),

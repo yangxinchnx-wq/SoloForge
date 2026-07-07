@@ -1,5 +1,5 @@
 import React from 'react';
-import { SlidersHorizontal, Trash2 } from '../utils/icons';
+import { SlidersHorizontal, Trash2, Eraser, Folder } from '../utils/icons';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { ChatHistoryItem } from '../types';
@@ -10,6 +10,7 @@ interface DraggableChatHistoryItem extends ChatHistoryItem {
   tagText: string;
   icon: any;
   permission?: 'normal' | 'performance' | 'ultimate' | 'expert';
+  workspaceFolder?: string;
 }
 
 // ============================================================
@@ -26,6 +27,7 @@ interface HistoryItemCardProps {
   onOpenSettings: (id: string, title: string) => void;
   onDelete: (id: string, title: string) => void;
   onRename: (id: string, title: string) => void;
+  onClearSession?: (id: string) => void;
   isFloatingEditorOpen?: boolean;
   /** When true, this card is rendered inside <DragOverlay>。
    *  使用 .sf-overlay-card 类（不透明背景 + lifted 阴影），
@@ -37,6 +39,8 @@ interface HistoryItemCardProps {
   isPulsing?: boolean;
   /** When true, play the post-drop radial ripple. */
   isRippling?: boolean;
+  /** When true, play the soft enter animation (fade + slide + scale). */
+  isNew?: boolean;
 }
 
 // React.memo — 拖动时父组件 onDragOver 会 setState,如果不 memo,
@@ -48,11 +52,13 @@ const HistoryItemCard = React.memo(function HistoryItemCard({
   onOpenSettings,
   onDelete,
   onRename,
+  onClearSession,
   isFloatingEditorOpen,
   isOverlayClone,
   isOverTarget,
   isPulsing,
   isRippling,
+  isNew,
 }: HistoryItemCardProps) {
   const [isEditingTitle, setIsEditingTitle] = React.useState(false);
   const [editTitle, setEditTitle] = React.useState(chat.title);
@@ -85,7 +91,7 @@ const HistoryItemCard = React.memo(function HistoryItemCard({
           : 'bg-bg/40 border-outline hover:border-primary/40 hover:bg-surface-bright text-on-surface/85 hover:text-on-surface'
       } cursor-default`;
 
-  const wrapperClassName = `w-full relative select-none ${isOverlayClone ? 'cursor-grabbing' : 'cursor-grab'} touch-none box-border block focus:outline-none outline-none rounded-xl ${isOverTarget ? 'sf-drop-target' : ''} ${isPulsing ? 'sf-drop-pulse' : ''} ${isRippling ? 'sf-drop-ripple is-rippling' : ''}`;
+  const wrapperClassName = `w-full relative select-none ${isOverlayClone ? 'cursor-grabbing' : 'cursor-grab'} touch-none box-border block focus:outline-none outline-none rounded-xl ${isOverTarget ? 'sf-drop-target' : ''} ${isPulsing ? 'sf-drop-pulse' : ''} ${isRippling ? 'sf-drop-ripple is-rippling' : ''} ${isNew && !isOverlayClone ? 'sf-item-enter' : ''}`;
 
   const handleClick = isOverlayClone ? undefined : (e: React.MouseEvent) => {
     if (isEditingTitle) return;
@@ -101,6 +107,11 @@ const HistoryItemCard = React.memo(function HistoryItemCard({
         {/* Title Row */}
         <div className="flex items-center justify-between gap-1.5">
           <div className="flex items-center gap-2 min-w-0 flex-1">
+            {chat.workspaceFolder && (
+              <div className="text-amber-500/80 shrink-0" title={`工作区: ${chat.workspaceFolder}`}>
+                <Folder className="w-3 h-3" />
+              </div>
+            )}
             {chat.icon && (
               <div className="text-primary shrink-0 opacity-80 group-hover:opacity-100 transition-opacity">
                 {React.createElement(chat.icon, { className: "w-3.5 h-3.5" })}
@@ -144,31 +155,46 @@ const HistoryItemCard = React.memo(function HistoryItemCard({
               </div>
             )}
           </div>
-          <div className="flex items-center gap-1 shrink-0">
-            {isFloatingEditorOpen && (
+          <div className="flex flex-col items-end gap-0.5 shrink-0">
+            <div className="flex items-center gap-1">
+              {isFloatingEditorOpen && (
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onOpenSettings(chat.id, chat.title);
+                  }}
+                  className="p-1 rounded hover:bg-primary/20 text-on-surface/75 hover:text-primary transition-all duration-150 cursor-pointer"
+                  title="定制智能体角色"
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                </button>
+              )}
               <button
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  onOpenSettings(chat.id, chat.title);
+                  onDelete(chat.id, chat.title);
                 }}
-                className="p-1 rounded hover:bg-primary/20 text-on-surface/75 hover:text-primary transition-all duration-150 cursor-pointer"
-                title="定制智能体角色"
+                className="p-1 rounded hover:bg-red-500/25 text-on-surface/40 hover:text-red-400 transition-all duration-150 cursor-pointer"
+                title="删除会话"
               >
-                <SlidersHorizontal className="w-3.5 h-3.5" />
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            {onClearSession && (
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onClearSession(chat.id);
+                }}
+                className="p-1 rounded hover:bg-amber-500/20 text-on-surface/30 hover:text-amber-400 transition-all duration-150 cursor-pointer"
+                title="清除当前会话 (保留对话, 清除上下文/流送/画布/终端)"
+              >
+                <Eraser className="w-3 h-3" />
               </button>
             )}
-            <button
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                onDelete(chat.id, chat.title);
-              }}
-              className="p-1 rounded hover:bg-red-500/25 text-on-surface/40 hover:text-red-400 transition-all duration-150 cursor-pointer"
-              title="删除会话"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
           </div>
         </div>
 

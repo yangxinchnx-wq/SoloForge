@@ -40,7 +40,7 @@ const fallbackActiveSettings: ChatSettingsItem = {
   emojiType: 'mixed'
 };
 
-const emptyStreamState: StreamState = {
+export const emptyStreamState: StreamState = {
   workerOutputs: [],
   reply: '',
   scores: [],
@@ -99,6 +99,8 @@ interface ChatStoreState {
   streamState: StreamState;
   inputValue: string;
   showModeDropdown: boolean;
+  /** 工作区越界审批对话框 */
+  workspaceApproval: { chatId: string; message: string } | null;
 
   /** props 注入字段 - 由组件挂载时 syncRuntimeOptions 同步,action 内部用 get().options 读取 */
   options: ChatRuntimeOptions;
@@ -116,6 +118,8 @@ interface ChatStoreState {
   setStreamState: (updater: StreamState | ((prev: StreamState) => StreamState)) => void;
   setInputValue: (updater: string | ((prev: string) => string)) => void;
   setShowModeDropdown: (v: boolean) => void;
+  setWorkspaceApproval: (v: { chatId: string; message: string } | null) => void;
+  resolveWorkspaceApproval: (chatId: string, decision: 'allow' | 'deny' | 'always') => void;
   syncRuntimeOptions: (opts: Partial<ChatRuntimeOptions>) => void;
 
   // ── 复合 actions ─────────────────────────────────
@@ -202,6 +206,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
   streamState: emptyStreamState,
   inputValue: '',
   showModeDropdown: false,
+  workspaceApproval: null,
   options: {},
 
   // ── setters ──────────────────────────────────────
@@ -225,6 +230,20 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     inputValue: typeof updater === 'function' ? (updater as any)(state.inputValue) : updater
   })),
   setShowModeDropdown: (v) => set({ showModeDropdown: v }),
+
+  setWorkspaceApproval: (v) => set({ workspaceApproval: v }),
+
+  resolveWorkspaceApproval: (chatId, decision) => {
+    // 存储决策到 localStorage
+    if (decision === 'always') {
+      localStorage.setItem(`soloforge_workspace_always_allow_${chatId}`, '1');
+    }
+    set({ workspaceApproval: null });
+    // 通知等待中的 handleSend
+    window.dispatchEvent(new CustomEvent('soloforge-workspace-approval-resolved', {
+      detail: { chatId, decision }
+    }));
+  },
   syncRuntimeOptions: (opts) => set((state) => ({ options: { ...state.options, ...opts } })),
 
   // ── 复合 actions ─────────────────────────────────
@@ -264,12 +283,17 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
       if (data.success) {
         const convos = data.conversations && typeof data.conversations === 'object' ? data.conversations : {};
         const cfgs = data.configs && typeof data.configs === 'object' ? data.configs : {};
-        // 用 sanitizeConversations 清理旧数据中可能残留的外链 avatar
+        // sanitizeConversations 清理旧数据: 外链 avatar + 旧格式错误消息 (❌ 开头)
         const sanitized = sanitizeConversations(convos);
         // 更新 store, 同时更新 lastPersisted 避免触发回写循环
         lastPersistedConversations = sanitized;
         lastPersistedConfigs = cfgs;
         set({ conversations: sanitized, configs: cfgs });
+        // 如果清理后数据有变化 (删除了旧错误消息), 回写后端避免下次再加载到脏数据
+        if (JSON.stringify(sanitized) !== JSON.stringify(convos)) {
+          schedulePersistToBackend(sanitized, cfgs);
+          console.log('[useChatStore] 检测到旧格式错误消息, 已清理并回写后端');
+        }
         console.log('[useChatStore] 从后端加载对话消息:', Object.keys(sanitized).length, '条对话');
       }
     } catch (e) {
@@ -337,7 +361,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     return [];
   },
 
-  handleSend: (inputRef) => {
+  handleSend: async (inputRef) => {
     const state = get();
     const { inputValue, pendingAttachment, conversations, options, hashlineAgentEnabled } = state;
     const { permissionMode = 'normal', mainModel = 'GPT-4o', secModels = [], selectedFile, editorContent, modelProviderMap = {}, selectedChatId = '1' } = options;
@@ -345,6 +369,55 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     if (!inputValue.trim() && !pendingAttachment) return;
 
     const finalContent = inputValue.trim() || `请帮我分析如下来自于 "${pendingAttachment?.fileName}" 的代码。`;
+
+    // ── 工作区越界检查 ──────────────────────────────────────────
+    // 如果对话绑定了工作区文件夹, 且用户消息中提到需要在文件夹外操作,
+    // 弹出审批对话框 (除非用户已选"允许并不再询问")
+    const chatInfo = useChatsStore.getState().getChat(selectedChatId);
+    const workspaceFolder = chatInfo?.workspaceFolder;
+    if (workspaceFolder) {
+      const alwaysAllow = localStorage.getItem(`soloforge_workspace_always_allow_${selectedChatId}`) === '1';
+      if (!alwaysAllow) {
+        // 检测用户是否提到需要在文件夹外操作
+        const boundaryKeywords = [
+          '文件夹外', '目录外', '工作区外', '外面做', '外部操作',
+          'outside folder', 'outside the folder', 'outside workspace',
+          'outside directory', 'not in folder',
+        ];
+        const mentionsOutside = boundaryKeywords.some(kw =>
+          finalContent.toLowerCase().includes(kw.toLowerCase())
+        );
+
+        if (mentionsOutside) {
+          // 弹出审批对话框
+          set({
+            workspaceApproval: {
+              chatId: selectedChatId,
+              message: `检测到您可能需要在工作区文件夹 "${workspaceFolder}" 外进行操作。是否允许？`,
+            },
+          });
+
+          // 等待用户决策
+          const decision = await new Promise<'allow' | 'deny' | 'always'>((resolve) => {
+            const handler = (e: Event) => {
+              const detail = (e as CustomEvent).detail;
+              if (detail?.chatId === selectedChatId) {
+                window.removeEventListener('soloforge-workspace-approval-resolved', handler);
+                resolve(detail.decision as 'allow' | 'deny' | 'always');
+              }
+            };
+            window.addEventListener('soloforge-workspace-approval-resolved', handler);
+          });
+
+          if (decision === 'deny') {
+            // 用户拒绝, 不发送消息, 清空输入框
+            set({ inputValue: '' });
+            return;
+          }
+          // 'allow' 或 'always' → 继续发送
+        }
+      }
+    }
 
     const userMsg: ChatMessage = {
       sender: 'user',
@@ -432,9 +505,18 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     // 2026-07-06 阶段3: 派发 AST 预览触发事件 → usePreviewBridge 接收
     //   - 预览流并行于主聊天 SSE, 独立 LLM 调用生成 UniversalAST
     //   - PreviewPanel 订阅 previewStreamStore 展示流式状态
+    //   - 2026-07-07: 传递 provider 配置, 避免预览流走 backend proxy 503
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('soloforge-preview-trigger', {
-        detail: { chatId: activeChatId, message: finalContent }
+        detail: {
+          chatId: activeChatId,
+          message: finalContent,
+          provider: mainEntry ? {
+            baseUrl: mainEntry.baseUrl,
+            apiKey: mainEntry.apiKey,
+            model: mainEntry.model,
+          } : undefined,
+        }
       }));
     }
 
@@ -461,23 +543,27 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
           modelName: e.model,
           baseUrl: e.baseUrl
         })),
-        ...(hashlineAgentEnabled ? { toolCallMode: 'hashline' } : {})
+        ...(hashlineAgentEnabled ? { toolCallMode: 'hashline' } : {}),
+        workspaceFolder: useChatsStore.getState().getChat(activeChatId)?.workspaceFolder,
       } as any,
       (evt: ChatStreamEvent) => {
         switch (evt.kind) {
           case 'text': {
             // 流式增量文本 → 追加到当前 assistant 消息
-            set({ isGenerating: false });
+            // 合并为单个 set 调用, 避免两次独立重渲染之间的空帧
             set((s) => {
               const currentList = s.conversations[activeChatId] || [];
-              if (currentList.length === 0) return s;
+              if (currentList.length === 0) return { isGenerating: false };
               const newList = [...currentList];
               const lastMsg = { ...newList[newList.length - 1] };
               if (lastMsg.sender === 'assistant') {
                 lastMsg.content += evt.text;
                 newList[newList.length - 1] = lastMsg;
               }
-              return { conversations: { ...s.conversations, [activeChatId]: newList } };
+              return {
+                conversations: { ...s.conversations, [activeChatId]: newList },
+                isGenerating: false,
+              };
             });
             break;
           }
@@ -488,22 +574,51 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
           }
           case 'error': {
             console.error('[aiBackend error]', evt.error);
-            set({ isGenerating: false });
+            // 智能解析错误类型, 给出更精准的提示
+            const rawErr = evt.error || '';
+            let friendlyMsg = '';
+            if (rawErr.includes('HTTP 429') || rawErr.includes('rate limit')) {
+              friendlyMsg = 'LLM 服务商返回 **429 速率限制**：免费额度已用尽或请求过于频繁。请稍后重试，或在「设置 → 模型」中更换/升级服务商。';
+            } else if (rawErr.includes('HTTP 401') || rawErr.includes('Unauthorized') || rawErr.includes('API key')) {
+              friendlyMsg = 'LLM 服务商返回 **401 认证失败**：API Key 无效或已过期。请在「设置 → 模型」中重新输入正确的 API Key。';
+            } else if (rawErr.includes('HTTP 404')) {
+              friendlyMsg = 'LLM 服务商返回 **404 未找到**：请求的模型不存在或端点错误。请检查「设置 → 模型」中的模型 ID 和 Base URL。';
+            } else if (rawErr.includes('HTTP 500') || rawErr.includes('LLM_EXECUTION_FAILED')) {
+              // 区分: LLM_EXECUTION_FAILED 但内部是 429 等 → 已经被上面的条件捕获
+              // 真正的后端 500 → 后端服务异常
+              if (rawErr.includes('LLM HTTP')) {
+                // LLM 调用失败 (非 429/401/404), 提取状态码
+                const m = rawErr.match(/LLM HTTP (\d+)/);
+                const code = m ? m[1] : '';
+                friendlyMsg = `LLM 调用失败 (HTTP ${code})。服务商可能暂时不可用，请稍后重试。`;
+              } else {
+                friendlyMsg = '后端服务异常，请检查 /api/agents/dispatch 是否在运行。';
+              }
+            } else if (rawErr.includes('fetch') || rawErr.includes('NetworkError') || rawErr.includes('Failed to fetch')) {
+              friendlyMsg = '网络连接失败：无法连接到后端服务。请确认后端服务已启动且端口未被占用。';
+            } else {
+              friendlyMsg = `${rawErr}\n\n如持续出现此错误，请检查后端 /api/agents/dispatch 是否在运行。`;
+            }
             set((s) => {
               const currentList = s.conversations[activeChatId] || [];
-              if (currentList.length === 0) return s;
+              if (currentList.length === 0) return { isGenerating: false, streamState: { ...emptyStreamState } };
               const newList = [...currentList];
               const lastMsg = { ...newList[newList.length - 1] };
               if (lastMsg.sender === 'assistant') {
-                lastMsg.content = `❌ **AI 调用失败**：${evt.error}\n\n请检查后端 /api/agents/dispatch 是否在运行。`;
+                lastMsg.content = `❌ **AI 调用失败**：${friendlyMsg}`;
                 newList[newList.length - 1] = lastMsg;
               }
-              return { conversations: { ...s.conversations, [activeChatId]: newList } };
+              return {
+                conversations: { ...s.conversations, [activeChatId]: newList },
+                isGenerating: false,
+                streamState: { ...emptyStreamState },
+              };
             });
             break;
           }
           case 'done': {
-            set({ isGenerating: false });
+            // 清理 streamState, 避免残留的流送面板在下次发送时闪现
+            set({ isGenerating: false, streamState: { ...emptyStreamState } });
             break;
           }
         }
