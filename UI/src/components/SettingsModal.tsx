@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   X, Globe, PlusCircle, Laptop, Cpu, Code2,
-  ShieldCheck, Layers, Navigation, Database, Share2, Save, Settings
+  ShieldCheck, Layers, Navigation, Database, Share2, Save, Settings, Bot
 } from '../utils/icons';
 import LanguageTab from './settingsTabs/LanguageTab';
 import ModelAddTab from './settingsTabs/ModelAddTab';
@@ -9,11 +9,11 @@ import LocalModelTab from './settingsTabs/LocalModelTab';
 import McpTab from './settingsTabs/McpTab';
 import EnvironmentTab from './settingsTabs/EnvironmentTab';
 import SkillsRulesTab from './settingsTabs/SkillsRulesTab';
-import MemoryTab from './settingsTabs/MemoryTab';
 import ProxyTab from './settingsTabs/ProxyTab';
 import KnowledgeBaseTab from './settingsTabs/KnowledgeBaseTab';
 import ChannelsTab from './settingsTabs/ChannelsTab';
 import DataManagementTab from './settingsTabs/DataManagementTab';
+import AgentCustomTab from './settingsTabs/AgentCustomTab';
 
 // 兼容性 re-export：维持历史 import 路径可用
 export { NormalIcon, PerformanceIcon, ExpertIcon, UltimateIcon } from './ChatPanel';
@@ -37,7 +37,7 @@ const TABS: TabItem[] = [
   { id: 'mcp', label: '04. MCP 工具', icon: Cpu },
   { id: 'environment', label: '05. 运行环境', icon: Code2 },
   { id: 'skills-rules', label: '06. 智能规则', icon: ShieldCheck },
-  { id: 'memory', label: '07. 记忆体设置', icon: Layers },
+  { id: 'memory', label: '07. Agent', icon: Bot },
   { id: 'proxy', label: '08. 网络代理', icon: Navigation },
   { id: 'knowledge-base', label: '09. 知识库', icon: Database },
   { id: 'channels', label: '10. 消息连接', icon: Share2 },
@@ -160,7 +160,7 @@ export default function SettingsModal({
               {activeTabId === 'mcp' && <McpTab />}
               {activeTabId === 'environment' && <EnvironmentTab />}
               {activeTabId === 'skills-rules' && <SkillsRulesTab onClose={handleClose} permissionMode={permissionMode} />}
-              {activeTabId === 'memory' && <MemoryTab />}
+              {activeTabId === 'memory' && <AgentCustomTab />}
               {activeTabId === 'proxy' && <ProxyTab />}
               {activeTabId === 'knowledge-base' && <KnowledgeBaseTab />}
               {activeTabId === 'channels' && <ChannelsTab />}

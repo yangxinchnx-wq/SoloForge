@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useMemo, useState } from 'react';
-import { Send, ChevronDown, ChevronUp, FileCode, X, SlidersHorizontal, Check, ShieldAlert } from '../utils/icons';
+import { Send, ChevronDown, ChevronUp, FileCode, X, SlidersHorizontal, Check, ShieldAlert, ThumbsUp, ThumbsDown } from '../utils/icons';
 import { MountTransition } from './MountTransition';
 import TerminalPanelWithWorkdir from './terminal/TerminalPanelWithWorkdir';
 // 2026-07-03 阶段3.1.C: DocsGeneratorModal 抽出为独立子应用, 状态收敛到 useDocsGeneratorStore
@@ -9,6 +9,7 @@ import ResourceManagerBar from './ResourceManagerBar';
 
 import { ModelIcon } from './ModelIcon';
 import { ToolCallCard } from './ToolCallCard';
+import StreamPanel from './StreamPanel';
 import type { ChatPanelProps, ChatSettingsItem } from '../types/chat';
 import { getSettingsSummary } from '../types/chat';
 // 2026-07-03 阶段3.1.B 子组件抽出:
@@ -16,14 +17,9 @@ import { getSettingsSummary } from '../types/chat';
 //   CollapsibleCodeBlock + FormatChatMessage → chatMessage/
 //   6 个 stream 子视图 → streamViews.tsx
 import { CollapsibleCodeBlock, FormatChatMessage } from './chatMessage';
-import {
-  WorkerOutputsView,
-  ScoresView,
-  JudgeView,
-  AuditView,
-  FinalReplyView,
-  SuggestEnableView,
-} from './streamViews';
+import { SuggestEnableView } from './streamViews';
+// StreamPanel 选择器: 获取事件缓冲 (通知用)
+import { useEventBufferForChat } from '../state/streamingStore';
 // 2026-07-03 阶段3.1.E: 12 个 state + 9 个 handler 收敛到 useChatStore
 import { useChatStore, fallbackActiveSettings } from '../state/useChatStore';
 import { NormalIcon, PerformanceIcon, ExpertIcon, UltimateIcon } from './permissionModeIcons';
@@ -267,8 +263,60 @@ export default function ChatPanel({
     }
   }, [activeMessages]);
 
+  // StreamPanel 事件缓冲 (按 chatId 隔离, 仅用于事件到达通知)
+  const eventBuffer = useEventBufferForChat(activeChatId);
+
   // 2026-07-03 阶段3.1.E: 发送时把 inputRef 传给 store action, 让 store 也能 focus 输入框
   const handleSend = () => handleSendFromStore(inputRef);
+
+  // ── Phase 5 实时训练: 👍/👎 反馈按钮 ──────────────────────────────
+  // 每条 assistant 消息独立追踪反馈状态, 累积 negative 反馈触发 PromptOptimizer
+  // 后端: POST /api/java-agent/api/feedback (FeedbackController)
+  // 触发阈值: soloforge.training.feedback.trigger-threshold (默认 5)
+  const [feedbackMap, setFeedbackMap] = useState<Record<number, 'up' | 'down' | undefined>>({});
+  const [feedbackBusy, setFeedbackBusy] = useState<Record<number, boolean>>({});
+
+  const submitFeedback = async (index: number, positive: boolean) => {
+    if (feedbackMap[index] || feedbackBusy[index]) return; // 已反馈 / 请求中
+    setFeedbackBusy(prev => ({ ...prev, [index]: true }));
+    setFeedbackMap(prev => ({ ...prev, [index]: positive ? 'up' : 'down' }));
+    const msg = activeMessages[index];
+    // 向前扫描找触发该回复的用户消息 (ChatMessage 无 parentId, 靠数组顺序反查)
+    let userMessage = '';
+    for (let i = index - 1; i >= 0; i--) {
+      if (activeMessages[i].sender === 'user') {
+        userMessage = activeMessages[i].content || '';
+        break;
+      }
+    }
+    try {
+      const res = await fetch('/api/java-agent/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentId: activeSettings.agentId || 'code_agent',
+          positive,
+          message: userMessage,
+          response: msg?.content || '',
+          chatId: activeChatId,
+        }),
+      });
+      if (!res.ok) {
+        // 提交失败: 回滚本地状态, 允许重试
+        setFeedbackMap(prev => ({ ...prev, [index]: undefined }));
+      } else {
+        const data = await res.json().catch(() => ({}));
+        // 新方案: 反馈写入案例库, 不再自动触发训练
+        if (data?.caseId) {
+          console.info(`[案例入库] ${data.agentId || activeSettings.agentId} caseId=${data.caseId} positive=${positive}`);
+        }
+      }
+    } catch (e) {
+      setFeedbackMap(prev => ({ ...prev, [index]: undefined })); // 网络失败回滚
+    } finally {
+      setFeedbackBusy(prev => ({ ...prev, [index]: false }));
+    }
+  };
 
   return (
     <div className="flex-1 h-full bg-bg flex flex-col overflow-hidden">
@@ -398,65 +446,68 @@ export default function ChatPanel({
                       </div>
                     )}
                   </div>
+                  {/* Phase 5: 👍/👎 反馈按钮 — 仅 assistant 消息, 累积 negative 触发 PromptOptimizer */}
+                  {!isUser && !isGenerating && (
+                    <div className="flex items-center gap-1.5 pl-1 pt-0.5">
+                      <button
+                        type="button"
+                        aria-label="赞同此回复"
+                        title="赞同此回复"
+                        disabled={!!feedbackMap[index] || feedbackBusy[index]}
+                        onClick={() => submitFeedback(index, true)}
+                        className={`p-1 rounded-md transition-all ${
+                          feedbackMap[index] === 'up'
+                            ? 'bg-emerald-500/15 text-emerald-500'
+                            : feedbackMap[index]
+                              ? 'text-on-surface/20 cursor-not-allowed'
+                              : 'text-on-surface/35 hover:text-emerald-500 hover:bg-emerald-500/10 cursor-pointer'
+                        }`}
+                      >
+                        <ThumbsUp className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="不赞同此回复 (累积触发 Prompt 优化)"
+                        title="不赞同此回复 (累积触发 Prompt 优化)"
+                        disabled={!!feedbackMap[index] || feedbackBusy[index]}
+                        onClick={() => submitFeedback(index, false)}
+                        className={`p-1 rounded-md transition-all ${
+                          feedbackMap[index] === 'down'
+                            ? 'bg-rose-500/15 text-rose-500'
+                            : feedbackMap[index]
+                              ? 'text-on-surface/20 cursor-not-allowed'
+                              : 'text-on-surface/35 hover:text-rose-500 hover:bg-rose-500/10 cursor-pointer'
+                        }`}
+                      >
+                        <ThumbsDown className="w-3.5 h-3.5" />
+                      </button>
+                      {feedbackBusy[index] && (
+                        <span className="text-[9px] text-on-surface/40 ml-0.5">提交中…</span>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             );
           })}
 
           {isGenerating && (
-            <div
-              className="sf-anim sf-anim-slide-up flex flex-col gap-2.5 text-left"
-            >
-              {/* Header Row: Avatar + Loading info */}
-              <div className="flex gap-3.5 items-center mb-1">
-                {/* Avatar block — 与模型选择器图标一致, 无旋转箭头 */}
-                <div className="w-11 h-11 rounded-full bg-on-surface/5 border border-on-surface/10 flex items-center justify-center shrink-0">
-                  {mainModel ? (
-                    <ModelIcon modelName={mainModel} size={32} className="shrink-0" iconType={mainModelIconType} />
-                  ) : (
-                    <span className="text-on-surface/20 text-xs font-bold">—</span>
-                  )}
+            <div className="sf-anim sf-anim-slide-up">
+              {/* SuggestEnableView 保留: StreamPanel 未处理 suggest_enable 事件 */}
+              {streamState.suggestEnables.length > 0 && (
+                <div className="flex flex-col gap-2 max-w-[95%] pl-[58px] text-left mb-2">
+                  <SuggestEnableView items={streamState.suggestEnables} onAccept={handleAcceptEnable} />
                 </div>
+              )}
 
-                {/* Info block (Model name + Loading status) */}
-                <div className="flex items-center gap-2 font-sans">
-                  <span className="text-[11px] font-bold text-[#3b82f6]">
-                    {mainModel} 正在响应中
-                  </span>
-                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse shrink-0" />
-                  <span className="text-[9px] text-on-surface/30 font-mono">排队分析中</span>
-                </div>
-              </div>
-
-              {/* 流式面板：6 个子组件按出现顺序堆叠 */}
-              <div className="flex flex-col gap-2 max-w-[95%] font-sans pl-[58px] text-left">
-                <SuggestEnableView items={streamState.suggestEnables} onAccept={handleAcceptEnable} />
-                <WorkerOutputsView outputs={streamState.workerOutputs} />
-                {permissionMode === 'ultimate' && <ScoresView scores={streamState.scores} />}
-                {permissionMode === 'ultimate' && <JudgeView chosen={streamState.judgeChosen} reasoning={streamState.judgeReasoning} />}
-                {streamState.reply && permissionMode !== 'ultimate' && (
-                  <FinalReplyView
-                    content={streamState.reply}
-                    label={permissionMode === 'expert' ? '主模型汇总 + 三段式审计' : '主模型汇总'}
-                  />
-                )}
-                {permissionMode === 'ultimate' && streamState.deliver && (
-                  <FinalReplyView content={streamState.deliver} label="Deliverer 整合交付" />
-                )}
-                {streamState.toolCalls.length > 0 && (
-                  <div className="flex flex-col gap-1.5">
-                    <div className="text-[9px] uppercase tracking-wider text-on-surface/40 font-semibold">
-                      工具调用进行中 · {streamState.toolCalls.length}
-                    </div>
-                    {streamState.toolCalls.map((tc) => (
-                      <ToolCallCard key={tc.id} call={tc} />
-                    ))}
-                  </div>
-                )}
-                {streamState.auditFindings.length > 0 && (
-                  <AuditView findings={streamState.auditFindings} />
-                )}
-              </div>
+              {/* StreamPanel: AI 行为流送区 */}
+              <StreamPanel
+                chatId={activeChatId}
+                mainModel={mainModel}
+                modelCount={1 + (secModels?.length || 0)}
+                permissionMode={permissionMode}
+                events={eventBuffer ?? []}
+              />
             </div>
           )}
 

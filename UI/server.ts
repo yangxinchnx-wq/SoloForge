@@ -3,9 +3,8 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
-import os from "os";
 import fs from "fs";
-import crypto from "crypto";
+import { Worker } from "worker_threads";
 import { createProxyMiddleware, fixRequestBody } from "http-proxy-middleware";
 import { registerBrowserUseRoutes } from "../src/core/browser-use/routes";
 import { bootstrapCanvasSessionLayer } from "./src/server/bootstrap/canvas";
@@ -20,23 +19,48 @@ dotenv.config();
 // SoloForge 原后端地址（src/index.ts），所有业务 API 经此代理
 const BACKEND_URL = process.env.SOLOFORGE_BACKEND_URL || "http://localhost:3001";
 
-// Helper for CPU calculation
-function getCpuTicks() {
-  const cpus = os.cpus();
-  if (!cpus || cpus.length === 0) return { idle: 0, total: 0 };
-  let totalIdle = 0;
-  let totalTick = 0;
-  cpus.forEach((cpu) => {
-    for (const type in cpu.times) {
-      totalTick += cpu.times[type as keyof typeof cpu.times];
-    }
-    totalIdle += cpu.times.idle;
-  });
-  return {
-    idle: totalIdle / cpus.length,
-    total: totalTick / cpus.length
-  };
-}
+// ============================================================
+// 系统指标采样 worker (CPU/内存/磁盘 IO 全部在 worker 内执行)
+//   - 主线程不再有 setInterval,事件循环零阻塞
+//   - 磁盘 IO 改为按需采样(收到 /api/system-metrics 请求才做)
+//   - CPU/内存由 worker 内部 500ms 轮询,只读不写
+// ============================================================
+const __filename_srv = typeof __filename !== "undefined" ? __filename : fileURLToPath(import.meta.url);
+const __dirname_srv = path.dirname(__filename_srv);
+const metricsWorker = new Worker(path.join(__dirname_srv, "metricsWorker.mjs"));
+
+// 缓存最近一次指标(主线程只读,worker 推送更新)
+let lastMetrics: any = {
+  cpu: 0,
+  memory: { total: 0, free: 0, used: 0, percentage: 0 },
+  disk: {
+    readSpeed: 0,
+    writeSpeed: 0,
+    drives: [],
+  },
+};
+
+// worker 主动推送时,更新主线程缓存
+metricsWorker.on("message", (msg: any) => {
+  if (msg?.type === "metrics" || msg?.type === "sampled") {
+    lastMetrics = {
+      cpu: msg.cpu,
+      memory: msg.memory,
+      disk: {
+        readSpeed: msg.readSpeed,
+        writeSpeed: msg.writeSpeed,
+        drives: msg.drives || lastMetrics.disk?.drives || [],
+      },
+    };
+  }
+});
+
+metricsWorker.on("error", (err: Error) => {
+  console.error("[metricsWorker] error:", err.message);
+});
+
+// 启动时预触发一次采样,让首次请求有数据
+metricsWorker.postMessage({ type: "sample-and-get" });
 
 async function startServer() {
   const app = express();
@@ -129,8 +153,7 @@ async function startServer() {
   //   /api/browser-use/stream/:id     — SSE 步进流
   //   /api/browser-use/health         — 探活
   // ============================================================
-  const __filename_srv = typeof __filename !== "undefined" ? __filename : fileURLToPath(import.meta.url);
-  const repoRootSrv = path.resolve(path.dirname(__filename_srv), "..", "..");
+  const repoRootSrv = path.resolve(__dirname_srv, "..", "..");
   registerBrowserUseRoutes(app, repoRootSrv);
 
   // ============================================================
@@ -465,6 +488,8 @@ async function startServer() {
     '/api/auth',      // Token bootstrap + 自动刷新 (/api/auth/bootstrap)
     '/api/terminal',  // 真实终端命令执行 (spawn shell → SSE 推 stdout/stderr/exit)
     '/api/names',     // 用户名称自定义 (双击胶囊名称 → 写入 names.txt [CUSTOM] 槽位)
+    '/api/java-agent', // Java Spring AI Agent 服务 (8770) 透传: /api/java-agent/* → 3001 → 8770
+    '/api/feedback',   // 经验案例库反馈 (经 3001 代理到 Java Agent 8770)
   ];
   for (const p of backendApiPrefixes) {
     // 关键：用 pathFilter 精确过滤，且不修改 req.url（HPM 默认行为会改写为相对路径）
@@ -649,193 +674,26 @@ async function startServer() {
     }
   });
 
-  // REAL TIME CPU, MEMORY & DISK TELEMETRY ENDPOINT WITH ACTIVE READ/WRITE SPEED SAMPLER
-  let lastTicks = getCpuTicks();
-  let cachedCpuUsage = 5; // default fallback
-  let cachedMem = {
-    total: os.totalmem(),
-    free: os.freemem(),
-    used: os.totalmem() - os.freemem(),
-    percentage: Math.round(((os.totalmem() - os.freemem()) / os.totalmem()) * 100)
-  };
-
-  let cachedReadSpeed = 0.00; // in MB/s
-  let cachedWriteSpeed = 0.00; // in MB/s
-
-  function getLogicalDrives() {
-    const drives: Array<{ id: string; name: string; path: string; total: number; free: number; used: number; percentage: number }> = [];
-    const isWin = os.platform() === "win32";
-    
-    if (isWin) {
-      // Check Windows drives C to H
-      for (let i = 67; i <= 72; i++) { // 'C' to 'H'
-        const driveLetter = String.fromCharCode(i);
-        const drivePath = `${driveLetter}:\\`;
-        try {
-          if (fs.existsSync(drivePath)) {
-            // fs.statfsSync is supported in modern Node v18.15.0+
-            const stats = fs.statfsSync(drivePath);
-            const total = stats.blocks * stats.bsize;
-            const free = stats.bfree * stats.bsize;
-            const used = total - free;
-            const percentage = Math.round((used / total) * 100);
-            drives.push({
-              id: driveLetter.toLowerCase(),
-              name: `本地磁盘 (${driveLetter}:)`,
-              path: drivePath,
-              total,
-              free,
-              used,
-              percentage
-            });
-          }
-        } catch (err) {
-          // Ignore unready drives
-        }
-      }
-    } else {
-      // Linux/Unix environments (like our Cloud Run container)
-      const mountPoints = [
-        { name: "系统根主硬盘 (/)", path: "/" },
-        { name: "沙箱运行缓存区 (/tmp)", path: "/tmp" },
-        { name: "内存高速缓存 (/dev/shm)", path: "/dev/shm" }
-      ];
-      mountPoints.forEach((p, idx) => {
-        try {
-          if (fs.existsSync(p.path)) {
-            const stats = fs.statfsSync(p.path);
-            const total = stats.blocks * stats.bsize;
-            const free = stats.bfree * stats.bsize;
-            const used = total - free;
-            const percentage = Math.round((used / total) * 100);
-            drives.push({
-              id: `drive-${idx}`,
-              name: p.name,
-              path: p.path,
-              total,
-              free,
-              used,
-              percentage
-            });
-          }
-        } catch (err) {
-          // Ignore
-        }
-      });
-    }
-
-    // Default fallback if no drives were discovered or permissions failed
-    if (drives.length === 0) {
-      drives.push({
-        id: "c",
-        name: "系统主盘 (C:)",
-        path: isWin ? "C:\\" : "/",
-        total: 512 * 1024 * 1024 * 1024,
-        free: 184 * 1024 * 1024 * 1024,
-        used: 328 * 1024 * 1024 * 1024,
-        percentage: 64
-      });
-      drives.push({
-        id: "d",
-        name: "数据盘 (D:)",
-        path: isWin ? "D:\\" : "/data",
-        total: 1024 * 1024 * 1024 * 1024,
-        free: 580 * 1024 * 1024 * 1024,
-        used: 444 * 1024 * 1024 * 1024,
-        percentage: 43
-      });
-    }
-
-    return drives;
-  }
-
-  // Active micro-benchmark disk read/write throughput sampling every 500ms
-  setInterval(() => {
-    try {
-      const tempPath = os.tmpdir();
-      const benchmarkFile = path.join(tempPath, `soloforge_io_bench_${process.pid}.bin`);
-      const payloadSize = 256 * 1024; // 256 KB buffer payload
-      const buffer = crypto.randomBytes(payloadSize);
-
-      // Measure real Write Throughput
-      const wStart = process.hrtime();
-      fs.writeFileSync(benchmarkFile, buffer);
-      const wDiff = process.hrtime(wStart);
-      const wTime = wDiff[0] + wDiff[1] / 1e9;
-      const targetWriteSpeed = (payloadSize / (1024 * 1024)) / (wTime || 0.001); // in MB/s
-
-      // Measure real Read Throughput
-      const rStart = process.hrtime();
-      const readBuf = fs.readFileSync(benchmarkFile);
-      const rDiff = process.hrtime(rStart);
-      const rTime = rDiff[0] + rDiff[1] / 1e9;
-      const targetReadSpeed = (readBuf.length / (1024 * 1024)) / (rTime || 0.001); // in MB/s
-
-      // Delete the bench file safely
-      try {
-        fs.unlinkSync(benchmarkFile);
-      } catch (err) {}
-
-      // Apply low-pass smoothing filters to model real drive behaviors
-      let finalWrite = Number((targetWriteSpeed * 0.4 + cachedWriteSpeed * 0.6).toFixed(2));
-      let finalRead = Number((targetReadSpeed * 0.3 + cachedReadSpeed * 0.7).toFixed(2));
-
-      // Limit caching buffer speeds as real PCIe/SSD read/writes
-      if (finalWrite > 2500) finalWrite = 240 + Math.random() * 50;
-      if (finalRead > 3500) finalRead = 450 + Math.random() * 80;
-
-      // Ensure slight positive speeds to indicate live monitoring
-      cachedWriteSpeed = Math.max(0.01, finalWrite);
-      cachedReadSpeed = Math.max(0.01, finalRead);
-
-    } catch (e) {
-      // Permission limits fallback with highly realistic Windows hardware readings
-      cachedReadSpeed = Number((12.5 + Math.sin(Date.now() / 3000) * 8 + Math.random() * 4).toFixed(2));
-      cachedWriteSpeed = Number((6.8 + Math.sin(Date.now() / 4500) * 4 + Math.random() * 2).toFixed(2));
-    }
-  }, 500);
-
-  // Keep CPU & Memory background sampler going to update metrics independently at 500ms
-  setInterval(() => {
-    try {
-      const currentTicks = getCpuTicks();
-      const idleDiff = currentTicks.idle - lastTicks.idle;
-      const totalDiff = currentTicks.total - lastTicks.total;
-      
-      if (totalDiff > 0) {
-        cachedCpuUsage = Math.max(0, Math.min(100, Math.round(100 - (100 * idleDiff) / totalDiff)));
-      }
-      lastTicks = currentTicks;
-
-      const totalMem = os.totalmem();
-      const freeMem = os.freemem();
-      const usedMem = totalMem - freeMem;
-      const percentage = Math.max(0, Math.min(100, Math.round((usedMem / totalMem) * 100)));
-
-      cachedMem = {
-        total: totalMem,
-        free: freeMem,
-        used: usedMem,
-        percentage
-      };
-    } catch (e) {
-      // prevent crashing
-    }
-  }, 500);
-
+  // ============================================================
+  // /api/system-metrics — CPU/内存/磁盘 IO 指标端点
+  //   - 主线程零计算,只读 worker 推送的缓存
+  //   - 每次请求触发一次按需磁盘 IO 采样(worker 内节流 1s/次)
+  //   - 磁盘驱动器列表由 worker 在 'sample-and-get' 时返回
+  // ============================================================
   app.get("/api/system-metrics", (req, res) => {
     try {
-      const currentDrives = getLogicalDrives();
+      // 触发 worker 异步采样(不等待,下次请求能看到新值)
+      metricsWorker.postMessage({ type: "sample-and-get" });
       res.json({
         success: true,
         timestamp: Date.now(),
-        cpu: cachedCpuUsage,
-        memory: cachedMem,
+        cpu: lastMetrics.cpu,
+        memory: lastMetrics.memory,
         disk: {
-          readSpeed: cachedReadSpeed,
-          writeSpeed: cachedWriteSpeed,
-          drives: currentDrives
-        }
+          readSpeed: lastMetrics.disk?.readSpeed || 0,
+          writeSpeed: lastMetrics.disk?.writeSpeed || 0,
+          drives: lastMetrics.disk?.drives || [],
+        },
       });
     } catch (err: any) {
       res.json({

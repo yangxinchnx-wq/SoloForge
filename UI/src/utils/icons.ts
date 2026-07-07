@@ -74,6 +74,8 @@ import {
   FolderIcon,
   FolderOpenIcon,
   FolderPlusIcon,
+  HandThumbUpIcon,
+  HandThumbDownIcon,
   HeartIcon,
   InformationCircleIcon,
   KeyIcon,
@@ -169,6 +171,7 @@ export const EyeOff = EyeSlashIcon;
 export const Link2 = LinkIcon;
 export const Minus = MinusIcon;
 export const MoreVertical = EllipsisVerticalIcon;
+export const Bookmark = BookmarkIcon;
 export const Pin = BookmarkIcon;                  // 固定 → 书签
 export const Plus = PlusIcon;
 export const PlusCircle = PlusCircleIcon;
@@ -248,6 +251,10 @@ export const User = UserIcon;
 export const Users = UsersIcon;
 export const Crown = StarIcon;                    // 皇冠 → 星标 (高级/所有者)
 export const Heart = HeartIcon;
+
+// 反馈
+export const ThumbsUp = HandThumbUpIcon;
+export const ThumbsDown = HandThumbDownIcon;
 
 // 工具 / 配置
 export const Compass = Squares2X2Icon;            // 指南针 → 网格浏览

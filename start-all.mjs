@@ -16,7 +16,10 @@
 //   5. MARL Python 服务 (8765 + 8766) python -m marl_service.server_prod
 //      8765 = gRPC 推理 (audit B1 修复后接 reputation-outbox-bridge)
 //      8766 = HTTP /sync/reputation 接收端 (audit B2 修复后接 outbox worker, M2 幂等键)
-//   6. Electron 桌面壳 (可选)
+//   6. Java Spring AI Agent (8770)   solo-forge-agent/target/solo-forge-agent-1.0.0.jar
+//      Spring AI 编排, 接 AI Society SQLite + MARL 训练闭环
+//      Node.js 通过 /api/java-agent/* 转发到此端口
+//   7. Electron 桌面壳 (可选)
 // ─────────────────────────────────────────────────────────────────
 
 import { spawn, execSync } from "node:child_process";
@@ -67,6 +70,11 @@ const UI_TSX_CLI = path.join(UI, "node_modules", "tsx", "dist", "cli.mjs");
 
 const ELECTRON_LAUNCH = path.join(UI, "electron", "launch.cjs");
 
+// Java Spring AI Agent 服务 (8770)
+const JAVA_AGENT_DIR = path.join(ROOT, "solo-forge-agent");
+const JAVA_AGENT_JAR = path.join(JAVA_AGENT_DIR, "target", "solo-forge-agent-1.0.0.jar");
+const JAVA_PORT = 8770;
+
 const PORTS = {
   3000: "UI dev server (Vite + Express)",
   3001: "SoloForge API Server (主内核)",
@@ -74,6 +82,7 @@ const PORTS = {
   6379: "Garnet 缓存 (Redis 协议)",
   8765: "MARL Python gRPC 推理",
   8766: "MARL Python /sync/reputation HTTP (P9 接收端, audit B2 修复)",
+  8770: "Java Spring AI Agent 服务 (solo-forge-agent)",
   9090: "Prometheus 指标导出",
 };
 
@@ -152,6 +161,10 @@ async function checkPrereqs() {
   line("UI tsx cli",      haveFile(UI_TSX_CLI), UI_TSX_CLI);
   line("Electron launch", haveFile(ELECTRON_LAUNCH), ELECTRON_LAUNCH);
   line("marl module",     haveDir(path.join(PY, "marl_service")), "python/marl_service");
+  line("java agent jar",  haveFile(JAVA_AGENT_JAR), JAVA_AGENT_JAR + " (不存在则启动时自动 mvnw 构建)");
+  line("java runtime",    (() => {
+    try { execSync("java -version", { stdio: "ignore", shell: isWin ? true : undefined }); return true; } catch { return false; }
+  })(), "java -version");
   line("browser-use pkg", false, "lazy-spawn, no daemon");
 
   console.log(BOLD("\n[Self-check] 依赖与二进制体检"));
@@ -159,7 +172,8 @@ async function checkPrereqs() {
   for (const l of lines) {
     const tag = l.ok ? OK("✓") : FAIL("✗");
     console.log(`  ${tag} ${l.name.padEnd(18)} ${DIM(l.detail || "")}`);
-    if (!l.ok && l.name !== "Garnet data dir" && l.name !== "browser-use pkg") bad++;
+    if (!l.ok && l.name !== "Garnet data dir" && l.name !== "browser-use pkg"
+        && l.name !== "java agent jar" && l.name !== "java runtime") bad++;
   }
 
   console.log(BOLD("\n[Self-check] 端口占用"));
@@ -258,6 +272,68 @@ async function startMarl() {
   });
 }
 
+/**
+ * 尝试构建 Java Agent JAR
+ * 优先用 mvnw, 失败则 fallback 到系统 mvn
+ */
+function tryMavenBuild() {
+  const mvw = path.join(JAVA_AGENT_DIR, isWin ? "mvnw.cmd" : "mvnw");
+  // 1. 尝试 mvnw
+  if (haveFile(mvw)) {
+    try {
+      log("java-agent", "尝试 mvnw 构建...");
+      execSync(`${mvw} -q -DskipTests package`, {
+        cwd: JAVA_AGENT_DIR, stdio: "inherit", env: process.env, shell: isWin,
+      });
+      return true;
+    } catch (e) {
+      log("java-agent", WARN(`mvnw 构建失败 (${e.message}), 尝试系统 mvn...`));
+    }
+  }
+  // 2. Fallback: 系统 mvn
+  try {
+    log("java-agent", "尝试系统 mvn 构建...");
+    execSync("mvn -q -DskipTests package", {
+      cwd: JAVA_AGENT_DIR, stdio: "inherit", env: process.env, shell: isWin,
+    });
+    return true;
+  } catch (e) {
+    log("java-agent", FAIL(`mvn 构建也失败: ${e.message}; 跳过`));
+    return false;
+  }
+}
+
+async function startJavaAgent() {
+  if (await portOpen("127.0.0.1", JAVA_PORT, 200)) {
+    log("java-agent", WARN(`${JAVA_PORT} 已占用,假定已在运行`));
+    return null;
+  }
+  // 优先用已构建的 fat jar; 不存在则尝试构建
+  let jarPath = JAVA_AGENT_JAR;
+  if (!haveFile(jarPath)) {
+    log("java-agent", WARN(`未找到 ${jarPath},尝试构建...`));
+    const buildOk = tryMavenBuild();
+    if (!buildOk) return null;
+    if (!haveFile(jarPath)) {
+      log("java-agent", FAIL(`构建完成但仍找不到 ${jarPath}; 跳过`));
+      return null;
+    }
+  }
+  // 校验 java 可执行
+  let javaExe = "java";
+  if (isWin) {
+    const javaHome = process.env.JAVA_HOME;
+    if (javaHome) javaExe = path.join(javaHome, "bin", "java.exe");
+  }
+  return spawnBg("java-agent", javaExe, [
+    "-jar", jarPath,
+    `--server.port=${JAVA_PORT}`,
+  ], {
+    cwd: JAVA_AGENT_DIR,
+    env: { ...process.env },
+  });
+}
+
 async function startElectron() {
   if (!haveFile(ELECTRON_LAUNCH)) {
     log("electron", FAIL(`找不到 ${ELECTRON_LAUNCH}; 跳过`));
@@ -325,6 +401,12 @@ async function main() {
   const gr = await waitPort("127.0.0.1", 8766, "marl-http", 10000);
   log("WAIT", `marl-http=${gr ? "OK" : "TIMEOUT"} (audit B2 修复)`);
 
+  // Java Spring AI Agent 服务 (8770) — 依赖 SQLite(AI Society) + MARL(8765) + Garnet(6379)
+  procs.push({ name: "java-agent", p: await startJavaAgent() });
+  log("WAIT", "等 Java Agent 8770 就绪(最多 25s)...");
+  const gj = await waitPort("127.0.0.1", JAVA_PORT, "java-agent", 25000);
+  log("WAIT", `java-agent=${gj ? "OK" : "TIMEOUT"}`);
+
   if (!NO_ELECTRON) {
     procs.push({ name: "electron", p: await startElectron() });
   }
@@ -338,6 +420,7 @@ async function main() {
   console.log(`  ${BOLD("Git 服务")}     ${INFO(`http://localhost:${GIT_PORT}`)}`);
   console.log(`  ${BOLD("MARL 推理")}    ${INFO("http://localhost:8765")}`);
   console.log(`  ${BOLD("MARL Reputation Sync")} ${INFO("http://localhost:8766/sync/reputation")}`);
+  console.log(`  ${BOLD("Java Agent")}    ${INFO(`http://localhost:${JAVA_PORT}`)}  (Spring AI 编排, /api/chat/send)`);
   console.log(`  ${BOLD("Garnet 缓存")}  ${INFO(`127.0.0.1:${GARNET_PORT}`)}`);
   console.log(`  ${BOLD("Prometheus")}   ${INFO("http://localhost:9090/metrics")}`);
   console.log(`  ${BOLD("SSE 事件流")}  ${INFO("http://localhost:3001/api/events/stream")}`);
