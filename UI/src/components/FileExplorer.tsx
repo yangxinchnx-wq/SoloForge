@@ -1,13 +1,11 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   ChevronDown, 
   ChevronRight, 
   Folder, 
   FolderOpen, 
   FileCode, 
-  Plus, 
   RefreshCw, 
-  Terminal, 
   X, 
   FolderPlus, 
   FilePlus, 
@@ -21,12 +19,12 @@ import {
   ExternalLink,
   MoreVertical,
   Check,
-  AlertCircle,
   Search,
   FileText
 } from '../utils/icons';
 import { MountTransition } from './MountTransition';
 import type { FileNode } from '../shared/types/file';
+import { useChatsStore } from '../state/chatsStore';
 
 interface FileExplorerProps {
   selectedFile: string;
@@ -36,8 +34,7 @@ interface FileExplorerProps {
   isFloatingEditorOpen?: boolean;
 }
 
-interface WorkspaceTab {
-  id: string;
+interface WorkspaceData {
   name: string;
   tree: FileNode;
   openFolders: Record<string, boolean>;
@@ -187,57 +184,63 @@ const getFileSize = (path: string): string => {
 };
 
 export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile, onClose, isFloatingEditorOpen }: FileExplorerProps) {
-  // ── Workspace Tabs ──────────────────────────────────────────
-  const [tabs, setTabs] = useState<WorkspaceTab[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const saved = localStorage.getItem('soloforge_workspace_tabs');
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            // Migrate: clear old BlogSystem tabs
-            const migrated = parsed.map((t: any) => t.tree?.name === 'BlogSystem' ? { ...t, tree: { name: '工作区', type: 'folder', path: '工作区', children: [] } } : t);
-            return migrated;
+  // ── Chat-aligned workspaces ────────────────────────────────
+  const selectedChatId = useChatsStore(s => s.selectedChatId);
+  const updateChat = useChatsStore(s => s.updateChat);
+
+  // Clean up legacy localStorage key
+  useEffect(() => {
+    try { localStorage.removeItem('soloforge_workspace_tabs'); } catch {}
+  }, []);
+
+  // workspaces: chatId → workspace data
+  const [workspaces, setWorkspaces] = useState<Record<string, WorkspaceData>>(() => {
+    try {
+      const saved = localStorage.getItem('soloforge_workspaces');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Migrate: clear old BlogSystem data
+        for (const key of Object.keys(parsed)) {
+          if (parsed[key]?.tree?.name === 'BlogSystem') {
+            parsed[key].tree = { name: parsed[key].name || '工作区', type: 'folder', path: parsed[key].name || '工作区', children: [] };
           }
         }
-      } catch {}
-    }
-    return [{ id: 'tab-1', name: '工作区', tree: { name: '工作区', type: 'folder', path: '工作区', children: [] }, openFolders: {} }];
+        return parsed;
+      }
+    } catch {}
+    return {};
   });
-  const [activeTabIndex, setActiveTabIndex] = useState(0);
 
-  // Persist tabs
+  // Current chat's workspace (derived)
+  const chatId = selectedChatId || 'default';
+  const currentWorkspace = workspaces[chatId];
+  const tree: FileNode = currentWorkspace?.tree ?? { name: '无工作区', type: 'folder', path: '无工作区', children: [] };
+  const openFolders: Record<string, boolean> = currentWorkspace?.openFolders ?? {};
+  const workspaceName = currentWorkspace?.name ?? '';
+
+  // Persist workspaces
   useEffect(() => {
-    try { localStorage.setItem('soloforge_workspace_tabs', JSON.stringify(tabs)); } catch {}
-  }, [tabs]);
+    try { localStorage.setItem('soloforge_workspaces', JSON.stringify(workspaces)); } catch {}
+  }, [workspaces]);
 
-  // Derived: active tab's tree and openFolders (stable references)
-  const activeTab = tabs[activeTabIndex] || tabs[0];
-  const tree = activeTab.tree;
-  const openFolders = activeTab.openFolders;
-
-  // Custom setters that update the active tab in the tabs array
+  // Update active workspace's tree
   const setTree = useCallback((updater: FileNode | ((prev: FileNode) => FileNode)) => {
-    setTabs(prev => {
-      const idx = prev.length > activeTabIndex ? activeTabIndex : 0;
-      const current = prev[idx];
-      const next = typeof updater === 'function' ? (updater as (p: FileNode) => FileNode)(current.tree) : updater;
-      const updated = [...prev];
-      updated[idx] = { ...current, tree: next };
-      return updated;
+    setWorkspaces(prev => {
+      const ws = prev[chatId];
+      if (!ws) return prev;
+      const next = typeof updater === 'function' ? (updater as (p: FileNode) => FileNode)(ws.tree) : updater;
+      return { ...prev, [chatId]: { ...ws, tree: next } };
     });
-  }, [activeTabIndex]);
+  }, [chatId]);
 
   const setOpenFolders = useCallback((updater: Record<string, boolean> | ((prev: Record<string, boolean>) => Record<string, boolean>)) => {
-    setTabs(prev => {
-      const idx = prev.length > activeTabIndex ? activeTabIndex : 0;
-      const current = prev[idx];
-      const next = typeof updater === 'function' ? (updater as (p: Record<string, boolean>) => Record<string, boolean>)(current.openFolders) : updater;
-      const updated = [...prev];
-      updated[idx] = { ...current, openFolders: next };
-      return updated;
+    setWorkspaces(prev => {
+      const ws = prev[chatId];
+      if (!ws) return prev;
+      const next = typeof updater === 'function' ? (updater as (p: Record<string, boolean>) => Record<string, boolean>)(ws.openFolders) : updater;
+      return { ...prev, [chatId]: { ...ws, openFolders: next } };
     });
-  }, [activeTabIndex]);
+  }, [chatId]);
 
   const [refreshKey, setRefreshKey] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -287,13 +290,10 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
     } catch {}
   }, []);
 
-  // ── Tab management helpers ─────────────────────────────────
-  const tabCounterRef = useRef(1);
-  const [editingTabId, setEditingTabId] = useState<string | null>(null);
-  const [editingTabName, setEditingTabName] = useState('');
+  // ── Workspace binding to chat ──────────────────────────────
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [isLoadingFolder, setIsLoadingFolder] = useState(false);
 
-  // Recursively read a directory handle into a FileNode tree
   const readDirectoryRecursive = async (
     dirHandle: FileSystemDirectoryHandle,
     dirName: string,
@@ -301,25 +301,19 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
     depth: number = 0,
   ): Promise<FileNode> => {
     const children: FileNode[] = [];
-    // Limit depth to avoid extremely deep recursion on large repos
     if (depth < 12) {
       try {
         for await (const entry of dirHandle.values()) {
-          // Skip hidden files/folders and node_modules
           if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === '__pycache__') continue;
           const entryPath = `${parentPath}/${entry.name}`;
           if (entry.kind === 'file') {
             children.push({ name: entry.name, type: 'file', path: entryPath });
           } else if (entry.kind === 'directory') {
-            const subTree = await readDirectoryRecursive(entry, entry.name, entryPath, depth + 1);
-            children.push(subTree);
+            children.push(await readDirectoryRecursive(entry, entry.name, entryPath, depth + 1));
           }
         }
-      } catch {
-        // Permission errors on some subdirs are non-fatal
-      }
+      } catch {}
     }
-    // Sort: folders first, then files, alphabetically
     children.sort((a, b) => {
       if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
       return a.name.localeCompare(b.name);
@@ -327,87 +321,109 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
     return { name: dirName, type: 'folder', path: parentPath, children };
   };
 
-  const addTab = useCallback(async () => {
-    // Try native folder picker first
-    if (typeof window !== 'undefined' && 'showDirectoryPicker' in window) {
-      try {
-        setIsLoadingFolder(true);
-        const dirHandle = await (window as any).showDirectoryPicker({ mode: 'read' });
-        const folderName = dirHandle.name;
-        const treeData = await readDirectoryRecursive(dirHandle, folderName, folderName);
+  // Bind a loaded tree to the current chat
+  const bindTreeToChat = useCallback((folderName: string, treeData: FileNode) => {
+    setWorkspaces(prev => ({
+      ...prev,
+      [chatId]: { name: folderName, tree: treeData, openFolders: { [folderName]: true } },
+    }));
+    if (chatId !== 'default' && updateChat) {
+      updateChat(chatId, { workspaceFolder: folderName });
+    }
+  }, [chatId, updateChat]);
 
-        tabCounterRef.current++;
-        const id = `tab-${Date.now()}-${tabCounterRef.current}`;
-        setTabs(prev => [...prev, {
-          id,
-          name: folderName,
-          tree: treeData,
-          openFolders: { [folderName]: true },
-        }]);
-        setActiveTabIndex(tabs.length);
-        setIsLoadingFolder(false);
-        return;
-      } catch (err: any) {
-        setIsLoadingFolder(false);
-        // User cancelled the picker — do nothing
-        if (err.name === 'AbortError') return;
-        console.warn('[FileExplorer] showDirectoryPicker failed:', err.message);
+  const openFolderForChat = useCallback(async () => {
+    if (isLoadingFolder) return;
+    setIsLoadingFolder(true);
+    try {
+      // Try File System Access API first (Chromium)
+      if ('showDirectoryPicker' in window) {
+        try {
+          const dirHandle = await (window as any).showDirectoryPicker({ mode: 'read' });
+          const folderName = dirHandle.name;
+          const treeData = await readDirectoryRecursive(dirHandle, folderName, folderName);
+          bindTreeToChat(folderName, treeData);
+          setIsLoadingFolder(false);
+          return;
+        } catch (pickErr: any) {
+          if (pickErr.name === 'AbortError') { setIsLoadingFolder(false); return; }
+          // showDirectoryPicker not usable — fall through to hidden input
+          console.warn('[FileExplorer] showDirectoryPicker failed:', pickErr.message);
+        }
+      }
+      // Fallback: hidden <input webkitdirectory> (works in Electron + all Chromium)
+      fileInputRef.current?.click();
+    } finally {
+      // Don't set false here for fallback path — handleFileInputChange does it
+      if ('showDirectoryPicker' in window) setIsLoadingFolder(false);
+    }
+  }, [chatId, isLoadingFolder, bindTreeToChat]);
+
+  // Fallback: <input type="file" webkitdirectory> handler
+  const handleFileInputChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    const firstFile = files[0];
+    const webkitRelativePath = (firstFile as any).webkitRelativePath as string;
+    if (!webkitRelativePath) return;
+    const folderName = webkitRelativePath.split('/')[0];
+    // Build tree from FileList
+    const root: FileNode = { name: folderName, type: 'folder', path: folderName, children: [] };
+    const dirMap = new Map<string, FileNode>();
+    dirMap.set(folderName, root);
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const relPath = (f as any).webkitRelativePath as string;
+      if (!relPath) continue;
+      const parts = relPath.split('/');
+      let currentPath = parts[0];
+      for (let j = 1; j < parts.length; j++) {
+        const partPath = `${currentPath}/${parts[j]}`;
+        if (j < parts.length - 1) {
+          // It's a directory
+          if (!dirMap.has(partPath)) {
+            const dirNode: FileNode = { name: parts[j], type: 'folder', path: partPath, children: [] };
+            dirMap.set(partPath, dirNode);
+            const parent = dirMap.get(currentPath);
+            if (parent && parent.children && !parent.children.some(c => c.path === partPath)) {
+              parent.children.push(dirNode);
+            }
+          }
+        } else {
+          // It's a file
+          if (parts[j].startsWith('.') || parts[j] === 'node_modules') continue;
+          const fileNode: FileNode = { name: parts[j], type: 'file', path: partPath };
+          const parent = dirMap.get(currentPath);
+          if (parent && parent.children) {
+            parent.children.push(fileNode);
+          }
+        }
+        currentPath = partPath;
       }
     }
+    // Sort all directories
+    const sortTree = (node: FileNode): FileNode => {
+      if (node.children) {
+        node.children.sort((a, b) => {
+          if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+          return a.name.localeCompare(b.name);
+        });
+        node.children.forEach(sortTree);
+      }
+      return node;
+    };
+    sortTree(root);
 
-    // Fallback: prompt for folder name
-    const name = prompt('输入工作区名称:');
-    if (!name?.trim()) return;
-    tabCounterRef.current++;
-    const id = `tab-${Date.now()}-${tabCounterRef.current}`;
-    setTabs(prev => [...prev, {
-      id,
-      name: name.trim(),
-      tree: { name: name.trim(), type: 'folder', path: name.trim(), children: [] },
-      openFolders: {},
-    }]);
-    setActiveTabIndex(tabs.length);
-  }, [tabs.length]);
-
-  const closeTab = useCallback((index: number) => {
-    if (tabs.length <= 1) return;
-    setTabs(prev => prev.filter((_, i) => i !== index));
-    setActiveTabIndex(prev => {
-      if (prev >= tabs.length - 1) return Math.max(0, tabs.length - 2);
-      if (prev > index) return prev - 1;
-      return prev;
-    });
-  }, [tabs.length]);
-
-  const commitTabRename = useCallback((tabId: string) => {
-    const newName = editingTabName.trim();
-    if (!newName) { setEditingTabId(null); return; }
-    setTabs(prev => prev.map(t => {
-      if (t.id !== tabId) return t;
-      const updateRootPaths = (node: FileNode, oldRoot: string, newRoot: string): FileNode => {
-        if (!node.path) return node;
-        const newPath = node.path === oldRoot ? newRoot : node.path.replace(oldRoot + '/', newRoot + '/');
-        return {
-          ...node,
-          path: newPath,
-          name: node.path === oldRoot ? newName : node.name,
-          children: node.children?.map(c => updateRootPaths(c, oldRoot, newRoot)),
-        };
-      };
-      return {
-        ...t,
-        name: newName,
-        tree: updateRootPaths(t.tree, t.tree.path, newName),
-        openFolders: Object.fromEntries(
-          Object.entries(t.openFolders).map(([k, v]) => [
-            k === t.tree.path ? newName : k.replace(t.tree.path + '/', newName + '/'),
-            v,
-          ])
-        ),
-      };
+    setWorkspaces(prev => ({
+      ...prev,
+      [chatId]: { name: folderName, tree: root, openFolders: { [folderName]: true } },
     }));
-    setEditingTabId(null);
-  }, [editingTabName]);
+    if (chatId !== 'default' && updateChat) {
+      updateChat(chatId, { workspaceFolder: folderName });
+    }
+    // Reset input
+    e.target.value = '';
+  }, [chatId, updateChat]);
 
   // Context Menu State
   const [contextMenu, setContextMenu] = useState<{
@@ -905,7 +921,7 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
     <div className="w-full h-full bg-surface flex flex-col select-none relative">
       {/* Search Header / Resource Management */}
       <div className="p-3 border-b border-outline/50 flex items-center justify-between shrink-0">
-        <span className="font-display font-bold text-[12px] text-on-surface truncate max-w-[120px]">{activeTab.name}</span>
+        <span className="font-display font-bold text-[12px] text-on-surface truncate max-w-[120px]">{workspaceName || '无工作区'}</span>
         <div className="flex items-center gap-1.5">
           <button 
             type="button"
@@ -929,63 +945,62 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
         </div>
       </div>
 
-      {/* ─── Workspace Tabs ─── */}
-      <div className="flex items-center border-b border-outline/30 bg-surface-bright/50 shrink-0 overflow-x-auto scrollbar-none">
-        {tabs.map((tab, idx) => (
-          <div
-            key={tab.id}
-            onClick={() => { setActiveTabIndex(idx); setSearchQuery(''); }}
-            className={`flex items-center gap-1 px-2.5 py-1.5 text-[10px] cursor-pointer border-r border-outline/15 shrink-0 transition-colors group ${
-              idx === activeTabIndex
-                ? 'bg-surface text-primary font-bold border-b-2 border-b-primary'
-                : 'text-on-surface/50 hover:text-on-surface/80 hover:bg-surface/50'
-            }`}
-          >
-            <Folder className="w-3 h-3 shrink-0" />
-            {editingTabId === tab.id ? (
-              <input
-                autoFocus
-                value={editingTabName}
-                onChange={(e) => setEditingTabName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') commitTabRename(tab.id); if (e.key === 'Escape') setEditingTabId(null); }}
-                onBlur={() => commitTabRename(tab.id)}
-                className="w-16 bg-transparent border-b border-primary/50 text-[10px] outline-none px-0.5"
-                onClick={(e) => e.stopPropagation()}
-              />
-            ) : (
-              <span
-                onDoubleClick={(e) => { e.stopPropagation(); setEditingTabId(tab.id); setEditingTabName(tab.name); }}
-                className="truncate max-w-[80px]"
-              >
-                {tab.name}
-              </span>
-            )}
-            {tabs.length > 1 && (
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); closeTab(idx); }}
-                className="p-0.5 rounded hover:bg-on-surface/10 text-on-surface/30 hover:text-on-surface opacity-0 group-hover:opacity-100 transition-opacity"
-                title="关闭选项卡"
-              >
-                <X className="w-2.5 h-2.5" />
-              </button>
-            )}
-          </div>
-        ))}
-        <button
-          type="button"
-          onClick={addTab}
-          disabled={isLoadingFolder}
-          className={`p-1.5 text-on-surface/40 hover:text-primary hover:bg-surface/50 transition-colors cursor-pointer shrink-0 ${isLoadingFolder ? 'animate-pulse' : ''}`}
-          title="打开文件夹"
-        >
-          {isLoadingFolder ? (
-            <RefreshCw className="w-3 h-3 animate-spin" />
+      {/* ─── Workspace Bar ─── */}
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-outline/30 bg-surface-bright/50 shrink-0">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <Folder className="w-3 h-3 text-primary shrink-0" />
+          {currentWorkspace ? (
+            <span className="text-[10px] font-bold text-primary truncate">{currentWorkspace.name}</span>
           ) : (
-            <FolderPlus className="w-3 h-3" />
+            <span className="text-[10px] text-on-surface/40">未绑定文件夹</span>
           )}
-        </button>
+        </div>
+        <div className="flex items-center gap-1">
+          {currentWorkspace && (
+            <button
+              type="button"
+              onClick={() => {
+                if (confirm('解除当前对话的工作区绑定？')) {
+                  setWorkspaces(prev => { const next = { ...prev }; delete next[chatId]; return next; });
+                }
+              }}
+              className="p-1 rounded text-on-surface/30 hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
+              title="解除绑定"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={openFolderForChat}
+            disabled={isLoadingFolder}
+            className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold transition-colors cursor-pointer ${
+              currentWorkspace
+                ? 'text-on-surface/50 hover:text-primary hover:bg-surface/50'
+                : 'text-primary bg-primary/10 hover:bg-primary/20 border border-primary/25'
+            } ${isLoadingFolder ? 'animate-pulse opacity-60' : ''}`}
+            title="为当前对话打开文件夹"
+          >
+            {isLoadingFolder ? (
+              <RefreshCw className="w-3 h-3 animate-spin" />
+            ) : (
+              <FolderPlus className="w-3 h-3" />
+            )}
+            <span>{currentWorkspace ? '切换' : '打开文件夹'}</span>
+          </button>
+        </div>
       </div>
+      {/* Hidden file input for fallback */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        // @ts-ignore
+        webkitdirectory=""
+        directory=""
+        multiple
+        style={{ display: 'none' }}
+        onChange={handleFileInputChange}
+      />
 
       {/* Search Input and Documentation Helper Trigger */}
       <div className="px-3 pb-2 pt-2 border-b border-outline/40 flex items-center gap-1.5 shrink-0 bg-surface">
@@ -1025,29 +1040,50 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
       {/* Directory file trees scroll container */}
       <div 
         ref={scrollContainerRef}
-        onContextMenu={(e) => openCustomMenu(e, tree.path, 'root_blank')}
+        onContextMenu={(e) => currentWorkspace && openCustomMenu(e, tree.path, 'root_blank')}
         className="flex-1 overflow-y-auto p-1.5 space-y-0.5 scrollbar-thin scrollbar-thumb-[#2c2f33] relative min-h-[150px]"
       >
-        <div
-          key={refreshKey}
-          className="sf-anim sf-anim-slide-up"
-        >
-          {renderNode(tree)}
-        </div>
+        {currentWorkspace ? (
+          <div
+            key={refreshKey}
+            className="sf-anim sf-anim-slide-up"
+          >
+            {renderNode(tree)}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center h-full text-center px-4 py-8 gap-3">
+            <FolderPlus className="w-8 h-8 text-on-surface/20" />
+            <p className="text-[11px] text-on-surface/40 leading-relaxed">
+              当前对话未绑定工作区文件夹。<br />
+              点击上方「打开文件夹」选择一个本地目录。
+            </p>
+            <button
+              type="button"
+              onClick={openFolderForChat}
+              disabled={isLoadingFolder}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/25 rounded-lg text-[10px] font-bold cursor-pointer transition-colors"
+            >
+              <FolderPlus className="w-3.5 h-3.5" />
+              <span>打开文件夹</span>
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Context Menu Overlay Option Cards */}
-      <MountTransition show={contextMenu.visible} variant="fade-scale" duration={120}>
-          <div
-            data-context-menu
-            style={{ 
-              position: 'fixed',
-              left: `${contextMenu.x}px`,
-              top: `${contextMenu.y}px`,
-            }}
-            className="z-50 w-[190px] bg-[#141517] border border-[#2b2d30] rounded-lg shadow-2xl p-1.5 flex flex-col font-sans select-none"
-            onClick={(e) => e.stopPropagation()}
-          >
+      {/* Context Menu */}
+      {contextMenu.visible && (
+        <div
+          data-context-menu
+          style={{
+            position: 'fixed',
+            left: `${contextMenu.x}px`,
+            top: `${contextMenu.y}px`,
+            zIndex: 99999,
+          } as React.CSSProperties}
+          className="w-[190px] bg-[#141517] border border-[#2b2d30] rounded-lg shadow-2xl p-1.5 flex flex-col font-sans select-none"
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
             {/* Folder / Blank only operations */}
             {contextMenu.targetType !== 'file' && (
               <>
@@ -1140,7 +1176,7 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
               <span>添加到对话</span>
             </button>
           </div>
-      </MountTransition>
+        )}
 
       {/* Interactive Beautiful Prompt Modal Dialogs */}
       <MountTransition show={!!dialog.type} variant="fade-scale" duration={150}>
