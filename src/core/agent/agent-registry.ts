@@ -59,6 +59,12 @@ export interface AgentDispatchRequest {
   mainProvider?: LLMProviderConfig;
   /** 工作区文件夹路径 (用于 AI 作用域限制) */
   workspaceFolder?: string;
+  /** 前端资源管理器选中的工具 ID 列表 */
+  activeTools?: string[];
+  /** 前端资源管理器选中的技能 ID 列表 */
+  activeSkills?: string[];
+  /** 前端资源管理器选中的知识库 ID 列表 */
+  activeKnowledge?: string[];
 }
 
 export interface AgentDispatchResult {
@@ -244,6 +250,9 @@ export class AgentRegistry {
       activeFile?: { name: string; content: string } | null;
       mainProvider?: { baseUrl: string; apiKey: string; model: string };
       workspaceFolder?: string;
+      activeTools?: string[];
+      activeSkills?: string[];
+      activeKnowledge?: string[];
     },
   ): Promise<string> {
     const agent = this.agents.get(agentId);
@@ -285,6 +294,9 @@ export class AgentRegistry {
     const activeFile = taskContext?.activeFile ?? null;
     const mainProvider = taskContext?.mainProvider;
     const workspaceFolder = taskContext?.workspaceFolder;
+    const activeTools = taskContext?.activeTools;
+    const activeSkills = taskContext?.activeSkills;
+    const activeKnowledge = taskContext?.activeKnowledge;
 
     let taskDesc = prompt;
     if (history.length > 0) {
@@ -312,6 +324,9 @@ export class AgentRegistry {
         streamHook,
         llmConfig: mainProvider,
         workspaceFolder,
+        activeTools,
+        activeSkills,
+        activeKnowledge,
       });
       output = result.answer ?? '';
       logger.info(this.moduleName, `executeOnAgent [${agentId}] via LLM packet=${packetUuid} tools=${result.toolCallCount}`);

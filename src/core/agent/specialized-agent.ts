@@ -69,6 +69,12 @@ export interface AgentTask {
   llmConfig?: { baseUrl: string; apiKey: string; model: string };
   /** 工作区文件夹路径 (用于 AI 作用域限制) */
   workspaceFolder?: string;
+  /** 前端选中的工具 ID 列表 (控制 LLM 可用的 tools) */
+  activeTools?: string[];
+  /** 前端选中的技能 ID 列表 */
+  activeSkills?: string[];
+  /** 前端选中的知识库 ID 列表 */
+  activeKnowledge?: string[];
 }
 
 // ─── Agent 任务结果 ────────────────────────────────────────────────
@@ -128,6 +134,9 @@ export class SpecializedAgent {
       streamHook: task.streamHook,
       llmConfig: task.llmConfig,
       workspaceFolder: task.workspaceFolder,
+      activeTools: task.activeTools,
+      activeSkills: task.activeSkills,
+      activeKnowledge: task.activeKnowledge,
     };
 
     // 执行 Agent Loop

@@ -270,6 +270,353 @@ export const AGENT_TOOLS: ToolSchema[] = [
   },
 ];
 
+/** 核心工具名称集合 (始终可用, 不受 activeTools 过滤影响) */
+const CORE_TOOL_NAMES = new Set([
+  'read_file', 'write_file', 'execute_cmd', 'search_code', 'list_files',
+]);
+
+/**
+ * 扩展工具 schema (对应前端 ResourceManagerBar 中可选的浏览器/Windows 工具)
+ * 这些工具的 ID 与 UI/resources/tools/manifest.json 中的 children[].id 一一对应
+ */
+export const EXTENDED_TOOL_SCHEMAS: ToolSchema[] = [
+  // ── Obscura 浏览器工具 ──
+  {
+    type: 'function',
+    function: {
+      name: 'browser_screenshot',
+      description: '对指定 URL 的网页进行高清截图。返回截图保存路径。',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: '要截图的网页 URL' },
+          selector: { type: 'string', description: 'CSS 选择器, 仅截取匹配元素 (可选)' },
+        },
+        required: ['url'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_devtools',
+      description: '打开 Chrome DevTools 调试指定网页。返回页面概要信息。',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: '要调试的网页 URL' },
+        },
+        required: ['url'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_console',
+      description: '实时捕获指定网页的浏览器控制台日志。返回最近的日志条目。',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: '目标网页 URL' },
+          lines: { type: 'number', description: '返回最近多少条日志 (可选, 默认 50)' },
+        },
+        required: ['url'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_network',
+      description: '拦截并分析指定网页的网络请求。返回请求列表 (URL/方法/状态码/耗时)。',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: '目标网页 URL' },
+          filter: { type: 'string', description: 'URL 过滤关键词 (可选)' },
+        },
+        required: ['url'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_dom_inspect',
+      description: '检查指定网页的 DOM 树结构。返回简化版的 DOM 树。',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: '目标网页 URL' },
+          selector: { type: 'string', description: 'CSS 选择器, 仅检查匹配的元素 (可选)' },
+        },
+        required: ['url'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_perf_trace',
+      description: '对指定网页进行性能追踪分析。返回页面加载与渲染性能报告。',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: '目标网页 URL' },
+        },
+        required: ['url'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_cookies',
+      description: '读取或写入指定域名的浏览器 Cookie。',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: '目标网页 URL' },
+          action: { type: 'string', description: '操作类型: get (读取) 或 set (写入)' },
+          name: { type: 'string', description: 'Cookie 名称 (set 时必填)' },
+          value: { type: 'string', description: 'Cookie 值 (set 时必填)' },
+        },
+        required: ['url', 'action'],
+      },
+    },
+  },
+  // ── Browser-Use 任务编排工具 ──
+  {
+    type: 'function',
+    function: {
+      name: 'bu_run_task',
+      description: '用自然语言描述一个浏览器任务, LLM 自动规划并执行步骤。返回任务 ID 和执行结果。',
+      parameters: {
+        type: 'object',
+        properties: {
+          task: { type: 'string', description: '自然语言任务描述 (如 "打开 GitHub 并搜索 SoloForge")' },
+          url: { type: 'string', description: '起始页面 URL (可选)' },
+        },
+        required: ['task'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'bu_pause',
+      description: '暂停正在执行的浏览器任务。',
+      parameters: {
+        type: 'object',
+        properties: {
+          task_id: { type: 'string', description: '任务 ID' },
+        },
+        required: ['task_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'bu_resume',
+      description: '恢复已暂停的浏览器任务。',
+      parameters: {
+        type: 'object',
+        properties: {
+          task_id: { type: 'string', description: '任务 ID' },
+        },
+        required: ['task_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'bu_state',
+      description: '查询浏览器任务的执行状态与进度。',
+      parameters: {
+        type: 'object',
+        properties: {
+          task_id: { type: 'string', description: '任务 ID' },
+        },
+        required: ['task_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'bu_screenshot',
+      description: '对浏览器任务当前页面进行截图。',
+      parameters: {
+        type: 'object',
+        properties: {
+          task_id: { type: 'string', description: '任务 ID' },
+        },
+        required: ['task_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'bu_history',
+      description: '查看浏览器任务的 ReAct 推理历史与执行轨迹。',
+      parameters: {
+        type: 'object',
+        properties: {
+          task_id: { type: 'string', description: '任务 ID' },
+        },
+        required: ['task_id'],
+      },
+    },
+  },
+  // ── Windows-MCP 系统自动化工具 ──
+  {
+    type: 'function',
+    function: {
+      name: 'win_reg_read',
+      description: '读取 Windows 注册表键值。返回键值数据。',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: '注册表路径 (如 HKLM\\Software\\Microsoft\\Windows\\CurrentVersion)' },
+          name: { type: 'string', description: '键值名称 (可选, 不传则返回所有子键)' },
+        },
+        required: ['path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'win_service_ctrl',
+      description: '管理 Windows 系统服务 (启动/停止/查询状态)。',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', description: '操作: start / stop / status / list' },
+          name: { type: 'string', description: '服务名称 (list 操作可不传)' },
+        },
+        required: ['action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'win_task_scheduler',
+      description: '创建或管理 Windows 系统定时任务。',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', description: '操作: create / delete / list / run' },
+          name: { type: 'string', description: '任务名称' },
+          command: { type: 'string', description: '要执行的命令 (create 时必填)' },
+          trigger: { type: 'string', description: '触发条件 (如 daily, onstart)' },
+        },
+        required: ['action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'win_event_log',
+      description: '读取 Windows 事件日志。',
+      parameters: {
+        type: 'object',
+        properties: {
+          source: { type: 'string', description: '日志源 (如 Application, System, Security)' },
+          count: { type: 'number', description: '返回最近多少条 (可选, 默认 20)' },
+        },
+        required: ['source'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'win_powershell',
+      description: '执行 PowerShell 脚本命令。比 execute_cmd 更适合 Windows 系统管理操作。',
+      parameters: {
+        type: 'object',
+        properties: {
+          script: { type: 'string', description: 'PowerShell 脚本内容' },
+        },
+        required: ['script'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'win_firewall',
+      description: '查看或修改 Windows 防火墙规则。',
+      parameters: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', description: '操作: list / add / delete / enable / disable' },
+          name: { type: 'string', description: '规则名称 (list 操作可不传)' },
+        },
+        required: ['action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'win_perfmon',
+      description: '获取 Windows 性能监视器数据 (CPU、内存、磁盘实时监控)。',
+      parameters: {
+        type: 'object',
+        properties: {
+          counter: { type: 'string', description: '性能计数器路径 (可选, 不传则返回常用指标)' },
+        },
+        required: [],
+      },
+    },
+  },
+];
+
+/**
+ * 根据前端选中的工具 ID 列表, 构建传给 LLM 的 tools 数组
+ *
+ * 规则:
+ *   - 核心工具 (read_file, write_file, execute_cmd, search_code, list_files) 始终包含
+ *   - 画布工具 (solo_canvas_*) 始终包含
+ *   - 如果 activeToolIds 为空/null → 返回全部 AGENT_TOOLS (向后兼容)
+ *   - 如果 activeToolIds 有值 → 只包含核心工具 + 匹配的扩展工具
+ *
+ * @param activeToolIds 前端 ResourceManagerBar 中选中的工具 ID (含父级 ID 如 obscura)
+ */
+export function getToolsForActiveIds(activeToolIds?: string[] | null): ToolSchema[] {
+  if (!activeToolIds || activeToolIds.length === 0) {
+    // 向后兼容: 没有传 activeTools 时, 返回全部内置工具
+    return AGENT_TOOLS;
+  }
+
+  const activeSet = new Set(activeToolIds);
+  const result: ToolSchema[] = [];
+
+  // 1) 始终包含核心工具和画布工具
+  for (const tool of AGENT_TOOLS) {
+    if (CORE_TOOL_NAMES.has(tool.function.name) || tool.function.name.startsWith('solo_canvas_')) {
+      result.push(tool);
+    }
+  }
+
+  // 2) 添加匹配的扩展工具
+  for (const tool of EXTENDED_TOOL_SCHEMAS) {
+    if (activeSet.has(tool.function.name)) {
+      result.push(tool);
+    }
+  }
+
+  return result;
+}
+
 // ─── Tool 执行器 ────────────────────────────────────────────────────
 
 export interface ToolCallRequest {
@@ -397,6 +744,40 @@ async function invokeCanvasToolViaUI(
       : JSON.stringify(data.payload, null, 2);
   } catch (err) {
     return `Error: failed to call UI canvas endpoint (${UI_BASE_URL}): ${
+      err instanceof Error ? err.message : String(err)
+    }`;
+  }
+}
+
+/**
+ * 扩展工具 (browser_*, bu_*, win_*) 的 HTTP 转发
+ * 转发到 UI 进程的统一工具调用端点: POST /api/tools/invoke
+ * UI 端负责路由到具体的工具服务 (Obscura / Browser-Use / Windows-MCP)
+ */
+async function invokeExtendedToolViaUI(
+  toolName: string,
+  args: Record<string, any>
+): Promise<string> {
+  try {
+    const res = await fetch(`${UI_BASE_URL}/api/tools/invoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: toolName, arguments: args }),
+    });
+
+    const data = (await res.json().catch(() => ({}))) as {
+      success?: boolean;
+      output?: string;
+      error?: string;
+    };
+
+    if (!res.ok || data.success !== true) {
+      return `Error: ${data.error || `HTTP ${res.status}`}`;
+    }
+
+    return data.output ?? 'OK';
+  } catch (err) {
+    return `Error: failed to call UI tool endpoint (${UI_BASE_URL}) for ${toolName}: ${
       err instanceof Error ? err.message : String(err)
     }`;
   }
@@ -608,6 +989,14 @@ export async function executeToolCall(request: ToolCallRequest): Promise<ToolCal
       default:
         if (request.name.startsWith('solo_canvas_')) {
           output = await invokeCanvasToolViaUI(request.name, request.arguments);
+          break;
+        }
+        // ── 扩展工具 (browser_*, bu_*, win_*)──
+        // 转发到 UI 进程的统一工具调用端点
+        if (request.name.startsWith('browser_') ||
+            request.name.startsWith('bu_') ||
+            request.name.startsWith('win_')) {
+          output = await invokeExtendedToolViaUI(request.name, request.arguments);
           break;
         }
         output = `Unknown tool: ${request.name}`;

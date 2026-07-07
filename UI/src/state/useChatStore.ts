@@ -18,8 +18,130 @@ import { AndroidIcon, WindowsIcon, HarmonyOSIcon, DefaultChatIcon } from '../com
 import { sanitizeConversations } from '../utils/chatMessageSanitizer';
 import { startChat, ChatStreamEvent } from '../services/aiBackend';
 import { useChatsStore } from './chatsStore';
+import { useResourceManagerStore } from './useResourceManagerStore';
 import type { ChatMessage, ChatSettingsItem } from '../types/chat';
 import type { ToolCall, HashlineReadCall, HashlineEditCall, HashlineBatchCall } from '../types';
+import { useStreamingStore } from './streamingStore';
+import { mapPhaseToStreamEvents, type PhaseMapperContext } from '../services/phaseMappers';
+import type { StreamEventKind, StreamEvent, PermissionMode } from '../types/streaming';
+
+// ==========================================
+// StreamPanel 桥接 — 把 aiBackend 事件喂给 streamingStore
+// ==========================================
+// 设计:
+//   - handleSend / handleAcceptEnable 调用 createStreamBridge()
+//   - bridge 把 text / phase / done / error 事件翻译为 StreamEvent
+//   - 推入 useStreamingStore.applyEvent → 驱动 StreamPanel 渲染
+//   - 不影响现有 streamState (handlePhase 仍正常运行, 保持向后兼容)
+
+interface StreamBridge {
+  onText: (text: string) => void;
+  onPhase: (evt: any) => void;
+  onDone: () => void;
+  onError: (error: string) => void;
+}
+
+function createStreamBridge(chatId: string, mainModel: string, userInput: string, mode: PermissionMode): StreamBridge {
+  // 创建新任务 (createTask 内部会归档旧任务)
+  useStreamingStore.getState().createTask(chatId, userInput, mode);
+
+  let isFirstText = true;
+  let hasPhaseEvents = false;
+  let textAccumulated = '';
+
+  const ctx: PhaseMapperContext = {
+    activeChatId: chatId,
+    pushStreamEvent: (kind: StreamEventKind, extra: Partial<StreamEvent> = {}) => {
+      const t = useStreamingStore.getState().tasks[chatId];
+      if (!t) return;
+      useStreamingStore.getState().applyEvent({
+        id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        chatId,
+        rootTaskId: t.id,
+        kind,
+        ts: Date.now(),
+        status: 'running',
+        content: '',
+        ...extra,
+      } as StreamEvent);
+    },
+    getSubTaskId: (cid: string, wIdx: number) => useStreamingStore.getState().getSubTaskId(cid, wIdx),
+    bindSubTask: (cid: string, wIdx: number, subId: string) => useStreamingStore.getState().bindSubTask(cid, wIdx, subId),
+    getLastSubTaskId: (cid: string) => useStreamingStore.getState().getLastSubTaskId(cid),
+  };
+
+  return {
+    onText(text: string) {
+      if (!text) return;
+      textAccumulated += text;
+      // 单模型模式: 首次 text 到达时创建 SINGLE_MODEL + subtask
+      if (isFirstText && !hasPhaseEvents) {
+        isFirstText = false;
+        ctx.pushStreamEvent('phase_change', {
+          content: 'SINGLE_MODEL',
+          detail: '单模型直接生成',
+          status: 'running',
+        });
+        ctx.pushStreamEvent('subtask_created', {
+          agentId: 'main-model',
+          content: mainModel,
+          detail: '生成回复',
+          status: 'pending',
+        });
+        const subId = useStreamingStore.getState().getLastSubTaskId(chatId);
+        if (subId) {
+          ctx.pushStreamEvent('subtask_step', {
+            subTaskId: subId,
+            content: 'EXECUTE',
+            status: 'running',
+          });
+        }
+      }
+      // text_chunk 只在单模型模式下推送 (多模型模式下 text 是最终交付)
+      if (!hasPhaseEvents) {
+        ctx.pushStreamEvent('text_chunk', {
+          subTaskId: useStreamingStore.getState().getLastSubTaskId(chatId),
+          content: text,
+          status: 'running',
+        });
+      }
+    },
+    onPhase(evt: any) {
+      hasPhaseEvents = true;
+      mapPhaseToStreamEvents(evt, ctx);
+    },
+    onDone() {
+      // 单模型模式: 完成子任务
+      if (!hasPhaseEvents && !isFirstText) {
+        const subId = useStreamingStore.getState().getLastSubTaskId(chatId);
+        if (subId) {
+          ctx.pushStreamEvent('subtask_done', {
+            subTaskId: subId,
+            content: textAccumulated,
+            progress: 100,
+            status: 'success',
+          });
+        }
+      }
+      // 交付 + 完成
+      if (textAccumulated) {
+        ctx.pushStreamEvent('delivery', { content: textAccumulated });
+      }
+      ctx.pushStreamEvent('phase_change', {
+        content: 'DONE',
+        detail: '生成完成',
+        status: 'success',
+      });
+    },
+    onError(error: string) {
+      ctx.pushStreamEvent('phase_change', {
+        content: 'ERROR',
+        detail: error,
+        status: 'error',
+      });
+    },
+  };
+}
 
 // ==========================================
 // 模块级常量 - 占位数据已清除
@@ -471,6 +593,12 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     const candidateEntries = Object.values(modelProviderMap)
       .filter((e: any) => e.enabledInSettings && !!e.apiKey && !subModelIds.includes(e.model));
 
+    // 读取资源管理器中选中的工具/技能/知识库 (在 reqBody 构建前读取)
+    const rmState = useResourceManagerStore.getState();
+    const activeTools = Array.from(rmState.activeTools);
+    const activeSkills = Array.from(rmState.activeSkills);
+    const activeKnowledge = Array.from(rmState.activeKnowledge);
+
     const reqBody = {
       mode: permissionMode,
       query: finalContent,
@@ -488,7 +616,10 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
         providerName: e.providerName,
         modelName: e.model,
         baseUrl: e.baseUrl
-      }))
+      })),
+      activeTools: activeTools.length > 0 ? activeTools : undefined,
+      activeSkills: activeSkills.length > 0 ? activeSkills : undefined,
+      activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined,
     };
     set({ lastReqBody: reqBody });
 
@@ -520,6 +651,9 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
       }));
     }
 
+    // StreamPanel 桥接: 创建 streamingStore 任务, 后续事件同步推送
+    const streamBridge = createStreamBridge(activeChatId, mainModel, finalContent, permissionMode);
+
     // 2026-07-03 阶段5.B: 调用形式对齐 aiBackend.startChat(req, onEvent) 单回调签名
     //   - aiBackend 把所有事件 (text/phase/error/done) 都通过 onEvent 推送
     //   - 不再有 { onDelta, onEvent, onError, onDone } 4 回调对象 (旧形式, 用 as any 绕过类型)
@@ -545,10 +679,14 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
         })),
         ...(hashlineAgentEnabled ? { toolCallMode: 'hashline' } : {}),
         workspaceFolder: useChatsStore.getState().getChat(activeChatId)?.workspaceFolder,
+        activeTools: activeTools.length > 0 ? activeTools : undefined,
+        activeSkills: activeSkills.length > 0 ? activeSkills : undefined,
+        activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined,
       } as any,
       (evt: ChatStreamEvent) => {
         switch (evt.kind) {
           case 'text': {
+            streamBridge.onText(evt.text);
             // 流式增量文本 → 追加到当前 assistant 消息
             // 合并为单个 set 调用, 避免两次独立重渲染之间的空帧
             set((s) => {
@@ -568,11 +706,13 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
             break;
           }
           case 'phase': {
-            // phase 事件 → 走 handlePhase 更新 streamState
+            streamBridge.onPhase(evt);
+            // phase 事件 → 走 handlePhase 更新 streamState (向后兼容)
             get().handlePhase(evt, currentChatMsgs);
             break;
           }
           case 'error': {
+            streamBridge.onError(evt.error);
             console.error('[aiBackend error]', evt.error);
             // 智能解析错误类型, 给出更精准的提示
             const rawErr = evt.error || '';
@@ -617,6 +757,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
             break;
           }
           case 'done': {
+            streamBridge.onDone();
             // 清理 streamState, 避免残留的流送面板在下次发送时闪现
             set({ isGenerating: false, streamState: { ...emptyStreamState } });
             break;
@@ -645,6 +786,10 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
       streamState: { ...emptyStreamState },
       isGenerating: true,
     });
+
+    // StreamPanel 桥接: 重新创建任务
+    const streamBridge = createStreamBridge(activeChatId, options.mainModel || '', '', lastReqBody.mode);
+
     // 2026-07-03 阶段5.B: 调用形式对齐 aiBackend.startChat(req, onEvent) 单回调签名
     startChat(
       {
@@ -654,24 +799,30 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
         history: [],
         mainProvider: (lastReqBody.mainProvider as any),
         subProviders: newSub ? [...(lastReqBody.subProviders as any[]), newSub] : (lastReqBody.subProviders as any[]),
-        candidateProviders: (lastReqBody.candidateProviders as any[]).filter((c: any) => c.modelName !== candidateName)
+        candidateProviders: (lastReqBody.candidateProviders as any[]).filter((c: any) => c.modelName !== candidateName),
+        activeTools: lastReqBody.activeTools,
+        activeSkills: lastReqBody.activeSkills,
+        activeKnowledge: lastReqBody.activeKnowledge,
       } as any,
       (evt: ChatStreamEvent) => {
         switch (evt.kind) {
           case 'phase': {
+            streamBridge.onPhase(evt);
             const s = get();
             const activeMessages = s.conversations[activeChatId] || [];
             s.handlePhase(evt, activeMessages);
             break;
           }
           case 'error':
+            streamBridge.onError(evt.error);
             console.error('[handleAcceptEnable error]', evt.error);
             break;
           case 'done':
+            streamBridge.onDone();
             set({ isGenerating: false });
             break;
           case 'text':
-            // handleAcceptEnable 不消费流式文本, 留空
+            streamBridge.onText(evt.text);
             break;
         }
       }

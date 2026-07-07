@@ -1454,6 +1454,9 @@ export class SoloForgeApiServer {
         model: mainProvider.model,
       } : undefined,
       workspaceFolder: body?.workspaceFolder ?? payload.workspaceFolder,
+      activeTools: body?.activeTools ?? undefined,
+      activeSkills: body?.activeSkills ?? undefined,
+      activeKnowledge: body?.activeKnowledge ?? undefined,
     };
     try {
       const result = await this.agentOrchestrator.dispatchPacket(req);

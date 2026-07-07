@@ -33,6 +33,12 @@ export interface ChatRequest {
   mainProvider?: { baseUrl: string; apiKey: string; model: string };
   /** 工作区文件夹路径 (用于 AI 作用域限制) */
   workspaceFolder?: string;
+  /** 前端资源管理器选中的工具 ID 列表 (如 browser_devtools, bu_run_task, win_powershell) */
+  activeTools?: string[];
+  /** 前端资源管理器选中的技能 ID 列表 */
+  activeSkills?: string[];
+  /** 前端资源管理器选中的知识库 ID 列表 */
+  activeKnowledge?: string[];
   // 多模型场景下透传到 phaseMappers
   [k: string]: any;
 }
@@ -90,6 +96,9 @@ async function startChatViaFetch(req: ChatRequest, onEvent: (e: ChatStreamEvent)
           chatId,
           mainProvider: req.mainProvider ?? null,
           workspaceFolder: req.workspaceFolder ?? null,
+          activeTools: req.activeTools ?? null,
+          activeSkills: req.activeSkills ?? null,
+          activeKnowledge: req.activeKnowledge ?? null,
         }),
         signal,
       });
@@ -176,6 +185,9 @@ async function startChatViaIpc(req: ChatRequest, onEvent: (e: ChatStreamEvent) =
         chatId,
         mainProvider: req.mainProvider ?? null,
         workspaceFolder: req.workspaceFolder ?? null,
+        activeTools: req.activeTools ?? null,
+        activeSkills: req.activeSkills ?? null,
+        activeKnowledge: req.activeKnowledge ?? null,
       });
       if (!resp?.ok) {
         onEvent({ kind: 'error', error: `IPC dispatch failed: HTTP ${resp?.status} ${resp?.error ?? ''}`, taskId });

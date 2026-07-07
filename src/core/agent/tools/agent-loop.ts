@@ -20,6 +20,7 @@ import {
 } from './function-calling-client';
 import {
   AGENT_TOOLS,
+  getToolsForActiveIds,
   type ToolCallRequest,
   type ToolCallResult,
   type ToolStreamHook,
@@ -70,6 +71,12 @@ export interface AgentExecutionContext {
   llmConfig?: { baseUrl: string; apiKey: string; model: string };
   /** 工作区文件夹路径 (用于路径强制校验) */
   workspaceFolder?: string;
+  /** 前端选中的工具 ID 列表 (控制 LLM 可用的 tools) */
+  activeTools?: string[];
+  /** 前端选中的技能 ID 列表 */
+  activeSkills?: string[];
+  /** 前端选中的知识库 ID 列表 */
+  activeKnowledge?: string[];
 }
 
 // ─── Agent 执行结果 ─────────────────────────────────────────────────
@@ -110,8 +117,11 @@ export async function runAgentLoop(ctx: AgentExecutionContext, userTask: string)
   const start = Date.now();
   const toolSteps: AgentLoopResult['toolSteps'] = [];
 
+  // 根据 activeTools 动态构建工具列表
+  const effectiveTools = getToolsForActiveIds(ctx.activeTools);
+
   // 构建 System Prompt
-  const systemPrompt = buildFullSystemPrompt(ctx);
+  const systemPrompt = buildFullSystemPrompt(ctx, effectiveTools);
 
   // 构建初始消息
   const messages: LLMMessage[] = [
@@ -124,7 +134,7 @@ export async function runAgentLoop(ctx: AgentExecutionContext, userTask: string)
   // 调用 LLM + 工具循环
   const result: CallWithToolsResult = await callLLMWithTools({
     messages,
-    tools: AGENT_TOOLS,
+    tools: effectiveTools,
     model: ctx.model,
     temperature: ctx.temperature ?? 0.2,
     maxTokens: ctx.maxTokens ?? 4096,
@@ -222,7 +232,7 @@ export async function runAgentLoop(ctx: AgentExecutionContext, userTask: string)
 
 // ─── System Prompt 构建 ─────────────────────────────────────────────
 
-function buildFullSystemPrompt(ctx: AgentExecutionContext): string {
+function buildFullSystemPrompt(ctx: AgentExecutionContext, effectiveTools: typeof AGENT_TOOLS): string {
 const parts: string[] = [];
 
 // 1. 角色定义
@@ -245,7 +255,7 @@ parts.push(`
 
 你可以使用以下工具来完成任务：
 
-${AGENT_TOOLS.map(t => `- **${t.function.name}**: ${t.function.description}`).join('\n')}
+${effectiveTools.map(t => `- **${t.function.name}**: ${t.function.description}`).join('\n')}
 
 **重要规则：**
 - 不要猜测文件内容，先用 read_file 或 search_code 查看现有代码
@@ -278,6 +288,26 @@ ${AGENT_TOOLS.map(t => `- **${t.function.name}**: ${t.function.description}`).jo
 ${ctx.skills.map((s, i) => `${i + 1}. ${s}`).join('\n')}
 
 请参考这些经验，但不要盲目套用。根据当前任务的具体情况调整方案。`);
+  }
+
+  // 3.5 前端选中的技能注入
+  if (ctx.activeSkills && ctx.activeSkills.length > 0) {
+    parts.push(`
+## 用户启用的技能
+
+用户在资源管理器中启用了以下技能，请在任务中参考：
+${ctx.activeSkills.map((s, i) => `${i + 1}. ${s}`).join('\n')}
+
+请根据任务需求主动使用这些技能。`);
+  }
+
+  // 3.6 前端选中的知识库注入
+  if (ctx.activeKnowledge && ctx.activeKnowledge.length > 0) {
+    parts.push(`
+## 用户启用的知识库
+
+用户在资源管理器中启用了以下知识库条目，请在任务中参考：
+${ctx.activeKnowledge.map((k, i) => `${i + 1}. ${k}`).join('\n')}`);
   }
 
   return parts.join('\n\n');
