@@ -4,3 +4,4 @@
 
 export * from './metrics';
 export * from './sentryAdapter';
+export * from './otel-init';

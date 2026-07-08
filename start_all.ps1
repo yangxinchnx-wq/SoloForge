@@ -89,14 +89,14 @@ if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir | Out
 
 # 清理已存在进程
 Write-Banner "SoloForge one-click startup - cleanup"
-Get-Process -Name "node","GarnetServer","scheduler","git-service" -ErrorAction SilentlyContinue | ForEach-Object {
+Get-Process -Name "node","GarnetServer","scheduler","git-service","java","electron","SoloForge" -ErrorAction SilentlyContinue | ForEach-Object {
     Write-Info ("stopping existing process: " + $_.ProcessName + " PID=" + $_.Id)
     $_ | Stop-Process -Force -ErrorAction SilentlyContinue
 }
 Start-Sleep -Seconds 2
 
 # 1. Garnet
-Write-Banner "[1/6] Starting Garnet (hot data layer) - port 6379"
+Write-Banner "[1/9] Starting Garnet (hot data layer) - port 6379"
 $GarnetExe = Join-Path $ProjectRoot "bin\garnet\portable\net10.0\GarnetServer.exe"
 $GarnetData = Join-Path $ProjectRoot "bin\garnet\data"
 $GarnetLogDir = Join-Path $GarnetData "logs"
@@ -119,7 +119,7 @@ if (Test-Path $GarnetExe) {
 }
 
 # 2. Rust Scheduler
-Write-Banner "[2/6] Rust Scheduler - spawned by main process"
+Write-Banner "[2/9] Rust Scheduler - spawned by main process"
 $SchedulerExe = Join-Path $ProjectRoot "bin\scheduler.exe"
 if (Test-Path $SchedulerExe) {
     Write-Ok ("scheduler.exe ready: " + $SchedulerExe + " (auto-spawned by core)")
@@ -127,8 +127,8 @@ if (Test-Path $SchedulerExe) {
     Write-Err ("scheduler.exe not found: " + $SchedulerExe)
 }
 
-# 3. MARL Python
-Write-Banner "[3/6] Starting MARL Python service - port 8765"
+# 3. MARL Python (8765 TCP + 8766 HTTP Reputation + 8767 HTTP LLM)
+Write-Banner "[3/9] Starting MARL Python service - port 8765/8766/8767"
 $PythonExe = Join-Path $ProjectRoot "bin\python-3.13\python.exe"
 $PythonCwd = Join-Path $ProjectRoot "python"
 if (Test-Path $PythonExe) {
@@ -139,14 +139,50 @@ if (Test-Path $PythonExe) {
         -RedirectStandardOutput $MarlLog -RedirectStandardError "$MarlLog.err" `
         -WindowStyle Hidden -PassThru
     Write-Info ("MARL launched (PID " + $MarlProc.Id + "), waiting for ready...")
-    if (Wait-Port 8765 20) { Write-Ok "MARL port 8765 READY" }
-    else { Write-Warn "MARL port 8765 NOT ready in 20s (check logs/marl.log)" }
+    if (Wait-Port 8765 20) { Write-Ok "MARL TCP port 8765 READY" }
+    else { Write-Warn "MARL TCP port 8765 NOT ready in 20s (check logs/marl.log)" }
+    if (Wait-Port 8766 10) { Write-Ok "MARL Reputation HTTP port 8766 READY" }
+    else { Write-Warn "MARL Reputation HTTP port 8766 NOT ready in 10s" }
+    if (Wait-Port 8767 10) { Write-Ok "MARL LLM HTTP port 8767 READY" }
+    else { Write-Warn "MARL LLM HTTP port 8767 NOT ready in 10s" }
 } else {
     Write-Err ("Python.exe not found: " + $PythonExe)
 }
 
-# 4. SoloForge Core
-Write-Banner "[4/6] Starting SoloForge Core - port 3001 (API) + 9090 (Prometheus)"
+# 4. DB Seed (governance 种子数据, 修复 Java Agent GovernanceClient 外键错误)
+Write-Banner "[4/9] Seeding AI Society DB (governance records)"
+$DbPath = Join-Path $ProjectRoot "python\data\ai_society\ai_society.db"
+if (Test-Path $DbPath) {
+    $SeedScript = @'
+import sqlite3, datetime
+db = r"__DB_PATH__"
+conn = sqlite3.connect(db)
+c = conn.cursor()
+now = datetime.datetime.now().isoformat()
+institutions = c.execute("SELECT id, name FROM institution").fetchall()
+inserted = 0
+for inst_id, inst_name in institutions:
+    exists = c.execute("SELECT 1 FROM governance WHERE id = ?", (inst_id,)).fetchone()
+    if not exists:
+        c.execute("""INSERT INTO governance (id, institution_id, owner, effectiveness, violations, last_review, description, notes, created_at, updated_at)
+                     VALUES (?, ?, ?, 1.0, 0, ?, ?, NULL, ?, ?)""",
+                  (inst_id, inst_id, "system", now, f"{inst_name} governance", now, now))
+        inserted += 1
+conn.commit()
+conn.close()
+print(f"DB seed: {inserted} governance records inserted ({len(institutions)} institutions total)")
+'@ -replace "__DB_PATH__", ($DbPath -replace "\\", "\\")
+    $SeedFile = Join-Path $LogDir "db_seed.py"
+    $SeedScript | Out-File -FilePath $SeedFile -Encoding utf8
+    & $PythonExe $SeedFile
+    if ($LASTEXITCODE -eq 0) { Write-Ok "AI Society DB seed completed" }
+    else { Write-Warn "DB seed failed (non-blocking, governance records may already exist)" }
+} else {
+    Write-Warn ("AI Society DB not found: " + $DbPath + " (will be created by MARL)")
+}
+
+# 5. SoloForge Core
+Write-Banner "[5/9] Starting SoloForge Core - port 3001 (API) + 9090 (Prometheus)"
 $NpmCmd  = Join-Path $ProjectRoot "bin/nodejs/npm.cmd"
 $CoreLog = Join-Path $LogDir "core.log"
 if (Test-Path $NpmCmd) {
@@ -164,8 +200,26 @@ if (Test-Path $NpmCmd) {
     Write-Err ("npm.cmd not found: " + $NpmCmd)
 }
 
-# 5. Go git-service
-Write-Banner "[5/6] Starting Go git-service - port 3002"
+# 6. Java Agent (Spring Boot, 8770) - Agent 管线核心
+Write-Banner "[6/9] Starting Java Agent (Spring Boot) - port 8770"
+$JavaJar = Join-Path $ProjectRoot "solo-forge-agent\target\solo-forge-agent-1.0.0.jar"
+$JavaLog = Join-Path $LogDir "java-agent.log"
+if (Test-Path $JavaJar) {
+    $JavaCwd = Join-Path $ProjectRoot "solo-forge-agent"
+    $JavaProc = Start-Process -FilePath "java" `
+        -ArgumentList "-jar", $JavaJar `
+        -WorkingDirectory $JavaCwd `
+        -RedirectStandardOutput $JavaLog -RedirectStandardError "$JavaLog.err" `
+        -WindowStyle Hidden -PassThru
+    Write-Info ("Java Agent launched (PID " + $JavaProc.Id + "), waiting for ready...")
+    if (Wait-Port 8770 30) { Write-Ok "Java Agent port 8770 READY" }
+    else { Write-Warn "Java Agent port 8770 NOT ready in 30s (check logs/java-agent.log)" }
+} else {
+    Write-Err ("Java Agent JAR not found: " + $JavaJar + " - run: cd solo-forge-agent && mvn clean package -DskipTests")
+}
+
+# 7. Go git-service
+Write-Banner "[7/9] Starting Go git-service - port 3002"
 $GitExe = Join-Path $ProjectRoot "UI\git-service\git-service.exe"
 $GitLog = Join-Path $LogDir "git-service.log"
 if (Test-Path $GitExe) {
@@ -181,8 +235,8 @@ if (Test-Path $GitExe) {
     Write-Warn ("git-service.exe not found: " + $GitExe)
 }
 
-# 6. UI Node Dev Server (use project-local npm)
-Write-Banner "[6/6] Starting UI Node dev server - port 3000"
+# 8. UI Node Dev Server
+Write-Banner "[8/9] Starting UI Node dev server - port 3000"
 $UiNpmCmd = Join-Path $ProjectRoot "bin/nodejs/npm.cmd"
 $UiLog = Join-Path $LogDir "ui.log"
 $UiCwd = Join-Path $ProjectRoot "UI"
@@ -199,6 +253,22 @@ if (Test-Path $UiNpmCmd) {
     Write-Warn ("project-local npm not found: " + $UiNpmCmd)
 }
 
+# 9. Electron Shell (桌面壳子)
+Write-Banner "[9/9] Starting Electron Shell"
+$ElectronLog = Join-Path $LogDir "electron.log"
+$ElectronCwd = Join-Path $ProjectRoot "UI"
+if (Test-Path $UiNpmCmd) {
+    # 用 npm run dev:electron 启动 Electron 壳子，加载 http://localhost:3000
+    $ElectronProc = Start-Process -FilePath $UiNpmCmd `
+        -ArgumentList "run","dev:electron" `
+        -WorkingDirectory $ElectronCwd `
+        -RedirectStandardOutput $ElectronLog -RedirectStandardError "$ElectronLog.err" `
+        -WindowStyle Hidden -PassThru
+    Write-Ok ("Electron Shell launched (PID " + $ElectronProc.Id + ")")
+} else {
+    Write-Warn ("Cannot launch Electron: npm not found at " + $UiNpmCmd)
+}
+
 # 连通性测试
 Write-Banner "Connectivity Test"
 Start-Sleep -Seconds 3
@@ -206,10 +276,12 @@ Start-Sleep -Seconds 3
 $Tests = @(
     @{ Name = "Garnet PING (6379)";              Cmd = { Test-GarnetPing } }
     @{ Name = "MARL TCP (8765)";                 Cmd = { Test-Tcp "127.0.0.1" 8765 } }
+    @{ Name = "MARL Reputation HTTP (8766)";     Cmd = { Test-Http "http://127.0.0.1:8766/health" 3 } }
     @{ Name = "API /api/health (3001)";          Cmd = { Test-Http "http://127.0.0.1:3001/api/health" } }
     @{ Name = "API /api/events/stream (3001)";   Cmd = { Test-Http "http://127.0.0.1:3001/api/events/stream" 5 } }
+    @{ Name = "Java Agent /health (8770)";       Cmd = { Test-Http "http://127.0.0.1:8770/health" 5 } }
     @{ Name = "Prometheus /metrics (9090)";      Cmd = { Test-Http "http://127.0.0.1:9090/metrics" } }
-    @{ Name = "git-service /health (3002)";      Cmd = { Test-Http "http://127.0.0.1:3002/health" } }
+    @{ Name = "git-service /api/git/health (3002)"; Cmd = { Test-Http "http://127.0.0.1:3002/api/git/health" } }
     @{ Name = "UI / (3000)";                     Cmd = { Test-Http "http://127.0.0.1:3000/" } }
 )
 
@@ -228,5 +300,7 @@ Write-Host "     Admin UI:          http://127.0.0.1:3001/admin" -ForegroundColo
 Write-Host "     SSE Events:        http://127.0.0.1:3001/api/events/stream" -ForegroundColor White
 Write-Host "     Prometheus:        http://127.0.0.1:9090/metrics" -ForegroundColor White
 Write-Host "     SoloForge Web UI:  http://127.0.0.1:3000" -ForegroundColor White
+Write-Host "     Java Agent:        http://127.0.0.1:8770/health" -ForegroundColor White
+Write-Host "     MARL Reputation:   http://127.0.0.1:8766/health" -ForegroundColor White
 Write-Host ""
 Write-Host "  Press Ctrl+C to stop all services..." -ForegroundColor Yellow

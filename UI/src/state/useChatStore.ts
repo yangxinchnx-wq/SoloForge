@@ -144,6 +144,79 @@ function createStreamBridge(chatId: string, mainModel: string, userInput: string
 }
 
 // ==========================================
+// 强制预览检测 — 不依赖 LLM 自标记, 前端自动扫描代码块
+// ==========================================
+
+/**
+ * 从 LLM 回复中强制检测是否包含 UI 代码, 返回预览语言或 null
+ *
+ * 检测策略 (任一命中即触发):
+ *   1. fenced 代码块语言 (```html / ```tsx / ```jsx / ```vue / ```dart / ...)
+ *   2. UI 关键词 (界面/页面/组件/按钮/表单/布局/dashboard/...)
+ *   3. HTML 标签特征 (<div / <button / <input / <form / ...)
+ *   4. Flutter/Dart widget 特征 (Widget / MaterialApp / Scaffold / ...)
+ */
+function detectPreviewFromResponse(text: string): string | null {
+  if (!text || text.length < 10) return null;
+
+  // ── 1. fenced 代码块语言检测 ──
+  const codeBlockRe = /```(\w+)/g;
+  const langMap: Record<string, string> = {
+    html: 'html', htm: 'html',
+    jsx: 'typescript', tsx: 'typescript',
+    javascript: 'typescript', js: 'typescript',
+    typescript: 'typescript', ts: 'typescript',
+    vue: 'typescript', svelte: 'typescript',
+    dart: 'dart',
+    python: 'python', py: 'python',
+    go: 'go',
+    rust: 'rust', rs: 'rust',
+    java: 'java',
+    c: 'c', cpp: 'c', 'c++': 'c',
+    kotlin: 'java', swift: 'dart',
+    css: 'html', scss: 'html',
+  };
+  let match: RegExpExecArray | null;
+  while ((match = codeBlockRe.exec(text)) !== null) {
+    const lang = match[1].toLowerCase();
+    if (langMap[lang]) return langMap[lang];
+  }
+
+  // ── 2. UI 关键词检测 (中英文) ──
+  const uiKeywords = [
+    '界面', '页面', '组件', '按钮', '表单', '布局', '导航', '菜单',
+    '卡片', '对话框', '弹窗', '侧边栏', '工具栏', '标签页', '轮播',
+    'dashboard', 'login', 'signup', 'register', 'form', 'button',
+    'navbar', 'sidebar', 'modal', 'dialog', 'card', 'table', 'chart',
+    '仪表盘', '登录页', '注册页', '设置页', '列表页', '详情页',
+  ];
+  const lowerText = text.toLowerCase();
+  for (const kw of uiKeywords) {
+    if (lowerText.includes(kw.toLowerCase())) {
+      // 有关键词但没代码块语言 → 默认 typescript
+      // (大多数 UI 代码是 React/TS)
+      // 但先检查有没有特定语言特征
+      if (/\bflutter\b|\bwidget\b|MaterialApp|Scaffold|StatelessWidget/i.test(text)) return 'dart';
+      if (/\bstreamlit\b|\bdash\b|\bgradio\b|import pandas/i.test(text)) return 'python';
+      if (/\bgo\b.*\bhtml\b|html\/template|gin\.Default/i.test(text)) return 'go';
+      return 'typescript';
+    }
+  }
+
+  // ── 3. HTML 标签特征 ──
+  if (/<(?:div|button|input|form|nav|header|footer|section|article|span|ul|li|table|img)\b/i.test(text)) {
+    return 'html';
+  }
+
+  // ── 4. Flutter/Dart widget 特征 ──
+  if (/(?:StatelessWidget|StatefulWidget|MaterialApp|Scaffold|AppBar|Container\(|Column\(|Row\(|Padding\()/i.test(text)) {
+    return 'dart';
+  }
+
+  return null;
+}
+
+// ==========================================
 // 模块级常量 - 占位数据已清除
 // ==========================================
 
@@ -673,6 +746,8 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
         activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined,
         // Phase 3: 透传 activeSettings (personality/tone/emoji) + agentId 给 Java Spring AI
         activeSettings: configs[activeChatId] || fallbackActiveSettings,
+        // 2026-07-09: 透传 canvasId/chatSessionId 给 Java Agent, 让 agent 知道画布存在
+        canvasId: `canvas-${activeChatId}`,
       } as any,
       (evt: ChatStreamEvent) => {
         switch (evt.kind) {
@@ -682,9 +757,10 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
             accumulatedText += evt.text;
             // 流式增量文本 → 追加到当前 assistant 消息
             // 合并为单个 set 调用, 避免两次独立重渲染之间的空帧
+            // 2026-07-08: 真实流式 — 保持 isGenerating: true, 由 done/error 事件重置
             set((s) => {
               const currentList = s.conversations[activeChatId] || [];
-              if (currentList.length === 0) return { isGenerating: false };
+              if (currentList.length === 0) return {};
               const newList = [...currentList];
               const lastMsg = { ...newList[newList.length - 1] };
               if (lastMsg.sender === 'assistant') {
@@ -693,7 +769,6 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
               }
               return {
                 conversations: { ...s.conversations, [activeChatId]: newList },
-                isGenerating: false,
               };
             });
             break;
@@ -754,30 +829,50 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
             // 清理 streamState, 避免残留的流送面板在下次发送时闪现
             set({ isGenerating: false, streamState: { ...emptyStreamState } });
 
-            // 2026-07-07: 解析 LLM 回复末尾的预览触发标记
-            // LLM 在 system prompt 中被指示: 需要生成 UI 代码时在回复末尾加 <<<PREVIEW_NEEDED:语言>>>
+            // 2026-07-09: 双层预览触发 — LLM 自标记 (优先) + 代码块强制检测 (兜底)
+            //   1. LLM 在 system prompt 指示下加 <<<PREVIEW_NEEDED:语言>>> → 用 LLM 指定的语言
+            //   2. LLM 忘了标记, 但回复里有 UI 代码块 → 前端强制检测, 自动触发
             const previewMatch = accumulatedText.match(/<<<PREVIEW_NEEDED:(\w+)>>>/);
-            if (previewMatch && typeof window !== 'undefined') {
-              // 从回复中移除标记,不让用户看到
-              const cleanText = accumulatedText.replace(/\n*<<<PREVIEW_NEEDED:\w+>>>\s*$/, '');
-              set((s) => {
-                const currentList = s.conversations[activeChatId] || [];
-                if (currentList.length === 0) return {};
-                const newList = [...currentList];
-                const lastMsg = { ...newList[newList.length - 1] };
-                if (lastMsg.sender === 'assistant') {
-                  lastMsg.content = cleanText;
-                  newList[newList.length - 1] = lastMsg;
-                }
-                return { conversations: { ...s.conversations, [activeChatId]: newList } };
-              });
+            let shouldPreview = false;
+            let previewLang = '';
+            let cleanText = accumulatedText;
 
-              // 触发预览流
+            if (previewMatch) {
+              // 层1: LLM 自标记
+              shouldPreview = true;
+              previewLang = previewMatch[1];
+              cleanText = accumulatedText.replace(/\n*<<<PREVIEW_NEEDED:\w+>>>\s*$/, '');
+            } else {
+              // 层2: 强制代码块检测 — 不依赖 LLM 自觉
+              const forcedLang = detectPreviewFromResponse(accumulatedText);
+              if (forcedLang) {
+                shouldPreview = true;
+                previewLang = forcedLang;
+              }
+            }
+
+            if (shouldPreview && typeof window !== 'undefined') {
+              // 如果有 LLM 标记, 从回复中移除标记文本
+              if (previewMatch) {
+                set((s) => {
+                  const currentList = s.conversations[activeChatId] || [];
+                  if (currentList.length === 0) return {};
+                  const newList = [...currentList];
+                  const lastMsg = { ...newList[newList.length - 1] };
+                  if (lastMsg.sender === 'assistant') {
+                    lastMsg.content = cleanText;
+                    newList[newList.length - 1] = lastMsg;
+                  }
+                  return { conversations: { ...s.conversations, [activeChatId]: newList } };
+                });
+              }
+
+              // 触发预览流 (LLM 标记 或 强制检测 均走此路径)
               window.dispatchEvent(new CustomEvent('soloforge-preview-trigger', {
                 detail: {
                   chatId: activeChatId,
                   message: finalContent,
-                  language: previewMatch[1],
+                  language: previewLang,
                   provider: mainEntry ? {
                     baseUrl: mainEntry.baseUrl,
                     apiKey: mainEntry.apiKey,

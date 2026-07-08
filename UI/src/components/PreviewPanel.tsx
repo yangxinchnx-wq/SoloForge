@@ -40,9 +40,20 @@ declare global {
         status: (sessionId: string) => Promise<{ ok: boolean; active: boolean; info?: any }>;
         reportBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: boolean; error?: string }>;
         hostInfo: () => Promise<{ ok: boolean; bounds: { x: number; y: number; width: number; height: number } }>;
+        onExited: (callback: (info: CanvasExitedInfo) => void) => () => void;
       };
     };
   }
+}
+
+/** main.cjs child.on('exit') 推送的画布退出信息 */
+interface CanvasExitedInfo {
+  sessionId: string;
+  exitCode: number | null;
+  signal: string | null;
+  isCrash: boolean;
+  stderr: string;
+  message: string;
 }
 
 const isElectron = () => typeof window !== 'undefined' && !!window.soloforge;
@@ -144,6 +155,56 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
     }
   }, [canvasState, selectedChatId]);
 
+  // ─────────────────────────────────────────
+  // ★ 画布进程崩溃检测 (2026-07-08)
+  //   - 监听 main.cjs 推送的 'canvas:exited' IPC 事件
+  //   - 崩溃时: 更新 UI 状态 + 显示友好错误 + 允许重启
+  //   - 正常退出 (用户点停止): 不显示错误, 仅同步状态
+  // ─────────────────────────────────────────
+  const canvasStateRef = useRef(canvasState);
+  useEffect(() => { canvasStateRef.current = canvasState; }, [canvasState]);
+  const isStoppingRef = useRef(false);
+
+  useEffect(() => {
+    if (!isElectron() || !window.soloforge?.canvas?.onExited) return;
+    const unsubscribe = window.soloforge.canvas.onExited((info) => {
+      // 只处理当前 session 的退出事件
+      if (info.sessionId !== sessionIdRef.current) return;
+      // 用户主动停止 → 不显示崩溃错误
+      if (isStoppingRef.current) {
+        isStoppingRef.current = false;
+        return;
+      }
+      // 画布已不在 running 状态 → 无需处理 (避免重复设置)
+      if (canvasStateRef.current !== 'running' && canvasStateRef.current !== 'starting') {
+        return;
+      }
+      if (info.isCrash) {
+        console.error('[canvas] 进程崩溃:', info);
+        setCanvasState('error');
+        setCanvasInfo(null);
+        // 显示友好的崩溃信息 (而不是裸露的退出码如 100488)
+        const stderrHint = info.stderr
+          ? info.stderr.split('\n').filter(l => l.trim()).slice(-3).join(' | ')
+          : '';
+        setCanvasError(
+          stderrHint
+            ? `画布进程崩溃 (${info.message})\n${stderrHint}`
+            : info.message
+        );
+        // 允许用户手动重启 (清除 autoStartFailed 标记)
+        autoStartFailedRef.current = false;
+        autoStartRef.current = false;
+      } else {
+        // 正常退出 → 回到 idle
+        setCanvasState('idle');
+        setCanvasInfo(null);
+        setCanvasError('');
+      }
+    });
+    return unsubscribe;
+  }, []);
+
   useEffect(() => {
     // P0: 仅在 canvasReady 后才切到真实画布 ID
     //   - ready=false 时保留 fallback (旧 canvas-${chatId})
@@ -244,6 +305,35 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
     await window.soloforge!.canvas.push(sessionIdRef.current, dsl).catch(() => {});
   }, [canvasState, canvasInfo]);
 
+  // 2026-07-09: 自动推送 AST 预览到 Flutter 画布
+  //   - previewPayload 确认后 → 推送完整 DSL (最终渲染)
+  //   - previewAst 流式更新中 → 节流推送部分 AST (实时构建效果)
+  const lastStreamPushRef = useRef(0);
+
+  // 1) 完整 payload → 一次性推送最终结果
+  useEffect(() => {
+    if (!isElectron() || canvasState !== 'running') return;
+    const root = previewPayload?.preview?.root;
+    if (!root) return;
+    const dsl = {
+      ...root,
+      platform: previewPayload?.framework || previewPayload?.language || 'material',
+    };
+    window.soloforge!.canvas.push(sessionIdRef.current, dsl).catch(() => {});
+  }, [previewPayload, canvasState]);
+
+  // 2) 流式 AST → 节流推送 (100ms), 让画布实时看到 UI 构建过程
+  useEffect(() => {
+    if (!isElectron() || canvasState !== 'running') return;
+    if (!previewAst) return;
+    // 如果已有确认的 payload, 不再推流式 AST (避免覆盖最终结果)
+    if (previewPayload?.preview?.root) return;
+    const now = Date.now();
+    if (now - lastStreamPushRef.current < 100) return;
+    lastStreamPushRef.current = now;
+    window.soloforge!.canvas.push(sessionIdRef.current, previewAst).catch(() => {});
+  }, [previewAst, canvasState, previewPayload]);
+
   // 计算画布实际宽高（w=0 表示填满 PreviewPanel 宽度）
   const computeFrame = useCallback((preset: typeof activePreset) => {
     if (preset.w > 0) return { w: preset.w, h: preset.h };
@@ -289,9 +379,12 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
 
   const stopCanvas = useCallback(async () => {
     if (!isElectron()) return;
-    await window.soloforge!.canvas.stop(sessionIdRef.current).catch(() => {});
+    // 标记为用户主动停止 → 崩溃检测收到 exit 事件时不会误判为崩溃
+    isStoppingRef.current = true;
     setCanvasState('idle');
     setCanvasInfo(null);
+    setCanvasError('');
+    await window.soloforge!.canvas.stop(sessionIdRef.current).catch(() => {});
   }, []);
 
   const handlePickColor = (color: string) => {
@@ -608,7 +701,10 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
           </div>
 
           {canvasError && (
-            <span className="flex-1 text-[10px] text-red-400 font-mono truncate min-w-0" title={canvasError}>
+            <span
+              className="flex-1 text-[10px] text-red-400 font-mono min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
+              title={canvasError}
+            >
               {canvasError}
             </span>
           )}

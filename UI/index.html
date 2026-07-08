@@ -39,15 +39,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SoloForge</title>
     <!--
-      内联 boot 样式: 硬编码深色背景,不依赖 CSS 变量。
-      在 Vite/Tailwind CSS bundle 下载前就生效,防止强制刷新黑屏。
-      一旦 index.css 加载,html/body 的 background-color 会被
-      var(--color-bg) !important 覆盖(此时 --color-bg 已定义)。
+      内联 boot 样式: 硬编码浅色背景,不依赖 CSS 变量。
+      在 Vite/Tailwind CSS bundle 下载前就生效,防止强制刷新闪白。
+      一旦 index.css 加载,html/body 的背景色会被
+      正确的主题色覆盖。
       #sf-boot-loader 在 React mount 后被自动替换消失。
     -->
     <style>
       html, body {
-        background-color: #050505;
+        background-color: #fafafa;
         margin: 0;
         padding: 0;
         width: 100%;
@@ -60,15 +60,15 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        background-color: #050505;
+        background-color: #fafafa;
         z-index: 2147483647;
       }
       #sf-boot-spinner {
         width: 32px;
         height: 32px;
         border-radius: 50%;
-        border: 2.5px solid rgba(255, 222, 130, 0.15);
-        border-top-color: #ffde82;
+        border: 2.5px solid rgba(99, 102, 241, 0.15);
+        border-top-color: #6366f1;
         animation: sf-boot-spin 0.7s linear infinite;
       }
       @keyframes sf-boot-spin {

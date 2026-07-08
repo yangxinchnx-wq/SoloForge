@@ -346,16 +346,8 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem('soloforge_themeId');
       if (stored) return stored;
-      
-      // Auto-detect system preferred color scheme for first-time entries
-      try {
-        const prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
-        return prefersLight ? 'light' : 'gruvbox';
-      } catch (e) {
-        return 'gruvbox';
-      }
     }
-    return 'gruvbox';
+    return 'light';
   });
 
   const [customColors, setCustomColors] = useState<Record<string, string>>(() => {
@@ -373,13 +365,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [primaryColor, setPrimaryColorState] = useState(() => {
     if (typeof window !== 'undefined') {
       const storedThemeId = localStorage.getItem('soloforge_themeId');
-      let savedThemeId = storedThemeId || 'gruvbox';
-      if (!storedThemeId) {
-        try {
-          const prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
-          savedThemeId = prefersLight ? 'light' : 'gruvbox';
-        } catch (e) {}
-      }
+      let savedThemeId = storedThemeId || 'light';
       const savedCustomColors = localStorage.getItem('soloforge_customColors');
       if (savedCustomColors) {
         try {
@@ -396,7 +382,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const preset = THEME_PRESETS.find(t => t.id === savedThemeId) || THEME_PRESETS[0];
       return preset.primary.toLowerCase();
     }
-    return '#fabd2f';
+    return '#6366f1';
   });
 
   const [primaryColorTargets, setPrimaryColorTargets] = useState<ThemeColorTargets>(() => {

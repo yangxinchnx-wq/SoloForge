@@ -81,13 +81,16 @@ function MainModelSelectorImpl({
   onOpenChange,
 }: MainModelSelectorProps) {
   const [open, setOpenState] = useState(false);
+  // ref 追踪 open 值, 让 setOpen 能在 updater 外计算新值 (updater 必须是纯函数)
+  const openRef = useRef(false);
   const setOpen = useCallback(
     (next: boolean | ((prev: boolean) => boolean)) => {
-      setOpenState((prev) => {
-        const v = typeof next === 'function' ? next(prev) : next;
-        onOpenChange?.(v);
-        return v;
-      });
+      const v = typeof next === 'function' ? next(openRef.current) : next;
+      openRef.current = v;
+      setOpenState(v);
+      // ★ 必须在 updater 外调用: onOpenChange 会触发父组件 setState,
+      //   放在 updater 内会在渲染期间更新父组件 → React 警告
+      onOpenChange?.(v);
     },
     [onOpenChange],
   );

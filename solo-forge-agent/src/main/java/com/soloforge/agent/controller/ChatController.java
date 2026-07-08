@@ -1,13 +1,17 @@
 package com.soloforge.agent.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.soloforge.agent.dto.ChatRequest;
 import com.soloforge.agent.orchestrator.AgentOrchestrator;
 import com.soloforge.agent.persistence.AgentIdentityEntity;
 import com.soloforge.agent.persistence.AgentIdentityRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import reactor.core.publisher.Flux;
 
 import java.util.HashMap;
 import java.util.List;
@@ -17,10 +21,11 @@ import java.util.stream.Collectors;
 /**
  * Chat Controller - 统一入口
  *
- * POST /api/chat/send  — 接收前端聊天请求,调用 AgentOrchestrator (复杂度分流)
- * GET  /api/agents     — 列出所有 Agent
+ * POST /api/chat/send   — 非流式聊天 (向后兼容)
+ * POST /api/chat/stream — SSE 流式聊天 (2026-07-08 新增, 真实流式)
+ * GET  /api/agents      — 列出所有 Agent
  * GET  /api/agents/{id} — 获取 Agent 详情
- * GET  /health         — 健康检查
+ * GET  /health          — 健康检查
  */
 @Slf4j
 @RestController
@@ -30,9 +35,10 @@ public class ChatController {
 
     private final AgentOrchestrator agentOrchestrator;
     private final AgentIdentityRepository agentRepo;
+    private final ObjectMapper objectMapper;
 
     /**
-     * 统一聊天入口
+     * 非流式聊天 (向后兼容)
      */
     @PostMapping("/api/chat/send")
     public ResponseEntity<Map<String, Object>> sendMessage(@RequestBody ChatRequest request) {
@@ -51,7 +57,9 @@ public class ChatController {
             String result = agentOrchestrator.orchestrate(
                 request.getMessage(),
                 request.getSettings(),
-                request.getProvider());
+                request.getProvider(),
+                request.getHistory(),
+                request.getFileContext());
 
             Map<String, Object> response = new HashMap<>();
             response.put("success", true);
@@ -70,6 +78,88 @@ public class ChatController {
     }
 
     /**
+     * SSE 流式聊天 — 真实流式输出 LLM 增量文本
+     *
+     * SSE 事件格式:
+     *   event: text\ndata: {"content":"增量文本片段"}\n\n
+     *   event: done\ndata: {}\n\n
+     *   event: error\ndata: {"error":"错误信息"}\n\n
+     */
+    @PostMapping(value = "/api/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter sendMessageStream(@RequestBody ChatRequest request) {
+        // 120s 超时, LLM 流式调用可能需要较长时间
+        SseEmitter emitter = new SseEmitter(120_000L);
+
+        log.info("POST /api/chat/stream sessionId={} agentId={}",
+            request.getSessionId(),
+            request.getSettings() != null ? request.getSettings().getAgentId() : "default");
+
+        try {
+            if (request.getMessage() == null || request.getMessage().isBlank()) {
+                sendSseEvent(emitter, "error", Map.of("error", "消息内容不能为空"));
+                emitter.complete();
+                return emitter;
+            }
+            if (request.getSettings() == null) {
+                request.setSettings(new com.soloforge.agent.dto.ChatSettings());
+            }
+
+            Flux<String> textFlux = agentOrchestrator.orchestrateStream(
+                request.getMessage(),
+                request.getSettings(),
+                request.getProvider(),
+                request.getHistory(),
+                request.getFileContext());
+
+            textFlux.subscribe(
+                chunk -> {
+                    try {
+                        sendSseEvent(emitter, "text", Map.of("content", chunk));
+                    } catch (Exception e) {
+                        log.warn("SSE send chunk failed: {}", e.getMessage());
+                    }
+                },
+                error -> {
+                    log.error("Stream error: {}", error.getMessage());
+                    try {
+                        sendSseEvent(emitter, "error", Map.of("error", error.getMessage()));
+                    } catch (Exception ignored) {}
+                    emitter.complete();
+                },
+                () -> {
+                    try {
+                        sendSseEvent(emitter, "done", Map.of(
+                            "sessionId", request.getSessionId() != null ? request.getSessionId() : "",
+                            "agentId", request.getSettings().getAgentId()
+                        ));
+                    } catch (Exception ignored) {}
+                    emitter.complete();
+                }
+            );
+
+        } catch (Exception e) {
+            log.error("Stream setup failed: {}", e.getMessage(), e);
+            try {
+                sendSseEvent(emitter, "error", Map.of("error", e.getMessage()));
+            } catch (Exception ignored) {}
+            emitter.complete();
+        }
+
+        return emitter;
+    }
+
+    /**
+     * 发送 SSE 事件 (JSON 序列化)
+     */
+    private void sendSseEvent(SseEmitter emitter, String eventName, Map<String, Object> data) throws Exception {
+        String json = objectMapper.writeValueAsString(data);
+        emitter.send(SseEmitter.event()
+            .name(eventName)
+            .data(json)
+            .build());
+    }
+
+    /**
      * 列出所有启用的 Agent
      */
     @GetMapping("/api/agents")
@@ -81,9 +171,6 @@ public class ChatController {
         return ResponseEntity.ok(result);
     }
 
-    /**
-     * 获取 Agent 详情
-     */
     @GetMapping("/api/agents/{id}")
     public ResponseEntity<Map<String, Object>> getAgent(@PathVariable String id) {
         return agentRepo.findById(id)
@@ -91,9 +178,6 @@ public class ChatController {
             .orElse(ResponseEntity.notFound().build());
     }
 
-    /**
-     * 健康检查
-     */
     @GetMapping("/health")
     public ResponseEntity<Map<String, Object>> health() {
         Map<String, Object> health = new HashMap<>();

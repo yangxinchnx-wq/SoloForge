@@ -114,6 +114,28 @@ class _CanvasAppState extends State<CanvasApp> {
   UiNode? _uiNode;
   String _renderMode = 'material';
 
+  // ── 2026-07-08 修复: 防止画布进程崩溃 ──────────────────────────
+  //
+  // 根因: 原来的 `await for (final request in _httpServer!)` 串行处理
+  //   每个请求, 流式推送期间 50ms 间隔的 POST /render 请求堆积,
+  //   导致 Dart 事件循环饿死 → 进程崩溃 (exit code 如 104060)。
+  //
+  // 修复:
+  //   1. 并发处理: 用 .listen() 替代 await for, 每个请求独立 async
+  //   2. WebSocket 清理: 跟踪所有活跃连接, dispose 时关闭
+  //   3. 健康检查: /health 端点供主进程看门狗心跳
+  //   4. setState 节流: 最快 100ms 一次, 防止 Flutter rebuild 队列爆炸
+  //   5. 请求体限制: 拒绝 > 10MB 的 payload
+  //   6. 服务器空闲超时: 30s 无活动自动断开空闲连接
+  //   7. 错误日志: 写入 soloforge_canvas.log 供诊断
+  // ────────────────────────────────────────────────────────────────
+
+  final Set<WebSocket> _activeWebSockets = {};
+  Timer? _setStateTimer;
+  String? _pendingMode;
+  Map<String, dynamic>? _pendingUiData;
+  bool _setStateScheduled = false;
+
   @override
   void initState() {
     super.initState();
@@ -133,34 +155,109 @@ class _CanvasAppState extends State<CanvasApp> {
   Future<void> _startServer() async {
     try {
       _httpServer = await HttpServer.bind('127.0.0.1', widget.port);
-      await for (final request in _httpServer!) {
-        if (request.uri.path == '/ws' || request.uri.path == '/') {
-          try {
-            final channel = await WebSocketTransformer.upgrade(request);
-            channel.listen((dynamic data) {
+      // 30s 空闲超时: 防止僵死连接占用资源
+      _httpServer!.idleTimeout = const Duration(seconds: 30);
+      _writeLog('[server] listening on port ${widget.port}');
+
+      // ★ 关键修复: 用 .listen() 替代 `await for` 实现并发处理
+      //   await for 是串行的: 一个请求处理完才能拿下一个
+      //   .listen() 回调立即返回, 每个请求在独立 async 函数中处理
+      _httpServer!.listen(
+        (HttpRequest request) {
+          _handleRequest(request);
+        },
+        onError: (e) {
+          _writeLog('[server] error: $e');
+        },
+        cancelOnError: false,
+      );
+    } catch (e) {
+      _writeLog('[server] bind failed: $e');
+    }
+  }
+
+  /// 并发处理每个 HTTP 请求 — 不阻塞事件循环
+  Future<void> _handleRequest(HttpRequest request) async {
+    try {
+      final path = request.uri.path;
+
+      if (path == '/health') {
+        // 健康检查端点: 主进程看门狗用
+        request.response.statusCode = 200;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({
+          'ok': true,
+          'uptime': DateTime.now().millisecondsSinceEpoch,
+          'websockets': _activeWebSockets.length,
+        }));
+        await request.response.close();
+        return;
+      }
+
+      if (path == '/ws' || path == '/') {
+        // WebSocket 升级 — 跟踪连接生命周期
+        try {
+          final channel = await WebSocketTransformer.upgrade(request);
+          _activeWebSockets.add(channel);
+          channel.listen(
+            (dynamic data) {
               if (data is String) {
                 _handleMessage(data);
               }
-            }, onError: (_) {}, cancelOnError: false);
-          } catch (_) {}
-        } else if (request.method == 'POST' && request.uri.path == '/render') {
-          await _handleHttpRender(request);
-        } else {
-          request.response.statusCode = 404;
-          await request.response.close();
+            },
+            onError: (e) {
+              _writeLog('[ws] error: $e');
+            },
+            onDone: () {
+              // ★ 关键: 连接关闭时从 Set 中移除, 释放资源
+              _activeWebSockets.remove(channel);
+            },
+            cancelOnError: false,
+          );
+        } catch (e) {
+          _writeLog('[ws] upgrade failed: $e');
         }
+        return;
       }
-    } catch (_) {}
+
+      if (request.method == 'POST' && path == '/render') {
+        await _handleHttpRender(request);
+        return;
+      }
+
+      // 未知路径: 返回 404 (Canvas3DClient 的 /push-ui 等端点会走到这里)
+      request.response.statusCode = 404;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode({'ok': false, 'error': 'not found'}));
+      await request.response.close();
+    } catch (e) {
+      _writeLog('[server] request handler error: $e');
+      try {
+        request.response.statusCode = 500;
+        await request.response.close();
+      } catch (_) {}
+    }
   }
 
   Future<void> _handleHttpRender(HttpRequest request) async {
     try {
+      // ★ 请求体大小限制: 防止超大 payload 导致 OOM
+      final contentLength = request.contentLength;
+      if (contentLength > 10 * 1024 * 1024) {
+        request.response.statusCode = 413;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({'ok': false, 'error': 'payload too large (max 10MB)' }));
+        await request.response.close();
+        return;
+      }
+
       final body = await utf8.decoder.bind(request).join();
       _handleMessage(body);
       request.response.statusCode = 200;
       request.response.headers.contentType = ContentType.json;
       request.response.write(jsonEncode({ 'ok': true }));
     } catch (e) {
+      _writeLog('[render] error: $e');
       request.response.statusCode = 400;
       request.response.headers.contentType = ContentType.json;
       request.response.write(jsonEncode({ 'ok': false, 'error': e.toString() }));
@@ -188,16 +285,40 @@ class _CanvasAppState extends State<CanvasApp> {
       }
 
       if (mode != null || uiData != null) {
-        setState(() {
-          if (mode != null) _renderMode = mode;
-          if (uiData != null) _uiNode = UiParser.parse(uiData);
-        });
+        // ★ 节流 setState: 最快 100ms 一次 (10fps)
+        //   流式推送 50ms 间隔时, 跳过中间帧只渲染最新
+        //   防止 Flutter rebuild 队列堆积 → 内存增长 → 崩溃
+        _pendingMode = mode ?? _pendingMode;
+        _pendingUiData = uiData ?? _pendingUiData;
+
+        if (!_setStateScheduled) {
+          _setStateScheduled = true;
+          _setStateTimer?.cancel();
+          _setStateTimer = Timer(const Duration(milliseconds: 100), () {
+            _setStateScheduled = false;
+            if (!mounted) return;
+            setState(() {
+              if (_pendingMode != null) _renderMode = _pendingMode!;
+              if (_pendingUiData != null) _uiNode = UiParser.parse(_pendingUiData!);
+              _pendingMode = null;
+              _pendingUiData = null;
+            });
+          });
+        }
       }
-    } catch (_) {}
+    } catch (e) {
+      _writeLog('[message] parse error: $e');
+    }
   }
 
   @override
   void dispose() {
+    _setStateTimer?.cancel();
+    // 关闭所有 WebSocket 连接
+    for (final ws in _activeWebSockets) {
+      try { ws.close(); } catch (_) {}
+    }
+    _activeWebSockets.clear();
     _httpServer?.close();
     super.dispose();
   }

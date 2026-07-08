@@ -19,6 +19,8 @@ dotenv.config();
 
 // SoloForge 原后端地址（src/index.ts），所有业务 API 经此代理
 const BACKEND_URL = process.env.SOLOFORGE_BACKEND_URL || "http://localhost:3001";
+// Java Agent 直连地址 (SSE 流式聊天直连 8770, 绕过 3001 避免缓冲)
+const JAVA_AGENT_URL = process.env.JAVA_AGENT_URL || "http://localhost:8770";
 
 // ============================================================
 // 系统指标采样 worker (CPU/内存/磁盘 IO 全部在 worker 内执行)
@@ -163,6 +165,91 @@ async function startServer() {
   // ============================================================
   const repoRootSrv = path.resolve(__dirname_srv, "..", "..");
   registerBrowserUseRoutes(app, repoRootSrv);
+
+  // ============================================================
+  // ★ Java Agent SSE 流式直连: /api/java-agent/api/chat/stream → 8770
+  //   绕过 3001 Core, 直连 8770 Java Agent, 避免中间层缓冲 SSE 流
+  //   必须在通用 /api/java-agent 代理之前注册 (Express 按注册顺序匹配)
+  // ============================================================
+  app.use("/api/java-agent/api/chat/stream", createProxyMiddleware({
+    target: JAVA_AGENT_URL,
+    changeOrigin: true,
+    selfHandleResponse: false,
+    pathRewrite: { "^/api/java-agent": "" },
+    onProxyReq: (proxyReq, req) => {
+      proxyReq.setHeader("Connection", "close");
+      proxyReq.setHeader("Accept", "text/event-stream");
+      if (req.body && req.body instanceof Object) {
+        fixRequestBody(proxyReq, req as any);
+      }
+    },
+    onProxyRes: (proxyRes) => {
+      proxyRes.headers["cache-control"] = "no-cache";
+      proxyRes.headers["x-accel-buffering"] = "no";
+      proxyRes.headers["connection"] = "keep-alive";
+    },
+    proxyTimeout: 0 as any,
+    timeout: 0 as any,
+  }));
+  console.log(`[proxy] Java Agent SSE /api/java-agent/api/chat/stream → ${JAVA_AGENT_URL}/api/chat/stream (直连, 无超时)`);
+
+  // ============================================================
+  // ★ Java Agent 专用转发: /api/java-agent/* → 3001 → 8770
+  //   LLM 调用可能需要 60-90 秒,使用 120s 超时
+  //   使用 fetch 手动转发 (避免 HPM 在高错误率环境下的连接挂死)
+  // ============================================================
+  app.use("/api/java-agent", async (req, res) => {
+    const javaPath = req.url; // 相对路径, 如 /api/chat/send
+    const targetUrl = BACKEND_URL + "/api/java-agent" + javaPath;
+    console.log(`[java-agent-fwd] ${req.method} ${javaPath} -> ${targetUrl}`);
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 110_000);
+
+      const fwdHeaders: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      // 透传 Authorization 等关键 header
+      if (req.headers["authorization"]) {
+        fwdHeaders["Authorization"] = req.headers["authorization"] as string;
+      }
+
+      const fwdOptions: any = {
+        method: req.method,
+        headers: fwdHeaders,
+        signal: controller.signal,
+      };
+
+      // POST/PUT 需要 body
+      if ((req.method === "POST" || req.method === "PUT") && req.body) {
+        fwdOptions.body = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
+      }
+
+      const upstreamRes = await fetch(targetUrl, fwdOptions);
+      clearTimeout(timeout);
+
+      const respBody = await upstreamRes.text();
+      console.log(`[java-agent-fwd] upstream status=${upstreamRes.status} bodyLen=${respBody.length}`);
+      // 用 writeHead+end 替代 status+send, 避免 Express 对非 2xx 状态码的 body 丢失
+      res.writeHead(upstreamRes.status, { "Content-Type": "application/json" });
+      res.end(respBody);
+    } catch (err: any) {
+      console.error(`[java-agent-fwd] error: ${err?.message}`);
+      if (err?.name === "AbortError") {
+        res.status(504).json({
+          success: false,
+          error: "Java Agent 响应超时 (>110s)。请检查 LLM 服务商连通性或减小 max_tokens。",
+        });
+      } else {
+        res.status(502).json({
+          success: false,
+          error: `Java Agent 服务不可达: ${err?.message || String(err)}`,
+        });
+      }
+    }
+  });
+  console.log(`[proxy] Java Agent /api/java-agent/* → ${BACKEND_URL} (fetch 转发, 110s 超时)`);
 
   // ============================================================
   // 第一优先：3000 本地专属端点（3001 没有这些功能）
@@ -496,7 +583,7 @@ async function startServer() {
     '/api/auth',      // Token bootstrap + 自动刷新 (/api/auth/bootstrap)
     '/api/terminal',  // 真实终端命令执行 (spawn shell → SSE 推 stdout/stderr/exit)
     '/api/names',     // 用户名称自定义 (双击胶囊名称 → 写入 names.txt [CUSTOM] 槽位)
-    '/api/java-agent', // Java Spring AI Agent 服务 (8770) 透传: /api/java-agent/* → 3001 → 8770
+    // '/api/java-agent' 已由上方专用代理处理 (120s 超时)
     '/api/feedback',   // 经验案例库反馈 (经 3001 代理到 Java Agent 8770)
   ];
   for (const p of backendApiPrefixes) {

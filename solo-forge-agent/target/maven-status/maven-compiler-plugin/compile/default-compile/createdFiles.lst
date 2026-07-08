@@ -30,6 +30,7 @@ com\soloforge\agent\training\FeedbackController.class
 com\soloforge\agent\tools\SearchCodeTool.class
 com\soloforge\agent\tools\ToolRegistry.class
 com\soloforge\agent\aisociety\EconomyClient.class
+com\soloforge\agent\llm\LlmGateway$1.class
 com\soloforge\agent\training\OptimizeResult$OptimizeResultBuilder.class
 com\soloforge\agent\dto\ChatRequest.class
 com\soloforge\agent\config\SqliteConfig.class
@@ -44,6 +45,7 @@ com\soloforge\agent\persistence\ExperienceCaseEntity.class
 com\soloforge\agent\tools\ListFilesTool.class
 com\soloforge\agent\persistence\AgentTrainingHistoryEntity.class
 com\soloforge\agent\executor\AgentExecutor$ToolCallResult.class
+com\soloforge\agent\tools\CanvasPushUiTool.class
 com\soloforge\agent\dto\ChatSettings.class
 com\soloforge\agent\aisociety\ReputationClient.class
 com\soloforge\agent\training\PromptOptimizer.class

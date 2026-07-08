@@ -94,9 +94,7 @@ export default function SettingsModal({
         {/* Modal Header */}
         <div className="flex items-center justify-between p-4 px-6 border-b border-[var(--color-outline)]/20 bg-[var(--color-bg)] text-[var(--color-on-surface)] shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/20 flex items-center justify-center">
-              <Settings className="text-[var(--color-primary)] w-5 h-5" />
-            </div>
+            <Settings className="text-[var(--color-primary)] w-5 h-5" />
             <div>
               <h2 className="text-lg font-bold text-[var(--color-on-surface)] tracking-wide">设置</h2>
             </div>

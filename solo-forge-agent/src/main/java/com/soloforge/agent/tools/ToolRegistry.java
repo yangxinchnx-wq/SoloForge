@@ -24,6 +24,7 @@ public class ToolRegistry {
     private final ExecuteCmdTool executeCmdTool;
     private final SearchCodeTool searchCodeTool;
     private final ListFilesTool listFilesTool;
+    private final CanvasPushUiTool canvasPushUiTool;
 
     /**
      * 获取所有工具的描述 (用于 System Prompt 第 7 层)
@@ -34,7 +35,8 @@ public class ToolRegistry {
             writeFileTool.getDescription(),
             executeCmdTool.getDescription(),
             searchCodeTool.getDescription(),
-            listFilesTool.getDescription()
+            listFilesTool.getDescription(),
+            canvasPushUiTool.getDescription()
         );
     }
 
@@ -54,6 +56,10 @@ public class ToolRegistry {
                     (String) args.get("pattern"),
                     args.containsKey("fileGlob") ? (String) args.get("fileGlob") : null);
                 case "list_files" -> listFilesTool.execute((String) args.get("dirPath"));
+                case "canvas_push_ui" -> canvasPushUiTool.execute(
+                    (String) args.get("sessionId"),
+                    (String) args.get("dslJson"),
+                    args.containsKey("language") ? (String) args.get("language") : "typescript");
                 default -> "未知工具: " + toolName;
             };
         } catch (Exception e) {
@@ -66,7 +72,7 @@ public class ToolRegistry {
      * 获取所有工具名 (用于 Function Calling 注册)
      */
     public List<String> getToolNames() {
-        return List.of("read_file", "write_file", "execute_cmd", "search_code", "list_files");
+        return List.of("read_file", "write_file", "execute_cmd", "search_code", "list_files", "canvas_push_ui");
     }
 
     /**
@@ -115,6 +121,16 @@ public class ToolRegistry {
                 "dirPath", Map.of("type", "string", "description", "目录路径")
             ),
             "required", List.of("dirPath")
+        ));
+
+        schemas.put("canvas_push_ui", Map.of(
+            "type", "object",
+            "properties", Map.of(
+                "sessionId", Map.of("type", "string", "description", "画布 session ID (如 canvas_1, canvas-2)"),
+                "dslJson", Map.of("type", "string", "description", "Universal AST JSON 字符串: UI 组件树, 如 {\"type\":\"container\",\"props\":{\"padding\":16},\"children\":[...]}"),
+                "language", Map.of("type", "string", "description", "生成语言: typescript/python/dart/go/rust/java/c/html")
+            ),
+            "required", List.of("sessionId", "dslJson")
         ));
 
         return schemas;

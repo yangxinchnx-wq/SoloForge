@@ -24,6 +24,14 @@ contextBridge.exposeInMainWorld('soloforge', {
     status: (sessionId) => ipcRenderer.invoke('canvas:status', { sessionId }),
     reportBounds: (bounds) => ipcRenderer.invoke('canvas:report-bounds', bounds),
     hostInfo: () => ipcRenderer.invoke('canvas:host-info'),
+    // ★ 画布进程退出事件 (崩溃 / 正常退出), 由 main.cjs 的 child.on('exit') 推送
+    //   回调参数: { sessionId, exitCode, signal, isCrash, stderr, message }
+    //   返回取消订阅函数
+    onExited: (callback) => {
+      const handler = (_e, info) => callback(info);
+      ipcRenderer.on('canvas:exited', handler);
+      return () => ipcRenderer.removeListener('canvas:exited', handler);
+    },
   },
   // ── 2026 自定义窗口控件(替代 Electron 的 titleBarOverlay,因为 Windows 11 22H2+ DWM 暗 tint) ──
   // 由 UI/src/components/WindowControls.tsx 调用

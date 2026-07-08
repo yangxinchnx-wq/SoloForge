@@ -1,17 +1,18 @@
 @import "tailwindcss";
 @import "./styles/animations.css";
 
-/* 2026: BrowserWindow transparent:true → 必须显式给 html/body 一个 solid 背景,
-   否则 resize 时窗口透明区域会透出桌面,看起来像"白色长方形"。
-   用 --color-bg (深色) 而不是 #ffffff,跟主背景完全一致 */
+/* html, body 背景色用纯色硬编码，React mount 后 ThemeContext 会覆盖为正确颜色 */
 html, body {
-  background-color: var(--color-bg) !important;
+  background-color: #fafafa;
   margin: 0;
   padding: 0;
   width: 100%;
   height: 100%;
   overflow: hidden;
 }
+
+/* 但默认主题是 light, 所以需要浅色背景。
+   React mount 后 ThemeContext 的 data-theme 会覆盖为正确颜色 */
 
 @source not "./components/SettingsModal.tsx";
 @source not "./components/FloatingEditorWindow.tsx";
@@ -21,14 +22,14 @@ html, body {
   --font-display: "Hanken Grotesk", "Segoe UI", "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
   --font-mono: "JetBrains Mono", "Cascadia Code", "Consolas", "SFMono Regular", monospace;
 
-  /* Obsidian Gold Palette */
-  --color-bg: #050505;
-  --color-surface: #121414;
-  --color-surface-bright: #383939;
-  --color-primary: #ffde82;
-  --color-primary-rgb: 255, 222, 130;
-  --color-on-surface: #e3e2e2;
-  --color-outline: #99907d;
+  /* Clean Light Palette (Default) */
+  --color-bg: #fafafa;
+  --color-surface: #ffffff;
+  --color-surface-bright: #f4f4f5;
+  --color-primary: #6366f1;
+  --color-primary-rgb: 99, 102, 241;
+  --color-on-surface: #18181b;
+  --color-outline: #e4e4e7;
 }
 
 /* Targeted fast transitions on core page containers and elements instead of universal (*) which throttles the CPU */

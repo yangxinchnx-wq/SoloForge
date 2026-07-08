@@ -8,7 +8,7 @@ interface StatusBarProps {
   setCurrentThemeId?: (id: string) => void;
 }
 
-export default function StatusBar({ currentThemeId = 'gruvbox', setCurrentThemeId }: StatusBarProps) {
+export default function StatusBar({ currentThemeId = 'light', setCurrentThemeId }: StatusBarProps) {
   const { primaryColorTargets } = useHotTheme();
   const applyThemeColor = !!primaryColorTargets?.statusBar;
   const [isTerminalCollapsed, setIsTerminalCollapsed] = useState(false);

@@ -148,7 +148,7 @@ export async function assembleSystem(kernel: RuntimeKernel): Promise<AssemblyCon
     if (schedulerModule?.SoloForgeRustSchedulerClient) {
       scheduler = new schedulerModule.SoloForgeRustSchedulerClient();
       scheduler.initialize?.();
-      (kernel as any).schedulerClient = scheduler;
+      kernel.schedulerClient = scheduler;
       logger.info('SystemAssembler', '🦀 [Rust Scheduler] spawn 完成,降级/直连已就位');
     }
   } catch (e: any) {
@@ -210,13 +210,13 @@ export async function assembleSystem(kernel: RuntimeKernel): Promise<AssemblyCon
   } catch (e) {
     logger.warn('SystemAssembler', 'Distributed broker connection failed, using no-op fallback');
   }
-  (kernel as any).distributedBrokerProxy = distributedBroker;
+  kernel.distributedBrokerProxy = distributedBroker;
 
   // ── 9. Raft 共识 ──
   const localClusterNodeId = kernel.configCenter.get('governor.cluster.local_node_id', 'node_alpha_master');
   const raftConsensusNode = new RaftConsensusNode(kernel, localClusterNodeId);
   await raftConsensusNode.bootConsensusRegistry();
-  (kernel as any).raftConsensusEngineProxy = raftConsensusNode;
+  kernel.raftConsensusEngineProxy = raftConsensusNode;
 
   logger.info('SystemAssembler', '🏆 共享总装厂纯净交付完成');
 

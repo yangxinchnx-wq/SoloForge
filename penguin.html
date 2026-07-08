@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>可爱的小企鹅</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(180deg, #87CEEB 0%, #E0F6FF 50%, #FFFFFF 100%);
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
+        }
+        
+        .penguin-container {
+            position: relative;
+            text-align: center;
+        }
+        
+        .penguin {
+            width: 200px;
+            height: 260px;
+            position: relative;
+            margin: 0 auto;
+        }
+        
+        /* 雪地效果 */
+        .snow {
+            position: absolute;
+            bottom: -20px;
+            left: -40px;
+            right: -40px;
+            height: 60px;
+            background: white;
+            border-radius: 50%;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+        }
+        
+        /* 企鹅身体 */
+        .body {
+            position: absolute;
+            width: 160px;
+            height: 200px;
+            background: #2C2C2C;
+            border-radius: 80px 80px 60px 60px;
+            left: 20px;
+            top: 30px;
+        }
+        
+        /* 白色肚子 */
+        .belly {
+            position: absolute;
+            width: 120px;
+            height: 150px;
+            background: white;
+            border-radius: 60px 60px 50px 50px;
+            left: 40px;
+            top: 50px;
+        }
+        
+        /* 头部 */
+        .head {
+            position: absolute;
+            width: 140px;
+            height: 130px;
+            background: #2C2C2C;
+            border-radius: 70px 70px 60px 60px;
+            left: 30px;
+            top: 0;
+        }
+        
+        /* 白色脸颊 */
+        .face {
+            position: absolute;
+            width: 100px;
+            height: 80px;
+            background: white;
+            border-radius: 50px 50px 40px 40px;
+            left: 50px;
+            top: 40px;
+        }
+        
+        /* 眼睛 */
+        .eye {
+            position: absolute;
+            width: 20px;
+            height: 25px;
+            background: #2C2C2C;
+            border-radius: 50%;
+            top: 50px;
+        }
+        
+        .eye-left {
+            left: 60px;
+        }
+        
+        .eye-right {
+            left: 110px;
+        }
+        
+        /* 眼睛高光 */
+        .eye::after {
+            content: '';
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            background: white;
+            border-radius: 50%;
+            top: 4px;
+            left: 4px;
+        }
+        
+        /* 喙 */
+        .beak {
+            position: absolute;
+            width: 0;
+            height: 0;
+            border-left: 15px solid transparent;
+            border-right: 15px solid transparent;
+            border-top: 25px solid #FF8C00;
+            left: 85px;
+            top: 70px;
+        }
+        
+        /* 腮红 */
+        .cheek {
+            position: absolute;
+            width: 25px;
+            height: 15px;
+            background: rgba(255, 150, 150, 0.6);
+            border-radius: 50%;
+            top: 85px;
+        }
+        
+        .cheek-left {
+            left: 45px;
+        }
+        
+        .cheek-right {
+            left: 120px;
+        }
+        
+        /* 翅膀 */
+        .wing {
+            position: absolute;
+            width: 40px;
+            height: 100px;
+            background: #2C2C2C;
+            border-radius: 20px;
+            top: 80px;
+        }
+        
+        .wing-left {
+            left: -10px;
+            transform: rotate(10deg);
+            animation: wave-left 2s ease-in-out infinite;
+        }
+        
+        .wing-right {
+            right: -10px;
+            transform: rotate(-10deg);
+            animation: wave-right 2s ease-in-out infinite;
+        }
+        
+        /* 脚 */
+        .feet {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+        }
+        
+        .foot {
+            width: 50px;
+            height: 20px;
+            background: #FF8C00;
+            border-radius: 25px 25px 15px 15px;
+        }
+        
+        /* 标题 */
+        h1 {
+            margin-top: 30px;
+            color: #2C2C2C;
+            font-size: 28px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        /* 飘落的雪花 */
+        .snowflake {
+            position: fixed;
+            top: -10px;
+            color: white;
+            font-size: 1em;
+            text-shadow: 0 0 5px rgba(255, 255, 255, 0.8);
+            animation: fall linear infinite;
+            opacity: 0.8;
+        }
+        
+        @keyframes fall {
+            to {
+                transform: translateY(100vh) rotate(360deg);
+            }
+        }
+        
+        @keyframes wave-left {
+            0%, 100% {
+                transform: rotate(10deg);
+            }
+            50% {
+                transform: rotate(-5deg);
+            }
+        }
+        
+        @keyframes wave-right {
+            0%, 100% {
+                transform: rotate(-10deg);
+            }
+            50% {
+                transform: rotate(5deg);
+            }
+        }
+        
+        /* 呼吸动画 */
+        .body, .head {
+            animation: breathe 3s ease-in-out infinite;
+        }
+        
+        @keyframes breathe {
+            0%, 100% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.02);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="penguin-container">
+        <div class="penguin">
+            <div class="head"></div>
+            <div class="face"></div>
+            <div class="eye eye-left"></div>
+            <div class="eye eye-right"></div>
+            <div class="beak"></div>
+            <div class="cheek cheek-left"></div>
+            <div class="cheek cheek-right"></div>
+            <div class="body"></div>
+            <div class="belly"></div>
+            <div class="wing wing-left"></div>
+            <div class="wing wing-right"></div>
+            <div class="feet">
+                <div class="foot"></div>
+                <div class="foot"></div>
+            </div>
+            <div class="snow"></div>
+        </div>
+        <h1>🐧 可爱的小企鹅 🐧</h1>
+    </div>
+    
+    <script>
+        // 创建飘落的雪花
+        function createSnowflakes() {
+            const snowflakes = ['❄', '❅', '❆', '✻', '✼', '❉'];
+            const body = document.body;
+            
+            for (let i = 0; i < 30; i++) {
+                setTimeout(() => {
+                    const snowflake = document.createElement('div');
+                    snowflake.className = 'snowflake';
+                    snowflake.innerHTML = snowflakes[Math.floor(Math.random() * snowflakes.length)];
+                    snowflake.style.left = Math.random() * 100 + 'vw';
+                    snowflake.style.fontSize = (Math.random() * 1 + 0.5) + 'em';
+                    snowflake.style.animationDuration = (Math.random() * 5 + 5) + 's';
+                    snowflake.style.opacity = Math.random() * 0.6 + 0.4;
+                    body.appendChild(snowflake);
+                    
+                    // 移除雪花
+                    setTimeout(() => {
+                        snowflake.remove();
+                    }, 10000);
+                }, i * 300);
+            }
+        }
+        
+        // 添加点击互动
+        document.querySelector('.penguin').addEventListener('click', function() {
+            this.style.transform = 'scale(1.1)';
+            setTimeout(() => {
+                this.style.transform = 'scale(1)';
+            }, 200);
+        });
+        
+        // 开始飘雪
+        createSnowflakes();
+        setInterval(createSnowflakes, 8000);
+    </script>
+</body>
+</html>

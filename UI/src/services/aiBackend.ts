@@ -43,6 +43,8 @@ export interface ChatRequest {
   activeKnowledge?: string[];
   /** Agent ID (手动选择, 默认 code_agent, 由 Java 服务 AgentOrchestrator 路由) */
   agentId?: string;
+  /** 画布 ID (从 PreviewPanel 传入, 让 Agent 知道推送到哪个画布) */
+  canvasId?: string;
   // 多模型场景下透传到 phaseMappers
   [k: string]: any;
 }
@@ -106,6 +108,8 @@ function buildJavaRequestBody(req: ChatRequest): any {
       enabledSkills: req.activeSkills || settings.enabledSkills || [],
       enabledKnowledge: req.activeKnowledge || [],
       workspaceFolder: req.workspaceFolder || null,
+      chatSessionId: req.chatId ?? null,
+      canvasId: req.canvasId ?? null,
     },
     stream: true, // 2026-07-08: 启用真实流式
   };

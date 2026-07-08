@@ -428,7 +428,7 @@ export default function ModelAddTab() {
             });
             const existingIds = new Set(merged.map(p => p.id));
             for (const sp of data.providers) {
-              if (!existingIds.has(sp.id)) merged.push(sp);
+              if (!existingIds.has(sp.id) && !String(sp.id).startsWith('custom_')) merged.push(sp);
             }
             return mergeProviders(merged);
           });

@@ -23,8 +23,79 @@ let mainWindow = null;
 
 /** 画布宿主窗口（隐藏），作为 Flutter 子窗口的 SetParent 目标 */
 let canvasHostWindow = null;
-/** canvas sessionId -> { pid, port, hwnd, process } */
+/** canvas sessionId -> { pid, port, hwnd, process, watchdog? } */
 const canvasSessions = new Map();
+
+// ────────────────────────────────────────────
+// 2026-07-08 画布看门狗: 心跳检测 + 自动重启
+//
+// 问题: canvas_preview.exe 有时不会崩溃退出, 而是事件循环挂住
+//   (Dart HttpServer 串行处理 → 请求堆积 → 卡死)
+//   此时 child.on('exit') 不会触发, UI 永远停在 "running" 状态
+//
+// 修复: 每 15s 向 canvas 的 /health 发 HTTP GET
+//   连续 3 次失败 (45s) → 判定为挂死 → kill + 通知 UI 崩溃
+// ────────────────────────────────────────────
+const WATCHDOG_INTERVAL_MS = 15000;
+const WATCHDOG_MAX_FAILURES = 3;
+
+function startWatchdog(sessionId, session) {
+  let consecutiveFailures = 0;
+  const timer = setInterval(() => {
+    const s = canvasSessions.get(sessionId);
+    if (!s || !s.process || s.process.killed) {
+      clearInterval(timer);
+      return;
+    }
+    const req = http.request({
+      host: '127.0.0.1',
+      port: s.port,
+      path: '/health',
+      method: 'GET',
+      timeout: 5000,
+    }, (res) => {
+      let body = '';
+      res.on('data', (c) => (body += c));
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          consecutiveFailures = 0; // 心跳恢复正常
+        } else {
+          consecutiveFailures++;
+          console.warn(`[watchdog:${sessionId}] health check returned ${res.statusCode} (${consecutiveFailures}/${WATCHDOG_MAX_FAILURES})`);
+        }
+      });
+    });
+    req.on('error', (e) => {
+      consecutiveFailures++;
+      console.warn(`[watchdog:${sessionId}] health check failed: ${e.message} (${consecutiveFailures}/${WATCHDOG_MAX_FAILURES})`);
+      if (consecutiveFailures >= WATCHDOG_MAX_FAILURES) {
+        // ★ 画布挂死: kill 进程, exit handler 会通知 UI
+        console.error(`[watchdog:${sessionId}] ${WATCHDOG_MAX_FAILURES} consecutive failures, killing unresponsive canvas`);
+        clearInterval(timer);
+        killProcessTree(s.process);
+      }
+    });
+    req.on('timeout', () => {
+      req.destroy();
+      consecutiveFailures++;
+      console.warn(`[watchdog:${sessionId}] health check timeout (${consecutiveFailures}/${WATCHDOG_MAX_FAILURES})`);
+      if (consecutiveFailures >= WATCHDOG_MAX_FAILURES) {
+        console.error(`[watchdog:${sessionId}] ${WATCHDOG_MAX_FAILURES} consecutive timeouts, killing unresponsive canvas`);
+        clearInterval(timer);
+        killProcessTree(s.process);
+      }
+    });
+    req.end();
+  }, WATCHDOG_INTERVAL_MS);
+  session.watchdog = timer;
+}
+
+function stopWatchdog(session) {
+  if (session?.watchdog) {
+    clearInterval(session.watchdog);
+    session.watchdog = null;
+  }
+}
 
 // ── Content-Security-Policy ──
 // dev 模式允许 unsafe-eval（Vite HMR 需要 new Function / eval）
@@ -120,7 +191,10 @@ function createCanvasHostWindow(parent) {
       offscreen: false,
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: true,
+      // ★ sandbox: false — 宿主窗口只加载 data: 空白页, 无需沙箱
+      //   sandbox:true + 无 preload + data:URL → binding.startupData=null
+      //   → "Cannot destructure property 'preloadScripts' of null" 报错
+      sandbox: false,
     },
   });
   // 加载空白透明页（Chromium 不允许 about:blank 当宿主；用 data: URL）
@@ -417,44 +491,121 @@ async function startCanvas(sessionId, width, height) {
   // cwd 必须设为 binary 所在目录，因为 C++ 入口的 DartProject(L"data") 是相对 binary 目录的
   // 而 dataDir 是 binary 下的 data/ 子目录，binary 在它的父目录
   const exeDir = path.dirname(exe);
+  // ★ 关键: 必须删除 ELECTRON_RUN_AS_NODE（不能赋空字符串）
+  //   Windows 上空字符串仍被视为 "存在", 可能干扰子进程初始化
+  const childEnv = { ...process.env };
+  delete childEnv.ELECTRON_RUN_AS_NODE;
+  delete childEnv.ELECTRON_NO_ATTACH_CONSOLE;
+
+  // ★ 关键修复: 不传 --parent-hwnd 给 C++ runner
+  //   原因: C++ runner 收到 parent-hwnd 后立即 SetParent, 将 Flutter 窗口变为子窗口
+  //   → findWindowByPid 的 EnumWindows 只查找顶层窗口 (GetParent==Zero), 找不到子窗口
+  //   → HWND 查找超时 → killProcessTree → exit code 1
+  //   修复: 让 Flutter 窗口先作为顶层窗口创建, main.cjs 找到 HWND 后再 embedWindow
+  console.log(`[canvas:${sessionId}] spawning: ${exe} --port=${port} --canvas-width=${width} --canvas-height=${height} (cwd=${exeDir})`);
+
   const child = spawn(exe, [
     `--port=${port}`,
-    `--parent-hwnd=${hostHwnd}`,
     `--canvas-width=${width}`,
     `--canvas-height=${height}`,
   ], {
     cwd: exeDir,
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '' },
+    env: childEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });
+  console.log(`[canvas:${sessionId}] spawned pid=${child.pid}`);
 
+  // 收集 stderr 输出用于崩溃诊断 (最多保留 2000 字符)
+  let stderrBuffer = '';
   child.stdout.on('data', (d) => console.log(`[canvas:${sessionId}]`, d.toString().trim()));
-  child.stderr.on('data', (d) => console.error(`[canvas:${sessionId}:err]`, d.toString().trim()));
+  child.stderr.on('data', (d) => {
+    const text = d.toString().trim();
+    console.error(`[canvas:${sessionId}:err]`, text);
+    stderrBuffer = (stderrBuffer + '\n' + text).slice(-2000);
+  });
   child.on('exit', (code, signal) => {
     console.log(`[canvas:${sessionId}] exited code=${code} signal=${signal}`);
+    const wasRunning = canvasSessions.has(sessionId);
+    const session = canvasSessions.get(sessionId);
+    // ★ 清理看门狗定时器
+    if (session?.watchdog) {
+      clearInterval(session.watchdog);
+    }
     canvasSessions.delete(sessionId);
+    // ★ 通知渲染层: 画布进程已退出 (非正常退出时附带诊断信息)
+    //   code=0 / signal=null → 正常关闭 (用户主动停止)
+    //   code!=0 / signal!=null → 崩溃, 附带 stderr 末尾供 UI 展示
+    if (wasRunning && mainWindow && !mainWindow.isDestroyed()) {
+      const isCrash = code !== 0 && code !== null;
+      // 翻译常见退出码为人类可读信息
+      let crashReason = '';
+      if (isCrash) {
+        if (code === 3221226505) crashReason = ' (STATUS_STACK_BUFFER_OVERRUN — 栈溢出)';
+        else if (code === 3221225477) crashReason = ' (STATUS_ACCESS_VIOLATION — 内存访问违规)';
+        else if (code === 3221225725) crashReason = ' (STATUS_HEAP_CORRUPTION — 堆损坏)';
+        else if (code === 255) crashReason = ' (Dart 未捕获异常)';
+        else if (code > 100000) crashReason = ' (Win32 异常)';
+      }
+      mainWindow.webContents.send('canvas:exited', {
+        sessionId,
+        exitCode: code,
+        signal,
+        isCrash,
+        stderr: isCrash ? stderrBuffer : '',
+        message: isCrash
+          ? `画布进程崩溃 (exit=${code}${crashReason}${signal ? ' signal=' + signal : ''})`
+          : 'canvas_preview.exe 已退出',
+      });
+    }
   });
 
   // 等待端口 ready
+  // 等待端口 ready (同时监听进程是否提前退出)
+  let exitedEarly = false;
+  let earlyExitCode = null;
+  let earlyStderr = '';
+  const earlyExitHandler = (code, signal) => {
+    exitedEarly = true;
+    earlyExitCode = code;
+    earlyStderr = stderrBuffer;
+  };
+  child.once('exit', earlyExitHandler);
+
+  console.log(`[canvas:${sessionId}] waiting for port ${port}...`);
   const ready = await waitForPort(port, 10000);
+  child.removeListener('exit', earlyExitHandler);
+
+  if (exitedEarly) {
+    console.error(`[canvas:${sessionId}] early exit: code=${earlyExitCode} stderr=${earlyStderr?.slice(-300)}`);
+    return {
+      ok: false,
+      error: `canvas_preview.exe 启动后立即退出 (code=${earlyExitCode})${earlyStderr ? '\n' + earlyStderr.slice(-500) : ''}`,
+    };
+  }
   if (!ready) {
+    console.error(`[canvas:${sessionId}] port ${port} not ready, killing process tree`);
     killProcessTree(child);
     return { ok: false, error: `canvas WebSocket did not start on port ${port}` };
   }
+  console.log(`[canvas:${sessionId}] port ${port} ready, finding window HWND...`);
 
   // 找窗口 HWND（总超时 15s — 避免慢速 PowerShell 导致无限等待）
   let hwnd = 0;
   const pid = child.pid;
   const hwndDeadline = Date.now() + 15000;
+  let hwndAttempts = 0;
   for (let i = 0; i < 60 && hwnd === 0 && Date.now() < hwndDeadline; i++) {
     hwnd = await findWindowByPid(pid);
+    hwndAttempts++;
     if (hwnd === 0) await new Promise(r => setTimeout(r, 200));
   }
   if (hwnd === 0) {
+    console.error(`[canvas:${sessionId}] HWND not found after ${hwndAttempts} attempts (pid=${pid}), killing process tree`);
     killProcessTree(child);
-    return { ok: false, error: `canvas window HWND not found for pid ${pid}` };
+    return { ok: false, error: `canvas window HWND not found for pid ${pid} (tried ${hwndAttempts} times)` };
   }
+  console.log(`[canvas:${sessionId}] HWND found: ${hwnd} (after ${hwndAttempts} attempts)`);
 
   // ★ 关键: 将 Flutter 窗口嵌入到 canvasHostWindow (SetParent + WS_CHILD)
   //   之前缺失这一步 → Flutter 窗口作为独立顶层窗口存在, 不在 Electron 内
@@ -481,10 +632,13 @@ async function startCanvas(sessionId, width, height) {
     process: child,
     width,
     height,
+    watchdog: null,
   };
   canvasSessions.set(sessionId, session);
-  // IPC 返回时去掉 process 对象 (ChildProcess 无法 structured clone)
-  const { process: _omit, ...ipcSession } = session;
+  // ★ 启动看门狗: 每 15s 心跳检测, 连续 3 次失败自动 kill 挂死的画布
+  startWatchdog(sessionId, session);
+  // IPC 返回时去掉无法 structured clone 的对象 (ChildProcess + Timer)
+  const { process: _omit, watchdog: _omit2, ...ipcSession } = session;
   return { ok: true, session: ipcSession, reused: false };
 }
 
@@ -499,6 +653,8 @@ async function resizeCanvas(sessionId, width, height) {
 async function stopCanvas(sessionId) {
   const s = canvasSessions.get(sessionId);
   if (!s) return { ok: true, notFound: true };
+  // ★ 清理看门狗
+  stopWatchdog(s);
   if (s.process && !s.process.killed) {
     killProcessTree(s.process);
     setTimeout(() => {
@@ -1605,8 +1761,9 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  // 清理所有画布进程
+  // 清理所有画布进程 + 看门狗
   for (const [, s] of canvasSessions) {
+    stopWatchdog(s);
     if (s.process && !s.process.killed) killProcessTree(s.process);
   }
   canvasSessions.clear();
@@ -1615,6 +1772,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   for (const [, s] of canvasSessions) {
+    stopWatchdog(s);
     if (s.process && !s.process.killed) killProcessTree(s.process);
   }
 });

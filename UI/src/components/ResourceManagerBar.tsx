@@ -11,7 +11,7 @@
  * 组件挂载时调用 store.loadResources() 拉取后端 manifest + active 列表。
  */
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Brain, Upload, ChevronDown, FolderPlus, X, Pencil, Trash2,
   Circle, GripVertical,
@@ -33,6 +33,10 @@ export default function ResourceManagerBar() {
   const customGroups = useResourceManagerStore(s => s.customGroups);
   const popoverHeight = useResourceManagerStore(s => s.popoverHeight);
   const popoverWidth = useResourceManagerStore(s => s.popoverWidth);
+
+  // ── button refs + popover fixed position (突破父容器裁剪) ──
+  const buttonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const [popoverFixedPos, setPopoverFixedPos] = useState<{ top: number; left: number } | null>(null);
 
   // ── setters / actions (函数引用稳定) ──────────────
   const setActiveResourcePopover = useResourceManagerStore(s => s.setActiveResourcePopover);
@@ -132,8 +136,16 @@ export default function ResourceManagerBar() {
             <React.Fragment key={resType}>
               <div className="relative shrink-0">
                 <button
+                  ref={el => { buttonRefs.current[resType] = el; }}
                   type="button"
-                  onClick={() => handleTogglePopover(resType)}
+                  onClick={() => {
+                    const btn = buttonRefs.current[resType];
+                    if (btn) {
+                      const rect = btn.getBoundingClientRect();
+                      setPopoverFixedPos({ top: rect.top, left: rect.right + 8 });
+                    }
+                    handleTogglePopover(resType);
+                  }}
                   className={`flex items-center justify-center gap-1.5 px-3 py-1 rounded-lg transition-all cursor-pointer font-sans text-[11px] border shrink-0 ${
                     isActive
                       ? 'bg-primary/20 border-primary text-primary shadow-sm'
@@ -159,10 +171,10 @@ export default function ResourceManagerBar() {
                   const groupedItems = getGroupedItems(type);
                   return (
                     <>
-                      <div className="fixed inset-0 z-40" onClick={() => setActiveResourcePopover(null)} />
+                      <div className="fixed inset-0 z-40" onClick={() => { setActiveResourcePopover(null); setPopoverFixedPos(null); }} />
                       <div
-                        className="absolute left-full top-0 ml-2 z-50 flex flex-col overflow-hidden border border-outline/20 bg-surface/95 backdrop-blur-md shadow-2xl rounded-xl text-left font-sans select-none"
-                        style={{ height: popoverHeight, width: popoverWidth }}
+                        className="flex flex-col overflow-hidden border border-outline/20 bg-surface/95 backdrop-blur-md shadow-2xl rounded-xl text-left font-sans select-none"
+                        style={{ position: 'fixed', top: popoverFixedPos?.top ?? 0, left: popoverFixedPos?.left ?? 0, height: popoverHeight, width: popoverWidth, zIndex: 9999 }}
                         onWheel={(e) => e.stopPropagation()}
                       >
                         {/* Header */}
@@ -172,7 +184,7 @@ export default function ResourceManagerBar() {
                             <button onClick={() => handleAddNewGroup(type)} className="p-0.5 rounded hover:bg-on-surface/5 text-on-surface/40 hover:text-primary transition-colors cursor-pointer" title="新建分组">
                               <FolderPlus className="w-3.5 h-3.5" />
                             </button>
-                            <button onClick={() => setActiveResourcePopover(null)} className="p-0.5 rounded hover:bg-on-surface/5 text-on-surface/40 hover:text-primary transition-colors cursor-pointer" title="关闭">
+                            <button onClick={() => { setActiveResourcePopover(null); setPopoverFixedPos(null); }} className="p-0.5 rounded hover:bg-on-surface/5 text-on-surface/40 hover:text-primary transition-colors cursor-pointer" title="关闭">
                               <X className="w-3.5 h-3.5" />
                             </button>
                           </div>

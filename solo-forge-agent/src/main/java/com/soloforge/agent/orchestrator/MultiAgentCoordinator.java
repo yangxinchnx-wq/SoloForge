@@ -47,7 +47,7 @@ public class MultiAgentCoordinator {
         List<CompletableFuture<String>> futures = agentIds.stream()
             .map(agentId -> CompletableFuture.supplyAsync(() -> {
                 ChatSettings agentSettings = copySettings(settings, agentId);
-                return agentExecutor.execute(task, agentSettings, provider);
+                return agentExecutor.execute(task, agentSettings, provider, null, null);
             }, parallelExecutor))
             .toList();
 
@@ -76,21 +76,21 @@ public class MultiAgentCoordinator {
         // 1. Planner 拆解
         ChatSettings plannerSettings = copySettings(settings, "plan_agent");
         String plan = agentExecutor.execute(
-            "请拆解以下任务,给出明确的步骤:\n" + task, plannerSettings, provider);
+            "请拆解以下任务,给出明确的步骤:\n" + task, plannerSettings, provider, null, null);
         log.info("Planner output: {} chars", plan.length());
 
         // 2. Executor 执行
         ChatSettings executorSettings = copySettings(settings, "code_agent");
         String execution = agentExecutor.execute(
             "按照以下计划执行任务:\n" + plan + "\n\n原始任务: " + task,
-            executorSettings, provider);
+            executorSettings, provider, null, null);
         log.info("Executor output: {} chars", execution.length());
 
         // 3. Reviewer 审查
         ChatSettings reviewerSettings = copySettings(settings, "debug_agent");
         String review = agentExecutor.execute(
             "审查以下执行结果,指出问题:\n\n计划:\n" + plan + "\n\n执行结果:\n" + execution,
-            reviewerSettings, provider);
+            reviewerSettings, provider, null, null);
         log.info("Reviewer output: {} chars", review.length());
 
         // 4. 如果审查发现问题,重新执行 (简化版: 直接返回综合结果)
@@ -98,7 +98,7 @@ public class MultiAgentCoordinator {
             ChatSettings reexecSettings = copySettings(settings, "code_agent");
             String reexec = agentExecutor.execute(
                 "根据审查意见修复:\n\n执行结果:\n" + execution + "\n\n审查意见:\n" + review,
-                reexecSettings, provider);
+                reexecSettings, provider, null, null);
             return "## 计划\n" + plan + "\n\n## 执行(修复后)\n" + reexec + "\n\n## 审查\n" + review;
         }
 
@@ -126,7 +126,7 @@ public class MultiAgentCoordinator {
                     ? task
                     : "任务: " + task + "\n\n其他 Agent 的观点:\n" + String.join("\n---\n", positions)
                         + "\n\n请给出你的观点,可以赞同或反驳其他 Agent。";
-                String position = agentExecutor.execute(prompt, agentSettings, provider);
+                String position = agentExecutor.execute(prompt, agentSettings, provider, null, null);
                 positions.add("[" + agentId + "] " + position);
             }
 

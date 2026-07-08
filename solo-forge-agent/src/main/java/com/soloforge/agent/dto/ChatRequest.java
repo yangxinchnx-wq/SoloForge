@@ -5,6 +5,9 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+import java.util.Map;
+
 /**
  * 聊天请求 (前端 POST /api/chat/send 的请求体)
  */
@@ -30,6 +33,12 @@ public class ChatRequest {
     /** 是否流式返回 (默认 true) */
     @Builder.Default
     private Boolean stream = true;
+
+    /** 对话历史 (前端透传, 格式: [{sender:"user"|"assistant", content:"..."}]) */
+    private List<Map<String, Object>> history;
+
+    /** 文件上下文 (前端透传, 格式: {name:"xxx", content:"..."}) */
+    private Map<String, Object> fileContext;
 
     /**
      * LLM 提供商配置
