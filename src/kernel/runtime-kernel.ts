@@ -8,6 +8,7 @@ import { RuntimeComponent } from './runtime-component';
 import { LifecycleManager } from '../runtime/lifecycle';
 import { ConfigCenter, globalConfigCenter, MetricsCollectorInterface, globalMetricsCollector } from './config-center';
 import type Redis from 'ioredis';
+import type { TransactionManager } from './transaction-manager';
 
 export enum RuntimeState {
   BOOTING = 'BOOTING',
@@ -30,7 +31,16 @@ export enum RuntimeMode {
 export interface EventBusInterface {
   emit(event: string, payload: any): void;
   on(event: string, handler: (payload: any) => void): void;
+  off(event: string, handler: (payload: any) => void): void;
   getEventLog(): Array<{ event: string; payload: any; timestamp: number }>;
+}
+
+/**
+ * 命令总线接口
+ */
+export interface CommandBusInterface {
+  execute(command: any): Promise<any>;
+  registerHandler(type: string, handler: (command: any) => Promise<any>): void;
 }
 
 /**
@@ -57,6 +67,14 @@ class InMemoryEventBus implements EventBusInterface {
       this.handlers.set(event, []);
     }
     this.handlers.get(event)!.push(handler);
+  }
+
+  off(event: string, handler: (payload: any) => void): void {
+    const list = this.handlers.get(event);
+    if (list) {
+      const idx = list.indexOf(handler);
+      if (idx !== -1) list.splice(idx, 1);
+    }
   }
 
   getEventLog(): Array<{ event: string; payload: any; timestamp: number }> {
@@ -133,8 +151,8 @@ export class RuntimeKernel {
    */
   public readonly eventBus: EventBusInterface = new InMemoryEventBus();
 
-  public commandBus: any = null;
-  public transactionManager: any = null;
+  public commandBus: CommandBusInterface | null = null;
+  public transactionManager: TransactionManager | null = null;
   public projectionManager: any = null;
   public snapshotManager: any = null;
   public scheduler: any = null;
@@ -147,6 +165,13 @@ export class RuntimeKernel {
   // 存根：占位属性（领域模块在挂载前访问时不会崩溃）
   public featureFlagManager: any = null;
   public recoveryPlanManager: any = null;
+
+  // Phase 4/5/7 运行时代理（由 bootstrap / system-assembler 挂载）
+  public distributedBrokerProxy: any = null;
+  public sandboxMigrationEngineProxy: any = null;
+  public globalTelemetryExporterProxy: any = null;
+  public raftConsensusEngineProxy: any = null;
+  public schedulerClient: any = null;
 
   // 🔥 热数据层：Garnet 热缓存客户端（运行态，无持久化，进程结束即销毁）
   private _garnetClient: Redis | null = null;
@@ -375,7 +400,7 @@ export class RuntimeKernel {
   }
 
   // ────────────── 命令总线 ──────────────
-  public executeCommand(cmd: {
+  public async executeCommand(cmd: {
     id?: string;
     type: string;
     domain: string;
@@ -383,13 +408,22 @@ export class RuntimeKernel {
     payload: any;
   }): Promise<any> {
     console.log(`[RuntimeKernel] Execute command: ${cmd.type} from ${cmd.caller}`);
-    return Promise.resolve({ accepted: true, type: cmd.type });
+    if (this.commandBus?.execute) {
+      try {
+        return await this.commandBus.execute(cmd);
+      } catch (err: any) {
+        console.error(`[RuntimeKernel] Command ${cmd.type} failed:`, err.message);
+        return { accepted: false, type: cmd.type, error: err.message };
+      }
+    }
+    console.warn(`[RuntimeKernel] CommandBus not initialized, command ${cmd.type} dropped`);
+    return { accepted: false, type: cmd.type, error: 'CommandBus not initialized' };
   }
 
   // ────────────── 兼容旧系统装配器的存根接口 ──────────────
   public bootstrapCoreLinkages(components: {
-    commandBus: any;
-    transactionManager: any;
+    commandBus: CommandBusInterface;
+    transactionManager: TransactionManager;
     projectionManager: any;
     snapshotManager: any;
     scheduler: any;

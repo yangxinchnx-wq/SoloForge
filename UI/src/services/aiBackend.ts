@@ -1,7 +1,7 @@
 /**
  * aiBackend — 统一 AI 流式后端接口
- *   dev (浏览器 / Vite dev server) → fetch('/api/java-agent/chat/send') (POST 触发)
- *                                  → Node.js(3001) 透传到 Java Spring AI Agent(8770)
+ *   dev (浏览器 / Vite dev server) → USE_RACER ? /api/agents/dispatch (RACER) : /api/java-agent/api/chat/stream (Java SSE)
+ *                                  → Node.js(3000) 直连透传到 Java Spring AI Agent(8770)
  *   prod (Electron) → window.soloforge.ai.chatViaPort (MessagePortMain 零拷贝)
  *                     (注: 当前 preload.cjs 未暴露 dispatchAgent, IPC 路径为预留)
  *
@@ -11,9 +11,8 @@
  *   startChat(req, onEvent) → { abort(): void }
  *   onEvent 收到的事件: { kind: 'text' | 'phase' | 'error' | 'done', ... }
  *
- * 2026-07-08 Phase 3: 运行时从 Node.js /api/agents/dispatch 切换到
- *            Java Spring AI /api/java-agent/chat/send (Node.js 透传到 8770)
- *            Java 服务当前为非流式 (单 JSON 响应), 仅 emit text + done
+ * 2026-07-08 Phase 4: 真实 SSE 流式 — 从 /api/chat/stream 读取 Server-Sent Events
+ *            每个 text 事件携带 LLM delta 文本片段, 前端逐字追加渲染
  */
 
 export type ChatStreamEvent =
@@ -62,9 +61,27 @@ export function isElectronIpcAvailable(): boolean {
 
 /**
  * 将前端 ChatRequest 映射为 Java Spring AI ChatRequest DTO
- *   POST /api/java-agent/api/chat/send (Node.js 透传到 8770/api/chat/send)
- *   Response: { success: boolean, content?: string, error?: string, sessionId, agentId }
+ *   POST /api/java-agent/api/chat/stream (Node.js 直连到 8770/api/chat/stream)
+ *   Response: SSE stream — event:text/done/error, data:{...}
  */
+// ── RACER 模式开关: true=Node.js RACER Agent, false=Java Agent ──
+const USE_RACER = true;
+
+function buildRacerRequestBody(req: ChatRequest): any {
+  return {
+    prompt: req.prompt,
+    chatId: req.chatId ?? `chat-${Date.now()}`,
+    packetUuid: `pkt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    history: req.history || [],
+    activeFile: req.activeFile || null,
+    mainProvider: req.mainProvider || null,
+    workspaceFolder: req.workspaceFolder || null,
+    activeTools: req.activeTools || [],
+    activeSkills: req.activeSkills || [],
+    activeKnowledge: req.activeKnowledge || [],
+  };
+}
+
 function buildJavaRequestBody(req: ChatRequest): any {
   const settings = req.activeSettings || {};
   return {
@@ -77,6 +94,8 @@ function buildJavaRequestBody(req: ChatRequest): any {
           model: req.mainProvider.model,
         }
       : null,
+    history: req.history || [],
+    fileContext: req.fileContext || undefined,
     settings: {
       agentId: req.agentId || settings.agentId || 'code_agent',
       personality: settings.personality || 'professional',
@@ -88,54 +107,229 @@ function buildJavaRequestBody(req: ChatRequest): any {
       enabledKnowledge: req.activeKnowledge || [],
       workspaceFolder: req.workspaceFolder || null,
     },
-    stream: false, // Java 服务当前为非流式
+    stream: true, // 2026-07-08: 启用真实流式
   };
 }
 
 /**
- * dev (fetch 触发) 实现
+ * 执行 Java Agent 路径 (SSE 流式)
+ * 用于 USE_RACER=false 时的主路径，以及 RACER 失败时的 fallback
+ */
+async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: string, onEvent: (e: ChatStreamEvent) => void): Promise<void> {
+  const res = await fetch('/api/java-agent/api/chat/stream', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream',
+    },
+    body: JSON.stringify(buildJavaRequestBody(req)),
+    signal,
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    onEvent({ kind: 'error', error: `HTTP ${res.status} ${errText}`, taskId });
+    return;
+  }
+
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('text/event-stream')) {
+    const result = await res.json().catch(() => null);
+    if (result?.content) {
+      onEvent({ kind: 'text', text: result.content, taskId });
+    }
+    onEvent({ kind: 'done', taskId });
+    return;
+  }
+
+  // SSE stream parsing
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let currentEvent = '';
+  let currentData = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (line.startsWith('event:')) {
+        currentEvent = line.substring(6).trim();
+      } else if (line.startsWith('data:')) {
+        currentData = line.substring(5).trim();
+      } else if (line === '' || line === '\r') {
+        if (currentEvent && currentData && !signal.aborted) {
+          try {
+            const data = JSON.parse(currentData);
+            if (currentEvent === 'text' && data.content) {
+              onEvent({ kind: 'text', text: data.content, taskId });
+            } else if (currentEvent === 'error') {
+              onEvent({ kind: 'error', error: data.error || 'Unknown error', taskId });
+            } else if (currentEvent === 'done') {
+              onEvent({ kind: 'done', taskId });
+            }
+          } catch {}
+        }
+        currentEvent = '';
+        currentData = '';
+      }
+    }
+  }
+
+  if (currentEvent && currentData && !signal.aborted) {
+    try {
+      const data = JSON.parse(currentData);
+      if (currentEvent === 'text' && data.content) {
+        onEvent({ kind: 'text', text: data.content, taskId });
+      } else if (currentEvent === 'done') {
+        onEvent({ kind: 'done', taskId });
+      }
+    } catch {}
+  }
+}
+
+/**
+ * Parse RACER SSE stream — handles phase, text, done, error events.
+ * Same wire format as Java Agent SSE, with additional phase events.
+ */
+async function parseRacerSSE(
+  res: Response,
+  signal: AbortSignal,
+  taskId: string,
+  onEvent: (e: ChatStreamEvent) => void,
+): Promise<void> {
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let currentEvent = '';
+  let currentData = '';
+
+  const processEvent = (): void => {
+    if (!currentEvent || !currentData || signal.aborted) return;
+    try {
+      const data = JSON.parse(currentData);
+      switch (currentEvent) {
+        case 'text':
+          if (data.content) {
+            onEvent({ kind: 'text', text: data.content, taskId });
+          }
+          break;
+        case 'phase':
+          onEvent({ kind: 'phase', phase: data.phase, taskId, ...data });
+          break;
+        case 'error':
+          onEvent({ kind: 'error', error: data.error || 'Unknown error', taskId });
+          break;
+        case 'done':
+          onEvent({ kind: 'done', taskId });
+          break;
+      }
+    } catch { /* ignore malformed JSON */ }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (line.startsWith('event:')) {
+        currentEvent = line.substring(6).trim();
+      } else if (line.startsWith('data:')) {
+        currentData = line.substring(5).trim();
+      } else if (line === '' || line === '\r') {
+        processEvent();
+        currentEvent = '';
+        currentData = '';
+      }
+    }
+  }
+
+  // Process any remaining event in buffer
+  processEvent();
+}
+
+/**
+ * dev (fetch SSE 流式) 实现
  * 流程:
- *   1) fetch POST /api/java-agent/chat/send → Node.js(3001) 透传到 Java(8770)
- *   2) Java AgentOrchestrator 复杂度分流 (单 Agent / 多 Agent 协作)
- *   3) 终态 JSON 返回 → emit text + done
+ *   1) USE_RACER=true 时优先走 Node.js RACER Agent (/api/agents/dispatch)
+ *   2) RACER 非超时失败时自动 fallback 到 Java Agent (/api/java-agent/api/chat/stream)
+ *   3) RACER 超时 (AbortError) 不 fallback — 说明后端整体不可用
+ *   4) USE_RACER=false 时直接走 Java Agent
  */
 async function startChatViaFetch(req: ChatRequest, onEvent: (e: ChatStreamEvent) => void): Promise<ChatHandle> {
-  const taskId = `java-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const backend = USE_RACER ? 'racer' : 'java';
+  const taskId = `${backend}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const controller = new AbortController();
   const signal = controller.signal;
 
-  // 超时保护: LLM 调用可能挂起 (如服务商不可达), 120s 后自动 abort
+  const timeoutMs = 120_000;
   const timeoutId = setTimeout(() => {
     controller.abort();
-    onEvent({ kind: 'error', error: '请求超时 (120s)：Java Agent 服务响应时间过长，请检查 8770 端口与 LLM 服务商连通性。', taskId });
-  }, 120_000);
+    onEvent({ kind: 'error', error: `${backend === 'racer' ? 'RACER Agent' : 'Java Agent'} request timeout (${timeoutMs / 1000}s)`, taskId });
+  }, timeoutMs);
 
   (async () => {
     try {
-      const res = await fetch('/api/java-agent/api/chat/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildJavaRequestBody(req)),
-        signal,
-      });
+      if (USE_RACER) {
+        // ── RACER path: Node.js AgentDecisionOrchestrator (SSE streaming) ──
+        //   Sends Accept: text/event-stream to get real-time phase events
+        //   Falls back to JSON if server doesn't support SSE
+        //   Non-timeout errors auto-fallback to Java Agent
+        try {
+          const res = await fetch('/api/agents/dispatch', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'text/event-stream',
+            },
+            body: JSON.stringify(buildRacerRequestBody(req)),
+            signal,
+          });
 
-      if (!res.ok) {
-        const errText = await res.text().catch(() => '');
-        onEvent({ kind: 'error', error: `HTTP ${res.status} ${errText}`, taskId });
-        return;
-      }
+          if (!res.ok) {
+            const errText = await res.text().catch(() => '');
+            let errMsg = `HTTP ${res.status}`;
+            try { errMsg = JSON.parse(errText).error || errMsg; } catch { errMsg = errText || errMsg; }
+            throw new Error(errMsg);
+          }
 
-      const result = await res.json().catch(() => null);
-      if (!signal.aborted) {
-        if (result?.success === false) {
-          onEvent({ kind: 'error', error: result?.error || 'Java Agent 返回失败', taskId });
-          return;
+          const contentType = res.headers.get('content-type') || '';
+          if (contentType.includes('text/event-stream') && res.body) {
+            // ── SSE streaming path ──
+            await parseRacerSSE(res, signal, taskId, onEvent);
+          } else {
+            // ── Fallback: JSON response (server didn't return SSE) ──
+            const result = await res.json();
+            if (result.output) {
+              onEvent({ kind: 'text', text: result.output, taskId });
+            }
+            onEvent({ kind: 'done', taskId });
+          }
+        } catch (racerErr: any) {
+          if (racerErr?.name === 'AbortError') {
+            return;
+          }
+          // RACER 非超时错误 → fallback 到 Java Agent
+          const reason = racerErr?.message || String(racerErr);
+          onEvent({ kind: 'phase', phase: 'fallback_to_java', taskId, reason });
+          try {
+            await executeJavaPath(req, signal, taskId, onEvent);
+          } catch (javaErr: any) {
+            if (javaErr?.name === 'AbortError') return;
+            onEvent({ kind: 'error', error: `RACER failed (${reason}), Java fallback also failed: ${javaErr?.message || javaErr}`, taskId });
+          }
         }
-        // Java 返回 { success, content, sessionId, agentId }
-        if (result?.content) {
-          onEvent({ kind: 'text', text: result.content, taskId });
-        }
-        onEvent({ kind: 'done', taskId });
+
+      } else {
+        // ── Java path: legacy Spring AI Agent ──
+        await executeJavaPath(req, signal, taskId, onEvent);
       }
     } catch (err: any) {
       if (err?.name === 'AbortError') return;
@@ -157,7 +351,7 @@ async function startChatViaFetch(req: ChatRequest, onEvent: (e: ChatStreamEvent)
 /**
  * prod (Electron IPC) 实现 — 预留路径
  * 当前 preload.cjs 未暴露 dispatchAgent/onAgentEvent, 此函数不会被调用。
- * 未来若启用 IPC, main 进程应转发到 /api/java-agent/chat/send。
+ * 未来若启用 IPC, main 进程应转发到 /api/java-agent/api/chat/stream。
  */
 async function startChatViaIpc(req: ChatRequest, onEvent: (e: ChatStreamEvent) => void): Promise<ChatHandle> {
   const sf = (window as any).soloforge;
@@ -167,7 +361,6 @@ async function startChatViaIpc(req: ChatRequest, onEvent: (e: ChatStreamEvent) =
 
   const taskId = `ipc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-  // 订阅 agent 事件 (预留, Java 服务当前不推送 phase 事件)
   const unsubscribeAgent = sf.onAgentEvent?.((msg: any) => {
     if (!msg || typeof msg.type !== 'string') return;
     if (!msg.type.startsWith('phase')) return;
@@ -182,7 +375,6 @@ async function startChatViaIpc(req: ChatRequest, onEvent: (e: ChatStreamEvent) =
   (async () => {
     try {
       const resp = await sf.dispatchAgent({
-        // main 进程应识别此标记并转发到 /api/java-agent/chat/send
         _target: 'java-agent',
         ...buildJavaRequestBody(req),
       });

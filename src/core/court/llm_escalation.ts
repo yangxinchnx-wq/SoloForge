@@ -2,6 +2,8 @@
 import crypto from 'crypto';
 import { RuntimeKernel } from '../../kernel/runtime-kernel';
 import { logger } from '../logger';
+import { callLLMWithTools, type LLMMessage } from '../agent/tools/function-calling-client';
+import { getLLMProxyConfig } from '../../llm/llmConfig';
 
 export interface EscalationVerdict {
   verdictId: string;
@@ -58,23 +60,82 @@ export class LlmEscalationRoom {
 
       // 2. Multi-Modal Semantic Pattern Matching Simulation Array Validator
       // Safely resolves alignment fingerprints without mutating state path parameters
-      let dynamicDeterminedWinner = 'agent-alpha-fast-edge';
-      let dynamicSanctionedLoser = 'agent-gamma-unstable-intruder';
-      let reasonText = `Advanced semantic timeline audit complete. Validated verification check tokens against historical HMAC hashes. Claim verified legal.`;
+      let dynamicDeterminedWinner = 'unknown';
+      let dynamicSanctionedLoser = 'unknown';
+      let reasonText = '';
 
-      // Fallback rule check: parsing audit log signatures for fraud poison tokens
+      // Fast path: fraud poison detection (no LLM needed)
       const containsPoisonToken = caseFile.events?.some((evt: any) =>
         JSON.stringify(evt.payload || {}).includes('fraud_poison') || suspiciousManifesto?.includes('poison')
       );
 
       if (containsPoisonToken) {
-        dynamicDeterminedWinner = 'agent-alpha-fast-edge';
-        dynamicSanctionedLoser = 'agent-gamma-unstable-intruder';
-        reasonText = `Extracted historical event logs captured signature mismatch anomalies. Rogue agent [agent-gamma-unstable-intruder] injected counterfeit unaligned pointers. Jurisdictional master tokens awarded exclusively to Alpha.`;
-      } else {
-        // Balanced distribution fallback under baseline metrics criteria
+        // Fraud detected: immediate ruling without LLM
         dynamicDeterminedWinner = caseFile.decisions?.[0]?.payload?.winning_agent || 'agent-alpha-fast-edge';
-        dynamicSanctionedLoser = 'unknown_rogue_intruder';
+        dynamicSanctionedLoser = 'fraud_detected_intruder';
+        reasonText = `Fraud poison tokens detected in evidence. Immediate ruling without LLM deliberation.`;
+        logger.info(this.moduleName, `Fraud fast-path: winner=${dynamicDeterminedWinner}, loser=${dynamicSanctionedLoser}`);
+      } else {
+        // Normal path: call real LLM for supreme court deliberation
+        try {
+          const cfg = getLLMProxyConfig();
+          const caseSummary = JSON.stringify({
+            traceId,
+            failedCaseId,
+            decisions: caseFile.decisions?.slice(0, 5) ?? [],
+            submissions: caseFile.courtSubmissions?.slice(0, 3) ?? [],
+            events: caseFile.events?.slice(0, 10) ?? [],
+          }, null, 2);
+
+          const messages: LLMMessage[] = [
+            {
+              role: 'system',
+              content: `You are the Supreme Court Judge of a multi-agent AI governance system.
+Your task: review the case evidence and determine the winner and loser.
+
+Rules:
+- Analyze the evidence objectively
+- Determine which agent deserves to win and which should be sanctioned
+- Respond in EXACTLY this JSON format, nothing else:
+{"winner": "<agent_id>", "loser": "<agent_id>", "reason": "<brief explanation>"}`,
+            },
+            {
+              role: 'user',
+              content: `Case evidence:\n${caseSummary}`,
+            },
+          ];
+
+          const llmResult = await callLLMWithTools({
+            messages,
+            tools: [],
+            model: cfg.defaultModel,
+            temperature: 0.2,
+            maxTokens: 1024,
+            maxRounds: 1,
+          });
+
+          const rawOutput = llmResult.finalMessage.content ?? '{}';
+          // Extract JSON from response (handle markdown code blocks)
+          const jsonMatch = rawOutput.match(/\{[\s\S]*?\}/);
+          if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            dynamicDeterminedWinner = parsed.winner || caseFile.decisions?.[0]?.payload?.winning_agent || 'unknown';
+            dynamicSanctionedLoser = parsed.loser || 'unknown';
+            reasonText = parsed.reason || 'LLM supreme court deliberation complete.';
+          } else {
+            // Fallback: use decision history
+            dynamicDeterminedWinner = caseFile.decisions?.[0]?.payload?.winning_agent || 'unknown';
+            dynamicSanctionedLoser = 'undetermined';
+            reasonText = `LLM response parsing failed. Fallback to decision history.`;
+          }
+
+          logger.info(this.moduleName, `LLM supreme court: winner=${dynamicDeterminedWinner}, loser=${dynamicSanctionedLoser}`);
+        } catch (llmErr: any) {
+          logger.error(this.moduleName, `LLM call failed: ${llmErr.message}, falling back to decision history`);
+          dynamicDeterminedWinner = caseFile.decisions?.[0]?.payload?.winning_agent || 'unknown';
+          dynamicSanctionedLoser = 'undetermined';
+          reasonText = `LLM deliberation failed (${llmErr.message}). Fallback to decision history.`;
+        }
       }
 
       const supremeVerdict: EscalationVerdict = {

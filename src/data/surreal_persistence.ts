@@ -6,9 +6,9 @@
 // âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 import { RuntimeComponent } from '../kernel/runtime-component';
-import { Surreal } from 'surrealdb';
-import { createNodeEngines } from '@surrealdb/node';
+import { Surreal, createRemoteEngines } from 'surrealdb';
 import path from 'path';
+import fs from 'fs';
 
 // ============================================================
 // ç±»åå®ä¹
@@ -101,7 +101,18 @@ export class SurrealPersistence implements RuntimeComponent, SoloForgePersistenc
   private surreal: Surreal | null = null;
   private connected = false;
 
+  // Singleton guard: only one Surreal instance per process (RocksDB is single-writer)
+  private static _globalInstance: SurrealPersistence | null = null;
+  private static _startPromise: Promise<void> | null = null;
+
   constructor(driver?: SurrealDbDriverInterface) {
+    // If a global singleton already exists and is connected, reuse it
+    if (SurrealPersistence._globalInstance?.connected) {
+      this.surreal = SurrealPersistence._globalInstance.surreal;
+      this.connected = true;
+      this.dbDriver = SurrealPersistence._globalInstance.dbDriver;
+      return;
+    }
     this.dbDriver = driver || null;
   }
 
@@ -116,31 +127,69 @@ export class SurrealPersistence implements RuntimeComponent, SoloForgePersistenc
    * å¯å¨ç»ä»¶ - è¿æ¥ SurrealDB
    */
   async start(): Promise<void> {
-    try {
-      console.log('[SurrealPersistence] Connecting to SurrealDB...');
+    // Singleton guard: if another instance already connected, reuse it
+    if (SurrealPersistence._globalInstance?.connected) {
+      this.surreal = SurrealPersistence._globalInstance.surreal;
+      this.connected = true;
+      this.dbDriver = SurrealPersistence._globalInstance.dbDriver;
+      console.log('[SurrealPersistence] Reusing existing global connection');
+      return;
+    }
 
+    // Guard against concurrent start() calls (multiple instances racing)
+    if (SurrealPersistence._startPromise) {
+      console.log('[SurrealPersistence] Another start() in progress, waiting...');
+      await SurrealPersistence._startPromise;
+      if (SurrealPersistence._globalInstance?.connected) {
+        this.surreal = SurrealPersistence._globalInstance.surreal;
+        this.connected = true;
+        this.dbDriver = SurrealPersistence._globalInstance.dbDriver;
+      }
+      return;
+    }
+
+    SurrealPersistence._startPromise = this._doConnect();
+    try {
+      await SurrealPersistence._startPromise;
+    } finally {
+      SurrealPersistence._startPromise = null;
+    }
+  }
+
+  private async _doConnect(): Promise<void> {
+    try {
+      const host = process.env.SURREALDB_HOST ?? 'localhost';
+      const port = process.env.SURREALDB_PORT ?? '8400';
+      const user = process.env.SURREALDB_USER ?? 'root';
+      const pass = process.env.SURREALDB_PASS ?? 'root';
+      const url = `http://${host}:${port}`;
+
+      console.log(`[SurrealPersistence] Connecting to SurrealDB server at ${url}...`);
+
+      // Use remote engine (HTTP/WebSocket to standalone SurrealDB process)
+      // Avoids embedded rocksdb native addon deadlock on Windows (surrealdb.js #582, #592)
       this.surreal = new Surreal({
-        engines: createNodeEngines(),
+        engines: createRemoteEngines(),
       });
 
-      // ä½¿ç¨ rocksdb åè®®ï¼åµå¥å¼æä¹åï¼
-      const dbPath = path.join(process.cwd(), 'data', 'soloforge_db').replace(/\\/g, '/');
-      await this.surreal.connect(`rocksdb://${dbPath}`);
-
-      // éæ©å½åç©ºé´åæ°æ®åº
+      await this.surreal.connect(url);
+      await this.surreal.signin({ username: user, password: pass });
       await this.surreal.use({ namespace: 'soloforge_core', database: 'autonomous_network' });
 
       this.connected = true;
-      this.dbDriver = this; // ä½¿ç¨èªèº«ä½ä¸ºé©±å¨
-      console.log('[SurrealPersistence] Connected successfully');
+      this.dbDriver = this;
+      SurrealPersistence._globalInstance = this;
+      console.log(`[SurrealPersistence] Connected to SurrealDB server at ${url} (global singleton registered)`);
 
-      // åå§åè¡¨ç»æ
       await this.initSchema();
     } catch (err: any) {
       console.error('[SurrealPersistence] Connection failed:', err.message);
+      console.error('[SurrealPersistence] Ensure SurrealDB server is running:');
+      console.error('  bin/surreal start --log warn --user root --pass root --bind 0.0.0.0:8400 rocksdb://data/soloforge_db');
       this.connected = false;
     }
   }
+
 
   /**
    * åå§åæ°æ®åºè¡¨ç»æ
@@ -202,7 +251,7 @@ export class SurrealPersistence implements RuntimeComponent, SoloForgePersistenc
       }
     }
     // Fallback to memory store
-    console.log(`[SurrealPersistence] query (memory mode): ${sqlStatement.substring(0, 80)}...`);
+    console.warn(`[SurrealPersistence] WARNING: dbDriver is null, falling back to memory store. Data will NOT be persisted. Query: ${sqlStatement.substring(0, 80)}...`);
     return [[]];
   }
 
@@ -252,6 +301,7 @@ export class SurrealPersistence implements RuntimeComponent, SoloForgePersistenc
       });
     } else {
       // ä½¿ç¨åå­å­å¨
+      console.warn(`[SurrealPersistence] WARNING: dbDriver is null, falling back to memory store. Decision "${payload.id}" will NOT be persisted.`);
       this.tableStore.set(payload.id, {
         ...payload,
         version: 1
@@ -294,6 +344,7 @@ export class SurrealPersistence implements RuntimeComponent, SoloForgePersistenc
       }
     } else {
       // ä½¿ç¨åå­å­å¨
+      console.warn(`[SurrealPersistence] WARNING: dbDriver is null, falling back to memory store. Optimistic lock update for "${id}" will NOT be persisted.`);
       const current = this.tableStore.get(id);
       if (!current) {
         throw new Error(`Decision not found: ${id}`);
@@ -349,6 +400,8 @@ export class SurrealPersistence implements RuntimeComponent, SoloForgePersistenc
       };
     }
 
+    // dbDriver 为空时返回空结果（内存模式下不支持 trace 查询）
+    console.warn(`[SurrealPersistence] WARNING: dbDriver is null, returning empty trace for "${traceId}". Data was NOT queried from database.`);
     return {
       traceId,
       decisions: [],
@@ -398,6 +451,7 @@ export class SurrealPersistence implements RuntimeComponent, SoloForgePersistenc
       });
     } else {
       // ä½¿ç¨åå­å­å¨
+      console.warn(`[SurrealPersistence] WARNING: dbDriver is null, falling back to memory store. Shadow decision "${payload.id}" will NOT be persisted.`);
       this.tableStore.set(payload.id, {
         ...payload,
         version: payload.version
@@ -435,6 +489,7 @@ export class SurrealPersistence implements RuntimeComponent, SoloForgePersistenc
     }
 
     // åå­å­å¨ï¼è¿æ»¤å¹éçè®°å½
+    console.warn(`[SurrealPersistence] WARNING: dbDriver is null, falling back to memory store for shadow decisions query (traceId: "${traceId}"). Results may be incomplete.`);
     const results: ShadowDecisionPayload[] = [];
     for (const record of this.tableStore.values()) {
       if (record.traceId === traceId && record.id?.startsWith('shadow_')) {

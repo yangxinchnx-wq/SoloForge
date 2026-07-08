@@ -32,32 +32,39 @@ import { initializeTelemetryAggregationConsumer } from './data/consumers/telemet
 import { RaftConsensusNode } from './kernel/consensus/raft-consensus-node';
 import { initializeConsensusAuditConsumer } from './data/consumers/consensus-audit-consumer';
 
-/**
- * SoloForge 纯净总装工厂
- * 职责边界：仅负责物理组件连线 + 事件转发，绝不包含任何业务逻辑
- */
-export async function bootstrapSystemNetwork(
-  kernel: RuntimeKernel, 
-  surrealClient: any
-): Promise<void> {
-  logger.info('Bootstrap', '⚙️ 总装厂点火：执行纯净基础设施连线...');
+// ─────────────────────────────────────────────────────────────────
+// 阶段化初始化子函数
+// ─────────────────────────────────────────────────────────────────
 
+/**
+ * 阶段 1：基础设施层
+ * Garnet 热数据层 + SurrealDB 持久化 + Scheduler 调度器
+ */
+async function initInfrastructure(
+  kernel: RuntimeKernel
+): Promise<{
+  commandBus: any;
+  transactionManager: any;
+  projectionManager: any;
+  snapshotManager: any;
+  scheduler: any;
+}> {
   // 1. 刚性契约保底桩（防止缺失文件导致崩溃）
-  let commandBus: any = { 
-    registerHandler: () => {}, 
-    execute: async (cmd: any) => ({ success: true, payload: cmd.payload }) 
+  let commandBus: any = {
+    registerHandler: () => {},
+    execute: async (cmd: any) => ({ success: true, payload: cmd.payload })
   };
-  let transactionManager: any = { 
-    begin: async () => ({ id: 'tx_stub' }), 
-    commit: async () => {}, 
-    rollback: async () => {}, 
-    drain: async () => {} 
+  let transactionManager: any = {
+    begin: async () => ({ id: 'tx_stub' }),
+    commit: async () => {},
+    rollback: async () => {},
+    drain: async () => {}
   };
   let projectionManager: any = { updateAll: () => {}, replayEvent: async () => {} };
-  let snapshotManager: any = { 
-    createFullSnapshot: async () => 'snap_stub', 
-    recover: async () => {}, 
-    replayEvent: async () => {} 
+  let snapshotManager: any = {
+    createFullSnapshot: async () => 'snap_stub',
+    recover: async () => {},
+    replayEvent: async () => {}
   };
   let scheduler: any = { drain: async () => {} };
 
@@ -93,6 +100,25 @@ export async function bootstrapSystemNetwork(
     logger.warn('Bootstrap', `部分底层模块尚未就位，启用防护桩`, { error: e.message });
   }
 
+  return { commandBus, transactionManager, projectionManager, snapshotManager, scheduler };
+}
+
+/**
+ * 阶段 2：核心服务层
+ * CommandBus 连线注入 + 心跳转发 + AI Runtime + LifecycleManager + Shadow Governor
+ */
+async function initCoreServices(
+  kernel: RuntimeKernel,
+  deps: {
+    commandBus: any;
+    transactionManager: any;
+    projectionManager: any;
+    snapshotManager: any;
+    scheduler: any;
+  }
+): Promise<void> {
+  const { commandBus, transactionManager, projectionManager, snapshotManager, scheduler } = deps;
+
   // 3. 核心连线注入
   kernel.bootstrapCoreLinkages({
     commandBus,
@@ -102,7 +128,7 @@ export async function bootstrapSystemNetwork(
     scheduler
   });
 
-  // 4. 纯净心跳转发（唯一允许的“业务入口”）
+  // 4. 纯净心跳转发（唯一允许的”业务入口”）
   if (commandBus?.registerHandler) {
     commandBus.registerHandler('SYS_HEARTBEAT', async (cmd: any) => {
       // 纯粹的事件化转发，不含任何业务逻辑
@@ -113,7 +139,7 @@ export async function bootstrapSystemNetwork(
       };
 
       kernel.eventBus.emit(RuntimeEvent.Heartbeat || 'sys.heartbeat', eventPayload);
-      
+
       return { success: true, event: 'Heartbeat broadcasted' };
     });
   }
@@ -155,7 +181,13 @@ export async function bootstrapSystemNetwork(
   } catch (e) {
     logger.warn('Bootstrap', '⚠️ Shadow Governor Orchestrator 暂未就位，不影响主流程');
   }
+}
 
+/**
+ * 阶段 3：社会引擎层
+ * SocialMemory + Law + Reputation + Institution + Governance
+ */
+async function initSocietyEngines(kernel: RuntimeKernel): Promise<void> {
   // 8. Social Memory Consumer 初始化（异步持久化冷沉淀消费者）
   try {
     initializeSocialMemoryConsumer(kernel);
@@ -171,27 +203,6 @@ export async function bootstrapSystemNetwork(
     logger.info('Bootstrap', '🧬 [Phase 3 Complete] Collective Social Memory Engine dynamically interlocked.');
   } catch (e) {
     logger.warn('Bootstrap', '⚠️ Social Memory Engine 暂未就位');
-  }
-
-  // 10. Court Adjudication Consumer 初始化（异步持久化冷沉淀消费者）
-  try {
-    initializeCourtAdjudicationConsumer(kernel);
-    logger.info('Bootstrap', '🏛️ [Phase 3 Court Complete] Court Adjudication Consumer 已挂载到数据沉淀管道');
-  } catch (e) {
-    logger.warn('Bootstrap', '⚠️ Court Adjudication Consumer 暂未就位');
-  }
-
-  // 11. Primary Court Room + Supreme LLM Escalation Tribunal 热插拔挂载
-  try {
-    const surrealPersistence = new SurrealPersistence();
-    const primaryCourt = new ConsensAgentCourtRoom(kernel);
-    const supremeCourt = new LlmEscalationRoom(kernel, surrealPersistence);
-
-    await primaryCourt.bootCourtRoom();
-    await supremeCourt.initializeSupremeTribunal();
-    logger.info('Bootstrap', '🏛️ [Phase 3 Absolute Complete] Judicial Assembly Courtroom Framework frozen into release line safely.');
-  } catch (e) {
-    logger.warn('Bootstrap', '⚠️ Court Engines 暂未就位');
   }
 
   // 12. Law Compliance Consumer 初始化（异步持久化冷沉淀消费者）
@@ -247,12 +258,45 @@ export async function bootstrapSystemNetwork(
   } catch (e) {
     logger.warn('Bootstrap', '⚠️ Institution/Goverance Engines 暂未就位');
   }
+}
 
+/**
+ * 阶段 4：司法系统层
+ * ConsensAgentCourtRoom + LlmEscalationRoom
+ */
+async function initCourtSystem(kernel: RuntimeKernel): Promise<void> {
+  // 10. Court Adjudication Consumer 初始化（异步持久化冷沉淀消费者）
+  try {
+    initializeCourtAdjudicationConsumer(kernel);
+    logger.info('Bootstrap', '🏛️ [Phase 3 Court Complete] Court Adjudication Consumer 已挂载到数据沉淀管道');
+  } catch (e) {
+    logger.warn('Bootstrap', '⚠️ Court Adjudication Consumer 暂未就位');
+  }
+
+  // 11. Primary Court Room + Supreme LLM Escalation Tribunal 热插拔挂载
+  try {
+    const surrealPersistence = new SurrealPersistence();
+    const primaryCourt = new ConsensAgentCourtRoom(kernel);
+    const supremeCourt = new LlmEscalationRoom(kernel, surrealPersistence);
+
+    await primaryCourt.bootCourtRoom();
+    await supremeCourt.initializeSupremeTribunal();
+    logger.info('Bootstrap', '🏛️ [Phase 3 Absolute Complete] Judicial Assembly Courtroom Framework frozen into release line safely.');
+  } catch (e) {
+    logger.warn('Bootstrap', '⚠️ Court Engines 暂未就位');
+  }
+}
+
+/**
+ * 阶段 5：网络通信层
+ * DistributedBroker + SandboxMigration + Telemetry + Raft Consensus + Garnet Bridge
+ */
+async function initNetworkLayer(kernel: RuntimeKernel): Promise<void> {
   // 18. Distributed Protocol Broker 热插拔挂载（Phase 4 跨语言IPC网络通信代理）
   try {
     const distributedBroker = new DistributedProtocolBroker(kernel);
     await distributedBroker.connectMarlServiceGateway();
-    (kernel as any).distributedBrokerProxy = distributedBroker;
+    kernel.distributedBrokerProxy = distributedBroker;
     logger.info('Bootstrap', '🛰️ [Phase 4 Ignition Base] Cross-language distributed IPC fast broker client linked and live.');
   } catch (e) {
     logger.warn('Bootstrap', '⚠️ Distributed Protocol Broker 暂未就位');
@@ -270,7 +314,7 @@ export async function bootstrapSystemNetwork(
   try {
     const sandboxMigrationEngine = new SandboxMigrationEngine(kernel);
     await sandboxMigrationEngine.bootSandboxRegistry();
-    (kernel as any).sandboxMigrationEngineProxy = sandboxMigrationEngine;
+    kernel.sandboxMigrationEngineProxy = sandboxMigrationEngine;
     logger.info('Bootstrap', '🛡️ [Phase 5 Complete] Hardened V8 Isolate sandboxing and live memory migration engine locked into release line safely.');
   } catch (e) {
     logger.warn('Bootstrap', '⚠️ Sandbox Migration Engine 暂未就位');
@@ -281,7 +325,7 @@ export async function bootstrapSystemNetwork(
     const telemetryExporter = new TelemetryMetricExporter(kernel);
     initializeTelemetryAggregationConsumer(kernel, telemetryExporter);
     await telemetryExporter.initializeExporterNode();
-    (kernel as any).globalTelemetryExporterProxy = telemetryExporter;
+    kernel.globalTelemetryExporterProxy = telemetryExporter;
     logger.info('Bootstrap', '🛰️ [Phase 5 Observability Complete] Prometheus Exporter Gateway frozen cleanly.');
   } catch (e) {
     logger.warn('Bootstrap', '⚠️ Telemetry Exporter 暂未就位');
@@ -300,7 +344,7 @@ export async function bootstrapSystemNetwork(
     const localClusterNodeId = kernel.configCenter.get('governor.cluster.local_node_id', 'node_alpha_master');
     const raftConsensusNode = new RaftConsensusNode(kernel, localClusterNodeId);
     await raftConsensusNode.bootConsensusRegistry();
-    (kernel as any).raftConsensusEngineProxy = raftConsensusNode;
+    kernel.raftConsensusEngineProxy = raftConsensusNode;
     logger.info('Bootstrap', '🧱 [Phase 7 Multi-Node Replicated live] Hardened Raft consensus engine interlocked successfully.');
   } catch (e) {
     logger.warn('Bootstrap', '⚠️ Raft Consensus Node 暂未就位');
@@ -314,11 +358,49 @@ export async function bootstrapSystemNetwork(
       getGarnetClient: () => kernel.getGarnetClient(),
     });
     await garnetBridge.start();
+    const lifecycleManager = kernel.getLifecycleManager();
     lifecycleManager.register(garnetBridge);
     logger.info('Bootstrap', '🔥 [Garnet Bridge] ↔ EventBus ↔ Garnet Streams interlocked.');
   } catch (bridgeErr: any) {
     logger.warn('Bootstrap', '⚠️ Garnet Bridge 未就位，事件仍走 SurrealDB 直写', { error: bridgeErr.message });
   }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// 总装厂编排入口
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * SoloForge 纯净总装工厂
+ * 职责边界：仅负责物理组件连线 + 事件转发，绝不包含任何业务逻辑
+ *
+ * 结构重组为五个阶段化子函数，保持原执行顺序和错误处理不变：
+ *   initInfrastructure  → Garnet、SurrealDB、Scheduler
+ *   initCoreServices    → CommandBus、TransactionManager、LifecycleManager
+ *   initSocietyEngines  → SocialMemory、Law、Reputation、Institution、Governance
+ *   initCourtSystem     → ConsensAgentCourtRoom、LlmEscalationRoom
+ *   initNetworkLayer    → DistributedBroker、SandboxMigration、Telemetry、Raft、GarnetBridge
+ */
+export async function bootstrapSystemNetwork(
+  kernel: RuntimeKernel,
+  surrealClient: any
+): Promise<void> {
+  logger.info('Bootstrap', '⚙️ 总装厂点火：执行纯净基础设施连线...');
+
+  // 阶段 1：基础设施层（Garnet + SurrealDB + Scheduler）
+  const infraDeps = await initInfrastructure(kernel);
+
+  // 阶段 2：核心服务层（CommandBus 连线 + 心跳 + AI Runtime + Lifecycle + Shadow Governor）
+  await initCoreServices(kernel, infraDeps);
+
+  // 阶段 3：社会引擎层（SocialMemory + Law + Reputation + Institution + Governance）
+  await initSocietyEngines(kernel);
+
+  // 阶段 4：司法系统层（Court + LLM Escalation）
+  await initCourtSystem(kernel);
+
+  // 阶段 5：网络通信层（DistributedBroker + Sandbox + Telemetry + Raft + Garnet Bridge）
+  await initNetworkLayer(kernel);
 
   logger.info('Bootstrap', '🏆 总装厂纯净交付完成 - 架构零污染闭合');
 }

@@ -27,7 +27,7 @@ export class AgentDecisionOrchestrator {
   constructor(kernel: RuntimeKernel, registry: AgentRegistry) {
     this.kernel = kernel;
     this.registry = registry;
-    this.racerEngine = new SoloForgeRTRRacerEngine(kernel as any, (kernel as any).schedulerClient);
+    this.racerEngine = new SoloForgeRTRRacerEngine(kernel as any, kernel.schedulerClient);
   }
 
   /**
@@ -198,8 +198,9 @@ export class AgentDecisionOrchestrator {
     // 释放 subTaskBinding
     try {
       this.registry.releasePacketBindings(packetUuid);
-    } catch (e: any) {
-      logger.debug(this.moduleName, `releasePacketBindings(${packetUuid}) failed: ${e?.message ?? e}`);
+    } catch (e: unknown) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      logger.debug(this.moduleName, `releasePacketBindings(${packetUuid}) failed: ${errMsg}`);
     }
 
     return result;

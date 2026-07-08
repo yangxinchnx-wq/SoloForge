@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────
-// SoloForge Core Layer: MAPPO Resource Governor Heuristic Client
+// SoloForge Core Layer: MAPPO Resource Governor Client
 // Path: src/core/governor/mappo-client.ts
 //
 // 历史背景:
@@ -14,11 +14,16 @@
 //     - python/marl_service/server_optimized.py
 //     - src/core/governor/ipc/ (IPCClient)
 //
-//   本文件简化为纯启发式兜底客户端:
+//   当前行为:
+//     - 尝试通过 net.Socket 连接 127.0.0.1:8765 发送 POLICY_QUERY 做真实推理
+//       (与 training-scheduler 使用相同的 MARL 服务和 JSON 行分隔协议)
+//     - 连接成功则使用返回的 action;连接失败/超时则 fallback 到 heuristicFallback
+//     - 通过 marlAvailable 标记 + 冷却期避免反复探测已下线的服务
 //     - 保留原有公开 API (evaluateMappoResourceVector / evaluateBatch / ...)
 //       以兼容已有集成测试 (mappo-ipc.test.ts / system-backbone.test.ts)
-//     - 永远走 heuristicFallback,等价于"删除前 useFallback=true"的行为
 // ─────────────────────────────────────────────────────────────────
+
+import * as net from 'net';
 
 /**
  * 启发式兜底决策映射缓存
@@ -36,14 +41,15 @@ interface BatchRequest {
 }
 
 /**
- * MAPPO 资源控流启发式客户端(纯本地,无 IPC)
+ * MAPPO 资源控流客户端(真实推理 + 启发式兜底)
  *
- * 提供与历史版本兼容的接口,内部统一走 heuristicFallback:
+ * 优先尝试通过 net.Socket 连接 127.0.0.1:8765 的 MARL 服务做真实策略推理;
+ * 连接失败/超时时 fallback 到 heuristicFallback:
  *   - CPU > 0.95 → 2 (熔断)
  *   - CPU > 0.70 → 1 (降级)
  *   - 其他      → 0 (放行)
  *
- * 历史命名: GeminiMappoResourceGovernorClient (2026-07-02 重命名 → MappoHeuristicGovernor)
+ * 历史命名: GeminiMappoResourceGovernorClient → MappoHeuristicGovernor
  */
 export class MappoHeuristicGovernor {
   // ============================================
@@ -61,9 +67,23 @@ export class MappoHeuristicGovernor {
   private batchTimer: NodeJS.Timeout | null = null;
   private isProcessingBatch: boolean = false;
 
+  // ============================================
+  // MARL 服务连接层(127.0.0.1:8765)
+  // ============================================
+  /** null=未探测, true=可用, false=不可用 */
+  private marlAvailable: boolean | null = null;
+  private marlLastProbeTime: number = 0;
+  /** 服务不可用时的重试冷却期 (ms) */
+  private marlProbeCooldown: number = 10_000;
+  /** 单次 POLICY_QUERY 超时 (ms) */
+  private marlQueryTimeout: number = 1000;
+  /** TCP 探测超时 (ms) */
+  private marlProbeTimeout: number = 500;
+
   constructor() {
     // 历史上在构造时启动 Python 子进程 + IPC 连接
     // 现已移除:18765 端口从无 Python 监听,启动即失败
+    // 当前版本在首次 processBatch 时探测 8765 端口,按需使用 MARL 服务
   }
 
   /**
@@ -91,6 +111,103 @@ export class MappoHeuristicGovernor {
       if (oldestKey) this.cache.delete(oldestKey);
     }
     this.cache.set(key, { action, timestamp: Date.now() });
+  }
+
+  // ============================================
+  // MARL 服务探测与策略查询
+  // ============================================
+
+  /**
+   * 快速 TCP 探测 8765 端口是否可达
+   * 成功连接即认为 MARL 服务可用
+   */
+  private probeMarlService(): Promise<boolean> {
+    return new Promise((resolve) => {
+      const socket = new net.Socket();
+      let settled = false;
+      const finish = (ok: boolean) => {
+        if (settled) return;
+        settled = true;
+        try { socket.destroy(); } catch (_) { /* noop */ }
+        resolve(ok);
+      };
+
+      const timer = setTimeout(() => finish(false), this.marlProbeTimeout);
+
+      socket.on('error', () => {
+        clearTimeout(timer);
+        finish(false);
+      });
+
+      socket.connect(8765, '127.0.0.1', () => {
+        clearTimeout(timer);
+        finish(true);
+      });
+    });
+  }
+
+  /**
+   * 向 MARL 服务发送单条 POLICY_QUERY 并等待 POLICY_ANSWER
+   * 协议与 training-scheduler.queryTrainedPolicy 一致:
+   *   发送: { frameId, type:'POLICY_QUERY', payload:{ observation }, timestamp }\n
+   *   接收: { type:'POLICY_ANSWER', payload:{ action, confidence, source } }\n
+   *
+   * 失败/超时返回 null
+   */
+  private queryMarlPolicy(observation: number[]): Promise<number | null> {
+    return new Promise((resolve) => {
+      try {
+        const client = new net.Socket();
+        let buf = '';
+        let done = false;
+        const finish = (action: number | null) => {
+          if (done) return;
+          done = true;
+          try { client.destroy(); } catch (_) { /* noop */ }
+          resolve(action);
+        };
+
+        const timer = setTimeout(() => finish(null), this.marlQueryTimeout);
+
+        client.on('error', () => {
+          clearTimeout(timer);
+          finish(null);
+        });
+
+        client.connect(8765, '127.0.0.1', () => {
+          const frame = JSON.stringify({
+            frameId: `mappo_q_${Date.now()}`,
+            type: 'POLICY_QUERY',
+            payload: { observation },
+            timestamp: Date.now(),
+          }) + '\n';
+          client.write(frame);
+        });
+
+        client.on('data', (chunk: Buffer) => {
+          buf += chunk.toString('utf-8');
+          const idx = buf.indexOf('\n');
+          if (idx >= 0) {
+            clearTimeout(timer);
+            try {
+              const ack = JSON.parse(buf.slice(0, idx).trim());
+              if (ack.type === 'POLICY_ANSWER' && ack.payload) {
+                const action = typeof ack.payload.action === 'number'
+                  ? ack.payload.action
+                  : null;
+                finish(action);
+              } else {
+                finish(null);
+              }
+            } catch {
+              finish(null);
+            }
+          }
+        });
+      } catch {
+        resolve(null);
+      }
+    });
   }
 
   /**
@@ -134,7 +251,13 @@ export class MappoHeuristicGovernor {
   }
 
   /**
-   * 批处理:同进程内同步派发,等价于"批 IPC 响应"的语义
+   * 批处理:优先尝试 MARL 服务真实推理,失败则 fallback 到启发式
+   *
+   * 流程:
+   *   1. 检查 marlAvailable 状态,若未探测或冷却期已过则重新探测 8765
+   *   2. 若服务可用,对批中每条请求并行发送 POLICY_QUERY
+   *   3. 成功的用真实 action 响应,失败的用 heuristicFallback
+   *   4. 若服务不可用,全部走 heuristicFallback
    */
   private async processBatch(): Promise<void> {
     if (this.isProcessingBatch || this.batchQueue.length === 0) return;
@@ -144,9 +267,44 @@ export class MappoHeuristicGovernor {
     this.batchQueue = [];
 
     try {
-      batch.forEach(req => {
-        req.resolve(this.heuristicFallback(req.globalState));
-      });
+      // 检查 MARL 服务可用性(带冷却期)
+      const now = Date.now();
+      const needsProbe =
+        this.marlAvailable === null ||
+        (!this.marlAvailable && now - this.marlLastProbeTime > this.marlProbeCooldown);
+
+      if (needsProbe) {
+        this.marlAvailable = await this.probeMarlService();
+        this.marlLastProbeTime = now;
+      }
+
+      if (this.marlAvailable) {
+        // 并行发送 POLICY_QUERY(每条一个 socket,与 training-scheduler 模式一致)
+        const observations = batch.map(req => [...req.globalState, ...req.localObs]);
+        const results = await Promise.all(
+          observations.map(obs => this.queryMarlPolicy(obs))
+        );
+
+        let hasFailure = false;
+        batch.forEach((req, i) => {
+          if (results[i] !== null) {
+            req.resolve(results[i]!);
+          } else {
+            hasFailure = true;
+            req.resolve(this.heuristicFallback(req.globalState));
+          }
+        });
+
+        // 若有查询失败,标记服务不可用以触发下次重新探测
+        if (hasFailure) {
+          this.marlAvailable = false;
+        }
+      } else {
+        // MARL 服务不可用,全部走启发式兜底
+        batch.forEach(req => {
+          req.resolve(this.heuristicFallback(req.globalState));
+        });
+      }
     } finally {
       this.isProcessingBatch = false;
 
@@ -179,7 +337,8 @@ export class MappoHeuristicGovernor {
   }
 
   /**
-   * 优雅关闭(兼容旧 API;现版本无外部资源,直接清理缓存和定时器)
+   * 优雅关闭(兼容旧 API)
+   * 清理定时器、批队列、缓存,并重置 MARL 连接状态
    */
   public safelyTerminateGovernorContext(): void {
     if (this.batchTimer) {
@@ -188,5 +347,6 @@ export class MappoHeuristicGovernor {
     }
     this.batchQueue = [];
     this.cache.clear();
+    this.marlAvailable = null;
   }
 }

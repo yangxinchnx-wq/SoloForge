@@ -41,7 +41,13 @@ export enum RuntimeEvent {
   ReputationIncrementRequested = 'governor.reputation.increment.requested',
 
   // 🔒 AI 社会角色演化事件
-  AgentRoleEvolved = 'society.agent.role.evolved'
+  AgentRoleEvolved = 'society.agent.role.evolved',
+
+  // 🤖 Agent 生命周期事件
+  AgentTaskDispatched = 'agent.task.dispatched',
+  AgentTaskExecuted = 'agent.task.executed',
+  AgentDisputeRaised = 'agent.dispute.raised',
+  AgentReputationUpdated = 'agent.reputation.updated'
 }
 
 export default RuntimeEvent;

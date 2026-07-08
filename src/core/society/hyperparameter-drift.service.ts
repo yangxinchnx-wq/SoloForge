@@ -47,6 +47,7 @@ export interface ExperimentSummary {
 export class HyperparameterDriftService {
   private readonly moduleName = 'HyperparameterDrift';
   private isActive = false;
+  private eventHandlers: Array<{ event: string; handler: (payload: any) => void }> = [];
 
   constructor(private kernel: RuntimeKernel) {
     if (!kernel || !kernel.eventBus || !kernel.commandBus || !kernel.configCenter) {
@@ -77,14 +78,18 @@ export class HyperparameterDriftService {
     });
 
     // 监听 Governance 干预信号
-    this.kernel.eventBus.on('governance.intervention.applied', (intervention: any) => {
+    const governanceHandler = (intervention: any) => {
       this.handleGovernanceIntervention(intervention);
-    });
+    };
+    this.kernel.eventBus.on('governance.intervention.applied', governanceHandler);
+    this.eventHandlers.push({ event: 'governance.intervention.applied', handler: governanceHandler });
 
     // 监听 Telemetry 熵值变化
-    this.kernel.eventBus.on('telemetry.entropy.updated', (entropy: number) => {
+    const entropyHandler = (entropy: number) => {
       this.handleEntropyUpdate(entropy);
-    });
+    };
+    this.kernel.eventBus.on('telemetry.entropy.updated', entropyHandler);
+    this.eventHandlers.push({ event: 'telemetry.entropy.updated', handler: entropyHandler });
 
     this.isActive = true;
 
@@ -247,10 +252,15 @@ export class HyperparameterDriftService {
   }
 
   /**
-   * 停止实验
+   * 停止实验并清理 eventBus 订阅
    */
   public stopExperiment(): void {
     this.isActive = false;
+    // 清理 eventBus 订阅
+    for (const { event, handler } of this.eventHandlers) {
+      this.kernel.eventBus.off(event, handler);
+    }
+    this.eventHandlers = [];
     logger.info(this.moduleName, '🧬 Drift experiment stopped.');
   }
 }

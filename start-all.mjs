@@ -11,7 +11,7 @@
 //   2. Go git-service (3002)          UI/git-service/git-service.exe
 //   3. 主后端内核 (3001 / 9090)  src/index.ts (tsx)
 //       ⚠️ 3001 是后端管理界面: http://localhost:3001/admin
-//       依赖 Garnet(6379) + SurrealDB(嵌入式) + MARL(8765)
+//       依赖 Garnet(6379) + SurrealDB(8400) + MARL(8765)
 //   4. UI dev server (3000)          UI/server.ts (tsx)
 //   5. MARL Python 服务 (8765 + 8766) python -m marl_service.server_prod
 //      8765 = gRPC 推理 (audit B1 修复后接 reputation-outbox-bridge)
@@ -75,11 +75,15 @@ const JAVA_AGENT_DIR = path.join(ROOT, "solo-forge-agent");
 const JAVA_AGENT_JAR = path.join(JAVA_AGENT_DIR, "target", "solo-forge-agent-1.0.0.jar");
 const JAVA_PORT = 8770;
 
+const SURREAL_EXE = path.join(BIN, `surreal${exeExt}`);
+const SURREAL_PORT = 8400;
+
 const PORTS = {
   3000: "UI dev server (Vite + Express)",
   3001: "SoloForge API Server (主内核)",
   3002: "Go git-service (go-git)",
   6379: "Garnet 缓存 (Redis 协议)",
+  8400: "SurrealDB (standalone, rocksdb backend)",
   8765: "MARL Python gRPC 推理",
   8766: "MARL Python /sync/reputation HTTP (P9 接收端, audit B2 修复)",
   8770: "Java Spring AI Agent 服务 (solo-forge-agent)",
@@ -151,6 +155,7 @@ async function checkPrereqs() {
   const lines = [];
   function line(name, ok, detail) { lines.push({ name, ok, detail }); }
 
+  line("SurrealDB binary", haveFile(SURREAL_EXE), SURREAL_EXE);
   line("Garnet binary",   haveFile(GARNET_EXE), GARNET_EXE);
   line("Garnet data dir", haveDir(GARNET_DATA) || fs.existsSync(path.dirname(GARNET_DATA)), GARNET_DATA);
   line("Python 3.13",     haveFile(PY_EXE),     PY_EXE);
@@ -209,6 +214,26 @@ async function startGarnet() {
   return spawnBg("Garnet", GARNET_EXE, args, { cwd: path.dirname(GARNET_EXE) });
 }
 
+async function startSurrealDB() {
+  if (await portOpen("127.0.0.1", SURREAL_PORT, 200)) {
+    log("SurrealDB", WARN(`${SURREAL_PORT} \u5df2\u5360\u7528,\u5047\u5b9a\u5df2\u5728\u8fd0\u884c`));
+    return null;
+  }
+  if (!haveFile(SURREAL_EXE)) {
+    log("SurrealDB", FAIL(`\u627e\u4e0d\u5230 ${SURREAL_EXE};\u8df3\u8fc7`));
+    return null;
+  }
+  const dbPath = path.join(ROOT, "data", "soloforge_db").replace(/\\/g, "/");
+  return spawnBg("SurrealDB", SURREAL_EXE, [
+    "start",
+    "--log", "warn",
+    "--user", "root",
+    "--pass", "root",
+    "--bind", `0.0.0.0:${SURREAL_PORT}`,
+    `rocksdb://${dbPath}`,
+  ], { cwd: ROOT });
+}
+
 async function startGitService() {
   if (await portOpen("127.0.0.1", GIT_PORT, 200)) {
     log("git-service", WARN(`3002 已占用,假定已在运行`));
@@ -240,8 +265,25 @@ async function startBackend() {
     log("backend", WARN(`3001 已占用,假定已在运行`));
     return null;
   }
-  // dev 模式自动签发 token, 避免 3001 启动失败
-  const env = { ...process.env, SOLOFORGE_REQUIRE_TOKENS: "0" };
+  // Read .env file and inject into backend process environment
+  const envFile = path.join(ROOT, ".env");
+  const envFromDotenv = {};
+  if (fs.existsSync(envFile)) {
+    const lines = fs.readFileSync(envFile, "utf-8").split("\n");
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eqIdx = trimmed.indexOf("=");
+      if (eqIdx > 0) {
+        const key = trimmed.slice(0, eqIdx).trim();
+        const val = trimmed.slice(eqIdx + 1).trim();
+        envFromDotenv[key] = val;
+      }
+    }
+    log("backend", `已读取 .env (${Object.keys(envFromDotenv).length} 个变量)`);
+  }
+  // dev mode: auto-issue tokens to avoid 3001 startup failure
+  const env = { ...process.env, ...envFromDotenv, SOLOFORGE_REQUIRE_TOKENS: "0" };
   return spawnBg("backend", process.execPath, [TSX_CLI, "src/index.ts"], { cwd: ROOT, env });
 }
 
@@ -373,8 +415,15 @@ async function main() {
   if (CHECK_ONLY) return;
 
   const procs = [];
+  procs.push({ name: "SurrealDB",  p: await startSurrealDB() });
   procs.push({ name: "Garnet",     p: await startGarnet()    });
   procs.push({ name: "git-service",p: await startGitService()});
+
+  // Wait for SurrealDB first (backend depends on it)
+  log("WAIT", "Waiting for SurrealDB on 8400 (max 10s)...");
+  const surrealReady = await waitPort("127.0.0.1", SURREAL_PORT, "SurrealDB", 10000);
+  log("WAIT", `SurrealDB=${surrealReady ? "OK" : "TIMEOUT"}`);
+
 
   log("WAIT", "等 Garnet 与 git-service 就绪(最多 8s)...");
   const a = waitPort("127.0.0.1", GARNET_PORT, "Garnet",  8000);
@@ -420,7 +469,8 @@ async function main() {
   console.log(`  ${BOLD("Git 服务")}     ${INFO(`http://localhost:${GIT_PORT}`)}`);
   console.log(`  ${BOLD("MARL 推理")}    ${INFO("http://localhost:8765")}`);
   console.log(`  ${BOLD("MARL Reputation Sync")} ${INFO("http://localhost:8766/sync/reputation")}`);
-  console.log(`  ${BOLD("Java Agent")}    ${INFO(`http://localhost:${JAVA_PORT}`)}  (Spring AI 编排, /api/chat/send)`);
+  console.log(`  ${BOLD("Java Agent")}    ${INFO(`http://localhost:${JAVA_PORT}`)}  (fallback, Spring AI 编排, /api/chat/send)`);
+    console.log(`  ${BOLD("SurrealDB")}    ${INFO(`http://localhost:${SURREAL_PORT}`)}  (standalone, rocksdb)`);
   console.log(`  ${BOLD("Garnet 缓存")}  ${INFO(`127.0.0.1:${GARNET_PORT}`)}`);
   console.log(`  ${BOLD("Prometheus")}   ${INFO("http://localhost:9090/metrics")}`);
   console.log(`  ${BOLD("SSE 事件流")}  ${INFO("http://localhost:3001/api/events/stream")}`);

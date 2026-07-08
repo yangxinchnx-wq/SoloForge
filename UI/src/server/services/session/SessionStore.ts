@@ -752,7 +752,7 @@ export class SessionStore {
       if (garnet && typeof (garnet as any).deleteSession === 'function') {
         await (garnet as any).deleteSession(sessionId).catch(() => {});
       }
-    } catch (_) {}
+    } catch (err) { console.warn('[SessionStore] GarnetStore 清理失败:', err); }
 
     try {
       const { getSurrealStore } = await import('../persistence/SurrealStore');
@@ -760,7 +760,7 @@ export class SessionStore {
       if (surreal && typeof (surreal as any).deleteSession === 'function') {
         await (surreal as any).deleteSession(sessionId).catch(() => {});
       }
-    } catch (_) {}
+    } catch (err) { console.warn('[SessionStore] SurrealStore 清理失败:', err); }
 
     return true;
   }

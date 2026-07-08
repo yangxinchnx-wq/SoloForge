@@ -173,8 +173,9 @@ export class AgentRegistry {
             entityType: 'agent',
           },
         });
-      } catch (e: any) {
-        logger.debug(this.moduleName, `Reputation register fallback for ${seed.id}: ${e.message}`);
+      } catch (e: unknown) {
+        const errMsg = e instanceof Error ? e.message : String(e);
+        logger.debug(this.moduleName, `Reputation register fallback for ${seed.id}: ${errMsg}`);
       }
     }
 
@@ -193,6 +194,12 @@ export class AgentRegistry {
       this.runGossipCycle();
     }, 10000);
 
+    // 启动跨进程通信总线 (WebSocket 传输层, 失败自动降级为进程内模式)
+    this.commBus.connect().catch((e: unknown) => {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      logger.warn(this.moduleName, `commBus transport init: ${errMsg}`);
+    });
+
     this.isOperational = true;
     logger.info(this.moduleName, `${this.agents.size} agents online, court-bridge + society-bridge + comm-bus mounted`);
   }
@@ -200,6 +207,7 @@ export class AgentRegistry {
   public async shutdown(): Promise<void> {
     if (this.syncTimer) { clearInterval(this.syncTimer); this.syncTimer = null; }
     if (this.gossipTimer) { clearInterval(this.gossipTimer); this.gossipTimer = null; }
+    this.commBus.close();
     this.isOperational = false;
   }
 
@@ -330,10 +338,11 @@ export class AgentRegistry {
       });
       output = result.answer ?? '';
       logger.info(this.moduleName, `executeOnAgent [${agentId}] via LLM packet=${packetUuid} tools=${result.toolCallCount}`);
-    } catch (e: any) {
+    } catch (e: unknown) {
       // LLM 调用失败 — 抛出错误, 不再降级到模拟
-      logger.error(this.moduleName, `executeOnAgent [${agentId}] LLM failed: ${e?.message ?? e}`);
-      throw new Error(`LLM_EXECUTION_FAILED [${agentId}]: ${e?.message ?? e}`);
+      const errMsg = e instanceof Error ? e.message : String(e);
+      logger.error(this.moduleName, `executeOnAgent [${agentId}] LLM failed: ${errMsg}`);
+      throw new Error(`LLM_EXECUTION_FAILED [${agentId}]: ${errMsg}`);
     }
 
     // 更新多维度声誉
@@ -594,8 +603,9 @@ export class AgentRegistry {
             evidence: `agent_pool_sync @ ${new Date().toISOString()}`,
           },
         });
-      } catch (e: any) {
-        logger.debug(this.moduleName, `social sync skipped for ${agentId}: ${e.message}`);
+      } catch (e: unknown) {
+        const errMsg = e instanceof Error ? e.message : String(e);
+        logger.debug(this.moduleName, `social sync skipped for ${agentId}: ${errMsg}`);
       }
     }
   }

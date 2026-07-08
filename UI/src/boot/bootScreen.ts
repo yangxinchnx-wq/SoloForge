@@ -233,7 +233,7 @@ function paint(payload: BootErrorPayload) {
       } else {
         (window as any).__sfBoot = { shown: true, lastError: payload };
       }
-    } catch (_) {}
+    } catch (err) { console.warn('[BootScreen] 同步 window.__sfBoot 失败:', err); }
 
     // console 也打印, 配合 DevTools (放最后, 即使抛错也完成主要工作)
     try {
@@ -246,7 +246,7 @@ function paint(payload: BootErrorPayload) {
         // eslint-disable-next-line no-console
         console.error(payload.stack);
       }
-    } catch (_) { /* console 抛了就吞 */ }
+    } catch (err) { console.warn('[BootScreen] console.error 输出失败:', err); }
   } finally {
     (paint as any).__running = false;
   }

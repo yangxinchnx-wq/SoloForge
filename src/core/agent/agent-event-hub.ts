@@ -36,6 +36,7 @@ export class AgentEventHub {
   private readonly clients: Set<WSClient> = new Set();
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private subscribed = false;
+  private eventHandlers: Array<{ event: string; handler: (payload: any) => void }> = [];
 
   constructor(private readonly kernel: RuntimeKernel) {
     this.wss = new WebSocketServer({ noServer: true });
@@ -48,9 +49,29 @@ export class AgentEventHub {
     httpServer.on('upgrade', (req: IncomingMessage, socket, head) => {
       const url = req.url || '';
       if (!url.startsWith('/ws/agents')) {
-        // 不属于本 hub, 保持 socket 开放由其他 handler 处理
         return;
       }
+
+      // Token authentication: check ?token=xxx query parameter
+      // (Browser WebSocket API doesn't support custom headers, so token goes in URL)
+      try {
+        const parsedUrl = new URL(url, 'http://localhost');
+        const token = parsedUrl.searchParams.get('token');
+        const apiTokens = this.kernel.configCenter?.get?.('security.apiTokens', []) ?? [];
+        const requireTokens = process.env.SOLOFORGE_REQUIRE_TOKENS !== '0';
+
+        if (requireTokens && apiTokens.length > 0) {
+          if (!token || !apiTokens.includes(token)) {
+            logger.warn(this.moduleName, `WS auth failed: invalid or missing token`);
+            socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+            socket.destroy();
+            return;
+          }
+        }
+      } catch (authErr: any) {
+        logger.warn(this.moduleName, `WS auth error: ${authErr.message}`);
+      }
+
       this.wss.handleUpgrade(req, socket as any, head, (ws) => {
         this.onConnection(ws);
       });
@@ -72,6 +93,9 @@ export class AgentEventHub {
         const msg = JSON.parse(raw.toString());
         if (msg?.type === 'ping') {
           ws.send(JSON.stringify({ type: 'pong', ts: Date.now() }));
+        } else if (msg?.type === 'fiaacl.relay') {
+          // FIPA-ACL 跨进程中继: 广播给除发送者外的所有客户端
+          this.broadcastExcept(ws, msg);
         }
       } catch (e: any) {
         logger.debug(this.moduleName, `non-JSON message ignored: ${e.message}`);
@@ -115,9 +139,11 @@ export class AgentEventHub {
       'phase3_deliver_done',
     ];
     for (const evt of eventsToForward) {
-      bus.on(evt, (payload: any) => {
+      const handler = (payload: any) => {
         this.broadcast({ type: evt, payload, ts: Date.now() });
-      });
+      };
+      bus.on(evt, handler);
+      this.eventHandlers.push({ event: evt, handler });
     }
     this.subscribed = true;
   }
@@ -140,6 +166,20 @@ export class AgentEventHub {
       if (ws.readyState === WSClient.OPEN) {
         try { ws.send(data); } catch (e: any) {
           logger.debug(this.moduleName, `send failed: ${e.message}`);
+        }
+      }
+    }
+  }
+
+  /**
+   * 广播给除发送者外的所有客户端 — 用于 FIPA-ACL 跨进程中继
+   */
+  private broadcastExcept(sender: WSClient, msg: any): void {
+    const data = JSON.stringify(msg);
+    for (const ws of this.clients) {
+      if (ws !== sender && ws.readyState === WSClient.OPEN) {
+        try { ws.send(data); } catch (e: any) {
+          logger.debug(this.moduleName, `relay send failed: ${e.message}`);
         }
       }
     }
@@ -169,6 +209,15 @@ export class AgentEventHub {
   }
 
   public close(): void {
+    // 清理 eventBus 订阅
+    if (this.kernel?.eventBus) {
+      for (const { event, handler } of this.eventHandlers) {
+        this.kernel.eventBus.off(event, handler);
+      }
+    }
+    this.eventHandlers = [];
+    this.subscribed = false;
+
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     for (const ws of this.clients) {
       try { ws.close(1001, 'server shutdown'); } catch { /* ignore */ }
