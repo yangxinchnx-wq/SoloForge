@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'ui_parser.dart';
 
 class PlatformRenderer {
@@ -372,6 +373,58 @@ class PlatformRenderer {
     return Divider(thickness: thickness, color: color, height: thickness);
   }
 
+  /// SVG 矢量图节点 (2026-07-09 新增)
+  ///
+  /// 让 LLM 能通过 SVG 字符串画任意矢量图形 (企鹅、图标、插图、流程图等)。
+  /// flutter_svg 直接从字符串解析 SVG, 无需网络请求。
+  ///
+  /// 支持的 props:
+  ///   - content: SVG 字符串 (必填, 如 "<svg viewBox='0 0 200 200'>...</svg>")
+  ///   - width: 显示宽度 (默认 200)
+  ///   - height: 显示高度 (默认 200)
+  ///   - fit: 缩放模式 (contain/cover/fill/none, 默认 contain)
+  Widget _buildSvg(UiNode node, BuildContext context) {
+    final svgString = node.props['content'] as String? ?? '';
+    final width = UiParser.parseDouble(node.props['width'], 200);
+    final height = UiParser.parseDouble(node.props['height'], 200);
+    final fitStr = node.props['fit'] as String? ?? 'contain';
+
+    BoxFit fit;
+    switch (fitStr) {
+      case 'fill': fit = BoxFit.fill;
+      case 'cover': fit = BoxFit.cover;
+      case 'fitWidth': fit = BoxFit.fitWidth;
+      case 'fitHeight': fit = BoxFit.fitHeight;
+      case 'none': fit = BoxFit.none;
+      case 'scaleDown': fit = BoxFit.scaleDown;
+      default: fit = BoxFit.contain;
+    }
+
+    if (svgString.isEmpty) {
+      return const SizedBox(
+        width: 48,
+        height: 48,
+        child: Icon(Icons.image_not_supported, size: 48, color: Color(0xFFBDBDBD)),
+      );
+    }
+
+    Widget svg = SvgPicture.string(
+      svgString,
+      width: width,
+      height: height,
+      fit: fit,
+      placeholderBuilder: (context) => const Center(
+        child: SizedBox(
+          width: 24,
+          height: 24,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      ),
+    );
+
+    return _applyContainerProps(svg, node.props);
+  }
+
   Widget _buildChartWidget(UiNode node, BuildContext context) {
     final chartType = UiParser.parseChartType(node.props['chartType']);
     final title = node.props['title'] as String?;
@@ -451,6 +504,8 @@ class PlatformRenderer {
         return _buildProgress(node, context);
       case UiNodeType.divider:
         return _buildDivider(node, context);
+      case UiNodeType.svg:
+        return _buildSvg(node, context);
     }
   }
 
@@ -501,6 +556,8 @@ class PlatformRenderer {
         return _buildProgress(node, context);
       case UiNodeType.divider:
         return _buildDivider(node, context);
+      case UiNodeType.svg:
+        return _buildSvg(node, context);
     }
   }
 
@@ -570,6 +627,8 @@ class PlatformRenderer {
         return _buildProgress(node, context);
       case UiNodeType.divider:
         return _buildDivider(node, context);
+      case UiNodeType.svg:
+        return _buildSvg(node, context);
     }
   }
 }

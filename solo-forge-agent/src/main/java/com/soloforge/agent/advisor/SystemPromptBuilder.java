@@ -328,6 +328,14 @@ public class SystemPromptBuilder {
             3. 你根据结果继续处理或给出最终答案
             4. 一次只能调用一个工具,需要多个工具时分多次调用
 
+            ## [FORCE_CANVAS] 强制画布标记
+
+            当用户消息以 [FORCE_CANVAS] 开头时,表示用户明确要求在画布上作画/展示。
+            此时你必须:
+            1. 生成对应的 UI AST (UI 界面用 container/text/button/input 等节点; 图形/插画/图标用 svg 节点)
+            2. 调用 canvas_push_ui 工具推送到画布 (不允许只回复文字)
+            3. 推送成功后, 用一句话简述你画了什么
+
             ## canvas_push_ui 使用示例
 
             当用户请求 UI 界面时,你可以:
@@ -336,6 +344,34 @@ public class SystemPromptBuilder {
 
             ```json
             {"tool": "canvas_push_ui", "args": {"sessionId": "canvas-1", "dslJson": "{\\"type\\":\\"container\\",\\"props\\":{\\"padding\\":16,\\"layout\\":\\"column\\",\\"spacing\\":8},\\"children\\":[{\\"type\\":\\"text\\",\\"props\\":{\\"content\\":\\"Hello\\",\\"fontSize\\":24}}]}", "language": "typescript"}}
+            ```
+
+            ## AST 节点类型 (画布渲染器支持的全部类型)
+
+            - container: 布局容器 (props: layout=row/column/stack/zstack, padding, spacing, backgroundColor, borderRadius, width, height)
+            - text: 文本 (props: content, fontSize, color, fontWeight, textAlign)
+            - button: 按钮 (props: label, variant=filled/outlined/text, color, disabled)
+            - input: 输入框 (props: placeholder, value, obscureText, maxLines)
+            - image: 网络图片 (props: url, fit=contain/cover/fill)
+            - icon: Material 图标 (props: icon=add/star/person/..., size, color)
+            - chart: 图表 (props: chartType=bar/line/pie, title, data, colors)
+            - spacer: 占位 (props: flex)
+            - progress: 进度条 (props: value, color)
+            - divider: 分隔线 (props: thickness, color)
+            - **svg: SVG 矢量图 (props: content=SVG字符串, width, height, fit=contain/cover/fill)**
+
+            ## svg 节点 — 画图/插画/图标/流程图
+
+            当用户请求"画 X"、"画一个企鹅"、"画流程图"等图形任务时,使用 svg 节点。
+            content 是完整 SVG 字符串 (viewBox + shape 元素)。LLM 生成 SVG 时应:
+            - 用 viewBox 定义坐标系 (如 viewBox='0 0 200 240')
+            - 用 circle/ellipse/rect/polygon/path/polyline 拼出形状
+            - 用 fill 属性上色, 用 transform 属性位移/旋转
+            - 保持简洁: 50 个 shape 元素以内
+
+            示例 — 画一只企鹅:
+            ```json
+            {"tool": "canvas_push_ui", "args": {"sessionId": "canvas-1", "dslJson": "{\\"type\\":\\"svg\\",\\"props\\":{\\"width\\":200,\\"height\\":240,\\"content\\":\\"<svg viewBox='0 0 200 240' xmlns='http://www.w3.org/2000/svg'><ellipse cx='100' cy='130' rx='60' ry='80' fill='#1A1A1A'/><ellipse cx='100' cy='150' rx='40' ry='55' fill='#FFFFFF'/><circle cx='100' cy='55' r='32' fill='#1A1A1A'/><circle cx='88' cy='50' r='5' fill='#FFFFFF'/><circle cx='112' cy='50' r='5' fill='#FFFFFF'/><polygon points='92,62 108,62 100,75' fill='#FFA000'/><ellipse cx='80' cy='205' rx='18' ry='9' fill='#FFA000'/><ellipse cx='120' cy='205' rx='18' ry='9' fill='#FFA000'/></svg>\\"}", "language": "typescript"}}
             ```
 
             也可以不调用工具,只在回复末尾加 <<<PREVIEW_NEEDED:语言>>> 标记,前端会自动生成预览。""";

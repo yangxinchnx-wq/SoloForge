@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Globe, Plus, Search, RefreshCw, Key, Eye, EyeOff, X, Layers, Check, AlertCircle, Radio, Trash2 } from '../../utils/icons';
+import { createPortal } from 'react-dom';
+import { Globe, Plus, Search, RefreshCw, Key, Eye, EyeOff, X, Layers, Check, AlertCircle, Radio, Trash2, ChevronDown, ChevronUp, Info, Zap, Clock } from '../../utils/icons';
 import * as DndKitCore from '@dnd-kit/core';
 import * as DndKitModifiers from '@dnd-kit/modifiers';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, arrayMove, useSortable } from '@dnd-kit/sortable';
@@ -8,7 +9,8 @@ import { ModelIcon } from '../ModelIcon';
 import { AnimalAvatar, loadIconRegistry, addCustomIconToRegistry, removeIconFromRegistry, processUploadedIcon } from '../AnimalAvatar';
 import type { IconRegistryItem } from '../AnimalAvatar';
 import { SortableProviderCard, ProviderCardInner } from '../ProviderCard';
-import type { ModelProvider, CloudModelScanResult } from '../../data/providersRegistry';
+import type { ModelProvider, CloudModelScanResult, ModelMetadata, ProbeResult } from '../../data/providersRegistry';
+import { getLocalModelMetadata } from '../../data/modelMetadata';
 
 const { DndContext, DragOverlay, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors } = DndKitCore;
 const { restrictToVerticalAxis, restrictToFirstScrollableAncestor } = DndKitModifiers;
@@ -461,6 +463,8 @@ export default function ModelAddTab() {
 
   const [isScanning, setIsScanning] = useState(false);
   const [scanResult, setScanResult] = useState<CloudModelScanResult | null>(null);
+  const [showModelPicker, setShowModelPicker] = useState(false);
+  const [batchProbeTrigger, setBatchProbeTrigger] = useState(0);
 
   const scanProviderModels = async (providerId: string) => {
     setIsScanning(true);
@@ -496,10 +500,19 @@ export default function ModelAddTab() {
       if (data?.success && Array.isArray(data.models)) {
         const discovered = data.models.map((m: any) => {
           const existing = targetProv.models.find(x => x.id === m.id);
+          // 从扫描结果中提取上游原始元数据
+          const raw = m.raw || null;
+          const localMeta = getLocalModelMetadata(m.id);
+          let metadata: ModelMetadata | undefined;
+          if (raw || localMeta) {
+            metadata = { ...localMeta };
+            if (raw) metadata.raw = raw;
+          }
           return {
             id: m.id,
             name: m.id,
             enabled: existing ? existing.enabled : false,
+            metadata,
           };
         });
         setScanResult({
@@ -1048,93 +1061,41 @@ export default function ModelAddTab() {
               <div className="space-y-3 pt-2">
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-on-surface/75 font-black">已选中模型</span>
-                  <button
-                    type="button"
-                    onClick={() => scanProviderModels(activeProvider.id)}
-                    disabled={isScanning || !activeProvider.enabled}
-                    className="text-[10px] px-3 py-1.5 bg-[var(--color-primary)]/10 hover:bg-[var(--color-primary)]/20 border border-[var(--color-primary)]/20 text-[var(--color-primary)] hover:text-white rounded-lg font-extrabold flex items-center gap-1.5 cursor-pointer transition-all active:scale-95 disabled:opacity-30 disabled:pointer-events-none"
-                  >
-                    {isScanning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
-                    <span>{isScanning ? '获取中...' : '获取模型列表'}</span>
-                  </button>
-                </div>
-
-                {/* Scanning Output Result Panel */}
-                <div className={scanResult ? 'sf-anim sf-anim-fade' : 'sf-anim sf-anim-fade sf-exit'}>
-                  {scanResult && (
-                    <div
-                      className="bg-[var(--color-primary)]/5 border border-[var(--color-primary)]/20 rounded-xl p-3.5 space-y-2.5 overflow-hidden shadow-inner text-left"
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!showModelPicker && activeProvider.models.length === 0) {
+                          scanProviderModels(activeProvider.id);
+                        }
+                        setShowModelPicker(!showModelPicker);
+                      }}
+                      disabled={!activeProvider.enabled}
+                      className="text-[10px] px-3 py-1.5 bg-[var(--color-primary)]/10 hover:bg-[var(--color-primary)]/20 border border-[var(--color-primary)]/20 text-[var(--color-primary)] hover:text-white rounded-lg font-extrabold flex items-center gap-1.5 cursor-pointer transition-all active:scale-95 disabled:opacity-30 disabled:pointer-events-none"
                     >
-                      <div className="flex justify-between items-center pb-1.5 border-b border-[var(--color-primary)]/15">
-                        <span className="text-[11px] font-extrabold text-[var(--color-primary)] flex items-center gap-2">
-                          <span>扫描结果：</span>
-                        </span>
-                        <button
-                          onClick={() => {
-                            setScanResult(null);
-                          }}
-                          className="p-1 hover:bg-[var(--color-primary)]/10 rounded-md text-[var(--color-primary)] cursor-pointer transition-colors"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      </div>
-
-                      {/* search and filter removed — keep raw scan output */}
-                      <div className="space-y-1.5 max-h-[140px] overflow-y-auto pr-1">
-                        {(() => {
-                          const list = scanResult.discoveredModels;
-                          if (!list || list.length === 0) {
-                            return (
-                              <p className="text-[11px] text-on-surface/40 py-2.5 text-center">
-                                {(scanResult as any).error || '未检索到该端点的公开大模型实例'}
-                              </p>
-                            );
+                      {isScanning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                      <span>{isScanning ? '获取中...' : '获取模型列表'}</span>
+                    </button>
+                    <ModelPickerDropdown
+                      isOpen={showModelPicker}
+                      onClose={() => setShowModelPicker(false)}
+                      provider={activeProvider}
+                      onAddModel={(modelId) => {
+                        setProviders(prev => prev.map(p => {
+                          if (p.id === activeProvider.id) {
+                            const modelExists = p.models.some(x => x.id === modelId);
+                            const updatedModels = modelExists
+                              ? p.models.map(x => x.id === modelId ? { ...x, enabled: true } : x)
+                              : [...p.models, { id: modelId, name: modelId, enabled: true }];
+                            return { ...p, models: updatedModels };
                           }
-                          return list.map((m) => {
-                            const isAlreadySelected = activeProvider.models.some(model => model.id === m.id && model.enabled);
-
-                            return (
-                              <div key={m.id} className="flex justify-between items-center px-2.5 py-1.5 rounded-lg bg-[var(--color-bg)]/80 border border-[var(--color-outline)]/10 text-[11px]">
-                                <div className="flex items-center gap-2 text-left max-w-[80%] truncate">
-                                  <ModelIcon modelName={m.id} size={22} className="shrink-0 animate-pulse" />
-                                  <span className="font-mono text-on-surface font-extrabold truncate" title={m.id}>{m.id}</span>
-                                </div>
-
-                                <div className="flex items-center shrink-0">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      if (!isAlreadySelected) {
-                                        setProviders(prev => prev.map(p => {
-                                          if (p.id === activeProvider.id) {
-                                            const modelExists = p.models.some(x => x.id === m.id);
-                                            const updatedModels = modelExists
-                                              ? p.models.map(x => x.id === m.id ? { ...x, enabled: true } : x)
-                                              : [...p.models, { id: m.id, name: m.id, enabled: true }];
-                                            return { ...p, models: updatedModels };
-                                          }
-                                          return p;
-                                        }));
-                                      }
-                                    }}
-                                    disabled={isAlreadySelected}
-                                    className={`w-5.5 h-5.5 rounded-md flex items-center justify-center font-bold text-xs transition-all select-none ${
-                                      isAlreadySelected
-                                        ? 'bg-on-surface/5 text-on-surface/30 cursor-not-allowed'
-                                        : 'bg-[var(--color-primary)] text-[var(--color-bg)] hover:scale-105 active:scale-95 cursor-pointer shadow-sm'
-                                    }`}
-                                    title={isAlreadySelected ? "已选中" : "点击加号将其放入下面已选中模型"}
-                                  >
-                                    +
-                                  </button>
-                                </div>
-                              </div>
-                            );
-                          });
-                        })()}
-                      </div>
-                    </div>
-                  )}
+                          return p;
+                        }));
+                      }}
+                      onRefresh={() => scanProviderModels(activeProvider.id)}
+                      isScanning={isScanning}
+                    />
+                  </div>
                 </div>
 
                 {/* Model Reorder List */}
@@ -1167,6 +1128,11 @@ export default function ModelAddTab() {
                               id={model.id}
                               name={model.name}
                               onRemove={() => toggleModelEnabled(activeProvider.id, model.id)}
+                              preloadedMetadata={model.metadata}
+                              providerBaseUrl={activeProvider.baseUrl || activeProvider.defaultUrl}
+                              providerApiKey={activeProvider.apiKey}
+                              providerDefaultUrl={activeProvider.defaultUrl}
+                              probeTrigger={batchProbeTrigger}
                             />
                           ))}
                         </div>
@@ -1184,30 +1150,18 @@ export default function ModelAddTab() {
                              !idLower.includes('test') &&
                              !idLower.includes('temp');
                     })
-                    .map((cm) => {
-                      return (
-                        <div
-                          key={cm}
-                          className="sf-lift flex items-center justify-between p-2.5 rounded-xl border text-xs bg-[var(--color-primary)]/10 border-[var(--color-primary)]/30 text-[var(--color-on-surface)] shadow-inner"
-                        >
-                          <div className="flex items-center gap-2 truncate font-mono text-[11.5px] text-left max-w-[80%]">
-                            <ModelIcon modelName={cm} size={20} className="shrink-0" />
-                            <span className="truncate text-on-surface font-bold" title={cm}>{cm}</span>
-                          </div>
-
-                          <div className="flex items-center shrink-0">
-                            <button
-                              disabled={!activeProvider.enabled}
-                              onClick={() => removeCustomModel(activeProvider.id, cm)}
-                              className="p-1 hover:bg-red-500/10 rounded-md text-on-surface/40 hover:text-red-400 cursor-pointer transition-colors"
-                              title="移除此登记模型"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
+                    .map((cm) => (
+                      <CustomModelItem
+                        key={cm}
+                        name={cm}
+                        providerBaseUrl={activeProvider.baseUrl || activeProvider.defaultUrl}
+                        providerApiKey={activeProvider.apiKey}
+                        providerDefaultUrl={activeProvider.defaultUrl}
+                        enabled={activeProvider.enabled}
+                        onRemove={() => removeCustomModel(activeProvider.id, cm)}
+                        probeTrigger={batchProbeTrigger}
+                      />
+                    ))}
                 </div>
 
                 {/* Manual Custom Model Registration */}
@@ -1243,7 +1197,12 @@ export default function ModelAddTab() {
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => testProviderConnection(activeProvider.id)}
+                  onClick={() => {
+                    testProviderConnection(activeProvider.id);
+                    if (dragModels.length > 0 || activeProvider.customModels.length > 0) {
+                      setBatchProbeTrigger(Date.now());
+                    }
+                  }}
                   disabled={!activeProvider.enabled || activeProvider.status === 'loading'}
                   className="px-4 py-2 bg-[var(--color-primary)] hover:opacity-95 text-[var(--color-bg)] font-extrabold text-xs rounded-xl transition-all flex items-center gap-2 active:scale-95 disabled:opacity-40 cursor-pointer shadow-md"
                 >
@@ -1252,10 +1211,10 @@ export default function ModelAddTab() {
                   ) : (
                     <Radio className="w-4 h-4 animate-pulse" />
                   )}
-                  <span>测试网络连通性</span>
+                  <span>测试连通性</span>
                 </button>
                 <span className="text-[10px] text-on-surface/40 font-medium">
-                  发送链路数据校验包测试延迟与握手响应
+                  测试网络连通性并探测所有已选模型的真实能力
                 </span>
               </div>
 
@@ -1319,22 +1278,475 @@ export default function ModelAddTab() {
 }
 
 // =====================================================
-// 【可拖拽模型项 — SortableModelItem】
-// 遵循项目 dnd-kit 规范（.trae/rules/project_rules.md）：
-//   1. visibility:hidden 隐藏源卡（绝不透明）→ 仅 DragOverlay 克隆可见
-//   2. GPU 加速（willChange + backfaceVisibility + contain）→ 消除拖拽卡顿
-//   3. 180ms cubic-bezier(0.22,1,0.36,1) transform 过渡 → 平滑减速
-//   4. 实色背景 bg-surface（避免半透感）+ 主题 token 颜色
-//   5. onPointerDown stopPropagation → 删除按钮不触发拖拽
+// ModelPickerDropdown — 模型选择下拉弹窗
+// 点击「获取模型列表」按钮后弹出，展示从服务端扫描到的所有模型
+// 每个模型尾部有 + 按钮，点击添加到已选中模型列表
 // =====================================================
+interface ModelPickerDropdownProps {
+  isOpen: boolean;
+  onClose: () => void;
+  provider: ModelProvider;
+  onAddModel: (modelId: string) => void;
+  onRefresh: () => void;
+  isScanning: boolean;
+}
+
+const ModelPickerDropdown: React.FC<ModelPickerDropdownProps> = ({
+  isOpen, onClose, provider, onAddModel, onRefresh, isScanning,
+}) => {
+  const [search, setSearch] = useState('');
+
+  // 打开时重置搜索
+  useEffect(() => { if (isOpen) setSearch(''); }, [isOpen]);
+
+  // ESC 关闭
+  useEffect(() => {
+    if (!isOpen) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [isOpen, onClose]);
+
+  if (!isOpen) return null;
+
+  const selectedIds = new Set(provider.models.filter(m => m.enabled).map(m => m.id));
+  const allModels = provider.models;
+  const filtered = search.trim()
+    ? allModels.filter(m => m.id.toLowerCase().includes(search.trim().toLowerCase()))
+    : allModels;
+
+  return createPortal(
+    // 全屏遮罩 — 不关闭，仅遮罩
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+      {/* 居中弹窗 */}
+      <div
+        className="sf-anim sf-anim-scale-in bg-[var(--color-surface)] border border-[var(--color-outline)]/25 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+        style={{ width: '560px', maxWidth: '90vw', maxHeight: '70vh' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* 标题栏 */}
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-[var(--color-outline)]/15 bg-[var(--color-bg)]/60">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-black text-[var(--color-on-surface)]">选择模型</span>
+            <span className="text-[10px] text-on-surface/40 font-medium">{provider.name}</span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-2 hover:bg-red-500/10 rounded-lg text-on-surface/50 hover:text-red-400 cursor-pointer transition-all shrink-0"
+            title="关闭"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* 搜索栏 + 刷新 */}
+        <div className="flex items-center gap-2 px-5 py-3 border-b border-[var(--color-outline)]/10">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-on-surface/30" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="搜索模型名称..."
+              autoFocus
+              className="w-full text-sm pl-9 pr-3 py-2.5 bg-[var(--color-surface)] border border-[var(--color-outline)]/20 focus:border-[var(--color-primary)] rounded-lg text-[var(--color-on-surface)] outline-none transition-all"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={isScanning}
+            className="p-2.5 hover:bg-[var(--color-primary)]/10 rounded-lg text-on-surface/50 hover:text-[var(--color-primary)] cursor-pointer transition-all disabled:opacity-40 shrink-0"
+            title="重新获取模型列表"
+          >
+            <RefreshCw className={`w-4 h-4 ${isScanning ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
+
+        {/* 模型列表 */}
+        <div className="flex-1 overflow-y-auto p-3 space-y-1">
+          {isScanning && (
+            <div className="flex items-center justify-center py-12 text-on-surface/50">
+              <RefreshCw className="w-5 h-5 animate-spin mr-3" />
+              <span className="text-sm">正在从服务器获取模型列表...</span>
+            </div>
+          )}
+          {!isScanning && filtered.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-12 text-on-surface/40 gap-3">
+              <Layers className="w-7 h-7 opacity-40" />
+              <span className="text-sm">
+                {allModels.length === 0 ? '暂无模型数据，点击刷新按钮获取' : '未找到匹配的模型'}
+              </span>
+            </div>
+          )}
+          {!isScanning && filtered.map((m) => {
+            const isSelected = selectedIds.has(m.id);
+            return (
+              <div
+                key={m.id}
+                className={`flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                  isSelected
+                    ? 'bg-[var(--color-primary)]/5 opacity-60'
+                    : 'hover:bg-[var(--color-primary)]/8'
+                }`}
+              >
+                <div className="flex items-center gap-2.5 text-left min-w-0 flex-1">
+                  <ModelIcon modelName={m.id} size={24} className="shrink-0" />
+                  <span className="font-mono text-[var(--color-on-surface)] font-bold truncate" title={m.id}>{m.id}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => !isSelected && onAddModel(m.id)}
+                  disabled={isSelected}
+                  className={`shrink-0 ml-2 w-8 h-8 rounded-lg flex items-center justify-center font-bold text-base transition-all select-none ${
+                    isSelected
+                      ? 'bg-emerald-500/15 text-emerald-400 cursor-not-allowed'
+                      : 'bg-[var(--color-primary)] text-[var(--color-bg)] hover:scale-110 active:scale-95 cursor-pointer shadow-sm'
+                  }`}
+                  title={isSelected ? '已添加到已选列表' : '添加到已选列表'}
+                >
+                  {isSelected ? <Check className="w-4 h-4" /> : '+'}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* 底部统计 */}
+        {!isScanning && (
+          <div className="px-5 py-3 border-t border-[var(--color-outline)]/15 bg-[var(--color-bg)]/40 text-xs text-on-surface/40 font-medium flex items-center justify-between">
+            <span>共 {allModels.length} 个模型</span>
+            <span>已选 {selectedIds.size} 个</span>
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+};
+
+// =====================================================
+// 【可拖拽模型项 — SortableModelItem (含元数据展开面板)】
+// 遵循项目 dnd-kit 规范：
+//   1. visibility:hidden 隐藏源卡 → 仅 DragOverlay 克隆可见
+//   2. GPU 加速 → 消除拖拽卡顿
+//   3. 180ms transform 过渡 → 平滑减速
+//   4. onPointerDown stopPropagation → 展开按钮/删除按钮不触发拖拽
+//   5. 展开面板与拖拽手柄分离，面板内容不参与拖拽
+// =====================================================
+
+/** 格式化 token 数 → 人类可读 */
+function fmtTokens(n: number | undefined | null): string {
+  if (n == null) return '未能探测';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1000)}K`;
+  return String(n);
+}
+
+/** 格式化价格 → 美元/百万 tokens */
+function fmtPrice(p: number | undefined): string {
+  if (p == null) return '—';
+  if (p === 0) return '免费';
+  if (p < 0.01) return `$${p.toFixed(4)}`;
+  return `$${p.toFixed(2)}`;
+}
+
+/** 能力状态 → 展示文本 + 颜色 */
+function fmtCapability(v: boolean | null): { text: string; color: string } {
+  if (v === true) return { text: '✓ 支持', color: 'text-emerald-400' };
+  if (v === false) return { text: '✗ 不支持', color: 'text-red-400' };
+  return { text: '未能探测', color: 'text-on-surface/40' };
+}
+
+// =====================================================
+// useModelProbe — 探针 hook (SortableModelItem / CustomModelItem 共享)
+// 点击展开时自动发起 /api/providers/model-probe 请求
+// =====================================================
+function useModelProbe(
+  name: string,
+  providerBaseUrl: string,
+  providerApiKey: string,
+  providerDefaultUrl: string,
+) {
+  const [probeResult, setProbeResult] = useState<ProbeResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const probeIdRef = useRef(0);
+  const hasProbed = useRef(false);
+
+  const probe = async () => {
+    const currentId = ++probeIdRef.current;
+    setLoading(true);
+    setError(null);
+    setProbeResult(null);
+    hasProbed.current = false;
+    try {
+      const r = await fetch('/api/providers/model-probe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          baseUrl: providerBaseUrl,
+          apiKey: providerApiKey,
+          defaultUrl: providerDefaultUrl,
+          modelId: name,
+        }),
+      });
+      const data = await r.json();
+      if (probeIdRef.current !== currentId) return;
+      if (!r.ok || !data.probed) {
+        setError(data?.error || `探测失败 (${r.status})`);
+      } else {
+        setProbeResult(data as ProbeResult);
+        hasProbed.current = true;
+      }
+    } catch (e: any) {
+      if (probeIdRef.current !== currentId) return;
+      setError(e?.message || '探测请求失败');
+    } finally {
+      if (probeIdRef.current === currentId) setLoading(false);
+    }
+  };
+
+  return { probeResult, loading, error, probe };
+}
+
+// =====================================================
+// ProbePanel — 探针结果展示面板 (两个 ModelItem 共享)
+// =====================================================
+interface ProbePanelProps {
+  probeResult: ProbeResult | null;
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+}
+
+const ProbePanel: React.FC<ProbePanelProps> = ({ probeResult, loading, error, onRetry }) => {
+  const [showRaw, setShowRaw] = useState(false);
+  const [showErrors, setShowErrors] = useState(false);
+
+  const rawEntries: Array<[string, string]> = React.useMemo(() => {
+    const info = probeResult?.serverInfo;
+    if (!info || typeof info !== 'object') return [];
+    return Object.entries(info)
+      .filter(([, v]) => v != null)
+      .map(([k, v]) => [k, typeof v === 'object' ? JSON.stringify(v) : String(v)]);
+  }, [probeResult]);
+
+  const errorEntries: Array<[string, string]> = React.useMemo(() => {
+    if (!probeResult?.errors) return [];
+    return Object.entries(probeResult.errors).filter(([, v]) => !!v);
+  }, [probeResult]);
+
+  const displayFields: Array<{
+    label: string;
+    value: string;
+    valueColor?: string;
+    icon?: React.ReactNode;
+    source: '实测' | '服务器';
+  }> = React.useMemo(() => {
+    if (!probeResult) return [];
+    const fields: Array<{ label: string; value: string; valueColor?: string; icon?: React.ReactNode; source: '实测' | '服务器' }> = [];
+
+    // ── 实测: 限制 ──
+    fields.push({
+      label: '上下文窗口',
+      value: probeResult.limits.contextWindow != null ? `${fmtTokens(probeResult.limits.contextWindow)} tokens` : '未能探测',
+      valueColor: probeResult.limits.contextWindow != null ? undefined : 'text-on-surface/40',
+      icon: <Layers className="w-3 h-3" />,
+      source: '实测',
+    });
+    fields.push({
+      label: '最大输出',
+      value: probeResult.limits.maxOutput != null ? `${fmtTokens(probeResult.limits.maxOutput)} tokens` : '未能探测',
+      valueColor: probeResult.limits.maxOutput != null ? undefined : 'text-on-surface/40',
+      icon: <Zap className="w-3 h-3" />,
+      source: '实测',
+    });
+
+    // ── 实测: 能力 ──
+    const visionCap = fmtCapability(probeResult.probed.vision);
+    fields.push({ label: '视觉输入', value: visionCap.text, valueColor: visionCap.color, source: '实测' });
+    const toolsCap = fmtCapability(probeResult.probed.tools);
+    fields.push({ label: 'Function Calling', value: toolsCap.text, valueColor: toolsCap.color, source: '实测' });
+    const jsonCap = fmtCapability(probeResult.probed.json);
+    fields.push({ label: 'JSON 模式', value: jsonCap.text, valueColor: jsonCap.color, source: '实测' });
+    const streamCap = fmtCapability(probeResult.probed.streaming);
+    fields.push({ label: '流式输出', value: streamCap.text, valueColor: streamCap.color, source: '实测' });
+
+    // ── 实测: 延迟 ──
+    fields.push({ label: '探测延迟', value: `${probeResult.latency}ms`, icon: <Clock className="w-3 h-3" />, source: '实测' });
+
+    // ── 服务器: 元信息 ──
+    const si = probeResult.serverInfo as Record<string, any>;
+    if (si.owner) fields.push({ label: '所有者', value: String(si.owner), source: '服务器' });
+    if (si.created) {
+      const date = new Date(Number(si.created) * 1000).toLocaleDateString('zh-CN');
+      fields.push({ label: '创建时间', value: date, source: '服务器' });
+    }
+    if (si.object) fields.push({ label: '对象类型', value: String(si.object), source: '服务器' });
+
+    return fields;
+  }, [probeResult]);
+
+  if (loading) {
+    return (
+      <div
+        onPointerDown={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        className="sf-anim sf-anim-slide-up border-t border-[var(--color-outline)]/15 bg-[var(--color-bg)]/60 p-3 space-y-2"
+      >
+        <div className="flex items-center justify-center py-4 text-on-surface/50">
+          <RefreshCw className="w-4 h-4 animate-spin mr-2" />
+          <span>正在发送真实 API 请求探测模型能力（约 5-30 秒）...</span>
+        </div>
+        <div className="text-[9px] text-on-surface/30 text-center">
+          探测项: 基础连通 · 视觉 · 工具调用 · JSON · 流式 · 上下文限制
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div
+        onPointerDown={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        className="sf-anim sf-anim-slide-up border-t border-[var(--color-outline)]/15 bg-[var(--color-bg)]/60 p-3 space-y-2"
+      >
+        <div className="flex items-center gap-1.5 text-[10px] text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-2 py-1.5">
+          <AlertCircle className="w-3 h-3 shrink-0" />
+          <span>探测失败: {error}</span>
+        </div>
+        <button type="button" onClick={onRetry} className="text-[10px] text-[var(--color-primary)] hover:underline font-bold flex items-center gap-1 cursor-pointer">
+          <RefreshCw className="w-3 h-3" /> 重新探测
+        </button>
+      </div>
+    );
+  }
+
+  if (!probeResult) return null;
+
+  return (
+    <div
+      onPointerDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      className="sf-anim sf-anim-slide-up border-t border-[var(--color-outline)]/15 bg-[var(--color-bg)]/60 p-3 space-y-2"
+    >
+      {/* 基础连通失败 */}
+      {!probeResult.probed.basic && (
+        <div className="flex items-center gap-1.5 text-[10px] text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-2 py-1.5">
+          <AlertCircle className="w-3 h-3 shrink-0" />
+          <span>基础连通失败: {probeResult.errors.basic || '未知错误'}</span>
+        </div>
+      )}
+
+      {/* 探测字段网格 */}
+      {displayFields.length > 0 && (
+        <div className="grid grid-cols-2 gap-1.5">
+          {displayFields.map((field, idx) => (
+            <div key={idx} className="flex flex-col gap-0.5 px-2 py-1.5 rounded-lg bg-[var(--color-surface)] border border-[var(--color-outline)]/10">
+              <span className="text-[9px] font-bold text-on-surface/40 uppercase tracking-wide flex items-center gap-1">
+                {field.icon}
+                {field.label}
+                <span className={`ml-auto px-1 rounded text-[7px] font-bold ${
+                  field.source === '实测'
+                    ? 'bg-[var(--color-primary)]/15 text-[var(--color-primary)]'
+                    : 'bg-on-surface/10 text-on-surface/40'
+                }`}>
+                  {field.source}
+                </span>
+              </span>
+              <span className={`text-[11px] font-medium ${field.valueColor || 'text-[var(--color-on-surface)]'}`}>
+                {field.value}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 探测错误详情 */}
+      {errorEntries.length > 0 && (
+        <div className="pt-1">
+          <button type="button" onClick={() => setShowErrors(v => !v)} className="text-[9px] text-on-surface/40 hover:text-amber-400 font-bold flex items-center gap-1 cursor-pointer transition-colors">
+            {showErrors ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
+            <span>探测错误详情 ({errorEntries.length})</span>
+          </button>
+          {showErrors && (
+            <div className="mt-1.5 max-h-[120px] overflow-y-auto rounded-lg bg-amber-500/5 border border-amber-500/15 p-2 space-y-1">
+              {errorEntries.map(([k, v]) => (
+                <div key={k} className="flex gap-2 text-[10px] font-mono">
+                  <span className="text-amber-500/70 font-bold shrink-0">{k}:</span>
+                  <span className="text-on-surface/60 break-all">{v.length > 150 ? v.slice(0, 150) + '...' : v}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 服务器原始字段 */}
+      {rawEntries.length > 0 && (
+        <div className="pt-1">
+          <button type="button" onClick={() => setShowRaw(v => !v)} className="text-[9px] text-on-surface/40 hover:text-[var(--color-primary)] font-bold flex items-center gap-1 cursor-pointer transition-colors">
+            {showRaw ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
+            <span>服务器原始字段 ({rawEntries.length})</span>
+          </button>
+          {showRaw && (
+            <div className="mt-1.5 max-h-[180px] overflow-y-auto rounded-lg bg-[var(--color-bg)]/80 border border-[var(--color-outline)]/10 p-2 space-y-1">
+              {rawEntries.map(([k, v]) => (
+                <div key={k} className="flex gap-2 text-[10px] font-mono">
+                  <span className="text-[var(--color-primary)]/70 font-bold shrink-0">{k}:</span>
+                  <span className="text-on-surface/70 break-all truncate" title={v}>{v.length > 120 ? v.slice(0, 120) + '...' : v}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 重新探测按钮 */}
+      <button type="button" onClick={onRetry} className="text-[10px] text-on-surface/40 hover:text-[var(--color-primary)] font-bold flex items-center gap-1 cursor-pointer transition-colors pt-1">
+        <RefreshCw className="w-3 h-3" /> 重新探测
+      </button>
+    </div>
+  );
+};
+
 interface SortableModelItemProps {
   id: string;
   name: string;
   onRemove: () => void;
+  preloadedMetadata?: ModelMetadata;
+  providerBaseUrl: string;
+  providerApiKey: string;
+  providerDefaultUrl: string;
+  /** 批量探测触发器 — 值变化时自动展开并探测 */
+  probeTrigger?: number;
 }
 
-const SortableModelItem: React.FC<SortableModelItemProps> = ({ id, name, onRemove }) => {
+const SortableModelItem: React.FC<SortableModelItemProps> = ({
+  id,
+  name,
+  onRemove,
+  providerBaseUrl,
+  providerApiKey,
+  providerDefaultUrl,
+  probeTrigger,
+}) => {
   const { setNodeRef, attributes, listeners, transform, transition, isDragging } = useSortable({ id });
+  const [expanded, setExpanded] = useState(false);
+  const { probeResult, loading, error, probe } = useModelProbe(name, providerBaseUrl, providerApiKey, providerDefaultUrl);
+  const prevTriggerRef = useRef(0);
+
+  // 批量探测触发
+  useEffect(() => {
+    if (probeTrigger && probeTrigger !== prevTriggerRef.current) {
+      prevTriggerRef.current = probeTrigger;
+      setExpanded(true);
+      probe();
+    }
+  }, [probeTrigger, probe]);
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -1345,31 +1757,145 @@ const SortableModelItem: React.FC<SortableModelItemProps> = ({ id, name, onRemov
     WebkitBackfaceVisibility: 'hidden',
   };
 
+  const handleToggleExpand = () => {
+    if (!expanded && !probeResult && !loading) {
+      probe();
+    }
+    setExpanded(!expanded);
+  };
+
   return (
     <div
       ref={setNodeRef}
       style={style}
-      {...attributes}
-      {...listeners}
-      className="sf-lift flex items-center justify-between p-2.5 rounded-xl border text-xs bg-[var(--color-surface)] border-[var(--color-outline)]/20 text-[var(--color-on-surface)] cursor-grab active:cursor-grabbing touch-none select-none"
+      className="flex flex-col rounded-xl border text-xs bg-[var(--color-surface)] border-[var(--color-outline)]/20 overflow-hidden"
     >
-      <div className="flex items-center gap-2 truncate pointer-events-none">
-        <ModelIcon modelName={name} size={20} className="shrink-0" />
-        <span className="truncate font-mono font-bold" title={name}>{name}</span>
-      </div>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onRemove();
-        }}
-        onPointerDown={(e) => e.stopPropagation()}
-        onMouseDown={(e) => e.stopPropagation()}
-        className="p-1 hover:bg-red-500/10 rounded-md text-on-surface/40 hover:text-red-400 cursor-pointer transition-colors pointer-events-auto"
-        title="从已选中列表移除"
+      {/* ── 拖拽手柄行 (dnd-kit listeners 仅绑定在此行) ── */}
+      <div
+        {...attributes}
+        {...listeners}
+        className="sf-lift flex items-center justify-between p-2.5 text-[var(--color-on-surface)] cursor-grab active:cursor-grabbing touch-none select-none"
       >
-        <X className="w-3.5 h-3.5" />
-            </button>
+        <div className="flex items-center gap-2 truncate pointer-events-none flex-1 min-w-0">
+          <ModelIcon modelName={name} size={20} className="shrink-0" />
+          <span className="truncate font-mono font-bold" title={name}>{name}</span>
+        </div>
+        <div className="flex items-center gap-0.5 shrink-0 pointer-events-auto">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); handleToggleExpand(); }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            className={`p-1.5 hover:bg-[var(--color-primary)]/10 rounded-md transition-all cursor-pointer ${
+              expanded ? 'text-[var(--color-primary)]' : 'text-on-surface/40 hover:text-[var(--color-on-surface)]'
+            }`}
+            title={expanded ? '收起' : '探针实测模型能力'}
+          >
+            {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onRemove(); }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            className="p-1.5 hover:bg-red-500/10 rounded-md text-on-surface/40 hover:text-red-400 cursor-pointer transition-colors"
+            title="从已选中列表移除"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+
+      {/* ── 展开的探针面板 ── */}
+      {expanded && (
+        <ProbePanel probeResult={probeResult} loading={loading} error={error} onRetry={probe} />
+      )}
+    </div>
+  );
+};
+
+// =====================================================
+// 【自定义登记模型项 — CustomModelItem (含元数据展开面板)】
+// 与 SortableModelItem 共享相同的元数据获取/展示逻辑，
+// 但不包含 dnd-kit 拖拽功能 (customModels 不参与排序)
+// =====================================================
+
+interface CustomModelItemProps {
+  name: string;
+  providerBaseUrl: string;
+  providerApiKey: string;
+  providerDefaultUrl: string;
+  enabled: boolean;
+  onRemove: () => void;
+  /** 批量探测触发器 */
+  probeTrigger?: number;
+}
+
+const CustomModelItem: React.FC<CustomModelItemProps> = ({
+  name,
+  providerBaseUrl,
+  providerApiKey,
+  providerDefaultUrl,
+  enabled,
+  onRemove,
+  probeTrigger,
+}) => {
+  const [expanded, setExpanded] = useState(false);
+  const { probeResult, loading, error, probe } = useModelProbe(name, providerBaseUrl, providerApiKey, providerDefaultUrl);
+  const prevTriggerRef = useRef(0);
+
+  // 批量探测触发
+  useEffect(() => {
+    if (probeTrigger && probeTrigger !== prevTriggerRef.current) {
+      prevTriggerRef.current = probeTrigger;
+      setExpanded(true);
+      probe();
+    }
+  }, [probeTrigger, probe]);
+
+  const handleToggleExpand = () => {
+    if (!expanded && !probeResult && !loading) {
+      probe();
+    }
+    setExpanded(!expanded);
+  };
+
+  return (
+    <div className="flex flex-col rounded-xl border text-xs bg-[var(--color-primary)]/10 border-[var(--color-primary)]/30 text-[var(--color-on-surface)] shadow-inner overflow-hidden">
+      {/* 模型行 */}
+      <div className="sf-lift flex items-center justify-between p-2.5">
+        <div className="flex items-center gap-2 truncate font-mono text-[11.5px] text-left flex-1 min-w-0">
+          <ModelIcon modelName={name} size={20} className="shrink-0" />
+          <span className="truncate text-on-surface font-bold" title={name}>{name}</span>
+        </div>
+        <div className="flex items-center gap-0.5 shrink-0">
+          <button
+            type="button"
+            onClick={handleToggleExpand}
+            disabled={!enabled}
+            className={`p-1.5 hover:bg-[var(--color-primary)]/10 rounded-md transition-all cursor-pointer disabled:opacity-40 ${
+              expanded ? 'text-[var(--color-primary)]' : 'text-on-surface/40 hover:text-[var(--color-on-surface)]'
+            }`}
+            title={expanded ? '收起' : '探针实测模型能力'}
+          >
+            {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          </button>
+          <button
+            type="button"
+            onClick={onRemove}
+            disabled={!enabled}
+            className="p-1.5 hover:bg-red-500/10 rounded-md text-on-surface/40 hover:text-red-400 cursor-pointer transition-colors disabled:opacity-40"
+            title="移除此登记模型"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+
+      {/* 展开的探针面板 */}
+      {expanded && (
+        <ProbePanel probeResult={probeResult} loading={loading} error={error} onRetry={probe} />
+      )}
     </div>
   );
 };

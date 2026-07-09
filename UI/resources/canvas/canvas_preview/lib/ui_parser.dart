@@ -11,6 +11,7 @@ enum UiNodeType {
   spacer,
   progress,
   divider,
+  svg,
 }
 
 enum FlexDirection {
@@ -95,6 +96,8 @@ class UiParser {
         return UiNodeType.progress;
       case 'divider':
         return UiNodeType.divider;
+      case 'svg':
+        return UiNodeType.svg;
       default:
         return UiNodeType.container;
     }

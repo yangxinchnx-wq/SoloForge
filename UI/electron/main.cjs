@@ -637,6 +637,8 @@ async function startCanvas(sessionId, width, height) {
   canvasSessions.set(sessionId, session);
   // ★ 启动看门狗: 每 15s 心跳检测, 连续 3 次失败自动 kill 挂死的画布
   startWatchdog(sessionId, session);
+  // ★ 2026-07-09: 把画布端口注册到 Node.js 后端 (让 Java Agent 能 relay 推送 DSL)
+  registerCanvasPortToBackend(sessionId, port, pid, hwnd);
   // IPC 返回时去掉无法 structured clone 的对象 (ChildProcess + Timer)
   const { process: _omit, watchdog: _omit2, ...ipcSession } = session;
   return { ok: true, session: ipcSession, reused: false };
@@ -648,6 +650,62 @@ async function resizeCanvas(sessionId, width, height) {
   s.width = width;
   s.height = height;
   return moveWindow(s.hwnd, 0, 0, width, height);
+}
+
+// ────────────────────────────────────────────
+// 2026-07-09 画布端口注册到 Node.js 后端 (3001)
+// 让 Java Agent (8770) 能通过 Node.js relay 推送 DSL 到 Flutter canvas
+// 链路: Java canvas_push_ui → POST 3001/api/canvas/relay/push-ui → Flutter /render
+// ────────────────────────────────────────────
+function registerCanvasPortToBackend(sessionId, port, pid, hwnd) {
+  const payload = JSON.stringify({ sessionId, port, pid, hwnd });
+  const req = http.request(
+    `${BACKEND_URL}/api/canvas/relay/register-port`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+      timeout: 2000,
+    },
+    (res) => {
+      let body = '';
+      res.on('data', (c) => (body += c));
+      res.on('end', () => {
+        console.log(`[canvas:${sessionId}] registered port ${port} to backend (status=${res.statusCode})`);
+      });
+    }
+  );
+  req.on('error', (e) => {
+    // 后端未启动时不阻塞画布启动 (Electron 可独立运行)
+    console.warn(`[canvas:${sessionId}] register-port failed (non-blocking): ${e.message}`);
+  });
+  req.on('timeout', () => { req.destroy(); });
+  req.write(payload);
+  req.end();
+}
+
+function unregisterCanvasPortFromBackend(sessionId) {
+  const payload = JSON.stringify({ sessionId });
+  const req = http.request(
+    `${BACKEND_URL}/api/canvas/relay/unregister-port`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+      timeout: 2000,
+    },
+    (res) => {
+      let body = '';
+      res.on('data', (c) => (body += c));
+      res.on('end', () => {
+        console.log(`[canvas:${sessionId}] unregistered port from backend (status=${res.statusCode})`);
+      });
+    }
+  );
+  req.on('error', (e) => {
+    console.warn(`[canvas:${sessionId}] unregister-port failed (non-blocking): ${e.message}`);
+  });
+  req.on('timeout', () => { req.destroy(); });
+  req.write(payload);
+  req.end();
 }
 
 async function stopCanvas(sessionId) {
@@ -662,6 +720,8 @@ async function stopCanvas(sessionId) {
     }, 3000);
   }
   canvasSessions.delete(sessionId);
+  // ★ 2026-07-09: 通知 Node.js 后端注销端口 (让 Java Agent 不再往已关闭的画布推)
+  unregisterCanvasPortFromBackend(sessionId);
   return { ok: true };
 }
 
