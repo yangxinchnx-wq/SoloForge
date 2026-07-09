@@ -41,34 +41,35 @@ function shouldUseAgent(prompt: string, req: {
   activeFile?: { name: string; content: string } | null;
   activeTools?: string[];
 }): boolean {
-  // 维度 1: 文件路径引用
-  if (/[a-zA-Z]:\\|\.\/|\/[a-zA-Z]|\\\\/.test(prompt) && /\.\w{1,5}\b/.test(prompt)) {
+  // 维度 1: 文件引用 — 路径前缀 OR 裸文件名(扩展名白名单)
+  const pathPrefix = /[a-zA-Z]:\\|\.\/|\/[a-zA-Z]|\\\\/;
+  const bareFilename = /\b[a-zA-Z_][\w-]*\.(?:json|yaml|yml|csv|tsv|xlsx|xls|pdf|docx|doc|txt|md|ts|js|tsx|jsx|py|go|rs|java|c|cpp|h|hpp|sql|db|sqlite|parquet|xml|html|css|scss|less|toml|ini|conf|log|env|sh|bash|bat|ps1)\b/i;
+  if ((pathPrefix.test(prompt) && /\.\w{1,5}\b/.test(prompt)) || bareFilename.test(prompt)) {
     return true;
   }
-  // 维度 2: 代码操作意图动词
-  const actionPattern = /(?:修改|创建|删除|重构|编写|修复|实现|添加|更新|迁移|优化|调试|fix|refactor|write|create|delete|implement|add|update|migrate|optimize|debug|build)/i;
+  // 维度 2: req 显式信号优先 (用户已激活工具/提供了文件上下文 → 一定走 Agent)
+  if (req.activeFile?.content && req.activeFile.content.length > 50) {
+    return true;
+  }
+  if (req.activeTools && req.activeTools.length > 0) {
+    return true;
+  }
+  // 维度 3: 纯问答句式优先判断
+  const questionPattern = /^(?:什么是|如何|为什么|怎么|请问|解释|翻译|总结|概括|介绍|讲解|说明|hello|hi|你好|hey|explain|what is|how to|why|summarize|translate|introduce)/i;
+  if (questionPattern.test(prompt.trim()) && prompt.length < 300 && !bareFilename.test(prompt)) {
+    return false;
+  }
+  // 维度 4: 文件/数据/系统操作意图动词 (中英文,覆盖热门行业)
+  const actionPattern = /(?:修改|创建|删除|重构|编写|修复|实现|添加|更新|迁移|优化|调试|读取|查看|分析|运行|部署|安装|提交|导入|导出|查询|清洗|校对|解读|整理|审查|对比|批改|抽取|抓取|检查|重启|监控|搜索|执行|编译|打包|发布|启动|停止|备份|恢复|扫描|诊断|测试|生成报告|fix|refactor|write|create|delete|implement|add|update|migrate|optimize|debug|build|read|view|analyze|run|deploy|install|commit|import|export|query|clean|review|audit|compare|extract|crawl|check|restart|monitor|search|execute|compile|package|publish|start|stop|backup|restore|scan|diagnose|test)/i;
   if (actionPattern.test(prompt)) {
     return true;
   }
-  // 维度 3: 多步骤指令
+  // 维度 5: 多步骤指令
   const multiStepPattern = /(?:然后|接着|第一步|第二步|首先.*然后|先.*再|step\s*\d|first.*then)/i;
   if (multiStepPattern.test(prompt)) {
     return true;
   }
-  // 维度 4: 有文件上下文
-  if (req.activeFile?.content && req.activeFile.content.length > 50) {
-    return true;
-  }
-  // 维度 5: 有活跃工具
-  if (req.activeTools && req.activeTools.length > 0) {
-    return true;
-  }
-  // 维度 6: 纯问答类短消息
-  const questionPattern = /^(?:什么是|如何|为什么|怎么|请问|解释|翻译|总结|概括|hello|hi|你好|hey|explain|what is|how to|why|summarize|translate)/i;
-  if (questionPattern.test(prompt.trim()) && prompt.length < 300) {
-    return false;
-  }
-  // 维度 7: 短消息且无操作意图
+  // 维度 6: 短消息且无操作意图
   if (prompt.length < 80 && !actionPattern.test(prompt)) {
     return false;
   }
@@ -176,6 +177,58 @@ describe('L1: shouldUseAgent() — 入口分流分类器', () => {
         activeTools: ['browser_devtools'],
       })).toBe(true);
     });
+
+    // ── 热门行业: 裸文件名识别(无路径前缀) ──
+    it('裸文件名 (软件开发) package.json', () => {
+      expect(shouldUseAgent('读取 package.json 文件并告诉我项目名称', {})).toBe(true);
+    });
+    it('裸文件名 (数据分析) data.csv', () => {
+      expect(shouldUseAgent('从 data.csv 导入数据并统计均值', {})).toBe(true);
+    });
+    it('裸文件名 (医疗) report.txt', () => {
+      expect(shouldUseAgent('解读这份CT报告 report.txt', {})).toBe(true);
+    });
+    it('裸文件名 (法律) contract.pdf', () => {
+      expect(shouldUseAgent('审查合同 contract.pdf 里的风险条款', {})).toBe(true);
+    });
+
+    // ── 热门行业: 扩展动词识别 ──
+    it('动词 读取 (软件开发)', () => {
+      expect(shouldUseAgent('读取日志文件', {})).toBe(true);
+    });
+    it('动词 查看 (DevOps)', () => {
+      expect(shouldUseAgent('查看 nginx 日志找出 500 错误', {})).toBe(true);
+    });
+    it('动词 分析 (软件开发)', () => {
+      expect(shouldUseAgent('分析 app.js 里的内存泄漏', {})).toBe(true);
+    });
+    it('动词 部署 (DevOps)', () => {
+      expect(shouldUseAgent('部署到生产环境', {})).toBe(true);
+    });
+    it('动词 查询 (数据分析)', () => {
+      expect(shouldUseAgent('查询数据库里上个月的销售额', {})).toBe(true);
+    });
+    it('动词 导出 (设计)', () => {
+      expect(shouldUseAgent('导出 Figma 设计稿为 SVG', {})).toBe(true);
+    });
+    it('动词 审查 (法律)', () => {
+      expect(shouldUseAgent('审查这份合同的条款', {})).toBe(true);
+    });
+    it('动词 检查 (设计)', () => {
+      expect(shouldUseAgent('检查颜色一致性', {})).toBe(true);
+    });
+    it('动词 重启 (DevOps)', () => {
+      expect(shouldUseAgent('重启 docker 容器', {})).toBe(true);
+    });
+    it('动词 监控 (DevOps)', () => {
+      expect(shouldUseAgent('监控 CPU 使用率', {})).toBe(true);
+    });
+    it('动词 批改 (教育)', () => {
+      expect(shouldUseAgent('批改这份作业', {})).toBe(true);
+    });
+    it('动词 抓取 (营销)', () => {
+      expect(shouldUseAgent('抓取竞品网站的关键词', {})).toBe(true);
+    });
   });
 
   describe('应该跳过 Agent 的场景', () => {
@@ -210,6 +263,29 @@ describe('L1: shouldUseAgent() — 入口分流分类器', () => {
     it('短消息无操作意图', () => {
       expect(shouldUseAgent('今天天气怎么样', {})).toBe(false);
     });
+
+    // ── 热门行业: 纯问答不被扩展动词误伤 ──
+    it('纯问答 什么是+动词词 (不误判)', () => {
+      expect(shouldUseAgent('什么是数据分析', {})).toBe(false);
+      expect(shouldUseAgent('什么是监控', {})).toBe(false);
+      expect(shouldUseAgent('什么是审查', {})).toBe(false);
+    });
+    it('纯问答 如何+动词词 (不误判)', () => {
+      expect(shouldUseAgent('如何分析数据', {})).toBe(false);
+      expect(shouldUseAgent('如何导出 Excel', {})).toBe(false);
+    });
+    it('纯问答 (医疗)', () => {
+      expect(shouldUseAgent('阿司匹林的常见副作用有哪些', {})).toBe(false);
+    });
+    it('纯问答 (金融)', () => {
+      expect(shouldUseAgent('什么是市盈率', {})).toBe(false);
+    });
+    it('纯问答 (教育)', () => {
+      expect(shouldUseAgent('讲解勾股定理', {})).toBe(false);
+    });
+    it('纯问答 (法律)', () => {
+      expect(shouldUseAgent('劳动法关于加班的规定', {})).toBe(false);
+    });
   });
 
   describe('边界条件', () => {
@@ -218,7 +294,7 @@ describe('L1: shouldUseAgent() — 入口分流分类器', () => {
     });
 
     it('恰好 79 字符无操作意图', () => {
-      const msg = '这是一段刚好七十九个字符的消息用来测试边界条件看看短消息是否真的会被跳过不走代理';
+      const msg = '这是一段刚好七十九个字符的消息用来观察边界条件看看短消息是否真的会被跳过不走代理';
       expect(msg.length).toBeLessThan(80);
       expect(shouldUseAgent(msg, {})).toBe(false);
     });

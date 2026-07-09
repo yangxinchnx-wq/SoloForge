@@ -134,6 +134,7 @@ export async function handleAgentDispatchSSE(
   // Build dispatch request (same logic as handleAgentDispatch)
   const payload = body?.payload ?? {};
   const mainProvider = body?.mainProvider ?? payload.mainProvider ?? null;
+  const subProvidersRaw = body?.subProviders ?? payload.subProviders ?? null;
   const chatId: string = body?.chatId ?? payload.chatId ?? `chat-${Date.now()}`;
   const agentReq: AgentDispatchRequest = {
     packetUuid: body?.packetUuid,
@@ -146,6 +147,7 @@ export async function handleAgentDispatchSSE(
     history: payload.history ?? body?.history,
     activeFile: payload.activeFile ?? body?.activeFile ?? null,
     mainProvider: mainProvider ? { baseUrl: mainProvider.baseUrl, apiKey: mainProvider.apiKey, model: mainProvider.model } : undefined,
+    subProviders: Array.isArray(subProvidersRaw) ? subProvidersRaw.map((p: any) => ({ baseUrl: p.baseUrl, apiKey: p.apiKey, model: p.model })) : undefined,
     workspaceFolder: body?.workspaceFolder ?? payload.workspaceFolder,
     activeTools: body?.activeTools ?? undefined,
     activeSkills: body?.activeSkills ?? undefined,
@@ -182,7 +184,16 @@ export async function handleAgentDispatchSSE(
       if (result.output) {
         writeSSE('text', { content: result.output });
       }
-      writeSSE('done', {});
+      // done 事件携带 token 用量,让前端/测试可见 (2026-07-09)
+      writeSSE('done', {
+        tokenUsage: result.tokenUsage,
+        parallel: result.parallel,
+        winnerAgentId: result.winnerAgentId,
+        strategy: result.strategy,
+        durationMs: result.durationMs,
+        // 经验路径才有的指纹 (供前端 👍/👎 反馈定位经验)
+        experienceFingerprint: result.experienceFingerprint,
+      });
     }
   } catch (e: any) {
     if (!aborted) {
@@ -232,6 +243,57 @@ export async function handleAgentBindSubTask(body: any, deps: AgentRouteDeps): P
   try {
     const result = deps.agentRegistry.bindSubTask({ packetUuid, workerIdx, chatId, subTaskId, agentId });
     return { status: 200, headers: { 'Content-Type': 'application/json' }, body: result };
+  } catch (e: any) {
+    return { status: 500, headers: { 'Content-Type': 'application/json' }, body: { error: e.message } };
+  }
+}
+
+/**
+ * 经验反馈 (2026-07-09) — 用户 👍/👎 更新经验 successRate
+ *
+ * 解决"LLM 回答错误仍保存记忆, 越做越错"弊端:
+ *   👎 → successRate 下降, 连续 👎 低于 0.3 自动删除经验
+ *   👍 → successRate 上升, 经验更稳定
+ *
+ * 请求体: { fingerprint?: string, prompt?: string, positive: boolean }
+ *   - fingerprint 优先 (经验路径回复携带)
+ *   - 无 fingerprint 时用 prompt 文本查找 (模糊匹配)
+ */
+export async function handleExperienceFeedback(body: any, deps: AgentRouteDeps): Promise<ApiResponse> {
+  if (!deps.agentOrchestrator) {
+    return { status: 503, headers: { 'Content-Type': 'application/json' }, body: { error: 'AgentDecisionOrchestrator not initialized' } };
+  }
+  const { fingerprint, prompt, positive } = body ?? {};
+  if (typeof positive !== 'boolean') {
+    return { status: 400, headers: { 'Content-Type': 'application/json' }, body: { error: 'positive (boolean) is required' } };
+  }
+
+  // 定位经验: 优先 fingerprint, 否则用 prompt 查找
+  let fp = fingerprint;
+  if (!fp && prompt) {
+    fp = deps.agentOrchestrator.findExperienceFingerprint(prompt);
+  }
+  if (!fp) {
+    return { status: 404, headers: { 'Content-Type': 'application/json' }, body: { error: 'experience not found', positive } };
+  }
+
+  try {
+    const { alive, successRate } = deps.agentOrchestrator.rateExperience(fp, positive);
+    logger.info('ExperienceFeedback', `fingerprint=${fp} positive=${positive} → alive=${alive} successRate=${successRate.toFixed(2)}`);
+    return {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: {
+        acknowledged: true,
+        fingerprint: fp,
+        positive,
+        alive,           // false = 经验已失效删除 (连续 👎 淘汰)
+        successRate,     // 当前成功率
+        message: alive
+          ? (positive ? '经验已强化, 将继续优先复用' : '经验已降权, 连续 👎 将自动失效')
+          : '经验已因低分失效删除, 下次该问题将重新走 Agent Loop 解决',
+      },
+    };
   } catch (e: any) {
     return { status: 500, headers: { 'Content-Type': 'application/json' }, body: { error: e.message } };
   }

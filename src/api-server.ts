@@ -36,6 +36,11 @@ import { handleLLMStreamProxy } from './llm/llmProxyHandler';
 
 // --- Module imports ---
 import type { ApiResponse } from './server/types';
+import {
+  handleCanvasRelayPushUi,
+  handleCanvasPortRegister,
+  handleCanvasPortUnregister,
+} from './server/routes-canvas';
 import { runMiddleware } from './server/middleware';
 import { SseManager, AgentEventHubManager } from './server/ws-manager';
 import type { AgentRouteDeps } from './server/routes-agent';
@@ -45,6 +50,7 @@ import {
   handleAgentDispatchSSE,
   handleAgentDispute,
   handleAgentBindSubTask,
+  handleExperienceFeedback,
   handleTestReputationBridgeStatus,
   handleTestReputationEnqueue,
 } from './server/routes-agent';
@@ -441,6 +447,7 @@ export class SoloForgeApiServer {
     if (reqPath === '/api/agents/dispatch' && method === 'POST') return handleAgentDispatch(req.body, agentDeps);
     if (reqPath === '/api/agents/dispute' && method === 'POST') return handleAgentDispute(req.body, agentDeps);
     if (reqPath === '/api/agents/bindSubTask' && method === 'POST') return handleAgentBindSubTask(req.body, agentDeps);
+    if (reqPath === '/api/agents/experience/feedback' && method === 'POST') return handleExperienceFeedback(req.body, agentDeps);
     if (reqPath === '/api/test/reputation-enqueue' && method === 'POST' && process.env.SOLOFORGE_ENABLE_TEST_HOOK === '1') return handleTestReputationEnqueue(req.body, agentDeps);
     if (reqPath === '/api/test/reputation-bridge-status' && method === 'GET' && process.env.SOLOFORGE_ENABLE_TEST_HOOK === '1') return handleTestReputationBridgeStatus(agentDeps);
 
@@ -486,6 +493,20 @@ export class SoloForgeApiServer {
 
     // Java agent proxy
     if (reqPath.startsWith('/api/java-agent/')) return handleJavaAgentProxy(reqPath, method, req.body);
+
+    // ── 画布中转端点 (2026-07-09 新增) ──
+    // Java Agent / 外部进程不能直接访问 Flutter canvas (端口由 Electron 动态分配)
+    // 通过此中转端点查询端口并转发 DSL 到 Flutter /render
+    if (reqPath === '/api/canvas/relay/push-ui' && method === 'POST') {
+      return handleCanvasRelayPushUi(req.body);
+    }
+    // Electron 主进程在画布启动/停止时注册/注销端口
+    if (reqPath === '/api/canvas/relay/register-port' && method === 'POST') {
+      return handleCanvasPortRegister(req.body);
+    }
+    if (reqPath === '/api/canvas/relay/unregister-port' && method === 'POST') {
+      return handleCanvasPortUnregister(req.body);
+    }
 
     // UI static files
     if (reqPath.startsWith('/ui/') && method === 'GET') {

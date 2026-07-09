@@ -75,6 +75,12 @@ export interface AgentTask {
   activeSkills?: string[];
   /** 前端选中的知识库 ID 列表 */
   activeKnowledge?: string[];
+  /** 当前 agent 的 ID (用于 CommBus 发送方标识) */
+  agentId?: string;
+  /** 并行执行时的 peer agent ID 列表 (用于 CommBus 广播发现) */
+  peerAgentIds?: string[];
+  /** Agent 通信总线 (用于并行 agent 间共享工具发现) */
+  commBus?: any; // AgentCommunicationBus 类型,避免循环依赖用 any
 }
 
 // ─── Agent 任务结果 ────────────────────────────────────────────────
@@ -88,8 +94,18 @@ export interface AgentTaskResult {
   durationMs: number;
   usedTools: boolean;
   toolSteps: AgentLoopResult['toolSteps'];
+  /** 工具结果缓存命中次数 */
+  cacheHits?: number;
   /** 从这次任务中学到了什么（用于自进化） */
   learnedExperience?: string;
+  /** 真实 token 消耗 (从 LLM usage 字段累加, 2026-07-09) */
+  actualTokenUsage?: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    cachedTokens: number;
+    llmCallCount: number;
+  };
 }
 
 // ─── SpecializedAgent 类 ──────────────────────────────────────────
@@ -122,7 +138,7 @@ export class SpecializedAgent {
 
     // 构建执行上下文
     const ctx: AgentExecutionContext = {
-      agentId: this.config.agentId,
+      agentId: task.agentId ?? this.config.agentId,
       domain: this.config.domain,
       role: this.config.role,
       systemPrompt: this.buildSystemPrompt(task),
@@ -137,6 +153,8 @@ export class SpecializedAgent {
       activeTools: task.activeTools,
       activeSkills: task.activeSkills,
       activeKnowledge: task.activeKnowledge,
+      commBus: task.commBus,
+      peerAgentIds: task.peerAgentIds,
     };
 
     // 执行 Agent Loop
@@ -165,7 +183,9 @@ export class SpecializedAgent {
       durationMs: Date.now() - start,
       usedTools: result.usedTools,
       toolSteps: result.toolSteps,
+      cacheHits: result.cacheHits,
       learnedExperience: experience,
+      actualTokenUsage: result.actualTokenUsage,
     };
 
     // 自动记录轨迹到训练触发器

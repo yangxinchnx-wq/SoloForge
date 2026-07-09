@@ -24,6 +24,8 @@ import type { ToolCall, HashlineReadCall, HashlineEditCall, HashlineBatchCall } 
 import { useStreamingStore } from './streamingStore';
 import { mapPhaseToStreamEvents, type PhaseMapperContext } from '../services/phaseMappers';
 import type { StreamEventKind, StreamEvent, PermissionMode } from '../types/streaming';
+// 2026-07-09: HTML 翻译器 — 本地解析 HTML 代码块为 Universal AST, 直接推画布, 省一次 LLM 调用
+import { translateCode, isLanguageSupported } from '../translate';
 
 // ==========================================
 // StreamPanel 桥接 — 把 aiBackend 事件喂给 streamingStore
@@ -214,6 +216,84 @@ function detectPreviewFromResponse(text: string): string | null {
   }
 
   return null;
+}
+
+/**
+ * 2026-07-09: 从 LLM 回复中提取 HTML 代码块内容
+ *
+ * 匹配 ```html ... ``` 或 ```htm ... ``` 代码块, 返回代码内容。
+ * 如果没有 fenced 代码块但回复以 < 开头 (整段都是 HTML), 返回整段。
+ *
+ * @returns HTML 代码字符串, 或 null (无 HTML 代码)
+ */
+function extractHtmlCodeBlock(text: string): string | null {
+  if (!text) return null;
+
+  // 1. fenced 代码块 ```html ... ```
+  const fencedRe = /```(?:html|htm)\s*\n([\s\S]*?)```/i;
+  const match = fencedRe.exec(text);
+  if (match && match[1]) {
+    return match[1].trim();
+  }
+
+  // 2. 整段是 HTML (以 < 开头, 且不是 JSX <Component />)
+  const trimmed = text.trim();
+  if (/^<(?:!doctype\s+html|html|div|section|article|body|p|span|button|input|form|ul|ol|li|h[1-6]|nav|header|footer|main)\b/i.test(trimmed)) {
+    return trimmed;
+  }
+
+  return null;
+}
+
+/**
+ * 2026-07-09: 本地翻译 HTML 代码块为 Universal AST 并推到画布
+ *
+ * 当 LLM 回复包含 HTML 代码块时:
+ *   1. 用 htmlTranslator 本地解析成 UniversalNode (不调 LLM, 零 token 消耗)
+ *   2. POST 到 Node.js relay /api/canvas/relay/push-ui
+ *   3. Node.js 转发到 Flutter /render
+ *
+ * @returns true 表示已本地翻译并推送, false 表示不适用 (需回退到 LLM 预览流)
+ */
+async function tryLocalHtmlTranslateAndPush(
+  text: string,
+  chatSessionId: string
+): Promise<boolean> {
+  const htmlCode = extractHtmlCodeBlock(text);
+  if (!htmlCode) return false;
+
+  // 确认翻译器可用
+  if (!isLanguageSupported('html')) return false;
+
+  try {
+    const ast = translateCode(htmlCode, 'html');
+
+    // 推到 Node.js relay → Flutter
+    const resp = await fetch('/api/canvas/relay/push-ui', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: chatSessionId,
+        dsl: ast,
+        language: 'html',
+      }),
+    });
+
+    if (!resp.ok) {
+      console.warn('[tryLocalHtmlTranslateAndPush] relay push-ui 失败:', resp.status);
+      return false;
+    }
+
+    const data = await resp.json();
+    console.log('[tryLocalHtmlTranslateAndPush] 已推送到画布 (本地翻译, 零 LLM 调用)', {
+      sessionId: chatSessionId,
+      success: data.success,
+    });
+    return data.success === true;
+  } catch (err) {
+    console.warn('[tryLocalHtmlTranslateAndPush] 翻译或推送失败, 将回退到 LLM 预览流:', err);
+    return false;
+  }
 }
 
 // ==========================================
@@ -749,7 +829,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
         // 2026-07-09: 透传 canvasId/chatSessionId 给 Java Agent, 让 agent 知道画布存在
         canvasId: `canvas-${activeChatId}`,
       } as any,
-      (evt: ChatStreamEvent) => {
+      async (evt: ChatStreamEvent) => {
         switch (evt.kind) {
           case 'text': {
             streamBridge.onText(evt.text);
@@ -829,15 +909,56 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
             // 清理 streamState, 避免残留的流送面板在下次发送时闪现
             set({ isGenerating: false, streamState: { ...emptyStreamState } });
 
+            // 经验路径: 把 fingerprint 存到最后一条 assistant 消息, 供 👍/👎 反馈定位 (2026-07-09)
+            const expFp = (evt as any).experienceFingerprint as string | undefined;
+            if (expFp) {
+              set((s) => {
+                const currentList = s.conversations[activeChatId] || [];
+                if (currentList.length === 0) return {};
+                const newList = [...currentList];
+                const lastMsg = { ...newList[newList.length - 1] };
+                if (lastMsg.sender === 'assistant') {
+                  lastMsg.experienceFingerprint = expFp;
+                  newList[newList.length - 1] = lastMsg;
+                }
+                return { conversations: { ...s.conversations, [activeChatId]: newList } };
+              });
+            }
+
             // 2026-07-09: 双层预览触发 — LLM 自标记 (优先) + 代码块强制检测 (兜底)
             //   1. LLM 在 system prompt 指示下加 <<<PREVIEW_NEEDED:语言>>> → 用 LLM 指定的语言
             //   2. LLM 忘了标记, 但回复里有 UI 代码块 → 前端强制检测, 自动触发
+            //
+            // 2026-07-09 新增: HTML 本地翻译优先路径
+            //   - 如果回复包含 HTML 代码块, 直接用本地 cheerio 翻译器转成 AST 推到画布
+            //   - 零 LLM 调用, 零 token 消耗
+            //   - 失败时回退到原来的 LLM 预览流
             const previewMatch = accumulatedText.match(/<<<PREVIEW_NEEDED:(\w+)>>>/);
             let shouldPreview = false;
             let previewLang = '';
             let cleanText = accumulatedText;
 
-            if (previewMatch) {
+            // 优先路径: HTML 本地翻译 (不调 LLM)
+            const localHtmlPushed = await tryLocalHtmlTranslateAndPush(accumulatedText, activeChatId);
+            if (localHtmlPushed) {
+              // 本地翻译成功, 不再触发 LLM 预览流
+              shouldPreview = false;
+              // 如果有 LLM 标记, 仍然从回复中移除标记文本
+              if (previewMatch) {
+                cleanText = accumulatedText.replace(/\n*<<<PREVIEW_NEEDED:\w+>>>\s*$/, '');
+                set((s) => {
+                  const currentList = s.conversations[activeChatId] || [];
+                  if (currentList.length === 0) return {};
+                  const newList = [...currentList];
+                  const lastMsg = { ...newList[newList.length - 1] };
+                  if (lastMsg.sender === 'assistant') {
+                    lastMsg.content = cleanText;
+                    newList[newList.length - 1] = lastMsg;
+                  }
+                  return { conversations: { ...s.conversations, [activeChatId]: newList } };
+                });
+              }
+            } else if (previewMatch) {
               // 层1: LLM 自标记
               shouldPreview = true;
               previewLang = previewMatch[1];

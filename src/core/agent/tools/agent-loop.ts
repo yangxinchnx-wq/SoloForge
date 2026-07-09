@@ -82,6 +82,14 @@ export interface AgentExecutionContext {
    * 设为 0 或 Infinity 可禁用预算控制。
    */
   tokenBudget?: number;
+  /**
+   * Agent 通信总线 (2026-07-09 新增)
+   * 并行执行时,工具发现通过 commBus.broadcast 共享给 peer agent
+   * 每轮 LLM 调用前 commBus.poll 注入 peer 的发现
+   */
+  commBus?: any;
+  /** 并行执行时的 peer agent ID 列表 (commBus.broadcast 的接收方) */
+  peerAgentIds?: string[];
 }
 
 // ─── Agent 执行结果 ─────────────────────────────────────────────────
@@ -105,6 +113,16 @@ export interface AgentLoopResult {
   exitedByStallDetection: boolean;
   /** L4: 是否因超预算提前退出 */
   exitedByTokenBudget: boolean;
+  /** 工具结果缓存命中次数 */
+  cacheHits?: number;
+  /** 真实 token 消耗 (从 LLM usage 字段累加, 2026-07-09) */
+  actualTokenUsage?: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    cachedTokens: number;
+    llmCallCount: number;
+  };
 }
 
 // ─── 核心循环 ───────────────────────────────────────────────────────
@@ -227,10 +245,48 @@ export async function runAgentLoop(ctx: AgentExecutionContext, userTask: string)
         }
       }
 
+      // ── CommBus: 广播工具发现给 peer agent (2026-07-09) ──────────
+      // 并行执行时,把工具发现(工具名+参数+结果摘要)广播给 peer
+      // peer 在下一轮 LLM 调用前 poll 注入,避免重复探索相同文件
+      if (ctx.commBus && ctx.peerAgentIds && ctx.peerAgentIds.length > 0 && !toolResult.isError) {
+        try {
+          ctx.commBus.broadcast(ctx.agentId, 'INFORM', {
+            type: 'tool_finding',
+            tool: call.name,
+            args: call.arguments,
+            summary: toolResult.output?.slice(0, 500) ?? '',
+          }, ctx.peerAgentIds);
+        } catch {
+          // CommBus 广播失败不影响主流程
+        }
+      }
+
       return toolResult;
     },
     onThinking: (text: string) => {
       logger.info('AgentLoop', `[${ctx.agentId}] Thinking: "${text.slice(0, 100)}..."`);
+    },
+    // ── CommBus: 每轮 LLM 调用前 poll peer 发现并注入 (2026-07-09) ──
+    onRoundStart: (round: number): LLMMessage[] | void => {
+      if (!ctx.commBus || round === 0) return;
+      try {
+        const peerMsgs = ctx.commBus.poll(ctx.agentId);
+        if (peerMsgs.length === 0) return;
+        // 把 peer 的工具发现汇总成一条 system 消息注入
+        const findings = peerMsgs
+          .filter((m: any) => m.content?.type === 'tool_finding')
+          .map((m: any) => {
+            const c = m.content;
+            return `[${m.sender}] ${c.tool}(${JSON.stringify(c.args).slice(0, 80)}) → ${c.summary?.slice(0, 200) ?? ''}`;
+          });
+        if (findings.length === 0) return;
+        return [{
+          role: 'system',
+          content: `[同侪发现 ${round}]\n其他 agent 已探索的工具结果,你可以参考但不必重复调用:\n${findings.join('\n')}`,
+        }];
+      } catch {
+        return;
+      }
     },
   });
 
@@ -258,6 +314,8 @@ export async function runAgentLoop(ctx: AgentExecutionContext, userTask: string)
     totalTokensEstimated: result.totalTokensEstimated,
     exitedByStallDetection: result.exitedByStallDetection,
     exitedByTokenBudget: result.exitedByTokenBudget,
+    cacheHits: result.cacheHits,
+    actualTokenUsage: result.actualTokenUsage,
   };
 }
 

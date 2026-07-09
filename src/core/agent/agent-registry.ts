@@ -40,6 +40,15 @@ export interface LLMProviderConfig {
   model: string;
 }
 
+/** 真实 token 消耗 (从 LLM usage 字段累加) */
+export interface AgentTokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cachedTokens: number;
+  llmCallCount: number;
+}
+
 export interface AgentDispatchRequest {
   packetUuid?: string;
   packetSizeKb?: number;
@@ -55,8 +64,10 @@ export interface AgentDispatchRequest {
   history?: Array<{ sender: string; content: string }>;
   /** 当前打开的文件上下文 */
   activeFile?: { name: string; content: string } | null;
-  /** 前端配置的 LLM provider (apiKey + baseUrl + model) */
+  /** 前端配置的主 LLM provider (apiKey + baseUrl + model),winner agent 使用 */
   mainProvider?: LLMProviderConfig;
+  /** 前端配置的副模型列表,并行 worker agent 使用 (winner 用 mainProvider,其他用 subProviders) */
+  subProviders?: LLMProviderConfig[];
   /** 工作区文件夹路径 (用于 AI 作用域限制) */
   workspaceFolder?: string;
   /** 前端资源管理器选中的工具 ID 列表 */
@@ -76,6 +87,17 @@ export interface AgentDispatchResult {
   parallel: boolean;
   candidateCount: number;
   durationMs: number;
+  /** 本次 dispatch 的真实 token 消耗汇总 (所有 worker 累加, 2026-07-09) */
+  tokenUsage?: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    cachedTokens: number;
+    llmCallCount: number;
+    workerCount: number;
+  };
+  /** 经验指纹 (仅 strategy='experience' 时有值, 供前端 👍/👎 反馈定位经验) */
+  experienceFingerprint?: string;
 }
 
 /**
@@ -261,8 +283,12 @@ export class AgentRegistry {
       activeTools?: string[];
       activeSkills?: string[];
       activeKnowledge?: string[];
+      /** 并行执行时的 peer agent ID 列表 (用于 CommBus 共享发现) */
+      peerAgentIds?: string[];
+      /** 并行 worker 的最大轮次 (降低并行 worker 的轮次以控制 token 消耗) */
+      maxRounds?: number;
     },
-  ): Promise<string> {
+  ): Promise<{ output: string; actualTokenUsage?: AgentTokenUsage }> {
     const agent = this.agents.get(agentId);
     if (!agent) {
       throw new Error(`AGENT_NOT_FOUND: ${agentId}`);
@@ -325,6 +351,7 @@ export class AgentRegistry {
     const specialized = this.getOrCreateSpecializedAgent(agentId, agent.strategyType);
 
     let output: string;
+    let tokenUsage: AgentTokenUsage | undefined;
     try {
       const result = await specialized.executeTask({
         taskId: packetUuid,
@@ -335,9 +362,16 @@ export class AgentRegistry {
         activeTools,
         activeSkills,
         activeKnowledge,
+        agentId,
+        peerAgentIds: taskContext?.peerAgentIds,
+        commBus: this.commBus,
+        maxRounds: taskContext?.maxRounds,
       });
       output = result.answer ?? '';
-      logger.info(this.moduleName, `executeOnAgent [${agentId}] via LLM packet=${packetUuid} tools=${result.toolCallCount}`);
+      tokenUsage = result.actualTokenUsage;
+      const tu = result.actualTokenUsage;
+      const tokenStr = tu ? ` tokens=${tu.totalTokens}(p=${tu.promptTokens} c=${tu.completionTokens}${tu.cachedTokens ? ` cached=${tu.cachedTokens}` : ''} calls=${tu.llmCallCount})` : '';
+      logger.info(this.moduleName, `executeOnAgent [${agentId}] via LLM packet=${packetUuid} tools=${result.toolCallCount}${result.cacheHits ? ` cache=${result.cacheHits}` : ''}${tokenStr}`);
     } catch (e: unknown) {
       // LLM 调用失败 — 抛出错误, 不再降级到模拟
       const errMsg = e instanceof Error ? e.message : String(e);
@@ -357,7 +391,7 @@ export class AgentRegistry {
       durationSimulatedMs: 0,
       timestamp: Date.now(),
     });
-    return output;
+    return { output, actualTokenUsage: tokenUsage };
   }
 
   // ============================================================

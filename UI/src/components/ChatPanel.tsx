@@ -289,26 +289,56 @@ export default function ChatPanel({
         break;
       }
     }
+
+    // ── 路径分流 (2026-07-09) ──────────────────────────────────────
+    // 经验路径 (experienceFingerprint 存在) → Node.js 经验反馈, 更新 successRate
+    //   👎 连续打分低于 0.3 → 经验自动失效删除, 下次重新走 Agent Loop (解决越做越错)
+    // 其他路径 (无 fingerprint) → Java Agent 案例库 (原逻辑)
+    const expFp = (msg as any)?.experienceFingerprint as string | undefined;
+
     try {
-      const res = await fetch('/api/java-agent/api/feedback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          agentId: activeSettings.agentId || 'code_agent',
-          positive,
-          message: userMessage,
-          response: msg?.content || '',
-          chatId: activeChatId,
-        }),
-      });
-      if (!res.ok) {
-        // 提交失败: 回滚本地状态, 允许重试
-        setFeedbackMap(prev => ({ ...prev, [index]: undefined }));
+      if (expFp) {
+        // ── 经验路径: 走 Node.js /api/agents/experience/feedback ──
+        const res = await fetch('/api/agents/experience/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fingerprint: expFp,
+            prompt: userMessage,
+            positive,
+          }),
+        });
+        if (!res.ok) {
+          setFeedbackMap(prev => ({ ...prev, [index]: undefined }));
+        } else {
+          const data = await res.json().catch(() => ({}));
+          if (data?.alive === false) {
+            // 经验已失效删除, 下次该问题重新走 Agent Loop
+            console.info(`[经验失效] fingerprint=${expFp} 已因 👎 降权失效, 下次重新解决`);
+          } else {
+            console.info(`[经验${positive ? '强化' : '降权'}] fingerprint=${expFp} successRate=${data?.successRate?.toFixed(2)}`);
+          }
+        }
       } else {
-        const data = await res.json().catch(() => ({}));
-        // 新方案: 反馈写入案例库, 不再自动触发训练
-        if (data?.caseId) {
-          console.info(`[案例入库] ${data.agentId || activeSettings.agentId} caseId=${data.caseId} positive=${positive}`);
+        // ── 其他路径: 走 Java Agent /api/java-agent/api/feedback (原逻辑) ──
+        const res = await fetch('/api/java-agent/api/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agentId: activeSettings.agentId || 'code_agent',
+            positive,
+            message: userMessage,
+            response: msg?.content || '',
+            chatId: activeChatId,
+          }),
+        });
+        if (!res.ok) {
+          setFeedbackMap(prev => ({ ...prev, [index]: undefined }));
+        } else {
+          const data = await res.json().catch(() => ({}));
+          if (data?.caseId) {
+            console.info(`[案例入库] ${data.agentId || activeSettings.agentId} caseId=${data.caseId} positive=${positive}`);
+          }
         }
       }
     } catch (e) {

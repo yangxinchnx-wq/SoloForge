@@ -17,6 +17,8 @@ export interface ChatMessage {
     text: string;
   };
   toolCalls?: ToolCall[];
+  /** 经验路径指纹 (仅 experience 策略有值, 供 👍/👎 反馈定位经验) */
+  experienceFingerprint?: string;
 }
 
 export interface ChatSettingsItem {

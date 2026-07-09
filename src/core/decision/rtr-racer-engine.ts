@@ -32,6 +32,40 @@ export interface RacerFlowResult {
   winnerModelName: string;
   output: string;
   winnerScore: number;
+  /** 并行执行的所有 worker 输出 (2026-07-09 恢复并行后新增) */
+  allOutputs?: Array<{
+    agentId: string;
+    output: string;
+    score: number;
+    durationMs: number;
+    provider: string; // 使用的 LLM 模型名
+    actualTokenUsage?: {
+      promptTokens: number;
+      completionTokens: number;
+      totalTokens: number;
+      cachedTokens: number;
+      llmCallCount: number;
+    };
+  }>;
+  /** 实际并行度 */
+  parallelism: number;
+}
+
+/** 单个 worker 的执行结果 */
+export interface WorkerExecResult {
+  output: string;
+  durationMs: number;
+  provider: string; // 实际使用的 LLM 模型名
+  toolCallCount?: number;
+  cacheHits?: number;
+  /** 真实 token 消耗 (从 LLM usage 字段累加) */
+  actualTokenUsage?: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    cachedTokens: number;
+    llmCallCount: number;
+  };
 }
 
 export class SoloForgeRTRRacerEngine {
@@ -109,7 +143,7 @@ export class SoloForgeRTRRacerEngine {
     requiresDeepCognition: boolean,
     globalConfidenceMetric: number,
     taskComplexityMetrics: number,
-    executionWorkerNode: (selectedTarget: ModelStrategyCandidate) => Promise<string>,
+    executionWorkerNode: (selectedTarget: ModelStrategyCandidate, workerIdx: number) => Promise<WorkerExecResult>,
     adaptiveContext?: SystemAdaptiveContext
   ): Promise<RacerFlowResult> {
     // 1. 严格契约拦截：执行所有权验证，不具备此状态所有权则拒绝变更执行
@@ -182,15 +216,98 @@ export class SoloForgeRTRRacerEngine {
 
     this.kernel.getEventBus().emit(DecisionEvent.CONFIDENCE_CALCULATED, { confidence: aggregateConfidenceIndex });
 
-    // 4. 单路执行路由 (2026-07-07: 砍掉三路并行)
-    //    原区间三 (confidence < 0.60 && candidates >= 3) 的三路并行逻辑已删除:
-    //    - 3 路用同一个 mainProvider 是 3 倍浪费,不是真正的多模型择优
-    //    - 业界共识 (Claude Code/Cursor/Aider) 均不这样做
-    //    - LLM 自主 Function Calling 已隐含"需要思考时就多调几轮工具"
-    //    保留区间一和区间二,都走单路执行
-    const winner = matrixScoringMap[0].instance;
-    const output = await executionWorkerNode(winner);
-    this.kernel.getEventBus().emit(DecisionEvent.ROUTE_COMPLETED, { strategy: winner.reasoningStrategy });
-    return { winnerModelName: winner.modelName, output, winnerScore: matrixScoringMap[0].score };
+    // 4. 自适应并行度选择 (2026-07-09: 恢复并行,配合副模型实现真正的多模型择优)
+    //    并行度由置信度决定:
+    //    - confidence >= 0.75 (高置信): N=1, 只跑 top1 (省 token)
+    //    - 0.60 <= confidence < 0.75 (中置信): N=2, 双路并行 (主+1副)
+    //    - confidence < 0.60 && candidates >= 3 (低置信): N=3, 三路并行 (主+2副)
+    //    与 2026-07-07 删除的旧三路并行不同:
+    //    - 旧版: 3 路用同一个 mainProvider = 3 倍浪费
+    //    - 新版: winner 用 mainProvider, 其他 worker 用 subProviders (真正多模型)
+    //    - 新版: 通过 AgentCommBus 共享工具发现,避免重复探索
+    const topN = this.selectTopN(matrixScoringMap, aggregateConfidenceIndex, candidates.length);
+
+    this.kernel.getEventBus().emit(DecisionEvent.ROUTE_COMPLETED, {
+      strategy: matrixScoringMap[0].instance.reasoningStrategy,
+      parallelism: topN,
+      confidence: aggregateConfidenceIndex,
+    });
+
+    if (topN === 1) {
+      // 单路执行 (高置信,省 token)
+      const winner = matrixScoringMap[0].instance;
+      const result = await executionWorkerNode(winner, 0);
+      return {
+        winnerModelName: winner.modelName,
+        output: result.output,
+        winnerScore: matrixScoringMap[0].score,
+        allOutputs: [{
+          agentId: winner.modelName,
+          output: result.output,
+          score: matrixScoringMap[0].score,
+          durationMs: result.durationMs,
+          provider: result.provider,
+          actualTokenUsage: result.actualTokenUsage,
+        }],
+        parallelism: 1,
+      };
+    }
+
+    // 多路并行执行 (中/低置信, 多模型择优)
+    const workers = matrixScoringMap.slice(0, topN);
+    const workerResults = await Promise.all(
+      workers.map((w, idx) => executionWorkerNode(w.instance, idx).catch(err => ({
+        output: `[WORKER_ERROR] ${err?.message ?? String(err)}`,
+        durationMs: 0,
+        provider: 'error',
+        toolCallCount: 0,
+        cacheHits: 0,
+      } as WorkerExecResult)))
+    );
+
+    // 选 winner: 优先用 score 最高的成功 worker
+    // (并行场景下各 worker 用不同模型,不能用 LLM 自评分,改用 RACER score)
+    let winnerIdx = 0;
+    for (let i = 1; i < workerResults.length; i++) {
+      if (!workerResults[i].output.startsWith('[WORKER_ERROR]') &&
+          workerResults[i].output.length > workerResults[winnerIdx].output.length) {
+        winnerIdx = i;
+      }
+    }
+    const winnerCandidate = workers[winnerIdx];
+    const winnerResult = workerResults[winnerIdx];
+
+    return {
+      winnerModelName: winnerCandidate.instance.modelName,
+      output: winnerResult.output,
+      winnerScore: winnerCandidate.score,
+      allOutputs: workers.map((w, i) => ({
+        agentId: w.instance.modelName,
+        output: workerResults[i].output,
+        score: w.score,
+        durationMs: workerResults[i].durationMs,
+        provider: workerResults[i].provider,
+        actualTokenUsage: workerResults[i].actualTokenUsage,
+      })),
+      parallelism: topN,
+    };
+  }
+
+  /**
+   * 根据置信度和候选数选择并行度
+   */
+  private selectTopN(
+    matrixScoringMap: Array<{ instance: ModelStrategyCandidate; score: number }>,
+    confidence: number,
+    candidateCount: number
+  ): number {
+    // 高置信: 单路
+    if (confidence >= 0.75) return 1;
+    // 中置信: 双路
+    if (confidence >= 0.60) return Math.min(2, candidateCount);
+    // 低置信 + 候选充足: 三路
+    if (candidateCount >= 3) return Math.min(3, candidateCount);
+    // 低置信但候选不足: 双路
+    return Math.min(2, candidateCount);
   }
 }

@@ -19,7 +19,7 @@ export type ChatStreamEvent =
   | { kind: 'text'; text: string; taskId?: string }
   | { kind: 'phase'; phase: string; taskId?: string; [k: string]: any }
   | { kind: 'error'; error: string; taskId?: string }
-  | { kind: 'done'; taskId?: string };
+  | { kind: 'done'; taskId?: string; experienceFingerprint?: string; strategy?: string };
 
 export interface ChatRequest {
   prompt: string;
@@ -61,6 +61,58 @@ export function isElectronIpcAvailable(): boolean {
     && typeof (window as any).soloforge?.onAgentEvent === 'function';
 }
 
+// ────────────────────────────────────────────────────────────
+// 强制画布关键词检测 (2026-07-09 新增)
+//
+// 当用户明确要求"在画布上画/展示/渲染"时, 在 prompt 前注入强制画布指令,
+// 让 LLM 必须调用 canvas_push_ui 工具, 而不是只回复文字。
+//
+// 检测关键词:
+//   - "画布上画" / "在画布画" / "画到画布" / "用画布画"
+//   - "canvas画" / "canvas 上画"
+//   - "画一个 X" / "画一只 X" / "画个 X" (图形类)
+//   - "在画布上显示" / "在画布展示"
+// ────────────────────────────────────────────────────────────
+const FORCE_CANVAS_PATTERNS: RegExp[] = [
+  /画布上画/i,
+  /在画布画/i,
+  /画到画布/i,
+  /用画布画/i,
+  /画布上显示/i,
+  /画布上展示/i,
+  /在画布上渲染/i,
+  /canvas\s*上?画/i,
+  /canvas\s*上?显示/i,
+  // "画一个/画一只/画个" — 图形任务强信号
+  /画[一]?[个只]|画个|画只/i,
+];
+
+const FORCE_CANVAS_INSTRUCTION = `[FORCE_CANVAS] 用户明确要求在画布上作画/展示。你必须:
+1. 生成对应的 UI AST (UI 界面用 container/text/button 等节点, 图形/插画用 svg 节点)
+2. 调用 canvas_push_ui 工具推送到画布
+3. 不要只回复文字, 必须调用工具
+4. 推送后再用简短文字说明你画了什么`;
+
+/** 检测用户输入是否包含强制画布关键词, 若包含则返回注入指令, 否则返回 null */
+export function detectForceCanvas(prompt: string): string | null {
+  if (!prompt || typeof prompt !== 'string') return null;
+  for (const pattern of FORCE_CANVAS_PATTERNS) {
+    if (pattern.test(prompt)) {
+      return FORCE_CANVAS_INSTRUCTION;
+    }
+  }
+  return null;
+}
+
+/** 构建最终 prompt — 在原始 prompt 前注入强制画布指令 (若检测到关键词) */
+function buildPromptWithCanvasForce(prompt: string): string {
+  const instruction = detectForceCanvas(prompt);
+  if (instruction) {
+    return `${instruction}\n\n用户原始请求: ${prompt}`;
+  }
+  return prompt;
+}
+
 /**
  * 将前端 ChatRequest 映射为 Java Spring AI ChatRequest DTO
  *   POST /api/java-agent/api/chat/stream (Node.js 直连到 8770/api/chat/stream)
@@ -71,12 +123,14 @@ const USE_RACER = true;
 
 function buildRacerRequestBody(req: ChatRequest): any {
   return {
-    prompt: req.prompt,
+    prompt: buildPromptWithCanvasForce(req.prompt),
     chatId: req.chatId ?? `chat-${Date.now()}`,
     packetUuid: `pkt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     history: req.history || [],
     activeFile: req.activeFile || null,
     mainProvider: req.mainProvider || null,
+    // 副模型列表: 并行 worker agent 使用 (winner 用 mainProvider, 其他用 subProviders)
+    subProviders: req.subProviders || [],
     workspaceFolder: req.workspaceFolder || null,
     activeTools: req.activeTools || [],
     activeSkills: req.activeSkills || [],
@@ -87,7 +141,7 @@ function buildRacerRequestBody(req: ChatRequest): any {
 function buildJavaRequestBody(req: ChatRequest): any {
   const settings = req.activeSettings || {};
   return {
-    message: req.prompt,
+    message: buildPromptWithCanvasForce(req.prompt),
     sessionId: req.chatId ?? null,
     provider: req.mainProvider
       ? {
@@ -229,7 +283,7 @@ async function parseRacerSSE(
           onEvent({ kind: 'error', error: data.error || 'Unknown error', taskId });
           break;
         case 'done':
-          onEvent({ kind: 'done', taskId });
+          onEvent({ kind: 'done', taskId, experienceFingerprint: data.experienceFingerprint, strategy: data.strategy });
           break;
       }
     } catch { /* ignore malformed JSON */ }

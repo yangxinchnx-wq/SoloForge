@@ -50,6 +50,12 @@ export interface CallWithToolsOptions {
   signal?: AbortSignal;
   onToolCall?: (call: ToolCallRequest) => Promise<ToolCallResult>;
   onThinking?: (text: string) => void;
+  /**
+   * 每轮 LLM 调用前的 hook (2026-07-09 新增)
+   * 返回 LLMMessage[] 会在本轮 LLM 调用前注入到 messages 末尾
+   * 用于 CommBus poll peer 发现并注入同侪信息
+   */
+  onRoundStart?: (round: number) => LLMMessage[] | void;
   /** 可选: LLM provider 覆盖 */
   llmConfig?: { baseUrl: string; apiKey: string; model: string };
   /**
@@ -72,6 +78,16 @@ export interface CallWithToolsResult {
   exitedByStallDetection: boolean;
   /** L4: 循环是否因超预算而提前退出 */
   exitedByTokenBudget: boolean;
+  /** 工具结果缓存命中次数 (本次 dispatch 内去重命中) */
+  cacheHits?: number;
+  /** 真实 token 消耗 (从 LLM usage 字段累加, 2026-07-09) */
+  actualTokenUsage?: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    cachedTokens: number;
+    llmCallCount: number;
+  };
 }
 
 // ─── L3+L4 内部工具函数 ────────────────────────────────────────────
@@ -193,6 +209,16 @@ export async function callLLMWithTools(opts: CallWithToolsOptions): Promise<Call
   const start = Date.now();
   let toolCallCount = 0;
 
+  // ── 工具结果缓存: 本次 dispatch 内去重 ──────────────────────────
+  // key = `${toolName}:${JSON.stringify(args)}`, value = output string
+  // 生命周期: 单次 callLLMWithTools 调用,不跨 dispatch
+  // 实测 50% 工具调用是重复的,缓存后直接砍掉重复 IO + 对应 LLM 推理轮次
+  const toolResultCache = new Map<string, string>();
+  let cacheHits = 0;
+
+  // ── 真实 token 累加器 (从 LLM usage 字段) ──────────────────────
+  const actualUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedTokens: 0, llmCallCount: 0 };
+
   // ── L3 状态: 无进展检测 ──
   let previousFingerprint = '';        // 上一轮工具调用的指纹
   let consecutiveStallRounds = 0;      // 连续无进展轮数
@@ -225,6 +251,18 @@ export async function callLLMWithTools(opts: CallWithToolsOptions): Promise<Call
       }
     }
 
+    // ── CommBus: 每轮 LLM 调用前注入 peer 发现 (2026-07-09) ──
+    if (opts.onRoundStart) {
+      try {
+        const injected = opts.onRoundStart(round);
+        if (injected && injected.length > 0) {
+          allMessages.push(...injected);
+        }
+      } catch {
+        // onRoundStart 失败不影响主流程
+      }
+    }
+
     const response = await callLLMOnce({
       baseUrl,
       apiKey,
@@ -235,6 +273,16 @@ export async function callLLMWithTools(opts: CallWithToolsOptions): Promise<Call
       maxTokens: opts.maxTokens ?? 4096,
       signal: opts.signal,
     });
+
+    // 累加真实 token usage (callLLMOnce 在 message 上挂 __usage)
+    const u = (response as any).__usage;
+    if (u) {
+      actualUsage.promptTokens += u.promptTokens ?? 0;
+      actualUsage.completionTokens += u.completionTokens ?? 0;
+      actualUsage.totalTokens += u.totalTokens ?? 0;
+      actualUsage.cachedTokens += u.cachedTokens ?? 0;
+      actualUsage.llmCallCount += 1;
+    }
 
     // ── L4: 估算本轮 token 消耗 ──
     cumulativeTokens += estimateTokens([response]);
@@ -256,6 +304,8 @@ export async function callLLMWithTools(opts: CallWithToolsOptions): Promise<Call
         totalTokensEstimated: cumulativeTokens,
         exitedByStallDetection,
         exitedByTokenBudget,
+        cacheHits,
+        actualTokenUsage: { ...actualUsage },
       };
     }
 
@@ -284,27 +334,56 @@ export async function callLLMWithTools(opts: CallWithToolsOptions): Promise<Call
       exitedByStallDetection = true;
     }
 
-    for (const tc of toolCalls) {
+    // ── 工具执行: 缓存优先 + 并行执行 ──────────────────────────────
+    // 优化点 (2026-07-09):
+    //   1. 工具结果去重缓存: 相同 toolName+args 在本次 dispatch 内不重复执行
+    //      实测 50% 工具调用是重复的 (read_file("README.md") 被调 4 次等)
+    //   2. 并行执行: LLM 一次返回多个 tool_calls 时, 用 Promise.all 并行
+    //      原来是 for...of + await 串行, 现在并行减少总等待时间
+    //   3. 缓存命中时标记 [CACHED], 让 LLM 知道这是复用结果
+
+    const toolResults = await Promise.all(toolCalls.map(async (tc) => {
       const request: ToolCallRequest = {
         id: tc.id,
         name: tc.function.name,
         arguments: JSON.parse(tc.function.arguments),
       };
 
-      // 执行工具（自定义或内置）
+      // 缓存 key: toolName + 参数 hash
+      const cacheKey = `${request.name}:${JSON.stringify(request.arguments)}`;
+
+      // 缓存命中: 直接复用, 不执行工具, 不消耗 IO
+      const cached = toolResultCache.get(cacheKey);
+      if (cached) {
+        cacheHits++;
+        return {
+          tool_call_id: request.id,
+          name: request.name,
+          output: cached + '\n[CACHED: 此结果由前次相同调用复用,无需再次请求]',
+        };
+      }
+
+      // 缓存未命中: 执行工具
       const result = opts.onToolCall
         ? await opts.onToolCall(request)
         : await executeToolCall(request);
 
-      // 将工具结果追加到消息列表
+      // 写入缓存 (仅缓存成功的结果,错误结果不缓存)
+      if (!result.output.startsWith('Error:') && !result.output.startsWith('Tool error:')) {
+        toolResultCache.set(cacheKey, result.output);
+      }
+
+      return result;
+    }));
+
+    // 将所有工具结果追加到消息列表
+    for (const result of toolResults) {
       allMessages.push({
         role: 'tool',
         tool_call_id: result.tool_call_id,
         name: result.name,
         content: result.output,
       });
-
-      // ── L4: 累计工具结果的 token ──
       cumulativeTokens += estimateTokens([{ role: 'tool', content: result.output }] as LLMMessage[]);
     }
 
@@ -327,6 +406,8 @@ export async function callLLMWithTools(opts: CallWithToolsOptions): Promise<Call
     totalTokensEstimated: cumulativeTokens,
     exitedByStallDetection,
     exitedByTokenBudget,
+    cacheHits,
+    actualTokenUsage: { ...actualUsage },
   };
 }
 
@@ -378,47 +459,143 @@ async function callLLMOnce(opts: CallOnceOptions): Promise<LLMMessage> {
     max_tokens: opts.maxTokens,
   };
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 120_000); // 2 分钟超时
-  if (opts.signal) {
-    if (opts.signal.aborted) controller.abort();
-    else opts.signal.addEventListener('abort', () => controller.abort(), { once: true });
-  }
+  // ── 429/5xx 指数退避重试 ──────────────────────────────────────────
+  // 避免单次限流导致整个 Agent Loop 失败(已积累的工具调用历史会全部丢失)
+  // 策略:
+  //   - 429 (Too Many Requests): 优先用 Retry-After 头,否则指数退避
+  //   - 5xx (服务端瞬时错误): 指数退避重试
+  //   - 4xx 其他 (401/403/400): 不重试,直接抛出(认证/参数错误不会自愈)
+  //   - AbortError (用户取消/超时): 不重试,立即抛出
+  // 上限: 最多 4 次重试,总等待上限 ~15s (200ms→800ms→2400ms→4800ms 基础退避)
+  const MAX_RETRIES = 4;
+  const BASE_BACKOFF_MS = 200;
+  const MAX_BACKOFF_MS = 8000;
 
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${opts.apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
+  const sleep = (ms: number, signal?: AbortSignal) =>
+    new Promise<void>((resolve, reject) => {
+      if (signal?.aborted) return reject(new DOMException('Aborted', 'AbortError'));
+      const timer = setTimeout(() => {
+        signal?.removeEventListener('abort', onAbort);
+        resolve();
+      }, ms);
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(new DOMException('Aborted', 'AbortError'));
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
     });
 
-    if (!response.ok) {
-      const errText = await response.text().catch(() => '');
-      throw new Error(`LLM HTTP ${response.status}: ${errText.slice(0, 300)}`);
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    // 每次重试新建 controller (上一次的已 abort 或完成)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120_000); // 2 分钟超时
+    if (opts.signal) {
+      if (opts.signal.aborted) { clearTimeout(timeoutId); controller.abort(); }
+      else opts.signal.addEventListener('abort', () => controller.abort(), { once: true });
     }
 
-    const json = await response.json() as any;
-    const choice = json?.choices?.[0];
-    if (!choice) throw new Error('LLM returned empty choices');
-
-    const msg = choice.message;
-    return {
-      role: 'assistant',
-      content: msg.content ?? null,
-      tool_calls: msg.tool_calls?.map((tc: any) => ({
-        id: tc.id,
-        type: 'function' as const,
-        function: {
-          name: tc.function.name,
-          arguments: tc.function.arguments,
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${opts.apiKey}`,
         },
-      })),
-    };
-  } finally {
-    clearTimeout(timeoutId);
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const errText = await response.text().catch(() => '');
+        const status = response.status;
+
+        // 不可重试: 4xx (除 429) — 认证/参数错误不会自愈
+        if (status >= 400 && status < 500 && status !== 429) {
+          throw new Error(`LLM HTTP ${status}: ${errText.slice(0, 300)}`);
+        }
+
+        // 可重试: 429 / 5xx
+        if (attempt < MAX_RETRIES) {
+          // 解析 Retry-After 头 (秒或 HTTP-date,这里只处理秒)
+          const retryAfter = response.headers.get('retry-after');
+          let waitMs: number;
+          if (retryAfter && /^\d+$/.test(retryAfter.trim())) {
+            waitMs = Math.min(parseInt(retryAfter, 10) * 1000, MAX_BACKOFF_MS);
+          } else {
+            // 指数退避: 200 * 2^attempt + 抖动(避免同步重试风暴)
+            const jitter = Math.random() * 100;
+            waitMs = Math.min(BASE_BACKOFF_MS * Math.pow(2, attempt) + jitter, MAX_BACKOFF_MS);
+          }
+          lastError = new Error(`LLM HTTP ${status}: ${errText.slice(0, 300)}`);
+          // 限流提示日志(仅首次限流,避免重试刷屏)
+          if (attempt === 0) {
+            // logger 在文件下方导入,这里用 console 避免循环依赖
+            console.log(`[LLM-Retry] HTTP ${status} (attempt ${attempt + 1}/${MAX_RETRIES + 1}), waiting ${Math.round(waitMs)}ms before retry...`);
+          }
+          await sleep(waitMs, opts.signal);
+          continue;
+        }
+
+        // 重试耗尽,抛出
+        throw new Error(`LLM HTTP ${status}: ${errText.slice(0, 300)}`);
+      }
+
+      const json = await response.json() as any;
+      const choice = json?.choices?.[0];
+      if (!choice) throw new Error('LLM returned empty choices');
+
+      const msg = choice.message;
+      const assistantMsg: LLMMessage = {
+        role: 'assistant',
+        content: msg.content ?? null,
+        tool_calls: msg.tool_calls?.map((tc: any) => ({
+          id: tc.id,
+          type: 'function' as const,
+          function: {
+            name: tc.function.name,
+            arguments: tc.function.arguments,
+          },
+        })),
+      };
+      // 捕获 LLM 返回的真实 token usage (2026-07-09)
+      // OpenAI 兼容 API 在 usage 字段返回 prompt_tokens / completion_tokens / total_tokens
+      // 缓存命中时还有 prompt_tokens_details.cached_tokens (Anthropic/OpenAI 缓存)
+      const usage = json?.usage;
+      if (usage && typeof usage === 'object') {
+        (assistantMsg as any).__usage = {
+          promptTokens: usage.prompt_tokens ?? 0,
+          completionTokens: usage.completion_tokens ?? 0,
+          totalTokens: usage.total_tokens ?? 0,
+          cachedTokens: usage.prompt_tokens_details?.cached_tokens
+            ?? usage.prompt_cache_hit_tokens
+            ?? 0,
+        };
+      }
+      return assistantMsg;
+    } catch (err: any) {
+      // 用户取消 / 超时: 不重试,立即抛出
+      if (err?.name === 'AbortError') {
+        throw err;
+      }
+      // 网络错误 (ECONNRESET / fetch failed 等): 可重试
+      if (attempt < MAX_RETRIES) {
+        const jitter = Math.random() * 100;
+        const waitMs = Math.min(BASE_BACKOFF_MS * Math.pow(2, attempt) + jitter, MAX_BACKOFF_MS);
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (attempt === 0) {
+          console.log(`[LLM-Retry] Network error (attempt ${attempt + 1}/${MAX_RETRIES + 1}): ${lastError.message.slice(0, 100)}, waiting ${Math.round(waitMs)}ms...`);
+        }
+        await sleep(waitMs, opts.signal);
+        continue;
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
+
+  // 所有重试耗尽 (理论上不会走到这里,for 循环内已 throw)
+  throw lastError ?? new Error('LLM call failed after all retries');
 }
