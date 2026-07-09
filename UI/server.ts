@@ -721,388 +721,160 @@ async function startServer() {
   });
 
   // ============================================================
-  // 已知模型上下文窗口数据库 (API 不返回时的兜底)
-  // 来源: 各服务商官方文档
+  // 模型上下文窗口数据库 — 多层数据获取系统
+  //
+  // 优先级 (从高到低):
+  //   1. 运行时探针缓存 (model_probe_cache.json) — 探针成功后自动记住
+  //   2. OpenRouter 动态注册表 — 定期从 openrouter.ai/api/v1/models 拉取
+  //   3. 本地 JSON 数据库 (model_context_db.json) — 手动维护, 热加载
+  //
+  // 新模型发布时的更新方式:
+  //   - 自动: 调用 POST /api/providers/refresh-model-db 触发 OpenRouter 同步
+  //   - 手动: 直接编辑 UI/model_context_db.json, 无需重启服务 (热加载)
+  //   - 运行时: 探针成功后自动写入 model_probe_cache.json
   // ============================================================
-  const KNOWN_MODEL_CONTEXT: Record<string, { context: number; maxOutput?: number }> = {
-    // ════════════════════════════════════════════
-    // ── OpenAI (来源: platform.openai.com/docs/models) ──
-    // ════════════════════════════════════════════
-    'gpt-4o': { context: 128000, maxOutput: 16384 },
-    'gpt-4o-mini': { context: 128000, maxOutput: 16384 },
-    'gpt-4o-audio-preview': { context: 128000, maxOutput: 16384 },
-    'gpt-4-turbo': { context: 128000, maxOutput: 4096 },
-    'gpt-4-turbo-preview': { context: 128000, maxOutput: 4096 },
-    'gpt-4-vision-preview': { context: 128000, maxOutput: 4096 },
-    'gpt-4': { context: 8192, maxOutput: 4096 },
-    'gpt-4-32k': { context: 32768, maxOutput: 4096 },
-    'gpt-4-0125-preview': { context: 128000, maxOutput: 4096 },
-    'gpt-4-1106-preview': { context: 128000, maxOutput: 4096 },
-    'gpt-3.5-turbo': { context: 16385, maxOutput: 4096 },
-    'gpt-3.5-turbo-16k': { context: 16385, maxOutput: 4096 },
-    'gpt-3.5-turbo-1106': { context: 16385, maxOutput: 4096 },
-    'o1': { context: 200000, maxOutput: 100000 },
-    'o1-mini': { context: 128000, maxOutput: 65536 },
-    'o1-preview': { context: 128000, maxOutput: 32768 },
-    'o3': { context: 200000, maxOutput: 100000 },
-    'o3-mini': { context: 200000, maxOutput: 100000 },
-    'o3-mini-high': { context: 200000, maxOutput: 100000 },
-    'o4-mini': { context: 200000, maxOutput: 100000 },
-    'o4-mini-high': { context: 200000, maxOutput: 100000 },
 
-    // ════════════════════════════════════════════
-    // ── DeepSeek (来源: api-docs.deepseek.com V4 版本) ──
-    // V4-Flash/Pro: 1M 上下文, 384K 最大输出
-    // deepseek-chat/deepseek-reasoner 即将弃用, 映射到 V4-Flash
-    // ════════════════════════════════════════════
-    'deepseek-v4-flash': { context: 1000000, maxOutput: 393216 },
-    'deepseek-v4-pro': { context: 1000000, maxOutput: 393216 },
-    'deepseek-chat': { context: 1000000, maxOutput: 393216 },
-    'deepseek-reasoner': { context: 1000000, maxOutput: 393216 },
-    'deepseek-coder': { context: 16000, maxOutput: 4096 },
-    'deepseek-v2.5': { context: 128000, maxOutput: 8192 },
-    'deepseek-v3': { context: 64000, maxOutput: 8192 },
+  const MODEL_DB_PATH = path.join(__dirname_srv, "model_context_db.json");
+  const MODEL_CACHE_PATH = path.join(__dirname_srv, "model_probe_cache.json");
 
-    // ════════════════════════════════════════════
-    // ── Anthropic Claude (来源: docs.anthropic.com) ──
-    // ════════════════════════════════════════════
-    'claude-3-opus': { context: 200000, maxOutput: 4096 },
-    'claude-3-opus-20240229': { context: 200000, maxOutput: 4096 },
-    'claude-3-sonnet': { context: 200000, maxOutput: 4096 },
-    'claude-3-sonnet-20240229': { context: 200000, maxOutput: 4096 },
-    'claude-3-haiku': { context: 200000, maxOutput: 4096 },
-    'claude-3-haiku-20240307': { context: 200000, maxOutput: 4096 },
-    'claude-3-5-sonnet': { context: 200000, maxOutput: 8192 },
-    'claude-3-5-sonnet-20241022': { context: 200000, maxOutput: 8192 },
-    'claude-3-5-sonnet-20240620': { context: 200000, maxOutput: 8192 },
-    'claude-3-5-haiku': { context: 200000, maxOutput: 8192 },
-    'claude-3-5-haiku-20241022': { context: 200000, maxOutput: 8192 },
-    'claude-sonnet-4': { context: 200000, maxOutput: 64000 },
-    'claude-sonnet-4-20250514': { context: 200000, maxOutput: 64000 },
-    'claude-opus-4': { context: 200000, maxOutput: 32000 },
-    'claude-opus-4-20250514': { context: 200000, maxOutput: 32000 },
-    'claude-sonnet-4-5': { context: 200000, maxOutput: 64000 },
+  // ── Layer 3: 本地 JSON 数据库 (热加载) ──
+  let KNOWN_MODEL_CONTEXT: Record<string, { context: number; maxOutput?: number }> = {};
+  function loadLocalModelDb(): void {
+    try {
+      const raw = fs.readFileSync(MODEL_DB_PATH, "utf-8");
+      const parsed = JSON.parse(raw);
+      KNOWN_MODEL_CONTEXT = parsed.models || parsed || {};
+      console.log(`[model-db] ✅ 已加载本地数据库: ${Object.keys(KNOWN_MODEL_CONTEXT).length} 个模型`);
+    } catch (e: any) {
+      console.warn(`[model-db] ⚠️  加载本地数据库失败: ${e.message}, 使用空数据库`);
+      KNOWN_MODEL_CONTEXT = {};
+    }
+  }
+  loadLocalModelDb();
 
-    // ════════════════════════════════════════════
-    // ── Google Gemini (来源: ai.google.dev/gemini-api/docs/models) ──
-    // ════════════════════════════════════════════
-    'gemini-1.5-pro': { context: 2000000, maxOutput: 8192 },
-    'gemini-1.5-pro-latest': { context: 2000000, maxOutput: 8192 },
-    'gemini-1.5-flash': { context: 1000000, maxOutput: 8192 },
-    'gemini-1.5-flash-latest': { context: 1000000, maxOutput: 8192 },
-    'gemini-1.5-flash-8b': { context: 1000000, maxOutput: 8192 },
-    'gemini-2.0-flash': { context: 1000000, maxOutput: 8192 },
-    'gemini-2.0-flash-exp': { context: 1000000, maxOutput: 8192 },
-    'gemini-2.0-flash-lite': { context: 1000000, maxOutput: 8192 },
-    'gemini-2.5-pro': { context: 2000000, maxOutput: 8192 },
-    'gemini-2.5-pro-preview': { context: 2000000, maxOutput: 8192 },
-    'gemini-2.5-flash': { context: 1000000, maxOutput: 8192 },
-    'gemini-2.5-flash-preview': { context: 1000000, maxOutput: 8192 },
-    'gemini-2.5-flash-lite': { context: 1000000, maxOutput: 8192 },
+  // 监听文件变化, 实现热加载 (无需重启服务)
+  try {
+    fs.watch(MODEL_DB_PATH, { persistent: false }, (eventType) => {
+      if (eventType === 'change') {
+        // 防抖: 文件写入可能触发多次
+        clearTimeout((loadLocalModelDb as any)._debounce);
+        (loadLocalModelDb as any)._debounce = setTimeout(() => {
+          console.log('[model-db] 📦 检测到文件变化, 热加载中...');
+          loadLocalModelDb();
+        }, 300);
+      }
+    });
+  } catch { /* 文件可能不存在, 忽略 */ }
 
-    // ════════════════════════════════════════════
-    // ── Moonshot Kimi (来源: platform.moonshot.cn/docs/pricing) ──
-    // ════════════════════════════════════════════
-    'moonshot-v1-8k': { context: 8192, maxOutput: 8192 },
-    'moonshot-v1-32k': { context: 32768, maxOutput: 32768 },
-    'moonshot-v1-128k': { context: 131072, maxOutput: 131072 },
-    'moonshot-v1-8k-vision-preview': { context: 8192, maxOutput: 8192 },
-    'moonshot-v1-32k-vision-preview': { context: 32768, maxOutput: 32768 },
-    'moonshot-v1-128k-vision-preview': { context: 131072, maxOutput: 131072 },
-    'kimi-k2.5': { context: 262144, maxOutput: 131072 },
-    'kimi-k2.6': { context: 262144, maxOutput: 131072 },
-    'kimi-k2.7-code': { context: 262144, maxOutput: 131072 },
-    'kimi-latest': { context: 262144, maxOutput: 131072 },
+  // ── Layer 2: OpenRouter 动态注册表 ──
+  let openRouterRegistry: Record<string, { context: number; maxOutput?: number }> = {};
+  let openRouterLastSync: Date | null = null;
 
-    // ════════════════════════════════════════════
-    // ── 阿里 Qwen 通义千问 (来源: help.aliyun.com/zh/model-studio) ──
-    // ════════════════════════════════════════════
-    'qwen-max': { context: 32768, maxOutput: 8192 },
-    'qwen-max-latest': { context: 32768, maxOutput: 8192 },
-    'qwen-max-longcontext': { context: 131072, maxOutput: 8192 },
-    'qwen-plus': { context: 131072, maxOutput: 8192 },
-    'qwen-plus-latest': { context: 131072, maxOutput: 8192 },
-    'qwen-turbo': { context: 1000000, maxOutput: 8192 },
-    'qwen-turbo-latest': { context: 1000000, maxOutput: 8192 },
-    'qwen2.5-72b-instruct': { context: 131072, maxOutput: 8192 },
-    'qwen2.5-32b-instruct': { context: 131072, maxOutput: 8192 },
-    'qwen2.5-14b-instruct': { context: 131072, maxOutput: 8192 },
-    'qwen2.5-7b-instruct': { context: 131072, maxOutput: 8192 },
-    'qwen2.5-coder-32b-instruct': { context: 131072, maxOutput: 8192 },
-    'qwen2.5-coder-14b-instruct': { context: 131072, maxOutput: 8192 },
-    'qwen2.5-coder-7b-instruct': { context: 131072, maxOutput: 8192 },
-    'qwen2.5-72b': { context: 131072, maxOutput: 8192 },
-    'qwen2.5-32b': { context: 131072, maxOutput: 8192 },
-    'qwen2.5-7b': { context: 131072, maxOutput: 8192 },
-    'qwen3-235b-a22b': { context: 131072, maxOutput: 8192 },
-    'qwen3-32b': { context: 131072, maxOutput: 8192 },
-    'qwen3-14b': { context: 131072, maxOutput: 8192 },
-    'qwen3-8b': { context: 131072, maxOutput: 8192 },
-    'qwen3-4b': { context: 131072, maxOutput: 8192 },
-    'qwen-vl-max': { context: 32768, maxOutput: 8192 },
-    'qwen-vl-plus': { context: 131072, maxOutput: 8192 },
+  async function syncOpenRouterRegistry(): Promise<{ success: boolean; count: number; error?: string }> {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000);
+      const res = await fetch("https://openrouter.ai/api/v1/models", {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (!res.ok) return { success: false, count: 0, error: `OpenRouter ${res.status}` };
+      const data = await res.json() as any;
+      const list: any[] = Array.isArray(data?.data) ? data.data : [];
+      const registry: Record<string, { context: number; maxOutput?: number }> = {};
+      let added = 0;
+      for (const m of list) {
+        const id = (m.id || m.name || '').toLowerCase();
+        if (!id) continue;
+        const ctx = m.context_length || m.top_provider?.context_length || 0;
+        const maxOut = m.top_provider?.max_completion_tokens || 0;
+        if (ctx > 0) {
+          registry[id] = { context: ctx, maxOutput: maxOut > 0 ? maxOut : undefined };
+          added++;
+        }
+      }
+      openRouterRegistry = registry;
+      openRouterLastSync = new Date();
+      console.log(`[model-db] 🌐 OpenRouter 同步完成: ${added} 个模型 (总计 ${list.length} 个)`);
+      return { success: true, count: added };
+    } catch (e: any) {
+      console.warn(`[model-db] ⚠️  OpenRouter 同步失败: ${e.message}`);
+      return { success: false, count: 0, error: e.message };
+    }
+  }
+  // 启动时异步同步 (不阻塞服务启动)
+  syncOpenRouterRegistry().then(() => {
+    // 同步完成后每小时自动刷新一次
+    setInterval(() => syncOpenRouterRegistry(), 60 * 60 * 1000);
+  });
 
-    // ════════════════════════════════════════════
-    // ── 智谱 GLM (来源: open.bigmodel.cn) ──
-    // ════════════════════════════════════════════
-    'glm-4': { context: 131072, maxOutput: 4096 },
-    'glm-4-plus': { context: 131072, maxOutput: 4096 },
-    'glm-4-flash': { context: 131072, maxOutput: 4096 },
-    'glm-4-flashx': { context: 131072, maxOutput: 4096 },
-    'glm-4-long': { context: 1000000, maxOutput: 4096 },
-    'glm-4-air': { context: 131072, maxOutput: 4096 },
-    'glm-4-airx': { context: 131072, maxOutput: 4096 },
-    'glm-4-9b': { context: 131072, maxOutput: 4096 },
-    'glm-4-9b-chat': { context: 131072, maxOutput: 4096 },
-    'glm-4v': { context: 131072, maxOutput: 4096 },
-    'glm-4v-flash': { context: 131072, maxOutput: 4096 },
-    'glm-4v-plus': { context: 131072, maxOutput: 4096 },
-    'glm-zero-preview': { context: 131072, maxOutput: 4096 },
-    'glm-5': { context: 131072, maxOutput: 16384 },
-    'glm-5-plus': { context: 131072, maxOutput: 16384 },
-    'glm-5-flash': { context: 131072, maxOutput: 16384 },
+  // ── Layer 1: 运行时探针缓存 ──
+  let probeCache: Record<string, { context: number; maxOutput?: number; probedAt: string }> = {};
+  try {
+    const raw = fs.readFileSync(MODEL_CACHE_PATH, "utf-8");
+    probeCache = JSON.parse(raw) || {};
+    console.log(`[model-db] ✅ 已加载探针缓存: ${Object.keys(probeCache).length} 个模型`);
+  } catch { /* 首次运行, 缓存文件不存在 */ }
 
-    // ════════════════════════════════════════════
-    // ── 百度文心 ERNIE (来源: cloud.baidu.com/doc/WENXINWORKSHOP) ──
-    // ════════════════════════════════════════════
-    'ernie-4.0-turbo-8k': { context: 8192, maxOutput: 4096 },
-    'ernie-4.0-turbo-128k': { context: 128000, maxOutput: 4096 },
-    'ernie-4.0-8k-latest': { context: 8192, maxOutput: 4096 },
-    'ernie-4.0-8k-0329': { context: 8192, maxOutput: 4096 },
-    'ernie-3.5-8k': { context: 8192, maxOutput: 4096 },
-    'ernie-3.5-8k-preview': { context: 8192, maxOutput: 4096 },
-    'ernie-speed-8k': { context: 8192, maxOutput: 4096 },
-    'ernie-speed-128k': { context: 128000, maxOutput: 4096 },
-    'ernie-lite-8k': { context: 8192, maxOutput: 2048 },
-    'ernie-character-8k': { context: 8192, maxOutput: 4096 },
-    'ernie-novel-8k': { context: 8192, maxOutput: 4096 },
+  function saveProbeCache(): void {
+    try {
+      fs.writeFileSync(MODEL_CACHE_PATH, JSON.stringify(probeCache, null, 2), "utf-8");
+    } catch (e: any) {
+      console.warn(`[model-db] ⚠️  保存探针缓存失败: ${e.message}`);
+    }
+  }
 
-    // ════════════════════════════════════════════
-    // ── 字节豆包 Doubao (来源: volcengine.com/docs/82379) ──
-    // ════════════════════════════════════════════
-    'doubao-pro-32k': { context: 32000, maxOutput: 4096 },
-    'doubao-pro-128k': { context: 128000, maxOutput: 4096 },
-    'doubao-pro-256k': { context: 256000, maxOutput: 4096 },
-    'doubao-lite-32k': { context: 32000, maxOutput: 4096 },
-    'doubao-lite-128k': { context: 128000, maxOutput: 4096 },
-    'doubao-1.5-pro': { context: 32000, maxOutput: 4096 },
-    'doubao-1.5-pro-32k': { context: 32000, maxOutput: 4096 },
-    'doubao-1.5-pro-256k': { context: 256000, maxOutput: 4096 },
-    'doubao-1.5-lite': { context: 32000, maxOutput: 4096 },
-    'doubao-vision-pro': { context: 32000, maxOutput: 4096 },
-    'doubao-vision-lite': { context: 32000, maxOutput: 4096 },
-    'ep-': { context: 32000, maxOutput: 4096 }, // 字节使用 ep-xxx 端点ID格式
+  /** 探针成功后调用, 将结果写入缓存 */
+  function cacheProbeResult(modelId: string, context: number | null, maxOutput: number | null): void {
+    if (!context && !maxOutput) return;
+    const idLower = modelId.toLowerCase();
+    probeCache[idLower] = {
+      context: context || 0,
+      maxOutput: maxOutput || undefined,
+      probedAt: new Date().toISOString(),
+    };
+    saveProbeCache();
+    console.log(`[model-db] 💾 探针结果已缓存: ${modelId} → ctx=${context}, maxOut=${maxOutput}`);
+  }
 
-    // ════════════════════════════════════════════
-    // ── 腾讯混元 Hunyuan (来源: cloud.tencent.com/document/product/1729) ──
-    // ════════════════════════════════════════════
-    'hunyuan-pro': { context: 32768, maxOutput: 4096 },
-    'hunyuan-standard': { context: 32768, maxOutput: 4096 },
-    'hunyuan-lite': { context: 32768, maxOutput: 4096 },
-    'hunyuan-large': { context: 262144, maxOutput: 8192 },
-    'hunyuan-large-longcontext': { context: 262144, maxOutput: 8192 },
-    'hunyuan-standard-256k': { context: 262144, maxOutput: 8192 },
-    'hunyuan-vision': { context: 32768, maxOutput: 4096 },
-    'hunyuan-code': { context: 32768, maxOutput: 4096 },
-    'hunyuan-role': { context: 32768, maxOutput: 4096 },
-    'hunyuan-turbo': { context: 32768, maxOutput: 4096 },
-    'hunyuan-turbos-latest': { context: 32768, maxOutput: 4096 },
-
-    // ════════════════════════════════════════════
-    // ── 讯飞星火 Spark (来源: xfyun.cn/doc/spark) ──
-    // ════════════════════════════════════════════
-    'spark-v1.5': { context: 8192, maxOutput: 4096 },
-    'spark-v2.0': { context: 8192, maxOutput: 4096 },
-    'spark-v3.0': { context: 8192, maxOutput: 4096 },
-    'spark-v3.1': { context: 8192, maxOutput: 4096 },
-    'spark-v3.5': { context: 8192, maxOutput: 4096 },
-    'spark-v4.0': { context: 8192, maxOutput: 4096 },
-    'spark-max': { context: 8192, maxOutput: 4096 },
-    'spark-pro': { context: 8192, maxOutput: 4096 },
-    'spark-lite': { context: 8192, maxOutput: 4096 },
-    'spark-4.0-ultra': { context: 32768, maxOutput: 8192 },
-    'generalv3.5': { context: 8192, maxOutput: 4096 },
-    'general': { context: 8192, maxOutput: 4096 },
-
-    // ════════════════════════════════════════════
-    // ── MiniMax (来源: platform.minimaxi.com) ──
-    // ════════════════════════════════════════════
-    'minimax-m1': { context: 1000000, maxOutput: 16384 },
-    'minimax-m2': { context: 1000000, maxOutput: 16384 },
-    'minimax-m3': { context: 1000000, maxOutput: 16384 },
-    'abab6.5': { context: 245760, maxOutput: 8192 },
-    'abab6.5s': { context: 245760, maxOutput: 8192 },
-    'abab6.5t': { context: 8192, maxOutput: 4096 },
-    'abab6-chat': { context: 245760, maxOutput: 8192 },
-    'abab5.5-chat': { context: 16384, maxOutput: 4096 },
-    'abab5.5s-chat': { context: 8192, maxOutput: 4096 },
-
-    // ════════════════════════════════════════════
-    // ── 百川 Baichuan (来源: platform.baichuan-ai.com) ──
-    // ════════════════════════════════════════════
-    'baichuan-4': { context: 32768, maxOutput: 4096 },
-    'baichuan-4-turbo': { context: 32768, maxOutput: 4096 },
-    'baichuan-4-air': { context: 32768, maxOutput: 4096 },
-    'baichuan3-turbo': { context: 32768, maxOutput: 4096 },
-    'baichuan2-turbo': { context: 32768, maxOutput: 4096 },
-
-    // ════════════════════════════════════════════
-    // ── 零一万物 Yi (来源: platform.lingyiwanwu.com) ──
-    // ════════════════════════════════════════════
-    'yi-large': { context: 32768, maxOutput: 4096 },
-    'yi-large-turbo': { context: 16384, maxOutput: 4096 },
-    'yi-large-rc': { context: 32768, maxOutput: 4096 },
-    'yi-medium': { context: 16384, maxOutput: 4096 },
-    'yi-medium-200k': { context: 200000, maxOutput: 4096 },
-    'yi-vision': { context: 16384, maxOutput: 4096 },
-    'yi-lightning': { context: 16384, maxOutput: 4096 },
-
-    // ════════════════════════════════════════════
-    // ── 阶跃星辰 StepFun (来源: platform.stepfun.com) ──
-    // ════════════════════════════════════════════
-    'step-1-8k': { context: 8192, maxOutput: 4096 },
-    'step-1-32k': { context: 32768, maxOutput: 4096 },
-    'step-1-128k': { context: 131072, maxOutput: 4096 },
-    'step-1-256k': { context: 262144, maxOutput: 4096 },
-    'step-1-flash': { context: 8192, maxOutput: 4096 },
-    'step-2-16k': { context: 16384, maxOutput: 4096 },
-    'step-2-mini': { context: 8192, maxOutput: 4096 },
-    'step-1v-8k': { context: 8192, maxOutput: 4096 },
-    'step-1v-32k': { context: 32768, maxOutput: 4096 },
-
-    // ════════════════════════════════════════════
-    // ── Mistral AI (来源: docs.mistral.ai) ──
-    // ════════════════════════════════════════════
-    'mistral-large-latest': { context: 128000, maxOutput: 8192 },
-    'mistral-large-2407': { context: 128000, maxOutput: 8192 },
-    'mistral-large-2411': { context: 128000, maxOutput: 8192 },
-    'mistral-small-latest': { context: 32000, maxOutput: 8192 },
-    'mistral-small-2402': { context: 32000, maxOutput: 8192 },
-    'mistral-small-2501': { context: 32000, maxOutput: 8192 },
-    'codestral-latest': { context: 256000, maxOutput: 8192 },
-    'codestral-2501': { context: 256000, maxOutput: 8192 },
-    'open-mistral-nemo': { context: 128000, maxOutput: 8192 },
-    'open-mistral-7b': { context: 32000, maxOutput: 8192 },
-    'open-mixtral-8x7b': { context: 32000, maxOutput: 8192 },
-    'open-mixtral-8x22b': { context: 64000, maxOutput: 8192 },
-    'pixtral-large-latest': { context: 128000, maxOutput: 8192 },
-    'pixtral-12b-latest': { context: 128000, maxOutput: 8192 },
-
-    // ════════════════════════════════════════════
-    // ── Groq (来源: console.groq.com/docs/models) ──
-    // Groq 推理速度极快, 模型来自第三方
-    // ════════════════════════════════════════════
-    'llama-3.3-70b-versatile': { context: 131072, maxOutput: 32768 },
-    'llama-3.1-8b-instant': { context: 131072, maxOutput: 8192 },
-    'llama-3.1-70b-versatile': { context: 131072, maxOutput: 32768 },
-    'llama-3.2-1b-preview': { context: 131072, maxOutput: 8192 },
-    'llama-3.2-3b-preview': { context: 131072, maxOutput: 8192 },
-    'llama-3.2-11b-vision-preview': { context: 131072, maxOutput: 8192 },
-    'llama-3.2-90b-vision-preview': { context: 131072, maxOutput: 8192 },
-    'mixtral-8x7b-32768': { context: 32768, maxOutput: 32768 },
-    'gemma2-9b-it': { context: 8192, maxOutput: 8192 },
-    'gemma-7b-it': { context: 8192, maxOutput: 8192 },
-    'deepseek-r1-distill-llama-70b': { context: 131072, maxOutput: 32768 },
-    'deepseek-r1-distill-qwen-32b': { context: 131072, maxOutput: 32768 },
-
-    // ════════════════════════════════════════════
-    // ── OpenRouter (来源: openrouter.ai/models) ──
-    // OpenRouter 是聚合路由, 模型来自各上游, 使用 /models API 可获取
-    // 此处仅做兜底, 实际数据靠 API 返回
-    // ════════════════════════════════════════════
-
-    // ════════════════════════════════════════════
-    // ── Together AI (来源: docs.together.ai) ──
-    // Together 托管开源模型, 上下文通常 4K-128K
-    // ════════════════════════════════════════════
-    'together-llama-3.3-70b': { context: 131072, maxOutput: 4096 },
-    'together-qwen-2.5-72b': { context: 131072, maxOutput: 4096 },
-    'together-deepseek-r1': { context: 131072, maxOutput: 4096 },
-
-    // ════════════════════════════════════════════
-    // ── Fireworks AI (来源: docs.fireworks.ai) ──
-    // Fireworks 托管开源模型, 上下文通常 8K-128K
-    // ════════════════════════════════════════════
-    'fireworks-llama-3.3-70b': { context: 131072, maxOutput: 16384 },
-    'fireworks-qwen-2.5-72b': { context: 131072, maxOutput: 16384 },
-    'fireworks-deepseek-r1': { context: 131072, maxOutput: 16384 },
-
-    // ════════════════════════════════════════════
-    // ── Perplexity (来源: docs.perplexity.ai) ──
-    // ════════════════════════════════════════════
-    'sonar-pro': { context: 200000, maxOutput: 8192 },
-    'sonar-reasoning': { context: 127000, maxOutput: 8192 },
-    'sonar-reasoning-pro': { context: 127000, maxOutput: 8192 },
-    'sonar': { context: 127000, maxOutput: 8192 },
-    'sonar-large': { context: 127000, maxOutput: 8192 },
-
-    // ════════════════════════════════════════════
-    // ── Cohere (来源: docs.cohere.com/docs/models) ──
-    // ════════════════════════════════════════════
-    'command-r': { context: 128000, maxOutput: 4096 },
-    'command-r-plus': { context: 128000, maxOutput: 4096 },
-    'command-r7b': { context: 128000, maxOutput: 4096 },
-    'command-a': { context: 256000, maxOutput: 8192 },
-    'command': { context: 4096, maxOutput: 4096 },
-    'command-light': { context: 4096, maxOutput: 4096 },
-
-    // ════════════════════════════════════════════
-    // ── Meta Llama 系列 (来源: 各平台通用) ──
-    // ════════════════════════════════════════════
-    'llama-3.1-405b-instruct': { context: 131072, maxOutput: 4096 },
-    'llama-3.1-70b-instruct': { context: 131072, maxOutput: 4096 },
-    'llama-3.1-8b-instruct': { context: 131072, maxOutput: 4096 },
-    'llama-3.2-1b-instruct': { context: 131072, maxOutput: 4096 },
-    'llama-3.2-3b-instruct': { context: 131072, maxOutput: 4096 },
-    'llama-3.2-11b-vision-instruct': { context: 131072, maxOutput: 4096 },
-    'llama-3.2-90b-vision-instruct': { context: 131072, maxOutput: 4096 },
-    'llama-3.3-70b-instruct': { context: 131072, maxOutput: 4096 },
-    'llama-4-scout': { context: 10000000, maxOutput: 8192 },
-    'llama-4-maverick': { context: 1000000, maxOutput: 8192 },
-
-    // ════════════════════════════════════════════
-    // ── Xiaomi MiMo (来源: xiaomimimo.com 实测) ──
-    // ════════════════════════════════════════════
-    'mimo-v2.5': { context: 32768, maxOutput: 4096 },
-    'mimo-v2.5-pro': { context: 131072, maxOutput: 131072 },
-    'mimo-v2.5-asr': { context: 32768, maxOutput: 4096 },
-    'mimo-v2.5-tts': { context: 32768, maxOutput: 4096 },
-
-    // ════════════════════════════════════════════
-    // ── 硅基流动 SiliconFlow (来源: docs.siliconflow.cn) ──
-    // SF 是聚合平台, 托管开源模型, 上下文靠 API 返回
-    // 以下为常见模型在 SF 上的默认配置
-    // ════════════════════════════════════════════
-    'deepseek-ai/deepseek-v3': { context: 64000, maxOutput: 8192 },
-    'deepseek-ai/deepseek-r1': { context: 64000, maxOutput: 8192 },
-    'deepseek-ai/deepseek-v2.5': { context: 128000, maxOutput: 8192 },
-    'qwen/qwen2.5-72b-instruct': { context: 131072, maxOutput: 8192 },
-    'qwen/qwen2.5-coder-32b-instruct': { context: 131072, maxOutput: 8192 },
-    'qwen/qwen2.5-7b-instruct': { context: 131072, maxOutput: 8192 },
-
-    // ════════════════════════════════════════════
-    // ── 其他常见模型 ──
-    // ════════════════════════════════════════════
-    'phi-3-medium-4k-instruct': { context: 4096, maxOutput: 4096 },
-    'phi-3-medium-128k-instruct': { context: 128000, maxOutput: 4096 },
-    'gemma-2-9b-it': { context: 8192, maxOutput: 4096 },
-    'gemma-2-27b-it': { context: 8192, maxOutput: 4096 },
-    'gemma-2-2b-it': { context: 8192, maxOutput: 4096 },
-  };
-
-  /** 模糊匹配已知模型上下文 */
+  /**
+   * 多层模糊匹配 — 按优先级查找模型上下文
+   * 优先级: 探针缓存 → OpenRouter → 本地JSON
+   */
   function lookupKnownContext(modelId: string): { context: number; maxOutput?: number } | null {
     const idLower = modelId.toLowerCase();
-    // 精确匹配
+
+    // Layer 1: 探针缓存 (最可靠, 来自真实 API 测试)
+    if (probeCache[idLower]) {
+      const c = probeCache[idLower];
+      if (c.context > 0) return { context: c.context, maxOutput: c.maxOutput };
+    }
+
+    // Layer 2: OpenRouter 动态注册表 (覆盖面最广)
+    if (openRouterRegistry[idLower]) return openRouterRegistry[idLower];
+
+    // Layer 3: 本地 JSON 数据库 (手动维护)
     if (KNOWN_MODEL_CONTEXT[idLower]) return KNOWN_MODEL_CONTEXT[idLower];
-    // 前缀匹配 (如 gpt-4o-2024-08-06)
+
+    // 模糊匹配 (在前缀和子串上查找, 覆盖带版本号的模型名)
+    // 优先在探针缓存中模糊匹配
+    for (const [key, val] of Object.entries(probeCache)) {
+      if (idLower.startsWith(key) && val.context > 0) return { context: val.context, maxOutput: val.maxOutput };
+    }
+    // 然后在 OpenRouter 中模糊匹配
+    for (const [key, val] of Object.entries(openRouterRegistry)) {
+      if (idLower.startsWith(key) || idLower.includes(key)) return val;
+    }
+    // 最后在本地数据库中模糊匹配
     for (const [key, val] of Object.entries(KNOWN_MODEL_CONTEXT)) {
       if (idLower.startsWith(key)) return val;
     }
-    // 模糊匹配
     for (const [key, val] of Object.entries(KNOWN_MODEL_CONTEXT)) {
       if (idLower.includes(key) || key.includes(idLower)) return val;
     }
+
     return null;
   }
 
@@ -1117,8 +889,48 @@ async function startServer() {
   //   5. 流式     — 同上，但 stream:true，读取首个 SSE chunk
   //   6. 限制     — 发送 max_tokens:999999，从 400 错误信息中解析上下文/输出上限
   //   7. 元信息   — GET /models/{id} 获取 owner/created 等
-  //   8. 已知库   — 从内置已知模型数据库补充上下文窗口
+  //   8. 已知库   — 从多层数据库补充上下文窗口 (探针缓存→OpenRouter→本地JSON)
   // ============================================================
+
+  // ============================================================
+  // 模型数据库刷新端点 — 手动触发 OpenRouter 同步 + 查看数据库状态
+  // ============================================================
+  app.post("/api/providers/refresh-model-db", async (req, res) => {
+    const result = await syncOpenRouterRegistry();
+    res.json({
+      success: result.success,
+      openRouter: {
+        ...result,
+        lastSync: openRouterLastSync?.toISOString() || null,
+        modelCount: Object.keys(openRouterRegistry).length,
+      },
+      localDb: {
+        modelCount: Object.keys(KNOWN_MODEL_CONTEXT).length,
+        path: MODEL_DB_PATH,
+      },
+      probeCache: {
+        modelCount: Object.keys(probeCache).length,
+        path: MODEL_CACHE_PATH,
+      },
+    });
+  });
+
+  app.get("/api/providers/model-db-status", (req, res) => {
+    res.json({
+      openRouter: {
+        modelCount: Object.keys(openRouterRegistry).length,
+        lastSync: openRouterLastSync?.toISOString() || null,
+      },
+      localDb: {
+        modelCount: Object.keys(KNOWN_MODEL_CONTEXT).length,
+      },
+      probeCache: {
+        modelCount: Object.keys(probeCache).length,
+        models: Object.keys(probeCache).slice(0, 50),
+      },
+    });
+  });
+
   app.post("/api/providers/model-probe", async (req, res) => {
    try {
     const { baseUrl, apiKey, defaultUrl, modelId } = req.body || {};
@@ -1445,13 +1257,18 @@ async function startServer() {
       }
     }
 
-    // ── Phase 4.5: 从已知模型数据库补充 (API 完全不返回时的兜底) ──
+    // ── Phase 4.5: 从多层数据库补充 (API 完全不返回时的兜底) ──
     if (!result.limits.contextWindow || !result.limits.maxOutput) {
       const known = lookupKnownContext(modelId);
       if (known) {
         if (!result.limits.contextWindow) result.limits.contextWindow = known.context;
         if (!result.limits.maxOutput) result.limits.maxOutput = known.maxOutput ?? null;
       }
+    }
+
+    // ── Phase 4.5b: 探针成功后自动缓存结果 (供下次直接使用) ──
+    if (result.limits.contextWindow || result.limits.maxOutput) {
+      cacheProbeResult(modelId, result.limits.contextWindow, result.limits.maxOutput);
     }
 
     // ── Phase 4.6: 如果 maxOutput 已知但 contextWindow 未知,推断 contextWindow >= maxOutput ──

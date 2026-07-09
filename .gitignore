@@ -144,3 +144,6 @@ marl_prod.out
 
 # Windows reserved device names (accidentally created)
 nul
+
+# Model probe runtime cache (auto-generated, do not commit)
+UI/model_probe_cache.json
