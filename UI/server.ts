@@ -354,6 +354,62 @@ async function startServer() {
   app.use(llmStreamSseProxy);
 
   // ============================================================
+  // 归一化上游模型元数据 → 统一格式
+  // 支持: OpenRouter / Gemini / OpenAI / DeepSeek / 通用
+  // ============================================================
+  function normalizeMetadata(raw: any): Record<string, any> {
+    if (!raw || typeof raw !== 'object') return {};
+    const meta: Record<string, any> = {};
+
+    // ── OpenRouter 格式 ──
+    if (raw.context_length) meta.contextWindow = raw.context_length;
+    if (raw.top_provider?.max_completion_tokens) meta.maxOutput = raw.top_provider.max_completion_tokens;
+    if (raw.architecture?.input_modalities) meta.inputModalities = raw.architecture.input_modalities;
+    if (raw.architecture?.output_modalities) meta.outputModalities = raw.architecture.output_modalities;
+    if (raw.architecture?.modality) meta.architecture = raw.architecture.modality;
+    if (raw.pricing?.prompt) meta.pricingInput = parseFloat(raw.pricing.prompt) * 1e6;
+    if (raw.pricing?.completion) meta.pricingOutput = parseFloat(raw.pricing.completion) * 1e6;
+    if (raw.description) meta.description = raw.description;
+    if (raw.top_provider?.context_length) meta.contextWindow = raw.top_provider.context_length;
+
+    // ── Gemini 格式 ──
+    if (raw.inputTokenLimit) {
+      meta.contextWindow = (meta.contextWindow || 0) + raw.inputTokenLimit;
+      meta.maxOutput = raw.outputTokenLimit;
+    }
+    if (raw.outputTokenLimit && !meta.maxOutput) meta.maxOutput = raw.outputTokenLimit;
+    if (raw.supportedGenerationMethods) {
+      meta.supportedMethods = raw.supportedGenerationMethods;
+      meta.supportsStreaming = raw.supportedGenerationMethods.includes('generateContent');
+    }
+
+    // ── 通用字段 (OpenAI / DeepSeek / 其他) ──
+    if (raw.owned_by) meta.owner = raw.owned_by;
+    if (raw.owner) meta.owner = raw.owner;
+    if (raw.created) meta.created = raw.created;
+    if (raw.object) meta.object = raw.object;
+    if (raw.permission) meta.permission = raw.permission;
+    if (raw.root) meta.root = raw.root;
+    if (raw.parent) meta.parent = raw.parent;
+    if (raw.id && !meta.description) meta.id = raw.id;
+
+    // ── 推断能力 (基于模型名) ──
+    const idLower = String(raw.id || raw.name || '').toLowerCase();
+    if (idLower.includes('vision') || idLower.includes('vl') || idLower.includes('4o') || idLower.includes('gemini')) {
+      meta.supportsVision = true;
+      if (!meta.inputModalities) meta.inputModalities = ['text', 'image'];
+    }
+    if (idLower.includes('audio') || idLower.includes('whisper')) {
+      meta.supportsAudio = true;
+    }
+    if (idLower.includes('reason') || idLower.includes('o1') || idLower.includes('o3') || idLower.includes('r1')) {
+      meta.isReasoningModel = true;
+    }
+
+    return meta;
+  }
+
+  // ============================================================
   // 数据库持久化：加载与保存云端大模型服务商配置
   // ============================================================
   app.get("/api/providers/config", (req, res) => {
@@ -491,8 +547,14 @@ async function startServer() {
         : Array.isArray(data) ? data
         : [];
       const models = list
-        .map((m: any) => ({ id: typeof m === "string" ? m : (m.id || m.name || m.model), name: typeof m === "string" ? m : (m.id || m.name || m.model) }))
-        .filter((m: any) => !!m.id)
+        .map((m: any) => {
+          if (typeof m === "string") return { id: m, name: m };
+          const id = m.id || m.name || m.model;
+          if (!id) return null;
+          // 保留上游返回的所有原始字段，供前端展示模型详情
+          return { id, name: id, raw: m };
+        })
+        .filter((m: any) => !!m)
         .slice(0, 500);
       res.json({ success: true, count: models.length, models, latency });
     } catch (err: any) {
@@ -559,6 +621,901 @@ async function startServer() {
     } finally {
       clearTimeout(timeout);
     }
+  });
+
+  // ============================================================
+  // 模型详情探测：获取单个模型的完整元数据
+  // 策略：
+  //   1. GET {baseUrl}/models/{modelId} — 部分服务商支持
+  //   2. 回退 GET {baseUrl}/models → 在列表中查找
+  //   3. 返回上游原始数据 + 归一化的 metadata
+  // ============================================================
+  app.post("/api/providers/model-detail", async (req, res) => {
+    const { baseUrl, apiKey, defaultUrl, modelId } = req.body || {};
+    const target = (baseUrl && baseUrl.trim()) || (defaultUrl && defaultUrl.trim());
+    if (!target || !/^https?:\/\//i.test(target)) {
+      return res.status(400).json({ success: false, error: "接口重定向网址 (baseUrl) 非法或缺失" });
+    }
+    if (!modelId || !modelId.trim()) {
+      return res.status(400).json({ success: false, error: "modelId 为空" });
+    }
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (apiKey && apiKey.trim()) headers["Authorization"] = `Bearer ${apiKey.trim()}`;
+
+    const base = target.replace(/\/+$/, "");
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    const t0 = Date.now();
+
+    try {
+      // 尝试 1: GET /models/{modelId}
+      let upstream = await fetch(`${base}/models/${encodeURIComponent(modelId)}`, {
+        method: "GET",
+        headers,
+        signal: controller.signal,
+      });
+
+      // 如果 404/405 → 回退到 GET /models 全列表查找
+      if (!upstream.ok && upstream.status !== 200) {
+        upstream = await fetch(`${base}/models`, {
+          method: "GET",
+          headers,
+          signal: controller.signal,
+        });
+        const text2 = await upstream.text();
+        if (!upstream.ok) {
+          const latency2 = Date.now() - t0;
+          return res.status(upstream.status).json({
+            success: false,
+            error: `上游 ${upstream.status} ${upstream.statusText}`,
+            latency: latency2,
+          });
+        }
+        let data2: any;
+        try { data2 = JSON.parse(text2); } catch {
+          return res.status(502).json({ success: false, error: "上游响应不是 JSON" });
+        }
+        const list2 = Array.isArray(data2?.data) ? data2.data
+          : Array.isArray(data2?.models) ? data2.models
+          : Array.isArray(data2) ? data2 : [];
+        const found = list2.find((m: any) => {
+          const mid = typeof m === "string" ? m : (m.id || m.name || m.model);
+          return mid === modelId;
+        });
+        if (!found) {
+          const latency3 = Date.now() - t0;
+          return res.json({
+            success: true,
+            modelId,
+            raw: null,
+            metadata: {},
+            latency: latency3,
+            note: "模型未在 /models 列表中找到",
+          });
+        }
+        const raw = typeof found === "string" ? { id: found } : found;
+        const latency4 = Date.now() - t0;
+        const metadata = normalizeMetadata(raw);
+        return res.json({ success: true, modelId, raw, metadata, latency: latency4 });
+      }
+
+      // /models/{modelId} 成功
+      const text = await upstream.text();
+      const latency = Date.now() - t0;
+      let raw: any;
+      try { raw = JSON.parse(text); } catch {
+        return res.status(502).json({ success: false, error: "上游响应不是 JSON", latency });
+      }
+      const metadata = normalizeMetadata(raw);
+      res.json({ success: true, modelId, raw, metadata, latency });
+    } catch (err: any) {
+      const latency = Date.now() - t0;
+      res.status(502).json({
+        success: false,
+        error: err.name === "AbortError" ? `请求超时（>15s）: ${target}` : (err.message || "上游不可达"),
+        latency,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+  });
+
+  // ============================================================
+  // 已知模型上下文窗口数据库 (API 不返回时的兜底)
+  // 来源: 各服务商官方文档
+  // ============================================================
+  const KNOWN_MODEL_CONTEXT: Record<string, { context: number; maxOutput?: number }> = {
+    // ════════════════════════════════════════════
+    // ── OpenAI (来源: platform.openai.com/docs/models) ──
+    // ════════════════════════════════════════════
+    'gpt-4o': { context: 128000, maxOutput: 16384 },
+    'gpt-4o-mini': { context: 128000, maxOutput: 16384 },
+    'gpt-4o-audio-preview': { context: 128000, maxOutput: 16384 },
+    'gpt-4-turbo': { context: 128000, maxOutput: 4096 },
+    'gpt-4-turbo-preview': { context: 128000, maxOutput: 4096 },
+    'gpt-4-vision-preview': { context: 128000, maxOutput: 4096 },
+    'gpt-4': { context: 8192, maxOutput: 4096 },
+    'gpt-4-32k': { context: 32768, maxOutput: 4096 },
+    'gpt-4-0125-preview': { context: 128000, maxOutput: 4096 },
+    'gpt-4-1106-preview': { context: 128000, maxOutput: 4096 },
+    'gpt-3.5-turbo': { context: 16385, maxOutput: 4096 },
+    'gpt-3.5-turbo-16k': { context: 16385, maxOutput: 4096 },
+    'gpt-3.5-turbo-1106': { context: 16385, maxOutput: 4096 },
+    'o1': { context: 200000, maxOutput: 100000 },
+    'o1-mini': { context: 128000, maxOutput: 65536 },
+    'o1-preview': { context: 128000, maxOutput: 32768 },
+    'o3': { context: 200000, maxOutput: 100000 },
+    'o3-mini': { context: 200000, maxOutput: 100000 },
+    'o3-mini-high': { context: 200000, maxOutput: 100000 },
+    'o4-mini': { context: 200000, maxOutput: 100000 },
+    'o4-mini-high': { context: 200000, maxOutput: 100000 },
+
+    // ════════════════════════════════════════════
+    // ── DeepSeek (来源: api-docs.deepseek.com V4 版本) ──
+    // V4-Flash/Pro: 1M 上下文, 384K 最大输出
+    // deepseek-chat/deepseek-reasoner 即将弃用, 映射到 V4-Flash
+    // ════════════════════════════════════════════
+    'deepseek-v4-flash': { context: 1000000, maxOutput: 393216 },
+    'deepseek-v4-pro': { context: 1000000, maxOutput: 393216 },
+    'deepseek-chat': { context: 1000000, maxOutput: 393216 },
+    'deepseek-reasoner': { context: 1000000, maxOutput: 393216 },
+    'deepseek-coder': { context: 16000, maxOutput: 4096 },
+    'deepseek-v2.5': { context: 128000, maxOutput: 8192 },
+    'deepseek-v3': { context: 64000, maxOutput: 8192 },
+
+    // ════════════════════════════════════════════
+    // ── Anthropic Claude (来源: docs.anthropic.com) ──
+    // ════════════════════════════════════════════
+    'claude-3-opus': { context: 200000, maxOutput: 4096 },
+    'claude-3-opus-20240229': { context: 200000, maxOutput: 4096 },
+    'claude-3-sonnet': { context: 200000, maxOutput: 4096 },
+    'claude-3-sonnet-20240229': { context: 200000, maxOutput: 4096 },
+    'claude-3-haiku': { context: 200000, maxOutput: 4096 },
+    'claude-3-haiku-20240307': { context: 200000, maxOutput: 4096 },
+    'claude-3-5-sonnet': { context: 200000, maxOutput: 8192 },
+    'claude-3-5-sonnet-20241022': { context: 200000, maxOutput: 8192 },
+    'claude-3-5-sonnet-20240620': { context: 200000, maxOutput: 8192 },
+    'claude-3-5-haiku': { context: 200000, maxOutput: 8192 },
+    'claude-3-5-haiku-20241022': { context: 200000, maxOutput: 8192 },
+    'claude-sonnet-4': { context: 200000, maxOutput: 64000 },
+    'claude-sonnet-4-20250514': { context: 200000, maxOutput: 64000 },
+    'claude-opus-4': { context: 200000, maxOutput: 32000 },
+    'claude-opus-4-20250514': { context: 200000, maxOutput: 32000 },
+    'claude-sonnet-4-5': { context: 200000, maxOutput: 64000 },
+
+    // ════════════════════════════════════════════
+    // ── Google Gemini (来源: ai.google.dev/gemini-api/docs/models) ──
+    // ════════════════════════════════════════════
+    'gemini-1.5-pro': { context: 2000000, maxOutput: 8192 },
+    'gemini-1.5-pro-latest': { context: 2000000, maxOutput: 8192 },
+    'gemini-1.5-flash': { context: 1000000, maxOutput: 8192 },
+    'gemini-1.5-flash-latest': { context: 1000000, maxOutput: 8192 },
+    'gemini-1.5-flash-8b': { context: 1000000, maxOutput: 8192 },
+    'gemini-2.0-flash': { context: 1000000, maxOutput: 8192 },
+    'gemini-2.0-flash-exp': { context: 1000000, maxOutput: 8192 },
+    'gemini-2.0-flash-lite': { context: 1000000, maxOutput: 8192 },
+    'gemini-2.5-pro': { context: 2000000, maxOutput: 8192 },
+    'gemini-2.5-pro-preview': { context: 2000000, maxOutput: 8192 },
+    'gemini-2.5-flash': { context: 1000000, maxOutput: 8192 },
+    'gemini-2.5-flash-preview': { context: 1000000, maxOutput: 8192 },
+    'gemini-2.5-flash-lite': { context: 1000000, maxOutput: 8192 },
+
+    // ════════════════════════════════════════════
+    // ── Moonshot Kimi (来源: platform.moonshot.cn/docs/pricing) ──
+    // ════════════════════════════════════════════
+    'moonshot-v1-8k': { context: 8192, maxOutput: 8192 },
+    'moonshot-v1-32k': { context: 32768, maxOutput: 32768 },
+    'moonshot-v1-128k': { context: 131072, maxOutput: 131072 },
+    'moonshot-v1-8k-vision-preview': { context: 8192, maxOutput: 8192 },
+    'moonshot-v1-32k-vision-preview': { context: 32768, maxOutput: 32768 },
+    'moonshot-v1-128k-vision-preview': { context: 131072, maxOutput: 131072 },
+    'kimi-k2.5': { context: 262144, maxOutput: 131072 },
+    'kimi-k2.6': { context: 262144, maxOutput: 131072 },
+    'kimi-k2.7-code': { context: 262144, maxOutput: 131072 },
+    'kimi-latest': { context: 262144, maxOutput: 131072 },
+
+    // ════════════════════════════════════════════
+    // ── 阿里 Qwen 通义千问 (来源: help.aliyun.com/zh/model-studio) ──
+    // ════════════════════════════════════════════
+    'qwen-max': { context: 32768, maxOutput: 8192 },
+    'qwen-max-latest': { context: 32768, maxOutput: 8192 },
+    'qwen-max-longcontext': { context: 131072, maxOutput: 8192 },
+    'qwen-plus': { context: 131072, maxOutput: 8192 },
+    'qwen-plus-latest': { context: 131072, maxOutput: 8192 },
+    'qwen-turbo': { context: 1000000, maxOutput: 8192 },
+    'qwen-turbo-latest': { context: 1000000, maxOutput: 8192 },
+    'qwen2.5-72b-instruct': { context: 131072, maxOutput: 8192 },
+    'qwen2.5-32b-instruct': { context: 131072, maxOutput: 8192 },
+    'qwen2.5-14b-instruct': { context: 131072, maxOutput: 8192 },
+    'qwen2.5-7b-instruct': { context: 131072, maxOutput: 8192 },
+    'qwen2.5-coder-32b-instruct': { context: 131072, maxOutput: 8192 },
+    'qwen2.5-coder-14b-instruct': { context: 131072, maxOutput: 8192 },
+    'qwen2.5-coder-7b-instruct': { context: 131072, maxOutput: 8192 },
+    'qwen2.5-72b': { context: 131072, maxOutput: 8192 },
+    'qwen2.5-32b': { context: 131072, maxOutput: 8192 },
+    'qwen2.5-7b': { context: 131072, maxOutput: 8192 },
+    'qwen3-235b-a22b': { context: 131072, maxOutput: 8192 },
+    'qwen3-32b': { context: 131072, maxOutput: 8192 },
+    'qwen3-14b': { context: 131072, maxOutput: 8192 },
+    'qwen3-8b': { context: 131072, maxOutput: 8192 },
+    'qwen3-4b': { context: 131072, maxOutput: 8192 },
+    'qwen-vl-max': { context: 32768, maxOutput: 8192 },
+    'qwen-vl-plus': { context: 131072, maxOutput: 8192 },
+
+    // ════════════════════════════════════════════
+    // ── 智谱 GLM (来源: open.bigmodel.cn) ──
+    // ════════════════════════════════════════════
+    'glm-4': { context: 131072, maxOutput: 4096 },
+    'glm-4-plus': { context: 131072, maxOutput: 4096 },
+    'glm-4-flash': { context: 131072, maxOutput: 4096 },
+    'glm-4-flashx': { context: 131072, maxOutput: 4096 },
+    'glm-4-long': { context: 1000000, maxOutput: 4096 },
+    'glm-4-air': { context: 131072, maxOutput: 4096 },
+    'glm-4-airx': { context: 131072, maxOutput: 4096 },
+    'glm-4-9b': { context: 131072, maxOutput: 4096 },
+    'glm-4-9b-chat': { context: 131072, maxOutput: 4096 },
+    'glm-4v': { context: 131072, maxOutput: 4096 },
+    'glm-4v-flash': { context: 131072, maxOutput: 4096 },
+    'glm-4v-plus': { context: 131072, maxOutput: 4096 },
+    'glm-zero-preview': { context: 131072, maxOutput: 4096 },
+    'glm-5': { context: 131072, maxOutput: 16384 },
+    'glm-5-plus': { context: 131072, maxOutput: 16384 },
+    'glm-5-flash': { context: 131072, maxOutput: 16384 },
+
+    // ════════════════════════════════════════════
+    // ── 百度文心 ERNIE (来源: cloud.baidu.com/doc/WENXINWORKSHOP) ──
+    // ════════════════════════════════════════════
+    'ernie-4.0-turbo-8k': { context: 8192, maxOutput: 4096 },
+    'ernie-4.0-turbo-128k': { context: 128000, maxOutput: 4096 },
+    'ernie-4.0-8k-latest': { context: 8192, maxOutput: 4096 },
+    'ernie-4.0-8k-0329': { context: 8192, maxOutput: 4096 },
+    'ernie-3.5-8k': { context: 8192, maxOutput: 4096 },
+    'ernie-3.5-8k-preview': { context: 8192, maxOutput: 4096 },
+    'ernie-speed-8k': { context: 8192, maxOutput: 4096 },
+    'ernie-speed-128k': { context: 128000, maxOutput: 4096 },
+    'ernie-lite-8k': { context: 8192, maxOutput: 2048 },
+    'ernie-character-8k': { context: 8192, maxOutput: 4096 },
+    'ernie-novel-8k': { context: 8192, maxOutput: 4096 },
+
+    // ════════════════════════════════════════════
+    // ── 字节豆包 Doubao (来源: volcengine.com/docs/82379) ──
+    // ════════════════════════════════════════════
+    'doubao-pro-32k': { context: 32000, maxOutput: 4096 },
+    'doubao-pro-128k': { context: 128000, maxOutput: 4096 },
+    'doubao-pro-256k': { context: 256000, maxOutput: 4096 },
+    'doubao-lite-32k': { context: 32000, maxOutput: 4096 },
+    'doubao-lite-128k': { context: 128000, maxOutput: 4096 },
+    'doubao-1.5-pro': { context: 32000, maxOutput: 4096 },
+    'doubao-1.5-pro-32k': { context: 32000, maxOutput: 4096 },
+    'doubao-1.5-pro-256k': { context: 256000, maxOutput: 4096 },
+    'doubao-1.5-lite': { context: 32000, maxOutput: 4096 },
+    'doubao-vision-pro': { context: 32000, maxOutput: 4096 },
+    'doubao-vision-lite': { context: 32000, maxOutput: 4096 },
+    'ep-': { context: 32000, maxOutput: 4096 }, // 字节使用 ep-xxx 端点ID格式
+
+    // ════════════════════════════════════════════
+    // ── 腾讯混元 Hunyuan (来源: cloud.tencent.com/document/product/1729) ──
+    // ════════════════════════════════════════════
+    'hunyuan-pro': { context: 32768, maxOutput: 4096 },
+    'hunyuan-standard': { context: 32768, maxOutput: 4096 },
+    'hunyuan-lite': { context: 32768, maxOutput: 4096 },
+    'hunyuan-large': { context: 262144, maxOutput: 8192 },
+    'hunyuan-large-longcontext': { context: 262144, maxOutput: 8192 },
+    'hunyuan-standard-256k': { context: 262144, maxOutput: 8192 },
+    'hunyuan-vision': { context: 32768, maxOutput: 4096 },
+    'hunyuan-code': { context: 32768, maxOutput: 4096 },
+    'hunyuan-role': { context: 32768, maxOutput: 4096 },
+    'hunyuan-turbo': { context: 32768, maxOutput: 4096 },
+    'hunyuan-turbos-latest': { context: 32768, maxOutput: 4096 },
+
+    // ════════════════════════════════════════════
+    // ── 讯飞星火 Spark (来源: xfyun.cn/doc/spark) ──
+    // ════════════════════════════════════════════
+    'spark-v1.5': { context: 8192, maxOutput: 4096 },
+    'spark-v2.0': { context: 8192, maxOutput: 4096 },
+    'spark-v3.0': { context: 8192, maxOutput: 4096 },
+    'spark-v3.1': { context: 8192, maxOutput: 4096 },
+    'spark-v3.5': { context: 8192, maxOutput: 4096 },
+    'spark-v4.0': { context: 8192, maxOutput: 4096 },
+    'spark-max': { context: 8192, maxOutput: 4096 },
+    'spark-pro': { context: 8192, maxOutput: 4096 },
+    'spark-lite': { context: 8192, maxOutput: 4096 },
+    'spark-4.0-ultra': { context: 32768, maxOutput: 8192 },
+    'generalv3.5': { context: 8192, maxOutput: 4096 },
+    'general': { context: 8192, maxOutput: 4096 },
+
+    // ════════════════════════════════════════════
+    // ── MiniMax (来源: platform.minimaxi.com) ──
+    // ════════════════════════════════════════════
+    'minimax-m1': { context: 1000000, maxOutput: 16384 },
+    'minimax-m2': { context: 1000000, maxOutput: 16384 },
+    'minimax-m3': { context: 1000000, maxOutput: 16384 },
+    'abab6.5': { context: 245760, maxOutput: 8192 },
+    'abab6.5s': { context: 245760, maxOutput: 8192 },
+    'abab6.5t': { context: 8192, maxOutput: 4096 },
+    'abab6-chat': { context: 245760, maxOutput: 8192 },
+    'abab5.5-chat': { context: 16384, maxOutput: 4096 },
+    'abab5.5s-chat': { context: 8192, maxOutput: 4096 },
+
+    // ════════════════════════════════════════════
+    // ── 百川 Baichuan (来源: platform.baichuan-ai.com) ──
+    // ════════════════════════════════════════════
+    'baichuan-4': { context: 32768, maxOutput: 4096 },
+    'baichuan-4-turbo': { context: 32768, maxOutput: 4096 },
+    'baichuan-4-air': { context: 32768, maxOutput: 4096 },
+    'baichuan3-turbo': { context: 32768, maxOutput: 4096 },
+    'baichuan2-turbo': { context: 32768, maxOutput: 4096 },
+
+    // ════════════════════════════════════════════
+    // ── 零一万物 Yi (来源: platform.lingyiwanwu.com) ──
+    // ════════════════════════════════════════════
+    'yi-large': { context: 32768, maxOutput: 4096 },
+    'yi-large-turbo': { context: 16384, maxOutput: 4096 },
+    'yi-large-rc': { context: 32768, maxOutput: 4096 },
+    'yi-medium': { context: 16384, maxOutput: 4096 },
+    'yi-medium-200k': { context: 200000, maxOutput: 4096 },
+    'yi-vision': { context: 16384, maxOutput: 4096 },
+    'yi-lightning': { context: 16384, maxOutput: 4096 },
+
+    // ════════════════════════════════════════════
+    // ── 阶跃星辰 StepFun (来源: platform.stepfun.com) ──
+    // ════════════════════════════════════════════
+    'step-1-8k': { context: 8192, maxOutput: 4096 },
+    'step-1-32k': { context: 32768, maxOutput: 4096 },
+    'step-1-128k': { context: 131072, maxOutput: 4096 },
+    'step-1-256k': { context: 262144, maxOutput: 4096 },
+    'step-1-flash': { context: 8192, maxOutput: 4096 },
+    'step-2-16k': { context: 16384, maxOutput: 4096 },
+    'step-2-mini': { context: 8192, maxOutput: 4096 },
+    'step-1v-8k': { context: 8192, maxOutput: 4096 },
+    'step-1v-32k': { context: 32768, maxOutput: 4096 },
+
+    // ════════════════════════════════════════════
+    // ── Mistral AI (来源: docs.mistral.ai) ──
+    // ════════════════════════════════════════════
+    'mistral-large-latest': { context: 128000, maxOutput: 8192 },
+    'mistral-large-2407': { context: 128000, maxOutput: 8192 },
+    'mistral-large-2411': { context: 128000, maxOutput: 8192 },
+    'mistral-small-latest': { context: 32000, maxOutput: 8192 },
+    'mistral-small-2402': { context: 32000, maxOutput: 8192 },
+    'mistral-small-2501': { context: 32000, maxOutput: 8192 },
+    'codestral-latest': { context: 256000, maxOutput: 8192 },
+    'codestral-2501': { context: 256000, maxOutput: 8192 },
+    'open-mistral-nemo': { context: 128000, maxOutput: 8192 },
+    'open-mistral-7b': { context: 32000, maxOutput: 8192 },
+    'open-mixtral-8x7b': { context: 32000, maxOutput: 8192 },
+    'open-mixtral-8x22b': { context: 64000, maxOutput: 8192 },
+    'pixtral-large-latest': { context: 128000, maxOutput: 8192 },
+    'pixtral-12b-latest': { context: 128000, maxOutput: 8192 },
+
+    // ════════════════════════════════════════════
+    // ── Groq (来源: console.groq.com/docs/models) ──
+    // Groq 推理速度极快, 模型来自第三方
+    // ════════════════════════════════════════════
+    'llama-3.3-70b-versatile': { context: 131072, maxOutput: 32768 },
+    'llama-3.1-8b-instant': { context: 131072, maxOutput: 8192 },
+    'llama-3.1-70b-versatile': { context: 131072, maxOutput: 32768 },
+    'llama-3.2-1b-preview': { context: 131072, maxOutput: 8192 },
+    'llama-3.2-3b-preview': { context: 131072, maxOutput: 8192 },
+    'llama-3.2-11b-vision-preview': { context: 131072, maxOutput: 8192 },
+    'llama-3.2-90b-vision-preview': { context: 131072, maxOutput: 8192 },
+    'mixtral-8x7b-32768': { context: 32768, maxOutput: 32768 },
+    'gemma2-9b-it': { context: 8192, maxOutput: 8192 },
+    'gemma-7b-it': { context: 8192, maxOutput: 8192 },
+    'deepseek-r1-distill-llama-70b': { context: 131072, maxOutput: 32768 },
+    'deepseek-r1-distill-qwen-32b': { context: 131072, maxOutput: 32768 },
+
+    // ════════════════════════════════════════════
+    // ── OpenRouter (来源: openrouter.ai/models) ──
+    // OpenRouter 是聚合路由, 模型来自各上游, 使用 /models API 可获取
+    // 此处仅做兜底, 实际数据靠 API 返回
+    // ════════════════════════════════════════════
+
+    // ════════════════════════════════════════════
+    // ── Together AI (来源: docs.together.ai) ──
+    // Together 托管开源模型, 上下文通常 4K-128K
+    // ════════════════════════════════════════════
+    'together-llama-3.3-70b': { context: 131072, maxOutput: 4096 },
+    'together-qwen-2.5-72b': { context: 131072, maxOutput: 4096 },
+    'together-deepseek-r1': { context: 131072, maxOutput: 4096 },
+
+    // ════════════════════════════════════════════
+    // ── Fireworks AI (来源: docs.fireworks.ai) ──
+    // Fireworks 托管开源模型, 上下文通常 8K-128K
+    // ════════════════════════════════════════════
+    'fireworks-llama-3.3-70b': { context: 131072, maxOutput: 16384 },
+    'fireworks-qwen-2.5-72b': { context: 131072, maxOutput: 16384 },
+    'fireworks-deepseek-r1': { context: 131072, maxOutput: 16384 },
+
+    // ════════════════════════════════════════════
+    // ── Perplexity (来源: docs.perplexity.ai) ──
+    // ════════════════════════════════════════════
+    'sonar-pro': { context: 200000, maxOutput: 8192 },
+    'sonar-reasoning': { context: 127000, maxOutput: 8192 },
+    'sonar-reasoning-pro': { context: 127000, maxOutput: 8192 },
+    'sonar': { context: 127000, maxOutput: 8192 },
+    'sonar-large': { context: 127000, maxOutput: 8192 },
+
+    // ════════════════════════════════════════════
+    // ── Cohere (来源: docs.cohere.com/docs/models) ──
+    // ════════════════════════════════════════════
+    'command-r': { context: 128000, maxOutput: 4096 },
+    'command-r-plus': { context: 128000, maxOutput: 4096 },
+    'command-r7b': { context: 128000, maxOutput: 4096 },
+    'command-a': { context: 256000, maxOutput: 8192 },
+    'command': { context: 4096, maxOutput: 4096 },
+    'command-light': { context: 4096, maxOutput: 4096 },
+
+    // ════════════════════════════════════════════
+    // ── Meta Llama 系列 (来源: 各平台通用) ──
+    // ════════════════════════════════════════════
+    'llama-3.1-405b-instruct': { context: 131072, maxOutput: 4096 },
+    'llama-3.1-70b-instruct': { context: 131072, maxOutput: 4096 },
+    'llama-3.1-8b-instruct': { context: 131072, maxOutput: 4096 },
+    'llama-3.2-1b-instruct': { context: 131072, maxOutput: 4096 },
+    'llama-3.2-3b-instruct': { context: 131072, maxOutput: 4096 },
+    'llama-3.2-11b-vision-instruct': { context: 131072, maxOutput: 4096 },
+    'llama-3.2-90b-vision-instruct': { context: 131072, maxOutput: 4096 },
+    'llama-3.3-70b-instruct': { context: 131072, maxOutput: 4096 },
+    'llama-4-scout': { context: 10000000, maxOutput: 8192 },
+    'llama-4-maverick': { context: 1000000, maxOutput: 8192 },
+
+    // ════════════════════════════════════════════
+    // ── Xiaomi MiMo (来源: xiaomimimo.com 实测) ──
+    // ════════════════════════════════════════════
+    'mimo-v2.5': { context: 32768, maxOutput: 4096 },
+    'mimo-v2.5-pro': { context: 131072, maxOutput: 131072 },
+    'mimo-v2.5-asr': { context: 32768, maxOutput: 4096 },
+    'mimo-v2.5-tts': { context: 32768, maxOutput: 4096 },
+
+    // ════════════════════════════════════════════
+    // ── 硅基流动 SiliconFlow (来源: docs.siliconflow.cn) ──
+    // SF 是聚合平台, 托管开源模型, 上下文靠 API 返回
+    // 以下为常见模型在 SF 上的默认配置
+    // ════════════════════════════════════════════
+    'deepseek-ai/deepseek-v3': { context: 64000, maxOutput: 8192 },
+    'deepseek-ai/deepseek-r1': { context: 64000, maxOutput: 8192 },
+    'deepseek-ai/deepseek-v2.5': { context: 128000, maxOutput: 8192 },
+    'qwen/qwen2.5-72b-instruct': { context: 131072, maxOutput: 8192 },
+    'qwen/qwen2.5-coder-32b-instruct': { context: 131072, maxOutput: 8192 },
+    'qwen/qwen2.5-7b-instruct': { context: 131072, maxOutput: 8192 },
+
+    // ════════════════════════════════════════════
+    // ── 其他常见模型 ──
+    // ════════════════════════════════════════════
+    'phi-3-medium-4k-instruct': { context: 4096, maxOutput: 4096 },
+    'phi-3-medium-128k-instruct': { context: 128000, maxOutput: 4096 },
+    'gemma-2-9b-it': { context: 8192, maxOutput: 4096 },
+    'gemma-2-27b-it': { context: 8192, maxOutput: 4096 },
+    'gemma-2-2b-it': { context: 8192, maxOutput: 4096 },
+  };
+
+  /** 模糊匹配已知模型上下文 */
+  function lookupKnownContext(modelId: string): { context: number; maxOutput?: number } | null {
+    const idLower = modelId.toLowerCase();
+    // 精确匹配
+    if (KNOWN_MODEL_CONTEXT[idLower]) return KNOWN_MODEL_CONTEXT[idLower];
+    // 前缀匹配 (如 gpt-4o-2024-08-06)
+    for (const [key, val] of Object.entries(KNOWN_MODEL_CONTEXT)) {
+      if (idLower.startsWith(key)) return val;
+    }
+    // 模糊匹配
+    for (const [key, val] of Object.entries(KNOWN_MODEL_CONTEXT)) {
+      if (idLower.includes(key) || key.includes(idLower)) return val;
+    }
+    return null;
+  }
+
+  // ============================================================
+  // 模型能力探针：发送真实 API 请求探测模型能力
+  //
+  // 探测项 (全部使用 max_tokens:1, 成本极低):
+  //   1. 基础连通 — POST /chat/completions { messages:[{content:"Hi"}], max_tokens:1 }
+  //   2. 视觉     — 同上，但 messages 包含 image_url (1x1 透明 PNG)
+  //   3. 工具     — 同上，但带 tools 参数
+  //   4. JSON     — 同上，但带 response_format:{type:"json_object"}
+  //   5. 流式     — 同上，但 stream:true，读取首个 SSE chunk
+  //   6. 限制     — 发送 max_tokens:999999，从 400 错误信息中解析上下文/输出上限
+  //   7. 元信息   — GET /models/{id} 获取 owner/created 等
+  //   8. 已知库   — 从内置已知模型数据库补充上下文窗口
+  // ============================================================
+  app.post("/api/providers/model-probe", async (req, res) => {
+   try {
+    const { baseUrl, apiKey, defaultUrl, modelId } = req.body || {};
+    const target = (baseUrl && baseUrl.trim()) || (defaultUrl && defaultUrl.trim());
+    if (!target || !/^https?:\/\//i.test(target)) {
+      return res.status(400).json({ success: false, error: "接口重定向网址 (baseUrl) 非法或缺失" });
+    }
+    if (!modelId || !modelId.trim()) {
+      return res.status(400).json({ success: false, error: "modelId 为空" });
+    }
+    if (!apiKey || !apiKey.trim()) {
+      return res.status(400).json({ success: false, error: "API 密钥为空" });
+    }
+
+    const base = target.replace(/\/+$/, "");
+    const authHeader = `Bearer ${apiKey.trim()}`;
+    const headers: Record<string, string> = { "Content-Type": "application/json", "Authorization": authHeader };
+
+    // 1x1 透明 PNG (base64)
+    const TINY_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+    const result = {
+      success: false,
+      modelId,
+      latency: 0,
+      probed: {
+        basic: false,
+        vision: null as boolean | null,
+        tools: null as boolean | null,
+        json: null as boolean | null,
+        streaming: null as boolean | null,
+        embeddings: null as boolean | null,
+      },
+      limits: {
+        contextWindow: null as number | null,
+        maxOutput: null as number | null,
+      },
+      usage: null as Record<string, unknown> | null,
+      pricing: null as Record<string, unknown> | null,
+      rawModelInfo: null as Record<string, unknown> | null,
+      responseHeaders: {} as Record<string, string>,
+      pingResponse: null as Record<string, unknown> | null,
+      serverInfo: {} as Record<string, unknown>,
+      errors: {} as Record<string, string>,
+    };
+
+    const t0 = Date.now();
+    const mkTimeout = (ms: number) => {
+      const c = new AbortController();
+      const t = setTimeout(() => c.abort(), ms);
+      return { c, t };
+    };
+
+    // ── 辅助：发 chat/completions 请求 ──
+    async function chatProbe(body: Record<string, unknown>, timeoutMs = 12000): Promise<{ ok: boolean; status: number; text: string }> {
+      const { c, t } = mkTimeout(timeoutMs);
+      try {
+        const r = await fetch(`${base}/chat/completions`, {
+          method: "POST",
+          headers,
+          signal: c.signal,
+          body: JSON.stringify({ model: modelId, max_tokens: 1, stream: false, ...body }),
+        });
+        const text = await r.text();
+        return { ok: r.ok, status: r.status, text };
+      } catch (e: any) {
+        return { ok: false, status: 0, text: e?.name === "AbortError" ? "timeout" : (e?.message || "error") };
+      } finally {
+        clearTimeout(t);
+      }
+    }
+
+    // ── 辅助：发 chat/completions 并捕获完整响应 + headers ──
+    async function chatProbeFull(body: Record<string, unknown>, timeoutMs = 12000): Promise<{ ok: boolean; status: number; text: string; json: any | null; headers: Record<string, string> }> {
+      const { c, t } = mkTimeout(timeoutMs);
+      try {
+        const r = await fetch(`${base}/chat/completions`, {
+          method: "POST",
+          headers,
+          signal: c.signal,
+          body: JSON.stringify({ model: modelId, max_tokens: 1, stream: false, ...body }),
+        });
+        const text = await r.text();
+        let json: any = null;
+        try { json = JSON.parse(text); } catch {}
+        // 捕获关键响应头
+        const respHeaders: Record<string, string> = {};
+        r.headers.forEach((v, k) => {
+          const kl = k.toLowerCase();
+          if (kl.startsWith('x-ratelimit') || kl.startsWith('x-request') || kl.includes('remaining') || kl.includes('limit') || kl.includes('reset') || kl === 'date' || kl === 'server' || kl === 'content-type') {
+            respHeaders[k] = v;
+          }
+        });
+        return { ok: r.ok, status: r.status, text, json, headers: respHeaders };
+      } catch (e: any) {
+        return { ok: false, status: 0, text: e?.name === "AbortError" ? "timeout" : (e?.message || "error"), json: null, headers: {} };
+      } finally {
+        clearTimeout(t);
+      }
+    }
+
+    // ── Phase 1: 基础 ping (完整响应) + /models/{id} (并行) ──
+    const [pingFull, modelsRes] = await Promise.all([
+      chatProbeFull({ messages: [{ role: "user", content: "Hi" }] }),
+      (async () => {
+        const { c, t } = mkTimeout(10000);
+        try {
+          let r = await fetch(`${base}/models/${encodeURIComponent(modelId)}`, { method: "GET", headers, signal: c.signal });
+          if (!r.ok) {
+            // 回退到 /models 列表
+            r = await fetch(`${base}/models`, { method: "GET", headers, signal: c.signal });
+            if (!r.ok) return {};
+            const data = await r.json();
+            const list = Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : Array.isArray(data) ? data : [];
+            const found = list.find((m: any) => (typeof m === "string" ? m : (m.id || m.name)) === modelId);
+            return typeof found === "string" ? { id: found } : (found || {});
+          }
+          return await r.json();
+        } catch { return {}; }
+        finally { clearTimeout(t); }
+      })(),
+    ]);
+
+    const pingRes = { ok: pingFull.ok, status: pingFull.status, text: pingFull.text };
+
+    // 保存完整 ping 响应 + usage + 响应头
+    if (pingFull.json) {
+      result.pingResponse = pingFull.json;
+      if (pingFull.json.usage) result.usage = pingFull.json.usage;
+    }
+    result.responseHeaders = pingFull.headers;
+
+    // 保存完整 /models/{id} 原始数据
+    if (modelsRes && typeof modelsRes === "object") {
+      result.rawModelInfo = modelsRes;
+      result.serverInfo = modelsRes;
+      if (modelsRes.owned_by) result.serverInfo.owner = modelsRes.owned_by;
+      // 提取 pricing (OpenRouter 格式)
+      if (modelsRes.pricing) result.pricing = modelsRes.pricing;
+    }
+
+    if (!pingRes.ok) {
+      result.errors.basic = `${pingRes.status}: ${pingRes.text.slice(0, 300)}`;
+      result.latency = Date.now() - t0;
+      return res.json(result);
+    }
+    result.probed.basic = true;
+
+    // ── Phase 2: 并行探测 vision / tools / json / streaming ──
+    const [visionRes, toolsRes, jsonRes] = await Promise.all([
+      // 视觉探测
+      chatProbe({
+        messages: [{
+          role: "user",
+          content: [
+            { type: "text", text: "What is this?" },
+            { type: "image_url", image_url: { url: TINY_PNG } },
+          ],
+        }],
+      }),
+      // 工具探测
+      chatProbe({
+        messages: [{ role: "user", content: "What's the weather?" }],
+        tools: [{
+          type: "function",
+          function: {
+            name: "get_weather",
+            description: "Get current weather",
+            parameters: { type: "object", properties: { location: { type: "string", description: "City name" } }, required: ["location"] },
+          },
+        }],
+      }),
+      // JSON 模式探测
+      chatProbe({
+        messages: [{ role: "user", content: 'Return {"hello":"world"}' }],
+        response_format: { type: "json_object" },
+      }),
+    ]);
+
+    result.probed.vision = visionRes.ok;
+    if (!visionRes.ok && visionRes.status !== 0) result.errors.vision = `${visionRes.status}: ${visionRes.text.slice(0, 200)}`;
+    else if (visionRes.status === 0) result.errors.vision = visionRes.text;
+
+    result.probed.tools = toolsRes.ok;
+    if (!toolsRes.ok && toolsRes.status !== 0) result.errors.tools = `${toolsRes.status}: ${toolsRes.text.slice(0, 200)}`;
+    else if (toolsRes.status === 0) result.errors.tools = toolsRes.text;
+
+    result.probed.json = jsonRes.ok;
+    if (!jsonRes.ok && jsonRes.status !== 0) result.errors.json = `${jsonRes.status}: ${jsonRes.text.slice(0, 200)}`;
+    else if (jsonRes.status === 0) result.errors.json = jsonRes.text;
+
+    // 流式探测 (需要特殊处理：读取首个 chunk 后立即 abort)
+    try {
+      const { c, t } = mkTimeout(8000);
+      const sr = await fetch(`${base}/chat/completions`, {
+        method: "POST",
+        headers,
+        signal: c.signal,
+        body: JSON.stringify({
+          model: modelId,
+          messages: [{ role: "user", content: "Hi" }],
+          max_tokens: 1,
+          stream: true,
+        }),
+      });
+      if (sr.ok) {
+        const ct = sr.headers.get("content-type") || "";
+        if (ct.includes("text/event-stream") || ct.includes("stream")) {
+          result.probed.streaming = true;
+        } else {
+          // 非 SSE header，尝试读取 body
+          const reader = sr.body?.getReader();
+          if (reader) {
+            const { value } = await reader.read();
+            result.probed.streaming = !!value && value.length > 0;
+          }
+        }
+        c.abort(); // 主动中断流
+      } else {
+        const st = await sr.text();
+        result.errors.streaming = `${sr.status}: ${st.slice(0, 200)}`;
+      }
+      clearTimeout(t);
+    } catch (e: any) {
+      // AbortError 在读取到数据后触发 = 流式正常
+      if (e?.name === "AbortError" && result.probed.streaming !== false) {
+        result.probed.streaming = result.probed.streaming ?? true;
+      } else {
+        result.errors.streaming = e?.message || "streaming probe failed";
+      }
+    }
+
+    // ── Phase 3: 限制探测 — 发送超大 max_tokens，从错误信息解析 ──
+    const limitRes = await chatProbe({
+      messages: [{ role: "user", content: "Hi" }],
+      max_tokens: 999999,
+    }, 10000);
+
+    if (!limitRes.ok && limitRes.text) {
+      // 尝试提取 max_output / max_tokens 上限
+      // 支持多种错误消息格式:
+      //   "max_tokens must be less than or equal to 16384"
+      //   "max tokens is too large: 999999. Max tokens: 8192"
+      //   "maximum output is 4096 tokens"
+      //   "The maximum allowed tokens is 4096"
+      //   "max_tokens may not be greater than 8192"
+      //   "This model has a maximum output of 4096 tokens"
+      //   "max_tokens is too large: 999999. This model supports at most 131072 completion tokens"
+      const maxOutPatterns = [
+        /max_tokens?\s*(?:must be|is|should be|may not be)?\s*(?:less than|<=?|at most|up to|greater than)\s*(?:or equal to\s*)?(\d+)/i,
+        /max(?:imum)?\s*(?:output|tokens?|allowed)\s*(?:is|of|:)?\s*(\d+)/i,
+        /max_tokens?\s*(?:is|:)\s*(\d+)/i,
+        /(?:maximum|max)\s+\d+\s*(?:output|completion)\s*tokens?/i,
+        /tokens?\s*(?:limit|max|maximum)\s*(?:is|:)?\s*(\d+)/i,
+        /supports\s+at\s+most\s+(\d+)\s*(?:completion|output)?\s*tokens?/i,
+        /at\s+most\s+(\d+)\s*(?:completion|output)?\s*tokens?/i,
+        /too\s+large.*?(\d{4,})\s*(?:completion|output)?\s*tokens?/i,
+      ];
+      for (const p of maxOutPatterns) {
+        const m = limitRes.text.match(p);
+        if (m) { result.limits.maxOutput = parseInt(m[m.length - 1]); break; }
+      }
+
+      // 尝试提取 context_length / context window
+      // 支持多种错误消息格式:
+      //   "This model's maximum context length is 128000 tokens"
+      //   "context_length is 64000"
+      //   "This model supports a maximum of 128000 tokens"
+      //   "maximum input tokens: 128000"
+      //   "total tokens cannot exceed 128000"
+      //   "input tokens must be less than 64000"
+      //   "This model supports at most 131072 completion tokens, whereas you provided 999999"
+      //   "maximum context length of 131072 tokens"
+      const ctxPatterns = [
+        /(?:maximum\s+)?context\s*(?:length|window)\s*(?:is|:|of)?\s*(\d+)/i,
+        /context_length\s*(?:is|:)?\s*(\d+)/i,
+        /(?:maximum|max)\s+(?:of\s+)?(\d+)\s*tokens?/i,
+        /(?:input|total)\s*tokens?\s*(?:cannot\s*exceed|must\s*be\s*less\s*than|limit(?:ed)?\s*to)\s*(\d+)/i,
+        /tokens?\s*(?:limit|max)\s*(?:is|:)?\s*(\d+)/i,
+        /(?:max|maximum)\s*(?:input|context)\s*tokens?\s*:?\s*(\d+)/i,
+        /(\d+)\s*tokens?\s*(?:context|window|input\s*limit)/i,
+        /context\s*(?:length|window)\s*(?:of|is)?\s*(\d+)/i,
+      ];
+      for (const p of ctxPatterns) {
+        const m = limitRes.text.match(p);
+        if (m) { result.limits.contextWindow = parseInt(m[m.length - 1]); break; }
+      }
+
+      result.errors.limits = `${limitRes.status}: ${limitRes.text.slice(0, 500)}`;
+    } else if (limitRes.ok) {
+      // API 接受了 999999 max_tokens — 可能静默截断了，无法确定上限
+      result.errors.limits = "API accepted max_tokens:999999 without error (silent cap, limit unknown)";
+    }
+
+    // ── Phase 4: 从 /models 响应补充限制信息 (OpenRouter/Gemini/通用) ──
+    if (modelsRes) {
+      const m = modelsRes as any;
+      if (!result.limits.contextWindow) {
+        // 尝试所有可能的字段名
+        const ctxFields = ['context_length', 'inputTokenLimit', 'max_input_tokens', 'context_window', 'maxContextLength', 'max_context_tokens', 'input_tokens_limit', 'maxInputTokens'];
+        for (const f of ctxFields) {
+          if (m[f] && typeof m[f] === 'number') { result.limits.contextWindow = m[f]; break; }
+        }
+        // OpenRouter 嵌套格式
+        if (!result.limits.contextWindow && m.top_provider?.context_length) {
+          result.limits.contextWindow = m.top_provider.context_length;
+        }
+        // 某些 API 在 architecture 中返回
+        if (!result.limits.contextWindow && m.architecture?.context_length) {
+          result.limits.contextWindow = m.architecture.context_length;
+        }
+      }
+      if (!result.limits.maxOutput) {
+        const outFields = ['max_completion_tokens', 'outputTokenLimit', 'max_output_tokens', 'maxOutputTokens', 'max_tokens', 'output_tokens_limit'];
+        for (const f of outFields) {
+          if (m[f] && typeof m[f] === 'number') { result.limits.maxOutput = m[f]; break; }
+        }
+        if (!result.limits.maxOutput && m.top_provider?.max_completion_tokens) {
+          result.limits.maxOutput = m.top_provider.max_completion_tokens;
+        }
+        if (!result.limits.maxOutput && m.architecture?.max_output_tokens) {
+          result.limits.maxOutput = m.architecture.max_output_tokens;
+        }
+      }
+    }
+
+    // ── Phase 4.5: 从已知模型数据库补充 (API 完全不返回时的兜底) ──
+    if (!result.limits.contextWindow || !result.limits.maxOutput) {
+      const known = lookupKnownContext(modelId);
+      if (known) {
+        if (!result.limits.contextWindow) result.limits.contextWindow = known.context;
+        if (!result.limits.maxOutput) result.limits.maxOutput = known.maxOutput ?? null;
+      }
+    }
+
+    // ── Phase 4.6: 如果 maxOutput 已知但 contextWindow 未知,推断 contextWindow >= maxOutput ──
+    if (result.limits.maxOutput && !result.limits.contextWindow) {
+      result.limits.contextWindow = result.limits.maxOutput;
+    }
+
+    // ── Phase 5: Embeddings 支持探测 ──
+    try {
+      const { c, t } = mkTimeout(8000);
+      const embRes = await fetch(`${base}/embeddings`, {
+        method: "POST",
+        headers,
+        signal: c.signal,
+        body: JSON.stringify({ model: modelId, input: "test" }),
+      });
+      if (embRes.ok) {
+        result.probed.embeddings = true;
+      } else if (embRes.status === 404 || embRes.status === 400) {
+        result.probed.embeddings = false;
+      } else {
+        result.probed.embeddings = null;
+        result.errors.embeddings = `${embRes.status}: ${(await embRes.text()).slice(0, 150)}`;
+      }
+      clearTimeout(t);
+    } catch {
+      result.probed.embeddings = null;
+    }
+
+    result.success = true;
+    result.latency = Date.now() - t0;
+
+    // ── 探针结果自动同步到后端能力库 ──
+    // 这样 agent 调用时能直接查询模型是否支持 tools/vision/json/streaming
+    try {
+      const capUrl = `http://localhost:3001/api/capabilities/save`;
+      await fetch(capUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          modelId: modelId,
+          capabilities: {
+            supportsTools: result.probed.tools,
+            supportsVision: result.probed.vision,
+            supportsJson: result.probed.json,
+            supportsStreaming: result.probed.streaming,
+            contextWindow: result.limits.contextWindow,
+            maxOutput: result.limits.maxOutput,
+          },
+        }),
+      }).catch(() => {}); // 静默失败, 不影响探针返回
+    } catch { /* 静默 */ }
+
+    res.json(result);
+   } catch (err: any) {
+    console.error('[model-probe] 未捕获异常:', err);
+    if (!res.headersSent) {
+      res.status(500).json({
+        success: false,
+        error: `探针内部错误: ${err?.message || err}`,
+        latency: 0,
+      });
+    }
+   }
   });
 
   // WebSocket upgrade

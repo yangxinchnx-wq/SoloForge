@@ -16,6 +16,7 @@
 
 import { createHash } from 'crypto';
 import { getLLMProxyConfig } from '../../../llm/llmConfig';
+import { supportsTools, learnCapability, describeCapabilities } from '../../../llm/modelCapabilities';
 import type { ToolSchema, ToolCallRequest, ToolCallResult } from './tool-definitions';
 import { executeToolCall } from './tool-definitions';
 
@@ -205,6 +206,17 @@ export async function callLLMWithTools(opts: CallWithToolsOptions): Promise<Call
   if (!apiKey) throw new Error('LLM API key not configured (neither in request nor env)');
   if (!model) throw new Error('LLM model not configured');
 
+  // ── 能力预检: 本地查询模型是否支持 tools (零网络请求) ──────────────
+  // 如果已知模型不支持 function calling, 直接跳过 tools, 避免 400/404/500
+  const toolSupport = supportsTools(model);
+  const hasTools = opts.tools.length > 0;
+  let toolsStripped = false;
+
+  if (hasTools && toolSupport === false) {
+    console.log(`[ModelCapabilities] ${model} 已知不支持 function calling (${describeCapabilities(model)}), 跳过 tools`);
+    toolsStripped = true;
+  }
+
   const allMessages: LLMMessage[] = [...opts.messages];
   const start = Date.now();
   let toolCallCount = 0;
@@ -231,7 +243,8 @@ export async function callLLMWithTools(opts: CallWithToolsOptions): Promise<Call
   let exitedByTokenBudget = false;
 
   // 当前使用的工具定义 (L3/L4 可能在中途移除 tools)
-  let currentTools = opts.tools;
+  // 如果能力预检发现模型不支持 tools, 直接清空
+  let currentTools = toolsStripped ? [] : opts.tools;
 
   for (let round = 0; round < hardCap; round++) {
     // ── L4: 预算检查 (在调用 LLM 之前) ──
@@ -512,11 +525,94 @@ async function callLLMOnce(opts: CallOnceOptions): Promise<LLMMessage> {
         const status = response.status;
 
         // 不可重试: 4xx (除 429) — 认证/参数错误不会自愈
+        // 但 400/404 + 有 tools 时可能是模型不支持 function calling → 降级重试
         if (status >= 400 && status < 500 && status !== 429) {
+          // 能力降级: 如果请求带 tools 且返回 400/404/500, 可能是模型不支持 function calling
+          // 学习这个事实, 下次直接跳过 tools
+          if ((status === 400 || status === 404 || status === 500) && body.tools && body.tools.length > 0) {
+            learnCapability(body.model, 'tools', false);
+            console.log(`[ModelCapabilities] 从 HTTP ${status} 学习: ${body.model} 不支持 tools, 已记录`);
+            // 降级重试: 移除 tools 后重试一次 (不计入正常重试次数)
+            const degradedBody = { ...body, tools: undefined, tool_choice: undefined };
+            try {
+              const degradedResponse = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${opts.apiKey}` },
+                body: JSON.stringify(degradedBody),
+                signal: controller.signal,
+              });
+              if (degradedResponse.ok) {
+                const json = await degradedResponse.json() as any;
+                const choice = json?.choices?.[0];
+                if (choice) {
+                  const msg = choice.message;
+                  const assistantMsg: LLMMessage = {
+                    role: 'assistant',
+                    content: msg.content ?? null,
+                    tool_calls: undefined, // 降级后无 tool_calls
+                  };
+                  const usage = json?.usage;
+                  if (usage && typeof usage === 'object') {
+                    (assistantMsg as any).__usage = {
+                      promptTokens: usage.prompt_tokens ?? 0,
+                      completionTokens: usage.completion_tokens ?? 0,
+                      totalTokens: usage.total_tokens ?? 0,
+                      cachedTokens: usage.prompt_tokens_details?.cached_tokens ?? usage.prompt_cache_hit_tokens ?? 0,
+                    };
+                  }
+                  console.log(`[ModelCapabilities] 降级重试成功: ${body.model} (无 tools)`);
+                  return assistantMsg;
+                }
+              }
+            } catch (degradedErr) {
+              // 降级也失败了, 继续抛出原始错误
+              console.log(`[ModelCapabilities] 降级重试也失败: ${degradedErr}`);
+            }
+          }
           throw new Error(`LLM HTTP ${status}: ${errText.slice(0, 300)}`);
         }
 
         // 可重试: 429 / 5xx
+        // 5xx + 有 tools 时, 先尝试降级 (可能是模型不支持 tools 导致的 500)
+        if (status === 500 && body.tools && body.tools.length > 0 && attempt === 0) {
+          learnCapability(body.model, 'tools', false);
+          console.log(`[ModelCapabilities] 从 HTTP 500 学习: ${body.model} 可能不支持 tools, 尝试降级`);
+          const degradedBody = { ...body, tools: undefined, tool_choice: undefined };
+          try {
+            const degradedResponse = await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${opts.apiKey}` },
+              body: JSON.stringify(degradedBody),
+              signal: controller.signal,
+            });
+            if (degradedResponse.ok) {
+              const json = await degradedResponse.json() as any;
+              const choice = json?.choices?.[0];
+              if (choice) {
+                const msg = choice.message;
+                const assistantMsg: LLMMessage = {
+                  role: 'assistant',
+                  content: msg.content ?? null,
+                  tool_calls: undefined,
+                };
+                const usage = json?.usage;
+                if (usage && typeof usage === 'object') {
+                  (assistantMsg as any).__usage = {
+                    promptTokens: usage.prompt_tokens ?? 0,
+                    completionTokens: usage.completion_tokens ?? 0,
+                    totalTokens: usage.total_tokens ?? 0,
+                    cachedTokens: usage.prompt_tokens_details?.cached_tokens ?? usage.prompt_cache_hit_tokens ?? 0,
+                  };
+                }
+                console.log(`[ModelCapabilities] 降级重试成功: ${body.model} (无 tools)`);
+                return assistantMsg;
+              }
+            }
+          } catch (degradedErr) {
+            console.log(`[ModelCapabilities] 降级重试也失败: ${degradedErr}`);
+          }
+        }
+
         if (attempt < MAX_RETRIES) {
           // 解析 Retry-After 头 (秒或 HTTP-date,这里只处理秒)
           const retryAfter = response.headers.get('retry-after');

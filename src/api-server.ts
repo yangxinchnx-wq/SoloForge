@@ -508,6 +508,34 @@ export class SoloForgeApiServer {
       return handleCanvasPortUnregister(req.body);
     }
 
+    // ── 模型能力端点 (2026-07-09 新增) ──
+    // 前端探针完成后自动保存结果到后端, 供 agent 调用时查询
+    if (reqPath === '/api/capabilities/save' && method === 'POST') {
+      try {
+        const { saveProbeResult } = await import('./llm/modelCapabilities');
+        const { modelId, capabilities } = req.body || {};
+        if (!modelId || !capabilities) {
+          return { status: 400, headers: {}, body: { error: 'modelId and capabilities required' } };
+        }
+        saveProbeResult(modelId, capabilities);
+        return { status: 200, headers: {}, body: { success: true } };
+      } catch (err: any) {
+        return { status: 500, headers: {}, body: { error: err.message } };
+      }
+    }
+    if (reqPath === '/api/capabilities/query' && method === 'GET') {
+      try {
+        const { getModelCapabilities, getAllCapabilities } = await import('./llm/modelCapabilities');
+        const modelId = req.query.model;
+        if (modelId) {
+          return { status: 200, headers: {}, body: getModelCapabilities(modelId) };
+        }
+        return { status: 200, headers: {}, body: getAllCapabilities() };
+      } catch (err: any) {
+        return { status: 500, headers: {}, body: { error: err.message } };
+      }
+    }
+
     // UI static files
     if (reqPath.startsWith('/ui/') && method === 'GET') {
       const staticResult = handleUiStatic(reqPath);
