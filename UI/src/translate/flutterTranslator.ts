@@ -185,6 +185,22 @@ class DartParser {
   }
 
   /**
+   * 跳过 balanced 括号对 (从当前 pos 的 open 开始, 到匹配的 close 结束)
+   * 用于跳过闭包体 / 表达式块
+   */
+  private skipBalanced(open: string, close: string): void {
+    if (this.peek()?.value !== open) return;
+    this.consume(); // open
+    let depth = 1;
+    while (this.peek() && depth > 0) {
+      const v = this.peek()!.value;
+      if (v === open) depth++;
+      else if (v === close) depth--;
+      this.consume();
+    }
+  }
+
+  /**
    * 解析一个值 (字面量 / 标识符 / 函数调用 / 列表)
    */
   parseValue(): DartValue {
@@ -216,6 +232,30 @@ class DartParser {
     // 列表 [ ... ]
     if (t.value === '[') {
       return this.parseList();
+    }
+
+    // 闭包 () { ... } / () => expr / (args) { ... }
+    // Dart 回调常见于 onPressed: () {} / onValueChange: (v) { ... }
+    // 我们不需要闭包内容, 只需跳过它, 避免破坏参数解析
+    if (t.value === '(') {
+      this.skipBalanced('(', ')');
+      const next = this.peek();
+      if (next?.value === '{') {
+        this.skipBalanced('{', '}');
+      } else if (next?.value === '=>') {
+        this.consume(); // =>
+        // 跳过表达式, 直到遇到 , 或 ) (call 结束) 在深度 0
+        let depth = 0;
+        while (this.peek()) {
+          const v = this.peek()!.value;
+          if (depth === 0 && (v === ',' || v === ')')) break;
+          if (v === '(' || v === '[' || v === '{') depth++;
+          else if (v === ')' || v === ']' || v === '}') depth--;
+          if (depth < 0) break;
+          this.consume();
+        }
+      }
+      return { kind: 'literal', value: null };
     }
 
     // 标识符 / 函数调用 / 成员访问
@@ -339,7 +379,8 @@ class DartParser {
  *   Color(0xFF42A5F5) → "#42A5F5"
  *   Color.fromARGB(255, 66, 165, 245) → "#42A5F5"
  */
-function parseColor(val: DartValue): string | undefined {
+function parseColor(val: DartValue | undefined | null): string | undefined {
+  if (!val) return undefined;
   if (val.kind === 'member' && val.object === 'Colors') {
     return val.property;
   }
@@ -367,7 +408,8 @@ function parseColor(val: DartValue): string | undefined {
 /**
  * 解析数字值
  */
-function parseNumber(val: DartValue): number | undefined {
+function parseNumber(val: DartValue | undefined | null): number | undefined {
+  if (!val) return undefined;
   if (val.kind === 'literal' && typeof val.value === 'number') {
     return val.value;
   }
@@ -380,8 +422,8 @@ function parseNumber(val: DartValue): number | undefined {
  *   EdgeInsets.symmetric(horizontal: 8, vertical: 4) → [4, 8]
  *   EdgeInsets.only(top: 1, right: 2, bottom: 3, left: 4) → [1, 2, 3, 4]
  */
-function parseEdgeInsets(val: DartValue): number | [number, number] | [number, number, number, number] | undefined {
-  if (val.kind !== 'call') return undefined;
+function parseEdgeInsets(val: DartValue | undefined | null): number | [number, number] | [number, number, number, number] | undefined {
+  if (!val || val.kind !== 'call') return undefined;
   const node = val.node;
 
   if (node.name === 'EdgeInsets.all' && node.positionalArgs.length > 0) {
@@ -443,8 +485,8 @@ function parseBoxDecoration(val: DartValue, style: UniversalStyle): void {
 /**
  * 解析 TextStyle → fontSize / fontWeight / color
  */
-function parseTextStyle(val: DartValue, style: UniversalStyle): void {
-  if (val.kind !== 'call') return;
+function parseTextStyle(val: DartValue | undefined | null, style: UniversalStyle): void {
+  if (!val || val.kind !== 'call') return;
   const node = val.node;
 
   const fontSize = parseNumber(node.namedArgs.fontSize);
@@ -470,8 +512,8 @@ function parseTextStyle(val: DartValue, style: UniversalStyle): void {
  * 解析 Alignment → align
  *   Alignment.center / Alignment.topLeft / ...
  */
-function parseAlignment(val: DartValue): UniversalStyle['align'] | undefined {
-  if (val.kind !== 'member' || val.object !== 'Alignment') return undefined;
+function parseAlignment(val: DartValue | undefined | null): UniversalStyle['align'] | undefined {
+  if (!val || val.kind !== 'member' || val.object !== 'Alignment') return undefined;
   switch (val.property) {
     case 'topLeft': case 'topCenter': case 'topRight': return 'start';
     case 'centerLeft': case 'center': case 'centerRight': return 'center';
@@ -483,8 +525,8 @@ function parseAlignment(val: DartValue): UniversalStyle['align'] | undefined {
 /**
  * 解析 MainAxisAlignment → justify
  */
-function parseMainAxisAlignment(val: DartValue): UniversalStyle['justify'] | undefined {
-  if (val.kind !== 'member' || val.object !== 'MainAxisAlignment') return undefined;
+function parseMainAxisAlignment(val: DartValue | undefined | null): UniversalStyle['justify'] | undefined {
+  if (!val || val.kind !== 'member' || val.object !== 'MainAxisAlignment') return undefined;
   switch (val.property) {
     case 'start': return 'start';
     case 'center': return 'center';
@@ -496,8 +538,8 @@ function parseMainAxisAlignment(val: DartValue): UniversalStyle['justify'] | und
 /**
  * 把 DartValue (期望是 call) 转为 UniversalNode
  */
-function dartValueToNode(val: DartValue): UniversalNode | null {
-  if (val.kind !== 'call') return null;
+function dartValueToNode(val: DartValue | undefined | null): UniversalNode | null {
+  if (!val || val.kind !== 'call') return null;
   return parseWidget(val.node);
 }
 
@@ -557,6 +599,109 @@ function parseWidget(node: DartCallNode): UniversalNode | null {
       style: Object.keys(style).length > 0 ? style : undefined,
       children: childNode ? [childNode] : undefined,
     };
+  }
+
+  // ── MaterialApp → container (提取 home 作为唯一子节点) ──
+  if (name === 'MaterialApp' || name === 'CupertinoApp') {
+    const children: UniversalNode[] = [];
+    if (node.namedArgs.home) {
+      const homeNode = dartValueToNode(node.namedArgs.home);
+      if (homeNode) children.push(homeNode);
+    }
+    return {
+      type: 'container',
+      children: children.length > 0 ? children : undefined,
+    };
+  }
+
+  // ── Scaffold → container (提取 appBar / body / floatingActionButton / drawer) ──
+  if (name === 'Scaffold') {
+    const children: UniversalNode[] = [];
+    // appBar: AppBar(...) → 顶部栏 (作为第一个子)
+    if (node.namedArgs.appBar) {
+      const appBarNode = dartValueToNode(node.namedArgs.appBar);
+      if (appBarNode) children.push(appBarNode);
+    }
+    // body: Widget → 主内容
+    if (node.namedArgs.body) {
+      const bodyNode = dartValueToNode(node.namedArgs.body);
+      if (bodyNode) children.push(bodyNode);
+    }
+    // floatingActionButton: Widget → FAB
+    if (node.namedArgs.floatingActionButton) {
+      const fabNode = dartValueToNode(node.namedArgs.floatingActionButton);
+      if (fabNode) children.push(fabNode);
+    }
+    // drawer / endDrawer → 侧边栏
+    if (node.namedArgs.drawer) {
+      const drawerNode = dartValueToNode(node.namedArgs.drawer);
+      if (drawerNode) children.push(drawerNode);
+    }
+    // bottomNavigationBar → 底部栏
+    if (node.namedArgs.bottomNavigationBar) {
+      const bnbNode = dartValueToNode(node.namedArgs.bottomNavigationBar);
+      if (bnbNode) children.push(bnbNode);
+    }
+    return {
+      type: 'container',
+      children: children.length > 0 ? children : undefined,
+    };
+  }
+
+  // ── AppBar → container (提取 title + actions) ──
+  if (name === 'AppBar') {
+    const children: UniversalNode[] = [];
+    if (node.namedArgs.title) {
+      const titleNode = dartValueToNode(node.namedArgs.title);
+      if (titleNode) children.push(titleNode);
+    }
+    // actions: [Widget, ...] → 按钮组
+    if (node.namedArgs.actions) {
+      const actions = node.namedArgs.actions;
+      if (actions.kind === 'list') {
+        for (const item of actions.items) {
+          const n = dartValueToNode(item);
+          if (n) children.push(n);
+        }
+      }
+    }
+    return {
+      type: 'row',
+      children: children.length > 0 ? children : undefined,
+    };
+  }
+
+  // ── ListTile → row (leading + title + subtitle + trailing) ──
+  if (name === 'ListTile') {
+    const children: UniversalNode[] = [];
+    if (node.namedArgs.leading) {
+      const n = dartValueToNode(node.namedArgs.leading);
+      if (n) children.push(n);
+    }
+    if (node.namedArgs.title) {
+      const n = dartValueToNode(node.namedArgs.title);
+      if (n) children.push(n);
+    }
+    if (node.namedArgs.subtitle) {
+      const n = dartValueToNode(node.namedArgs.subtitle);
+      if (n) children.push(n);
+    }
+    if (node.namedArgs.trailing) {
+      const n = dartValueToNode(node.namedArgs.trailing);
+      if (n) children.push(n);
+    }
+    return {
+      type: 'row',
+      children: children.length > 0 ? children : undefined,
+    };
+  }
+
+  // ── Expanded / Flexible / Positioned → 透传 child ──
+  if (name === 'Expanded' || name === 'Flexible' || name === 'Positioned' ||
+      name === 'Center' || name === 'Align' || name === 'FittedBox') {
+    const childNode = node.namedArgs.child ? dartValueToNode(node.namedArgs.child) : null;
+    if (childNode) return childNode;
+    return { type: 'container', children: [] };
   }
 
   // ── Padding → container (把 padding 下放到 style) ──

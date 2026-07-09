@@ -345,11 +345,28 @@ requesterChatSessionId: ${chatId}
 调用 solo_canvas_* 工具时,必须把 requesterChatSessionId 参数填成上面这个值。canvasId 参数可选,不传时系统自动用当前对话绑定的画布。`);
   }
 
-  // 3. 预览触发指令 (让 LLM 自主判断是否需要生成 UI 代码)
-  parts.push(`## 预览触发
-如果用户的请求明确需要生成 UI 代码(如"写一个页面/界面/组件/可视化"),在你的回复末尾添加一行:
-<<<PREVIEW_NEEDED:语言>>>
-其中语言可以是 python/typescript/go/rust/c/java。否则不要添加。`);
+  // 3. 预览触发指令 (让 LLM 知道前端有本地翻译器, 优先返回代码块)
+  parts.push(`## 画布预览 (重要 — 新机制)
+
+SoloForge 前端内置 11 款本地翻译器, 会自动把你回复中的 UI 代码块翻译成画布 AST 并渲染。
+你**不需要**调用任何工具, 也**不需要**加 <<<PREVIEW_NEEDED>>> 标记。
+
+### 如何让画布显示
+当用户请求生成 UI 界面/页面/组件时, 直接在回复中用 markdown 代码块返回完整 UI 代码:
+- 网页:    \`\`\`html  / \`\`\`tsx  / \`\`\`vue
+- 移动端:  \`\`\`dart  / \`\`\`swift  / \`\`\`kotlin
+- 桌面端:  \`\`\`xml  / \`\`\`xaml  / \`\`\`qml
+- 脚本UI:  \`\`\`python  / \`\`\`c
+
+前端会自动检测代码块语言, 调用对应翻译器, 推送到画布。零 LLM 调用, 零 token 消耗。
+
+### 何时用 canvas_push_ui 工具 (仅限非代码场景)
+- 图形/插画/图标/流程图 (svg 节点, 代码块无法表达)
+- 用户明确要求"用 AST 推送"或"实时推送"
+
+### 不要
+- 不要加 <<<PREVIEW_NEEDED:语言>>> 标记 (已废弃, 前端会自动检测代码块)
+- 不要为 UI 代码调用 canvas_push_ui 工具 (本地翻译器已处理, 调了会重复推送)`);
 
   return parts.join('\n\n');
 }

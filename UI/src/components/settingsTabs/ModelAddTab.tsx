@@ -465,6 +465,7 @@ export default function ModelAddTab() {
   const [scanResult, setScanResult] = useState<CloudModelScanResult | null>(null);
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [batchProbeTrigger, setBatchProbeTrigger] = useState(0);
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
 
   const scanProviderModels = async (providerId: string) => {
     setIsScanning(true);
@@ -1098,70 +1099,56 @@ export default function ModelAddTab() {
                   </div>
                 </div>
 
-                {/* Model Reorder List */}
-                <div className="max-h-[220px] overflow-y-auto pr-1">
-                  {activeProvider.models.filter(m => m.enabled).length === 0 && activeProvider.customModels.length === 0 && (
-                    <div className="py-6 text-center text-xs text-[var(--color-on-surface)]/40 flex flex-col items-center justify-center gap-1.5 border border-dashed border-[var(--color-outline)]/15 rounded-xl bg-[var(--color-surface-bright)]/10">
-                      <Layers className="w-5 h-5 opacity-40 animate-pulse text-[var(--color-primary)]" />
-                      <span>暂无选中模型</span>
+                {/* ── 浏览器选项卡式模型列表 ── */}
+                <ModelTabBar
+                  models={dragModels}
+                  customModels={activeProvider.customModels.filter(cm => {
+                    const idLower = cm.toLowerCase();
+                    return !idLower.startsWith('custom-') &&
+                           !idLower.includes('placeholder') &&
+                           !idLower.includes('dummy') &&
+                           !idLower.includes('fake') &&
+                           !idLower.includes('test') &&
+                           !idLower.includes('temp');
+                  })}
+                  selectedModelId={selectedModelId}
+                  onSelect={setSelectedModelId}
+                  onRemoveModel={(modelId) => {
+                    toggleModelEnabled(activeProvider.id, modelId);
+                    if (selectedModelId === modelId) setSelectedModelId(null);
+                  }}
+                  onRemoveCustomModel={(modelId) => {
+                    removeCustomModel(activeProvider.id, modelId);
+                    if (selectedModelId === modelId) setSelectedModelId(null);
+                  }}
+                />
+
+                {/* ── 模型详情面板 ── */}
+                <div className="rounded-xl border border-[var(--color-outline)]/15 bg-[var(--color-surface)]/50 overflow-hidden flex flex-col">
+                  {selectedModelId ? (
+                    <ModelDetailPanel
+                      key={selectedModelId}
+                      modelName={selectedModelId}
+                      providerBaseUrl={activeProvider.baseUrl || activeProvider.defaultUrl}
+                      providerApiKey={activeProvider.apiKey}
+                      providerDefaultUrl={activeProvider.defaultUrl}
+                      probeTrigger={batchProbeTrigger}
+                      onRemove={() => {
+                        const isInModels = activeProvider.models.some(m => m.id === selectedModelId && m.enabled);
+                        if (isInModels) {
+                          toggleModelEnabled(activeProvider.id, selectedModelId);
+                        } else {
+                          removeCustomModel(activeProvider.id, selectedModelId);
+                        }
+                        setSelectedModelId(null);
+                      }}
+                    />
+                  ) : (
+                    <div className="flex-1 flex flex-col items-center justify-center text-on-surface/30 gap-3 p-6">
+                      <Info className="w-8 h-8 opacity-30" />
+                      <span className="text-xs text-center">点击上方选项卡查看模型详细信息</span>
                     </div>
                   )}
-                  {activeProvider.enabled && dragModels.length > 0 && (
-                    <DndContext
-                      sensors={providerSensors}
-                      collisionDetection={closestCenter}
-                      modifiers={[restrictToVerticalAxis]}
-                      onDragEnd={({ active, over }: DragEndEvent) => {
-                        if (!over || active.id === over.id) return;
-                        const oldIndex = dragModels.findIndex((m) => m.id === active.id);
-                        const newIndex = dragModels.findIndex((m) => m.id === over.id);
-                        if (oldIndex !== -1 && newIndex !== -1) {
-                          reorderModels(activeProvider.id, arrayMove(dragModels, oldIndex, newIndex));
-                        }
-                      }}
-                    >
-                      <SortableContext items={dragModels.map((m) => m.id)} strategy={verticalListSortingStrategy}>
-                        <div className="space-y-1.5" style={{ overflow: 'visible' }}>
-                          {dragModels.map((model) => (
-                            <SortableModelItem
-                              key={model.id}
-                              id={model.id}
-                              name={model.name}
-                              onRemove={() => toggleModelEnabled(activeProvider.id, model.id)}
-                              preloadedMetadata={model.metadata}
-                              providerBaseUrl={activeProvider.baseUrl || activeProvider.defaultUrl}
-                              providerApiKey={activeProvider.apiKey}
-                              providerDefaultUrl={activeProvider.defaultUrl}
-                              probeTrigger={batchProbeTrigger}
-                            />
-                          ))}
-                        </div>
-                      </SortableContext>
-                    </DndContext>
-                  )}
-
-                  {activeProvider.customModels
-                    .filter((cm) => {
-                      const idLower = cm.toLowerCase();
-                      return !idLower.startsWith('custom-') &&
-                             !idLower.includes('placeholder') &&
-                             !idLower.includes('dummy') &&
-                             !idLower.includes('fake') &&
-                             !idLower.includes('test') &&
-                             !idLower.includes('temp');
-                    })
-                    .map((cm) => (
-                      <CustomModelItem
-                        key={cm}
-                        name={cm}
-                        providerBaseUrl={activeProvider.baseUrl || activeProvider.defaultUrl}
-                        providerApiKey={activeProvider.apiKey}
-                        providerDefaultUrl={activeProvider.defaultUrl}
-                        enabled={activeProvider.enabled}
-                        onRemove={() => removeCustomModel(activeProvider.id, cm)}
-                        probeTrigger={batchProbeTrigger}
-                      />
-                    ))}
                 </div>
 
                 {/* Manual Custom Model Registration */}
@@ -1512,393 +1499,528 @@ function useModelProbe(
 }
 
 // =====================================================
-// ProbePanel — 探针结果展示面板 (两个 ModelItem 共享)
+// ModelTabBar — 浏览器选项卡式模型列表
+// 横向排列，支持鼠标滚轮左右滚动，每个选项卡含 logo + 全名 + X关闭
 // =====================================================
-interface ProbePanelProps {
-  probeResult: ProbeResult | null;
-  loading: boolean;
-  error: string | null;
-  onRetry: () => void;
+
+interface ModelTabBarProps {
+  models: { id: string; name: string }[];
+  customModels: string[];
+  selectedModelId: string | null;
+  onSelect: (modelId: string) => void;
+  onRemoveModel: (modelId: string) => void;
+  onRemoveCustomModel: (modelId: string) => void;
 }
 
-const ProbePanel: React.FC<ProbePanelProps> = ({ probeResult, loading, error, onRetry }) => {
-  const [showRaw, setShowRaw] = useState(false);
+const ModelTabBar: React.FC<ModelTabBarProps> = ({
+  models,
+  customModels,
+  selectedModelId,
+  onSelect,
+  onRemoveModel,
+  onRemoveCustomModel,
+}) => {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // 鼠标滚轮 → 水平滚动
+  const handleWheel = (e: React.WheelEvent) => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollLeft += e.deltaY;
+      e.preventDefault();
+    }
+  };
+
+  const isEmpty = models.length === 0 && customModels.length === 0;
+
+  return (
+    <div
+      ref={scrollRef}
+      onWheel={handleWheel}
+      className="flex items-center gap-1 overflow-x-auto overflow-y-hidden py-1.5 px-1 rounded-lg bg-[var(--color-bg)]/40 border border-[var(--color-outline)]/10"
+      style={{
+        scrollbarWidth: 'thin',
+        msOverflowStyle: 'none',
+      }}
+    >
+      {/* 隐藏 webkit 滚动条但保留滚动功能 */}
+      <style>{`.model-tabbar-scroll::-webkit-scrollbar { height: 3px; } .model-tabbar-scroll::-webkit-scrollbar-thumb { background: var(--color-outline); border-radius: 2px; }`}</style>
+
+      {isEmpty && (
+        <div className="flex items-center gap-1.5 px-3 py-1 text-[11px] text-on-surface/30 italic">
+          <Layers className="w-3.5 h-3.5 opacity-40" />
+          <span>暂无选中模型，点击上方「获取模型列表」添加</span>
+        </div>
+      )}
+
+      {/* 已选模型 (来自扫描) */}
+      {models.map((model) => {
+        const isActive = selectedModelId === model.id;
+        return (
+          <div
+            key={model.id}
+            onClick={() => onSelect(model.id)}
+            className={`group inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-t-lg cursor-pointer transition-all whitespace-nowrap select-none border-b-2 ${
+              isActive
+                ? 'bg-[var(--color-surface)] border-[var(--color-primary)] text-[var(--color-on-surface)]'
+                : 'bg-[var(--color-bg)]/60 border-transparent text-on-surface/60 hover:bg-[var(--color-surface)]/60 hover:text-[var(--color-on-surface)] hover:border-[var(--color-outline)]/30'
+            }`}
+          >
+            <ModelIcon modelName={model.name} size={16} className="shrink-0" />
+            <span className="font-mono text-[11px] font-bold">{model.name}</span>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onRemoveModel(model.id); }}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-on-surface/30 hover:text-red-400 hover:bg-red-500/15 transition-all cursor-pointer"
+              title="关闭此模型"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        );
+      })}
+
+      {/* 自定义登记模型 */}
+      {customModels.map((cm) => {
+        const isActive = selectedModelId === cm;
+        return (
+          <div
+            key={cm}
+            onClick={() => onSelect(cm)}
+            className={`group inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-t-lg cursor-pointer transition-all whitespace-nowrap select-none border-b-2 ${
+              isActive
+                ? 'bg-[var(--color-surface)] border-[var(--color-primary)] text-[var(--color-on-surface)]'
+                : 'bg-[var(--color-primary)]/5 border-transparent text-on-surface/60 hover:bg-[var(--color-surface)]/60 hover:text-[var(--color-on-surface)] hover:border-[var(--color-outline)]/30'
+            }`}
+          >
+            <ModelIcon modelName={cm} size={16} className="shrink-0" />
+            <span className="font-mono text-[11px] font-bold">{cm}</span>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onRemoveCustomModel(cm); }}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-on-surface/30 hover:text-red-400 hover:bg-red-500/15 transition-all cursor-pointer"
+              title="关闭此模型"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+// =====================================================
+// 【模型详情面板 — ModelDetailPanel】
+// 点击选项卡后展示服务端返回的全部信息
+// =====================================================
+
+interface ModelDetailPanelProps {
+  modelName: string;
+  providerBaseUrl: string;
+  providerApiKey: string;
+  providerDefaultUrl: string;
+  probeTrigger?: number;
+  onRemove: () => void;
+}
+
+/** 能力探测结果 → 中文标签 + 状态颜色 */
+function capLabel(v: boolean | null): { text: string; color: string; bg: string } {
+  if (v === true) return { text: '支持', color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20' };
+  if (v === false) return { text: '不支持', color: 'text-red-400', bg: 'bg-red-500/10 border-red-500/20' };
+  return { text: '未能探测', color: 'text-on-surface/40', bg: 'bg-on-surface/5 border-on-surface/10' };
+}
+
+/** 解析错误信息中是否含 429 限流 */
+function isRateLimited(errMsg: string | undefined): boolean {
+  if (!errMsg) return false;
+  return errMsg.includes('429') || errMsg.toLowerCase().includes('too many requests');
+}
+
+const ModelDetailPanel: React.FC<ModelDetailPanelProps> = ({
+  modelName,
+  providerBaseUrl,
+  providerApiKey,
+  providerDefaultUrl,
+  probeTrigger,
+  onRemove,
+}) => {
+  const { probeResult, loading, error, probe } = useModelProbe(modelName, providerBaseUrl, providerApiKey, providerDefaultUrl);
+  const prevTriggerRef = useRef(0);
   const [showErrors, setShowErrors] = useState(false);
 
-  const rawEntries: Array<[string, string]> = React.useMemo(() => {
+  useEffect(() => { probe(); }, []);
+
+  useEffect(() => {
+    if (probeTrigger && probeTrigger !== prevTriggerRef.current) {
+      prevTriggerRef.current = probeTrigger;
+      probe();
+    }
+  }, [probeTrigger, probe]);
+
+  // 服务器信息条目
+  const serverInfoEntries: Array<[string, string]> = React.useMemo(() => {
     const info = probeResult?.serverInfo;
     if (!info || typeof info !== 'object') return [];
     return Object.entries(info)
       .filter(([, v]) => v != null)
-      .map(([k, v]) => [k, typeof v === 'object' ? JSON.stringify(v) : String(v)]);
+      .map(([k, v]) => {
+        const labelMap: Record<string, string> = {
+          id: '模型 ID',
+          object: '对象类型',
+          owned_by: '所属厂商',
+          owner: '所有者',
+          created: '创建时间',
+          permission: '权限',
+          root: '根模型',
+          parent: '父模型',
+          description: '描述',
+        };
+        const label = labelMap[k] || k;
+        let val = typeof v === 'object' ? JSON.stringify(v) : String(v);
+        if (k === 'created' && /^\d+$/.test(val)) {
+          val = new Date(Number(val) * 1000).toLocaleString('zh-CN');
+        }
+        return [label, val] as [string, string];
+      });
   }, [probeResult]);
 
+  // 错误条目
   const errorEntries: Array<[string, string]> = React.useMemo(() => {
     if (!probeResult?.errors) return [];
-    return Object.entries(probeResult.errors).filter(([, v]) => !!v);
+    const labelMap: Record<string, string> = {
+      basic: '基础连通',
+      vision: '视觉输入',
+      tools: '工具调用',
+      json: 'JSON 模式',
+      streaming: '流式输出',
+      limits: '上下文限制',
+      embeddings: '向量嵌入',
+    };
+    return Object.entries(probeResult.errors)
+      .filter(([, v]) => !!v)
+      .map(([k, v]) => [labelMap[k] || k, v] as [string, string]);
   }, [probeResult]);
 
-  const displayFields: Array<{
-    label: string;
-    value: string;
-    valueColor?: string;
-    icon?: React.ReactNode;
-    source: '实测' | '服务器';
-  }> = React.useMemo(() => {
-    if (!probeResult) return [];
-    const fields: Array<{ label: string; value: string; valueColor?: string; icon?: React.ReactNode; source: '实测' | '服务器' }> = [];
-
-    // ── 实测: 限制 ──
-    fields.push({
-      label: '上下文窗口',
-      value: probeResult.limits.contextWindow != null ? `${fmtTokens(probeResult.limits.contextWindow)} tokens` : '未能探测',
-      valueColor: probeResult.limits.contextWindow != null ? undefined : 'text-on-surface/40',
-      icon: <Layers className="w-3 h-3" />,
-      source: '实测',
-    });
-    fields.push({
-      label: '最大输出',
-      value: probeResult.limits.maxOutput != null ? `${fmtTokens(probeResult.limits.maxOutput)} tokens` : '未能探测',
-      valueColor: probeResult.limits.maxOutput != null ? undefined : 'text-on-surface/40',
-      icon: <Zap className="w-3 h-3" />,
-      source: '实测',
-    });
-
-    // ── 实测: 能力 ──
-    const visionCap = fmtCapability(probeResult.probed.vision);
-    fields.push({ label: '视觉输入', value: visionCap.text, valueColor: visionCap.color, source: '实测' });
-    const toolsCap = fmtCapability(probeResult.probed.tools);
-    fields.push({ label: 'Function Calling', value: toolsCap.text, valueColor: toolsCap.color, source: '实测' });
-    const jsonCap = fmtCapability(probeResult.probed.json);
-    fields.push({ label: 'JSON 模式', value: jsonCap.text, valueColor: jsonCap.color, source: '实测' });
-    const streamCap = fmtCapability(probeResult.probed.streaming);
-    fields.push({ label: '流式输出', value: streamCap.text, valueColor: streamCap.color, source: '实测' });
-
-    // ── 实测: 延迟 ──
-    fields.push({ label: '探测延迟', value: `${probeResult.latency}ms`, icon: <Clock className="w-3 h-3" />, source: '实测' });
-
-    // ── 服务器: 元信息 ──
-    const si = probeResult.serverInfo as Record<string, any>;
-    if (si.owner) fields.push({ label: '所有者', value: String(si.owner), source: '服务器' });
-    if (si.created) {
-      const date = new Date(Number(si.created) * 1000).toLocaleDateString('zh-CN');
-      fields.push({ label: '创建时间', value: date, source: '服务器' });
-    }
-    if (si.object) fields.push({ label: '对象类型', value: String(si.object), source: '服务器' });
-
-    return fields;
+  // usage 条目
+  const usageEntries: Array<[string, string]> = React.useMemo(() => {
+    if (!probeResult?.usage) return [];
+    const labelMap: Record<string, string> = {
+      prompt_tokens: '提示 tokens',
+      completion_tokens: '完成 tokens',
+      total_tokens: '总 tokens',
+      prompt_tokens_details: '提示详情',
+      completion_tokens_details: '完成详情',
+    };
+    return Object.entries(probeResult.usage)
+      .filter(([, v]) => v != null)
+      .map(([k, v]) => [labelMap[k] || k, typeof v === 'object' ? JSON.stringify(v) : String(v)] as [string, string]);
   }, [probeResult]);
 
-  if (loading) {
-    return (
-      <div
-        onPointerDown={(e) => e.stopPropagation()}
-        onMouseDown={(e) => e.stopPropagation()}
-        className="sf-anim sf-anim-slide-up border-t border-[var(--color-outline)]/15 bg-[var(--color-bg)]/60 p-3 space-y-2"
-      >
-        <div className="flex items-center justify-center py-4 text-on-surface/50">
-          <RefreshCw className="w-4 h-4 animate-spin mr-2" />
-          <span>正在发送真实 API 请求探测模型能力（约 5-30 秒）...</span>
-        </div>
-        <div className="text-[9px] text-on-surface/30 text-center">
-          探测项: 基础连通 · 视觉 · 工具调用 · JSON · 流式 · 上下文限制
-        </div>
-      </div>
-    );
-  }
+  // pricing 条目
+  const pricingEntries: Array<[string, string]> = React.useMemo(() => {
+    if (!probeResult?.pricing) return [];
+    const labelMap: Record<string, string> = {
+      prompt: '输入价格',
+      completion: '输出价格',
+      image: '图片价格',
+      request: '请求价格',
+    };
+    return Object.entries(probeResult.pricing)
+      .filter(([, v]) => v != null && v !== '0' && v !== 0)
+      .map(([k, v]) => {
+        const label = labelMap[k] || k;
+        let val = String(v);
+        // 价格通常是美元/token，转成更友好的格式
+        const num = parseFloat(val);
+        if (!isNaN(num) && num > 0 && num < 1) {
+          val = `$${num.toFixed(6)} / token ($${(num * 1_000_000).toFixed(2)} / 百万 tokens)`;
+        }
+        return [label, val] as [string, string];
+      });
+  }, [probeResult]);
 
-  if (error) {
-    return (
-      <div
-        onPointerDown={(e) => e.stopPropagation()}
-        onMouseDown={(e) => e.stopPropagation()}
-        className="sf-anim sf-anim-slide-up border-t border-[var(--color-outline)]/15 bg-[var(--color-bg)]/60 p-3 space-y-2"
-      >
-        <div className="flex items-center gap-1.5 text-[10px] text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-2 py-1.5">
-          <AlertCircle className="w-3 h-3 shrink-0" />
-          <span>探测失败: {error}</span>
-        </div>
-        <button type="button" onClick={onRetry} className="text-[10px] text-[var(--color-primary)] hover:underline font-bold flex items-center gap-1 cursor-pointer">
-          <RefreshCw className="w-3 h-3" /> 重新探测
-        </button>
-      </div>
-    );
-  }
+  // 响应头条目
+  const headerEntries: Array<[string, string]> = React.useMemo(() => {
+    if (!probeResult?.responseHeaders) return [];
+    const labelMap: Record<string, string> = {
+      'x-ratelimit-limit-requests': '速率限制 (请求)',
+      'x-ratelimit-limit-tokens': '速率限制 (tokens)',
+      'x-ratelimit-remaining-requests': '剩余请求',
+      'x-ratelimit-remaining-tokens': '剩余 tokens',
+      'x-ratelimit-reset-requests': '请求重置',
+      'x-ratelimit-reset-tokens': 'tokens 重置',
+      'x-request-id': '请求 ID',
+      'date': '服务器时间',
+      'server': '服务器',
+      'content-type': '内容类型',
+    };
+    return Object.entries(probeResult.responseHeaders)
+      .map(([k, v]) => [labelMap[k.toLowerCase()] || k, v] as [string, string]);
+  }, [probeResult]);
 
-  if (!probeResult) return null;
+  // 完整原始 JSON
+  const [showRawJson, setShowRawJson] = useState(false);
+  const rawJsonText = React.useMemo(() => {
+    if (!probeResult) return '';
+    try { return JSON.stringify(probeResult, null, 2); } catch { return String(probeResult); }
+  }, [probeResult]);
+
+  // 是否有 429 限流
+  const hasRateLimit = React.useMemo(() => {
+    return errorEntries.some(([, v]) => isRateLimited(v));
+  }, [errorEntries]);
 
   return (
-    <div
-      onPointerDown={(e) => e.stopPropagation()}
-      onMouseDown={(e) => e.stopPropagation()}
-      className="sf-anim sf-anim-slide-up border-t border-[var(--color-outline)]/15 bg-[var(--color-bg)]/60 p-3 space-y-2"
-    >
-      {/* 基础连通失败 */}
-      {!probeResult.probed.basic && (
-        <div className="flex items-center gap-1.5 text-[10px] text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-2 py-1.5">
-          <AlertCircle className="w-3 h-3 shrink-0" />
-          <span>基础连通失败: {probeResult.errors.basic || '未知错误'}</span>
-        </div>
-      )}
-
-      {/* 探测字段网格 */}
-      {displayFields.length > 0 && (
-        <div className="grid grid-cols-2 gap-1.5">
-          {displayFields.map((field, idx) => (
-            <div key={idx} className="flex flex-col gap-0.5 px-2 py-1.5 rounded-lg bg-[var(--color-surface)] border border-[var(--color-outline)]/10">
-              <span className="text-[9px] font-bold text-on-surface/40 uppercase tracking-wide flex items-center gap-1">
-                {field.icon}
-                {field.label}
-                <span className={`ml-auto px-1 rounded text-[7px] font-bold ${
-                  field.source === '实测'
-                    ? 'bg-[var(--color-primary)]/15 text-[var(--color-primary)]'
-                    : 'bg-on-surface/10 text-on-surface/40'
-                }`}>
-                  {field.source}
-                </span>
-              </span>
-              <span className={`text-[11px] font-medium ${field.valueColor || 'text-[var(--color-on-surface)]'}`}>
-                {field.value}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* 探测错误详情 */}
-      {errorEntries.length > 0 && (
-        <div className="pt-1">
-          <button type="button" onClick={() => setShowErrors(v => !v)} className="text-[9px] text-on-surface/40 hover:text-amber-400 font-bold flex items-center gap-1 cursor-pointer transition-colors">
-            {showErrors ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
-            <span>探测错误详情 ({errorEntries.length})</span>
-          </button>
-          {showErrors && (
-            <div className="mt-1.5 max-h-[120px] overflow-y-auto rounded-lg bg-amber-500/5 border border-amber-500/15 p-2 space-y-1">
-              {errorEntries.map(([k, v]) => (
-                <div key={k} className="flex gap-2 text-[10px] font-mono">
-                  <span className="text-amber-500/70 font-bold shrink-0">{k}:</span>
-                  <span className="text-on-surface/60 break-all">{v.length > 150 ? v.slice(0, 150) + '...' : v}</span>
-                </div>
-              ))}
-            </div>
+    <div className="flex flex-col">
+      {/* ── 头部 ── */}
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-[var(--color-outline)]/15 bg-[var(--color-bg)]/40 shrink-0">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <ModelIcon modelName={modelName} size={22} className="shrink-0" />
+          <span className="text-sm font-black text-[var(--color-on-surface)] font-mono truncate" title={modelName}>{modelName}</span>
+          {loading && <RefreshCw className="w-3.5 h-3.5 animate-spin text-[var(--color-primary)] shrink-0" />}
+          {probeResult && !loading && (
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
+              probeResult.probed.basic
+                ? 'bg-emerald-500/15 text-emerald-400'
+                : 'bg-red-500/15 text-red-400'
+            }`}>
+              {probeResult.probed.basic ? '连通正常' : '连通失败'}
+            </span>
           )}
         </div>
-      )}
-
-      {/* 服务器原始字段 */}
-      {rawEntries.length > 0 && (
-        <div className="pt-1">
-          <button type="button" onClick={() => setShowRaw(v => !v)} className="text-[9px] text-on-surface/40 hover:text-[var(--color-primary)] font-bold flex items-center gap-1 cursor-pointer transition-colors">
-            {showRaw ? <ChevronUp className="w-2.5 h-2.5" /> : <ChevronDown className="w-2.5 h-2.5" />}
-            <span>服务器原始字段 ({rawEntries.length})</span>
-          </button>
-          {showRaw && (
-            <div className="mt-1.5 max-h-[180px] overflow-y-auto rounded-lg bg-[var(--color-bg)]/80 border border-[var(--color-outline)]/10 p-2 space-y-1">
-              {rawEntries.map(([k, v]) => (
-                <div key={k} className="flex gap-2 text-[10px] font-mono">
-                  <span className="text-[var(--color-primary)]/70 font-bold shrink-0">{k}:</span>
-                  <span className="text-on-surface/70 break-all truncate" title={v}>{v.length > 120 ? v.slice(0, 120) + '...' : v}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* 重新探测按钮 */}
-      <button type="button" onClick={onRetry} className="text-[10px] text-on-surface/40 hover:text-[var(--color-primary)] font-bold flex items-center gap-1 cursor-pointer transition-colors pt-1">
-        <RefreshCw className="w-3 h-3" /> 重新探测
-      </button>
-    </div>
-  );
-};
-
-interface SortableModelItemProps {
-  id: string;
-  name: string;
-  onRemove: () => void;
-  preloadedMetadata?: ModelMetadata;
-  providerBaseUrl: string;
-  providerApiKey: string;
-  providerDefaultUrl: string;
-  /** 批量探测触发器 — 值变化时自动展开并探测 */
-  probeTrigger?: number;
-}
-
-const SortableModelItem: React.FC<SortableModelItemProps> = ({
-  id,
-  name,
-  onRemove,
-  providerBaseUrl,
-  providerApiKey,
-  providerDefaultUrl,
-  probeTrigger,
-}) => {
-  const { setNodeRef, attributes, listeners, transform, transition, isDragging } = useSortable({ id });
-  const [expanded, setExpanded] = useState(false);
-  const { probeResult, loading, error, probe } = useModelProbe(name, providerBaseUrl, providerApiKey, providerDefaultUrl);
-  const prevTriggerRef = useRef(0);
-
-  // 批量探测触发
-  useEffect(() => {
-    if (probeTrigger && probeTrigger !== prevTriggerRef.current) {
-      prevTriggerRef.current = probeTrigger;
-      setExpanded(true);
-      probe();
-    }
-  }, [probeTrigger, probe]);
-
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition: transition || 'transform 180ms cubic-bezier(0.22, 1, 0.36, 1)',
-    visibility: isDragging ? 'hidden' : 'visible',
-    willChange: isDragging ? 'transform' : 'auto',
-    backfaceVisibility: 'hidden',
-    WebkitBackfaceVisibility: 'hidden',
-  };
-
-  const handleToggleExpand = () => {
-    if (!expanded && !probeResult && !loading) {
-      probe();
-    }
-    setExpanded(!expanded);
-  };
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className="flex flex-col rounded-xl border text-xs bg-[var(--color-surface)] border-[var(--color-outline)]/20 overflow-hidden"
-    >
-      {/* ── 拖拽手柄行 (dnd-kit listeners 仅绑定在此行) ── */}
-      <div
-        {...attributes}
-        {...listeners}
-        className="sf-lift flex items-center justify-between p-2.5 text-[var(--color-on-surface)] cursor-grab active:cursor-grabbing touch-none select-none"
-      >
-        <div className="flex items-center gap-2 truncate pointer-events-none flex-1 min-w-0">
-          <ModelIcon modelName={name} size={20} className="shrink-0" />
-          <span className="truncate font-mono font-bold" title={name}>{name}</span>
-        </div>
-        <div className="flex items-center gap-0.5 shrink-0 pointer-events-auto">
+        <div className="flex items-center gap-1 shrink-0">
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); handleToggleExpand(); }}
-            onPointerDown={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-            className={`p-1.5 hover:bg-[var(--color-primary)]/10 rounded-md transition-all cursor-pointer ${
-              expanded ? 'text-[var(--color-primary)]' : 'text-on-surface/40 hover:text-[var(--color-on-surface)]'
-            }`}
-            title={expanded ? '收起' : '探针实测模型能力'}
+            onClick={() => probe()}
+            disabled={loading}
+            className="p-1.5 hover:bg-[var(--color-primary)]/10 rounded-lg text-on-surface/50 hover:text-[var(--color-primary)] cursor-pointer transition-all disabled:opacity-40"
+            title="重新探测"
           >
-            {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-          </button>
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); onRemove(); }}
-            onPointerDown={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
-            className="p-1.5 hover:bg-red-500/10 rounded-md text-on-surface/40 hover:text-red-400 cursor-pointer transition-colors"
-            title="从已选中列表移除"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </div>
-
-      {/* ── 展开的探针面板 ── */}
-      {expanded && (
-        <ProbePanel probeResult={probeResult} loading={loading} error={error} onRetry={probe} />
-      )}
-    </div>
-  );
-};
-
-// =====================================================
-// 【自定义登记模型项 — CustomModelItem (含元数据展开面板)】
-// 与 SortableModelItem 共享相同的元数据获取/展示逻辑，
-// 但不包含 dnd-kit 拖拽功能 (customModels 不参与排序)
-// =====================================================
-
-interface CustomModelItemProps {
-  name: string;
-  providerBaseUrl: string;
-  providerApiKey: string;
-  providerDefaultUrl: string;
-  enabled: boolean;
-  onRemove: () => void;
-  /** 批量探测触发器 */
-  probeTrigger?: number;
-}
-
-const CustomModelItem: React.FC<CustomModelItemProps> = ({
-  name,
-  providerBaseUrl,
-  providerApiKey,
-  providerDefaultUrl,
-  enabled,
-  onRemove,
-  probeTrigger,
-}) => {
-  const [expanded, setExpanded] = useState(false);
-  const { probeResult, loading, error, probe } = useModelProbe(name, providerBaseUrl, providerApiKey, providerDefaultUrl);
-  const prevTriggerRef = useRef(0);
-
-  // 批量探测触发
-  useEffect(() => {
-    if (probeTrigger && probeTrigger !== prevTriggerRef.current) {
-      prevTriggerRef.current = probeTrigger;
-      setExpanded(true);
-      probe();
-    }
-  }, [probeTrigger, probe]);
-
-  const handleToggleExpand = () => {
-    if (!expanded && !probeResult && !loading) {
-      probe();
-    }
-    setExpanded(!expanded);
-  };
-
-  return (
-    <div className="flex flex-col rounded-xl border text-xs bg-[var(--color-primary)]/10 border-[var(--color-primary)]/30 text-[var(--color-on-surface)] shadow-inner overflow-hidden">
-      {/* 模型行 */}
-      <div className="sf-lift flex items-center justify-between p-2.5">
-        <div className="flex items-center gap-2 truncate font-mono text-[11.5px] text-left flex-1 min-w-0">
-          <ModelIcon modelName={name} size={20} className="shrink-0" />
-          <span className="truncate text-on-surface font-bold" title={name}>{name}</span>
-        </div>
-        <div className="flex items-center gap-0.5 shrink-0">
-          <button
-            type="button"
-            onClick={handleToggleExpand}
-            disabled={!enabled}
-            className={`p-1.5 hover:bg-[var(--color-primary)]/10 rounded-md transition-all cursor-pointer disabled:opacity-40 ${
-              expanded ? 'text-[var(--color-primary)]' : 'text-on-surface/40 hover:text-[var(--color-on-surface)]'
-            }`}
-            title={expanded ? '收起' : '探针实测模型能力'}
-          >
-            {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
           <button
             type="button"
             onClick={onRemove}
-            disabled={!enabled}
-            className="p-1.5 hover:bg-red-500/10 rounded-md text-on-surface/40 hover:text-red-400 cursor-pointer transition-colors disabled:opacity-40"
-            title="移除此登记模型"
+            className="p-1.5 hover:bg-red-500/10 rounded-lg text-on-surface/50 hover:text-red-400 cursor-pointer transition-all"
+            title="移除模型"
           >
-            <Trash2 className="w-3.5 h-3.5" />
+            <Trash2 className="w-4 h-4" />
           </button>
         </div>
       </div>
 
-      {/* 展开的探针面板 */}
-      {expanded && (
-        <ProbePanel probeResult={probeResult} loading={loading} error={error} onRetry={probe} />
-      )}
+      {/* ── 内容区 ── */}
+      <div className="p-3 space-y-3">
+        {loading && !probeResult && (
+          <div className="flex flex-col items-center justify-center h-full text-on-surface/50 gap-2">
+            <RefreshCw className="w-6 h-6 animate-spin text-[var(--color-primary)]" />
+            <span className="text-xs">正在发送 API 请求探测模型能力...</span>
+          </div>
+        )}
+
+        {error && !loading && (
+          <div className="flex flex-col items-center justify-center h-full gap-3">
+            <div className="flex items-center gap-2 text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>探测失败: {error}</span>
+            </div>
+            <button type="button" onClick={() => probe()} className="text-[11px] text-[var(--color-primary)] hover:underline font-bold flex items-center gap-1 cursor-pointer">
+              <RefreshCw className="w-3 h-3" /> 重新探测
+            </button>
+          </div>
+        )}
+
+        {probeResult && !loading && !error && (
+          <>
+            {/* 429 限流提示 */}
+            {hasRateLimit && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-[11px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>部分探测项因 API 限流 (429) 未能完成，建议稍后重试</span>
+              </div>
+            )}
+
+            {/* 探测概览 */}
+            <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-[var(--color-bg)]/60 border border-[var(--color-outline)]/10">
+              <div className="flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-on-surface/40" />
+                <span className="text-[10px] text-on-surface/40 font-bold">探测延迟</span>
+                <span className="text-xs font-bold text-[var(--color-on-surface)]">{probeResult.latency}ms</span>
+              </div>
+              <div className="w-px h-4 bg-[var(--color-outline)]/15" />
+              <div className="flex items-center gap-1.5">
+                <Radio className="w-3.5 h-3.5 text-on-surface/40" />
+                <span className="text-[10px] text-on-surface/40 font-bold">基础对话</span>
+                {probeResult.probed.basic
+                  ? <span className="text-xs font-bold text-emerald-400">可用</span>
+                  : <span className="text-xs font-bold text-red-400">不可用</span>
+                }
+              </div>
+            </div>
+
+            {/* 上下文限制 */}
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-col gap-1 px-3 py-2 rounded-lg bg-[var(--color-bg)]/60 border border-[var(--color-outline)]/10">
+                <span className="text-[10px] font-bold text-on-surface/40 uppercase tracking-wide flex items-center gap-1">
+                  <Layers className="w-3 h-3" /> 上下文窗口
+                </span>
+                <span className={`text-xs font-bold ${probeResult.limits.contextWindow != null ? 'text-[var(--color-on-surface)]' : 'text-on-surface/40'}`}>
+                  {probeResult.limits.contextWindow != null ? fmtTokens(probeResult.limits.contextWindow) + ' tokens' : '未能探测'}
+                </span>
+              </div>
+              <div className="flex flex-col gap-1 px-3 py-2 rounded-lg bg-[var(--color-bg)]/60 border border-[var(--color-outline)]/10">
+                <span className="text-[10px] font-bold text-on-surface/40 uppercase tracking-wide flex items-center gap-1">
+                  <Zap className="w-3 h-3" /> 最大输出
+                </span>
+                <span className={`text-xs font-bold ${probeResult.limits.maxOutput != null ? 'text-[var(--color-on-surface)]' : 'text-on-surface/40'}`}>
+                  {probeResult.limits.maxOutput != null ? fmtTokens(probeResult.limits.maxOutput) + ' tokens' : '未能探测'}
+                </span>
+              </div>
+            </div>
+
+            {/* 能力矩阵 */}
+            <div>
+              <div className="text-[10px] font-bold text-on-surface/40 uppercase tracking-wide mb-1.5">模型能力</div>
+              <div className="grid grid-cols-2 gap-2">
+                {([
+                  { label: '视觉输入', key: 'vision' as const },
+                  { label: 'Function Calling', key: 'tools' as const },
+                  { label: 'JSON 模式', key: 'json' as const },
+                  { label: '流式输出', key: 'streaming' as const },
+                  { label: '向量嵌入', key: 'embeddings' as const },
+                ] as const).map(({ label, key }) => {
+                  const cap = capLabel(probeResult.probed[key]);
+                  const errForCap = probeResult.errors[key];
+                  const rateLimited = isRateLimited(errForCap);
+                  return (
+                    <div key={key} className={`flex items-center justify-between px-3 py-2 rounded-lg border ${cap.bg}`}>
+                      <span className="text-[11px] font-bold text-on-surface/70">{label}</span>
+                      <div className="flex items-center gap-1.5">
+                        {rateLimited && cap.text === '不支持' && (
+                          <span className="text-[8px] font-bold text-amber-400 bg-amber-500/15 px-1.5 py-0.5 rounded-full">限流</span>
+                        )}
+                        <span className={`text-[11px] font-bold ${cap.color}`}>{cap.text}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Token 用量 */}
+            {usageEntries.length > 0 && (
+              <div>
+                <div className="text-[10px] font-bold text-on-surface/40 uppercase tracking-wide mb-1.5">Token 用量 (ping 测试)</div>
+                <div className="grid grid-cols-3 gap-2">
+                  {usageEntries.map(([label, val]) => (
+                    <div key={label} className="flex flex-col gap-0.5 px-3 py-2 rounded-lg bg-[var(--color-bg)]/60 border border-[var(--color-outline)]/10">
+                      <span className="text-[9px] font-bold text-on-surface/40">{label}</span>
+                      <span className="text-xs font-bold text-[var(--color-on-surface)] font-mono">{val}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 定价信息 */}
+            {pricingEntries.length > 0 && (
+              <div>
+                <div className="text-[10px] font-bold text-on-surface/40 uppercase tracking-wide mb-1.5">定价信息</div>
+                <div className="rounded-lg bg-[var(--color-bg)]/60 border border-[var(--color-outline)]/10 divide-y divide-[var(--color-outline)]/8">
+                  {pricingEntries.map(([label, val]) => (
+                    <div key={label} className="flex items-center gap-3 px-3 py-1.5">
+                      <span className="text-[10px] font-bold text-on-surface/40 shrink-0 w-20">{label}</span>
+                      <span className="text-[11px] text-[var(--color-on-surface)] font-mono break-all">{val}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 响应头信息 */}
+            {headerEntries.length > 0 && (
+              <div>
+                <div className="text-[10px] font-bold text-on-surface/40 uppercase tracking-wide mb-1.5">响应头 / 限流信息</div>
+                <div className="rounded-lg bg-[var(--color-bg)]/60 border border-[var(--color-outline)]/10 divide-y divide-[var(--color-outline)]/8">
+                  {headerEntries.map(([label, val]) => (
+                    <div key={label} className="flex items-center gap-3 px-3 py-1.5">
+                      <span className="text-[10px] font-bold text-on-surface/40 shrink-0 w-28">{label}</span>
+                      <span className="text-[11px] text-[var(--color-on-surface)] font-mono break-all">{val}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 服务器信息 */}
+            {serverInfoEntries.length > 0 && (
+              <div>
+                <div className="text-[10px] font-bold text-on-surface/40 uppercase tracking-wide mb-1.5">服务器信息</div>
+                <div className="rounded-lg bg-[var(--color-bg)]/60 border border-[var(--color-outline)]/10 divide-y divide-[var(--color-outline)]/8">
+                  {serverInfoEntries.map(([label, val]) => (
+                    <div key={label} className="flex items-center gap-3 px-3 py-1.5">
+                      <span className="text-[10px] font-bold text-on-surface/40 shrink-0 w-20">{label}</span>
+                      <span className="text-[11px] text-[var(--color-on-surface)] font-mono break-all">{val}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 探测错误详情 (可折叠) */}
+            {errorEntries.length > 0 && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowErrors(v => !v)}
+                  className="text-[10px] text-on-surface/40 hover:text-amber-400 font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                >
+                  {showErrors ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                  <span>探测错误详情 ({errorEntries.length})</span>
+                </button>
+                {showErrors && (
+                  <div className="mt-2 max-h-[200px] overflow-y-auto rounded-lg bg-amber-500/5 border border-amber-500/15 p-2.5 space-y-2">
+                    {errorEntries.map(([label, val]) => (
+                      <div key={label} className="flex flex-col gap-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-bold text-amber-500/70 shrink-0">{label}</span>
+                          {isRateLimited(val) && (
+                            <span className="text-[8px] font-bold text-amber-400 bg-amber-500/15 px-1.5 py-0.5 rounded-full">429 限流</span>
+                          )}
+                        </div>
+                        <pre className="text-[9px] font-mono text-on-surface/50 whitespace-pre-wrap break-all ml-3">{val}</pre>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 完整原始 JSON (可折叠) */}
+            <div>
+              <button
+                type="button"
+                onClick={() => setShowRawJson(v => !v)}
+                className="text-[10px] text-on-surface/40 hover:text-[var(--color-primary)] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+              >
+                {showRawJson ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                <span>完整原始 JSON</span>
+              </button>
+              {showRawJson && (
+                <pre className="mt-2 max-h-[300px] overflow-y-auto rounded-lg bg-[var(--color-bg)]/80 border border-[var(--color-outline)]/10 p-2.5 text-[9px] font-mono text-on-surface/60 whitespace-pre-wrap break-all">
+                  {rawJsonText}
+                </pre>
+              )}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 };
+
 
 // =====================================================
 // IconPicker — 自定义服务商图标选择器 (仅限 custom_ 开头的提供商)

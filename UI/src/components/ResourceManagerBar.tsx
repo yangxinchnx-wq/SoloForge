@@ -21,6 +21,7 @@ import {
   isParentTool, getChildIds,
   ResourceType,
 } from '../state/useResourceManagerStore';
+import { useChatStore } from '../state/useChatStore';
 
 export default function ResourceManagerBar() {
   // ── store 订阅 ───────────────────────────────────
@@ -37,6 +38,43 @@ export default function ResourceManagerBar() {
   // ── button refs + popover fixed position (突破父容器裁剪) ──
   const buttonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [popoverFixedPos, setPopoverFixedPos] = useState<{ top: number; left: number } | null>(null);
+
+  // ── 上传文件: 隐藏 input + 复用 ChatPanel 的 pendingAttachment 流程 ──
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const setPendingAttachment = useChatStore(s => s.setPendingAttachment);
+  const setIsPendingAttachmentExpanded = useChatStore(s => s.setIsPendingAttachmentExpanded);
+  const setInputValue = useChatStore(s => s.setInputValue);
+
+  // 文件大小上限: 5MB (与 pendingAttachment 仅存 text 的设计匹配,避免读取超大文件卡死)
+  const MAX_FILE_SIZE = 5 * 1024 * 1024;
+
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // 重置 value 允许重复选择同一文件
+    e.target.value = '';
+    if (!file) return;
+
+    if (file.size > MAX_FILE_SIZE) {
+      alert(`文件过大（${(file.size / 1024 / 1024).toFixed(2)} MB），上限为 5 MB。请选择更小的文本/代码文件。`);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = typeof reader.result === 'string' ? reader.result : '';
+      setPendingAttachment({ fileName: file.name, text });
+      setIsPendingAttachmentExpanded(false);
+      setInputValue((prev: string) => prev.trim() ? prev : `请帮我分析并优化 "${file.name}" 的代码：`);
+    };
+    reader.onerror = () => {
+      alert(`读取文件失败：${file.name}`);
+    };
+    reader.readAsText(file);
+  };
 
   // ── setters / actions (函数引用稳定) ──────────────
   const setActiveResourcePopover = useResourceManagerStore(s => s.setActiveResourcePopover);
@@ -59,20 +97,36 @@ export default function ResourceManagerBar() {
   const handleDragStart = useResourceManagerStore(s => s.handleDragStart);
   const handleGroupDrop = useResourceManagerStore(s => s.handleGroupDrop);
 
-  // ── resize refs (transient imperative state, 不入 React tree) ──
+  // ── resize / drag refs (transient imperative state, 不入 React tree) ──
   const isResizingPopover = useRef(false);
   const popoverResizeStart = useRef({
     y: 0, h: 340, x: 0, w: 280, dir: 'height' as 'height' | 'width' | 'width-left',
   });
+  // 拖动整个面板: 起始鼠标位置 + 起始面板位置, mousemove 时 delta 累加
+  const isDraggingPopover = useRef(false);
+  const popoverDragStart = useRef({ mx: 0, my: 0, top: 0, left: 0 });
 
   // ── 首次挂载: 拉取后端 manifest + active 列表 ────
   useEffect(() => {
     loadResources();
   }, [loadResources]);
 
-  // ── resize mousemove / mouseup 监听 ───────────────
+  // ── resize + drag mousemove / mouseup 监听 ──────────
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
+      // 拖动整面板优先 (避免与 resize 冲突, 二者互斥启动)
+      if (isDraggingPopover.current) {
+        const dx = e.clientX - popoverDragStart.current.mx;
+        const dy = e.clientY - popoverDragStart.current.my;
+        const newTop = popoverDragStart.current.top + dy;
+        const newLeft = popoverDragStart.current.left + dx;
+        // 边界保护: 至少保留 40px 可见 (顶部/右侧/底部), 左侧允许部分溢出 (保留 80px 可拖回)
+        const GAP = 8;
+        const clampedTop = Math.max(GAP, Math.min(window.innerHeight - 40, newTop));
+        const clampedLeft = Math.max(-popoverWidth + 80, Math.min(window.innerWidth - 40, newLeft));
+        setPopoverFixedPos({ top: clampedTop, left: clampedLeft });
+        return;
+      }
       if (!isResizingPopover.current) return;
       const dir = popoverResizeStart.current.dir;
       if (dir === 'height') {
@@ -89,14 +143,31 @@ export default function ResourceManagerBar() {
         setPopoverWidth(Math.max(280, Math.min(Math.min(window.innerWidth - 80, 560), newWidth)));
       }
     };
-    const handleMouseUp = () => { isResizingPopover.current = false; };
+    const handleMouseUp = () => {
+      isResizingPopover.current = false;
+      isDraggingPopover.current = false;
+    };
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [setPopoverHeight, setPopoverWidth]);
+  }, [setPopoverHeight, setPopoverWidth, popoverWidth]);
+
+  // 启动面板拖动 (Header 区域 onMouseDown 触发, 排除按钮点击)
+  const handlePopoverDragStart = (e: React.MouseEvent) => {
+    // 点中按钮 / 输入框等可交互元素时不启动拖动
+    if ((e.target as HTMLElement).closest('button, input')) return;
+    e.preventDefault();
+    isDraggingPopover.current = true;
+    popoverDragStart.current = {
+      mx: e.clientX,
+      my: e.clientY,
+      top: popoverFixedPos?.top ?? 0,
+      left: popoverFixedPos?.left ?? 0,
+    };
+  };
 
   // ── 渲染 ────────────────────────────────────────────
   // 2026-07-03 阶段4 主题优化: 用 data-theme-region="skill-bar" 替代 inline --color-primary
@@ -113,10 +184,21 @@ export default function ResourceManagerBar() {
           <Brain className="w-3.5 h-3.5 text-primary" />
           <span>记忆</span>
         </button>
-        <button className="flex items-center gap-1.5 px-3 py-1 rounded-lg hover:text-primary hover:bg-on-surface/5 transition-all cursor-pointer font-sans text-[11px] text-primary border border-transparent">
+        <button
+          type="button"
+          onClick={handleUploadClick}
+          title="从本地选择文件作为附件"
+          className="flex items-center gap-1.5 px-3 py-1 rounded-lg hover:text-primary hover:bg-on-surface/5 transition-all cursor-pointer font-sans text-[11px] text-primary border border-transparent"
+        >
           <Upload className="w-3.5 h-3.5 text-primary" />
           <span>上传文件</span>
         </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          className="hidden"
+          onChange={handleFileChange}
+        />
 
         <div className="w-px h-4 bg-primary/12 shrink-0 mx-1" />
 
@@ -142,7 +224,12 @@ export default function ResourceManagerBar() {
                     const btn = buttonRefs.current[resType];
                     if (btn) {
                       const rect = btn.getBoundingClientRect();
-                      setPopoverFixedPos({ top: rect.top, left: rect.right + 8 });
+                      const GAP = 8;
+                      // 右上方弹出: 面板底部对齐按钮顶部上方 GAP; 上方空间不足时回退到右下方
+                      const topAbove = rect.top - popoverHeight - GAP;
+                      const topBelow = rect.bottom + GAP;
+                      const top = topAbove >= GAP ? topAbove : topBelow;
+                      setPopoverFixedPos({ top, left: rect.right + GAP });
                     }
                     handleTogglePopover(resType);
                   }}
@@ -177,10 +264,17 @@ export default function ResourceManagerBar() {
                         style={{ position: 'fixed', top: popoverFixedPos?.top ?? 0, left: popoverFixedPos?.left ?? 0, height: popoverHeight, width: popoverWidth, zIndex: 9999 }}
                         onWheel={(e) => e.stopPropagation()}
                       >
-                        {/* Header */}
-                        <div className="px-2 py-1.5 flex items-center justify-between border-b border-outline/15 shrink-0">
-                          <span className="text-[10px] font-bold text-on-surface/80 tracking-wider uppercase select-none">{labels[type]}</span>
-                          <div className="flex items-center gap-1">
+                        {/* Header (可拖动 handle) */}
+                        <div
+                          onMouseDown={handlePopoverDragStart}
+                          className="px-2 py-1.5 flex items-center justify-between border-b border-outline/15 shrink-0 cursor-move hover:bg-on-surface/[0.04] transition-colors group/header"
+                          title="拖动移动面板"
+                        >
+                          <div className="flex items-center gap-1 min-w-0">
+                            <GripVertical className="w-3 h-3 text-on-surface/25 group-hover/header:text-on-surface/50 transition-colors shrink-0" />
+                            <span className="text-[10px] font-bold text-on-surface/80 tracking-wider uppercase select-none truncate">{labels[type]}</span>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
                             <button onClick={() => handleAddNewGroup(type)} className="p-0.5 rounded hover:bg-on-surface/5 text-on-surface/40 hover:text-primary transition-colors cursor-pointer" title="新建分组">
                               <FolderPlus className="w-3.5 h-3.5" />
                             </button>

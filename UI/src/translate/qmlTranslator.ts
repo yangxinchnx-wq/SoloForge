@@ -465,7 +465,39 @@ function qmlToUniversal(node: QmlObjectNode): UniversalNode | null {
 // ──────────────────────────── 根节点查找 ────────────────────────────
 
 function findRootObject(tokens: Token[]): UniversalNode | null {
-  const parser = new QmlParser(tokens);
+  // 跳过开头的 import 语句: import QtQuick 2.15 / import QtQuick.Controls 2.15
+  // import 语句格式: import <Module.Name> <version>
+  // tokens: import, Module, ., Name, version, (下一个 import 或 根对象)
+  let start = 0;
+  while (start < tokens.length && tokens[start].value === 'import') {
+    // 跳过整个 import 语句, 直到遇到下一个大写开头的 ident (根对象) 或 import
+    let j = start + 1;
+    // 跳过模块名 (可能含 . ): Module.Sub.Sub
+    while (j < tokens.length) {
+      const tj = tokens[j];
+      if (tj.type === 'ident') {
+        j++;
+        // 允许 . 后跟 ident
+        while (j < tokens.length && tokens[j].value === '.' && tokens[j + 1]?.type === 'ident') {
+          j += 2;
+        }
+        // 版本号 (数字)
+        if (j < tokens.length && tokens[j].type === 'number') {
+          j++;
+        }
+        // 可能还有 as 别名
+        if (j < tokens.length && tokens[j].value === 'as') {
+          j++;
+          if (j < tokens.length && tokens[j].type === 'ident') j++;
+        }
+        break;
+      }
+      j++;
+    }
+    start = j;
+  }
+
+  const parser = new QmlParser(tokens.slice(start));
 
   // QML 文件根对象就是第一个 parseObject()
   const root = parser.parseObject();

@@ -1,0 +1,419 @@
+╔══════════════════════════════════════════════════════════════════════════╗
+║                                                                          ║
+║              SoloForge 翻译脚本规范说明                                   ║
+║              (UI/src/translate/ 目录)                                    ║
+║                                                                          ║
+╚══════════════════════════════════════════════════════════════════════════╝
+
+══════════════════════════════════════════════════════════════════════════════
+  一、这个文件夹是干什么的?
+══════════════════════════════════════════════════════════════════════════════
+
+这里存放所有"UI 代码翻译器"脚本。
+
+翻译器的作用: 把不同语言/框架的 UI 源代码 (HTML / React / Vue / Flutter /
+SwiftUI / Compose / Android XML / XAML / QML / Python / C ...) 翻译成统一的
+Universal AST 节点树, 让 Flutter 画布能直接渲染, 不消耗 LLM token。
+
+翻译流程:
+
+  源代码 (任意语言)  ──→  Translator  ──→  Universal AST  ──→  Flutter 画布
+  "<div>hi</div>"         htmlTranslator      { type: 'container',    渲染出界面
+                                            children: [{type:'text',
+                                              content:'hi'}] }
+
+
+══════════════════════════════════════════════════════════════════════════════
+  二、目录结构
+══════════════════════════════════════════════════════════════════════════════
+
+  UI/src/translate/
+  │
+  ├── 脚本规范说明.txt          ← 你正在看的这个文件
+  │
+  ├── index.ts                  ← 统一入口 + 自动发现注册表 (不要改这里!)
+  ├── types.ts                  ← Translator 接口定义 (写脚本必看)
+  │
+  ├── htmlTranslator.ts         ┐
+  ├── reactTranslator.ts        │
+  ├── vueTranslator.ts          │
+  ├── flutterTranslator.ts      │
+  ├── swiftuiTranslator.ts      ├── 11 款已实现的翻译器 (参考用)
+  ├── composeTranslator.ts      │
+  ├── androidXmlTranslator.ts   │
+  ├── xamlTranslator.ts         │
+  ├── qmlTranslator.ts          │
+  ├── pythonTranslator.ts       │
+  ├── cTranslator.ts            ┘
+  │
+  ├── cssExtractor.ts           ← CSS 提取器 (辅助工具, 非翻译器)
+  ├── translatorWorker.ts       ← CPU 加速 worker 池 (非翻译器)
+  │
+  └── __tests__/                ← 测试脚本
+      ├── stressTest.ts         ← 压力测试 (验证所有翻译器)
+      ├── htmlTranslator.test.ts
+      └── ...
+
+  规律:
+    - 文件名以 "Translator.ts" 结尾  →  会被自动发现为翻译器
+    - 其他文件名 (如 cssExtractor.ts) →  不会被发现, 安全
+
+
+══════════════════════════════════════════════════════════════════════════════
+  三、如何写一个新的翻译器 (3 步)
+══════════════════════════════════════════════════════════════════════════════
+
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │  零配置接入 — 写完文件放进来就行, 不需要改 index.ts                  │
+  └──────────────────────────────────────────────────────────────────────┘
+
+  步骤 1: 新建文件, 文件名必须以 "Translator.ts" 结尾
+  ───────────────────────────────────────────────────────────────────────
+    例: rustTranslator.ts / kotlinTranslator.ts / myLangTranslator.ts
+
+  步骤 2: 实现 Translator 接口 (4 个必填字段)
+  ───────────────────────────────────────────────────────────────────────
+
+    import type { Translator } from './types';
+    import { TranslateError } from './types';
+    import type { UniversalNode } from '../services/canvas/UniversalAST';
+
+    export const myLangTranslator: Translator = {
+
+      // (1) 语言标识 — 唯一 key, 小写英文, 如 'rust'
+      language: 'mylang',
+
+      // (2) 显示名 — UI 展示用, 如 'Rust egui'
+      displayName: 'My Language',
+
+      // (3) detect — 检测代码是否属于此语言, 返回 0-1 置信度
+      //     0.9 = 强特征 (include + 函数调用)
+      //     0.7 = 中等 (仅函数调用)
+      //     0.3 = 弱特征 (语法特征, 兜底)
+      //     0   = 不匹配
+      //     低于 0.3 会被忽略
+      detect(code: string): number {
+        if (code.includes('#mylang')) return 0.9;
+        if (code.includes('mylang_')) return 0.7;
+        return 0;
+      },
+
+      // (4) translate — 翻译源代码为 Universal AST
+      //     出错时抛 TranslateError
+      translate(code: string): UniversalNode {
+        if (!code) {
+          throw new TranslateError('mylang', '代码为空', code);
+        }
+
+        // 解析 code, 构建 UniversalNode 树
+        return {
+          type: 'container',           // 根节点通常是 container
+          children: [
+            { type: 'text', content: 'hello' },
+            { type: 'button', label: '点击', variant: 'filled' },
+            { type: 'input', placeholder: '输入', kind: 'text' },
+          ],
+        };
+      },
+    };
+
+  步骤 3: 完成! 不需要改 index.ts
+  ───────────────────────────────────────────────────────────────────────
+    Vite 构建时会自动扫描 *Translator.ts 文件并注册。
+    立即可用:
+      translateCode(code, 'mylang')         // 指定语言
+      translateCode(code)                    // 自动检测 (如果 detect 返回 >0.3)
+
+
+══════════════════════════════════════════════════════════════════════════════
+  四、Universal AST 节点类型 (translate 的返回值)
+══════════════════════════════════════════════════════════════════════════════
+
+  所有翻译器最终都要把源代码翻译成这几种节点类型:
+
+  ┌──────────────┬─────────────────────────────────────────────────────────┐
+  │  节点类型    │  字段说明                                               │
+  ├──────────────┼─────────────────────────────────────────────────────────┤
+  │  container   │  { type: 'container', children: [...], style? }        │
+  │  (容器)      │  通用容器, 最常用, 根节点通常用它                        │
+  ├──────────────┼─────────────────────────────────────────────────────────┤
+  │  row         │  { type: 'row', children: [...], style? }              │
+  │  (水平布局)  │  子节点水平排列 (类似 flex-direction: row)              │
+  ├──────────────┼─────────────────────────────────────────────────────────┤
+  │  column      │  { type: 'column', children: [...], style? }           │
+  │  (垂直布局)  │  子节点垂直排列 (类似 flex-direction: column)           │
+  ├──────────────┼─────────────────────────────────────────────────────────┤
+  │  stack       │  { type: 'stack', children: [...], style? }            │
+  │  (层叠)      │  子节点叠加 (类似 position: absolute)                   │
+  ├──────────────┼─────────────────────────────────────────────────────────┤
+  │  text        │  { type: 'text', content: '文字内容', style? }         │
+  │  (文本)      │  显示一段文字                                           │
+  ├──────────────┼─────────────────────────────────────────────────────────┤
+  │  button      │  { type: 'button', label: '按钮文字',                   │
+  │  (按钮)      │    variant?: 'filled'|'outlined'|'text', style? }      │
+  ├──────────────┼─────────────────────────────────────────────────────────┤
+  │  input       │  { type: 'input', placeholder?: '提示',                │
+  │  (输入框)    │    kind?: 'text'|'password'|'number'|'email', style? } │
+  ├──────────────┼─────────────────────────────────────────────────────────┤
+  │  image       │  { type: 'image', src: 'url', style? }                 │
+  │  (图片)      │  src 可以是 URL / base64 / system: 图标名              │
+  ├──────────────┼─────────────────────────────────────────────────────────┤
+  │  divider     │  { type: 'divider', style? }                           │
+  │  (分割线)    │  水平或垂直分割线                                       │
+  ├──────────────┼─────────────────────────────────────────────────────────┤
+  │  spacer      │  { type: 'spacer', style? }                            │
+  │  (占位空白)  │  弹性空白 (类似 Spacer / flex: 1)                       │
+  └──────────────┴─────────────────────────────────────────────────────────┘
+
+  style (可选) 字段示例:
+    {
+      width: '100%' | 200,           // 宽度
+      height: '100%' | 50,           // 高度
+      padding: 16 | [8, 4],          // 内边距 [垂直, 水平] 或 [上,右,下,左]
+      margin: 16 | [8, 4],
+      background: '#FF5722' | 'red', // 背景色
+      color: '#333333' | 'black',    // 文字颜色
+      fontSize: 24,
+      fontWeight: 'bold' | 'normal',
+      radius: 8,                     // 圆角
+      border: { width: 1, color: '#ccc' },
+      shadow: '0 2px 8px rgba(0,0,0,0.1)',
+      align: 'center' | 'left' | 'right',  // 文字对齐
+      gap: 8,                        // 子节点间距
+    }
+
+
+══════════════════════════════════════════════════════════════════════════════
+  五、detect() 置信度怎么定?
+══════════════════════════════════════════════════════════════════════════════
+
+  detect() 是自动检测的核心 — 用户不指定语言时, 系统遍历所有翻译器的
+  detect(), 取置信度最高的那个。
+
+  约定:
+
+    0.9  强特征 — 同时有 import/include + 框架函数调用
+         例: #include <windows.h> + CreateWindow(...)
+         例: import 'package:flutter/material.dart'; + Column(children:...)
+
+    0.7  中等特征 — 仅有框架函数调用, 无 import
+         例: 代码里有 CreateWindow(...) 但没 #include
+
+    0.5  弱特征 — 框架特征关键字
+         例: Widget / Composable / VStack 等关键字
+
+    0.3  仅语法特征 — 可能误判, 兜底用
+         例: 代码里有 #include 但没 UI 函数
+
+    0    不匹配
+
+  重要:
+    - 低于 0.3 会被忽略 (避免弱特征误判)
+    - 多个翻译器可能同时 >0.3, 取最高者
+    - HTML (<div>) 和 React/Vue 可能重叠, HTML 通常 0.7 优先命中
+
+  示例 (参考 flutterTranslator.ts):
+
+    detect(code: string): number {
+      const hasImport = /import\s+['"]package:flutter/.test(code);
+      const hasWidget = /\b(Column|Row|Container|Text|Scaffold)\s*\(/.test(code);
+      if (hasImport && hasWidget) return 0.9;   // 强特征
+      if (hasWidget) return 0.7;                 // 中等
+      if (hasImport) return 0.5;                 // 弱特征
+      return 0;
+    }
+
+
+══════════════════════════════════════════════════════════════════════════════
+  六、translate() 实现策略
+══════════════════════════════════════════════════════════════════════════════
+
+  按语言类型选不同的解析方式:
+
+  ┌──────────────────┬─────────────────────────────────────────────────────┐
+  │  语言类型        │  推荐解析方式                                       │
+  ├──────────────────┼─────────────────────────────────────────────────────┤
+  │  HTML / XML 系   │  用 cheerio (npm i cheerio)                          │
+  │  (HTML, Android, │  $.load(code) → 遍历 DOM → 映射成 UniversalNode     │
+  │   XAML)          │  参考 htmlTranslator.ts / androidXmlTranslator.ts   │
+  ├──────────────────┼─────────────────────────────────────────────────────┤
+  │  JSX / TSX       │  用 @babel/parser (npm i @babel/parser)             │
+  │                  │  parse(code, { plugins: ['jsx','typescript'] })     │
+  │                  │  参考 reactTranslator.ts                            │
+  ├──────────────────┼─────────────────────────────────────────────────────┤
+  │  Vue SFC         │  用 @vue/compiler-sfc                                │
+  │                  │  参考 vueTranslator.ts                              │
+  ├──────────────────┼─────────────────────────────────────────────────────┤
+  │  其他语言        │  自定义 tokenizer + 递归下降 parser                  │
+  │  (Flutter, Swift,│  1. tokenize(code) → Token[]                        │
+  │   Compose, QML,  │  2. Parser 类递归解析 Token[]                       │
+  │   Python, C)     │  3. 构建 UniversalNode 树                           │
+  │                  │  参考 flutterTranslator.ts (最完整的示例)           │
+  └──────────────────┴─────────────────────────────────────────────────────┘
+
+  通用建议:
+    - 翻译器只翻译 UI 结构, 忽略业务逻辑 (函数体 / 闭包体用 skipBalanced 跳过)
+    - 不支持的语法不要崩溃, 跳过即可 (容错优先)
+    - helper 函数 (parseColor / parseNumber 等) 加 null guard
+    - 出错时抛 TranslateError, 不要抛普通 Error
+
+
+══════════════════════════════════════════════════════════════════════════════
+  七、如何使用翻译器
+══════════════════════════════════════════════════════════════════════════════
+
+  // 指定语言 (推荐, 性能最佳)
+  import { translateCode } from '@/translate';
+  const ast = translateCode(htmlString, 'html');
+
+  // 自动检测 (遍历所有翻译器的 detect, 取最高)
+  const ast = translateCode(codeString);
+
+  // 详细版 (含警告/耗时)
+  import { translateCodeDetailed } from '@/translate';
+  const result = translateCodeDetailed(code, 'vue');
+  // result = { node, language, warnings, durationMs }
+
+  // 查询已注册的语言
+  import { getSupportedLanguages, isLanguageSupported } from '@/translate';
+  getSupportedLanguages();          // ['android', 'c', 'compose', ...]
+  isLanguageSupported('rust');      // false
+
+  // 运行时动态注册 (不依赖文件命名)
+  import { registerTranslator } from '@/translate';
+  registerTranslator({
+    language: 'rust',
+    displayName: 'Rust egui',
+    detect: (code) => code.includes('egui::') ? 0.9 : 0,
+    translate: (code) => parseRustEgui(code),
+  });
+
+
+══════════════════════════════════════════════════════════════════════════════
+  八、环境兼容性
+══════════════════════════════════════════════════════════════════════════════
+
+  翻译器在两个环境下工作:
+
+  ┌─────────────────────────┬───────────────────────────────────────────────┐
+  │  环境                   │  发现机制                                     │
+  ├─────────────────────────┼───────────────────────────────────────────────┤
+  │  Vite (浏览器/Electron) │  import.meta.glob 自动发现 ← 主路径, 零配置   │
+  │                         │  放进 *Translator.ts 文件即可                 │
+  ├─────────────────────────┼───────────────────────────────────────────────┤
+  │  Node.js / tsx (脚本)   │  显式 import fallback                          │
+  │                         │  需要把翻译器加到 index.ts 的                  │
+  │                         │  fallbackTranslators 数组                      │
+  └─────────────────────────┴───────────────────────────────────────────────┘
+
+  如果你只写 *Translator.ts 文件:
+    - Vite 浏览器端: 自动可用 ✓
+    - tsx 脚本端:   需要额外加到 fallbackTranslators 数组
+
+  (大多数情况只需要 Vite 端, tsx 主要用于压力测试脚本)
+
+
+══════════════════════════════════════════════════════════════════════════════
+  九、测试你的翻译器
+══════════════════════════════════════════════════════════════════════════════
+
+  方法 1: 单元测试 (推荐)
+  ───────────────────────────────────────────────────────────────────────
+    在 __tests__/ 目录新建 myLangTranslator.test.ts
+    参考 htmlTranslator.test.ts 的写法
+
+  方法 2: 快速验证脚本
+  ───────────────────────────────────────────────────────────────────────
+    npx tsx -e "
+      import { translateCode, detectLanguage } from './src/translate';
+      const code = '你的测试代码';
+      console.log('detected:', detectLanguage(code)?.language);
+      console.log('ast:', JSON.stringify(translateCode(code), null, 2));
+    "
+
+  方法 3: 加入压力测试
+  ───────────────────────────────────────────────────────────────────────
+    编辑 __tests__/stressTest.ts, 在样本数组里加你的语言样本
+    运行: npx tsx src/translate/__tests__/stressTest.ts
+
+
+══════════════════════════════════════════════════════════════════════════════
+  十、注意事项 / 常见坑
+══════════════════════════════════════════════════════════════════════════════
+
+  1. 文件名必须以 "Translator.ts" 结尾
+     ✓ myLangTranslator.ts
+     ✗ myLang.ts         (不会被发现)
+     ✗ myLangHelper.ts   (不会被发现)
+
+  2. 必须导出一个满足 Translator 接口的对象
+     export const myLangTranslator: Translator = { ... };
+     (导出名随意, 但必须有 language + displayName + detect + translate)
+
+  3. language 标识必须唯一
+     如果两个翻译器都用 'html', 后注册的覆盖先注册的
+
+  4. detect() 不要太激进
+     返回 0.9 时要确保确实是这个语言, 否则会抢其他翻译器的代码
+
+  5. translate() 要容错
+     遇到不支持的语法跳过即可, 不要崩溃
+     真正的错误抛 TranslateError, 不要抛普通 Error
+
+  6. helper 函数加 null guard
+     function parseColor(val) {
+       if (!val) return undefined;  // ← 必须加
+       ...
+     }
+
+  7. 闭包体 / 函数体要跳过
+     用 skipBalanced('(', ')') / skipBalanced('{', '}') 跳过
+     否则会破坏外层参数解析 (Flutter 的 () {} 闭包是经典坑)
+
+  8. 纯本地解析, 不依赖网络
+     翻译器的核心价值是 "不消耗 LLM token"
+     不要在 translate() 里发 HTTP 请求
+
+
+══════════════════════════════════════════════════════════════════════════════
+  十一、参考文件
+══════════════════════════════════════════════════════════════════════════════
+
+  想写新翻译器, 推荐按这个顺序看:
+
+    1. types.ts                    — 接口定义 (先看这个理解契约)
+    2. htmlTranslator.ts           — 最简单的翻译器 (cheerio 解析)
+    3. flutterTranslator.ts        — 最完整的自定义 parser 示例
+                                     (tokenizer + 递归下降 + 闭包跳过)
+    4. cTranslator.ts              — 复杂父子关系重建示例 (Win32/GTK/LVGL)
+    5. index.ts                    — 自动发现机制 (一般不用改)
+    6. __tests__/stressTest.ts     — 压力测试 (复杂样本参考)
+
+
+══════════════════════════════════════════════════════════════════════════════
+  十二、当前已支持的 11 款翻译器
+══════════════════════════════════════════════════════════════════════════════
+
+  ┌────┬──────────────────┬───────────────────────────────────────────────┐
+  │ #  │ 语言             │ 文件                                          │
+  ├────┼──────────────────┼───────────────────────────────────────────────┤
+  │ 1  │ HTML             │ htmlTranslator.ts        (cheerio)            │
+  │ 2  │ React JSX/TSX    │ reactTranslator.ts       (@babel/parser)      │
+  │ 3  │ Vue SFC          │ vueTranslator.ts         (@vue/compiler-sfc)  │
+  │ 4  │ Flutter/Dart     │ flutterTranslator.ts     (自定义 parser)      │
+  │ 5  │ SwiftUI          │ swiftuiTranslator.ts     (自定义 parser)      │
+  │ 6  │ Jetpack Compose  │ composeTranslator.ts     (自定义 parser)      │
+  │ 7  │ Android XML      │ androidXmlTranslator.ts  (cheerio xmlMode)    │
+  │ 8  │ XAML (WPF/MAUI)  │ xamlTranslator.ts        (cheerio xmlMode)    │
+  │ 9  │ Qt QML           │ qmlTranslator.ts         (自定义 parser)      │
+  │ 10 │ Python           │ pythonTranslator.ts      (自定义 parser)      │
+  │    │ (Tkinter/PyQt/   │                                              │
+  │    │  Kivy)           │                                              │
+  │ 11 │ C                │ cTranslator.ts           (自定义 parser)      │
+  │    │ (Win32/GTK/LVGL) │                                              │
+  └────┴──────────────────┴───────────────────────────────────────────────┘
+
+
+══════════════════════════════════════════════════════════════════════════════
+  有问题? 看 index.ts 和 types.ts 的源码注释, 或参考现有翻译器实现。
+══════════════════════════════════════════════════════════════════════════════

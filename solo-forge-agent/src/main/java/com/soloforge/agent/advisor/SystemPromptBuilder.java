@@ -253,56 +253,42 @@ public class SystemPromptBuilder {
             5. 完成后给出清晰的总结
             6. 用中文回复
 
-            # 画布预览触发规则 (重要)
+            # 画布预览机制 (重要 — 新机制, 2026-07-09)
 
-            SoloForge 配备了一个实时画布预览系统,可以在对话中直接渲染 UI 界面。
-            你需要自主判断回复是否涉及可视化内容,并在需要时触发画布预览。
+            SoloForge 前端内置 11 款本地翻译器, 会自动把你回复中的 UI 代码块翻译成画布 AST 并渲染。
+            这意味着: 你只需正常返回 markdown 代码块, 画布会自动显示, 无需调用工具, 无需加标记。
 
-            ## 何时触发
+            ## 默认行为 — 返回代码块 (推荐, 零 token 消耗)
 
-            当你的回复涉及以下任一情况时,你**必须**在回复的最末尾添加预览触发标记:
-            - 生成或修改了任何 UI 界面代码 (网页、组件、页面布局、表单等)
-            - 创建了前端相关代码 (HTML/CSS/JavaScript/TypeScript/React/Vue/Angular)
-            - 创建了移动端代码 (Flutter/Dart/Swift/Kotlin)
-            - 创建了桌面端代码 (Electron/Tauri/Qt/GTK)
-            - 设计了数据可视化 (图表、仪表盘、数据看板、报表)
-            - 描述了需要可视化展示的内容 (流程图、架构图、原型设计)
-            - 生成了游戏界面、动画效果、交互原型
-            - 任何用户应该"看到"而不仅仅是"读到"的内容
+            当用户请求生成 UI 界面/页面/组件时, 直接在回复中用 markdown 代码块返回完整 UI 代码:
 
-            ## 何时不触发
+            | 平台    | 代码块语言标记                    |
+            |---------|----------------------------------|
+            | 网页    | ```html  / ```tsx  / ```vue      |
+            | 移动端  | ```dart  / ```swift  / ```kotlin |
+            | 桌面端  | ```xml  / ```xaml  / ```qml      |
+            | 脚本UI  | ```python  / ```c                |
 
-            - 纯文字问答 (如"你好"、"解释一下什么是递归")
-            - 纯后端逻辑代码 (如算法实现、数据处理脚本,无 UI 输出)
+            前端流程: 检测代码块语言 → 调用对应翻译器 → 生成 Universal AST → 推送画布渲染。
+            全程零 LLM 调用, 零 token 消耗。
+
+            ## 何时不触发画布
+
+            - 纯文字问答 (如"你好"、"解释什么是递归")
+            - 纯后端逻辑代码 (如算法实现、数据处理脚本, 无 UI 输出)
             - 配置文件修改 (如 docker-compose.yml、package.json)
-            - 纯概念性讨论,没有生成实际可运行的 UI 代码
+            - 纯概念性讨论, 没有生成实际可运行的 UI 代码
 
-            ## 标记格式
+            ## 仅以下场景才调用 canvas_push_ui 工具
 
-            在回复的最末尾添加一行 (用户不会看到此标记,前端会自动移除):
+            - 图形/插画/图标/流程图 (用 svg 节点, 代码块无法表达)
+            - 用户明确要求"用 AST 推送"或"实时推送"
+            - 代码块不是完整 UI 而是片段, 需要推送组装后的 AST
 
-            <<<PREVIEW_NEEDED:语言>>>
+            ## 废弃的标记 (不要再使用)
 
-            语言可选: typescript, python, dart, go, rust, java, c, html
-
-            ## 示例
-
-            用户: "帮我写一个登录页面"
-            → 生成 React 登录组件代码,末尾加: <<<PREVIEW_NEEDED:typescript>>>
-
-            用户: "用 Python 做一个数据看板"
-            → 生成 Streamlit/Dash 代码,末尾加: <<<PREVIEW_NEEDED:python>>>
-
-            用户: "写一个 Flutter 设置页面"
-            → 生成 Dart 代码,末尾加: <<<PREVIEW_NEEDED:dart>>>
-
-            用户: "什么是闭包?"
-            → 纯文字解释,不加标记
-
-            用户: "帮我优化这个 SQL 查询"
-            → 纯后端优化,不加标记
-
-            注意: 宁可多触发也不要遗漏。只要回复中包含任何用户可能想看到的 UI/可视化代码,就加标记。
+            ~~<<<PREVIEW_NEEDED:语言>>>~~ 标记已废弃! 前端会自动检测代码块, 不需要你加标记。
+            旧指令里提到的这个标记请忽略。
 
             # 工具调用格式 (重要)
 
@@ -319,7 +305,8 @@ public class SystemPromptBuilder {
             - execute_cmd: 执行命令。args: {"command": "命令"}
             - search_code: 搜索代码。args: {"pattern": "正则", "fileGlob": "*.ts"}
             - list_files: 列出目录。args: {"dirPath": "目录路径"}
-            - canvas_push_ui: 推送 UI 到画布预览。args: {"sessionId": "画布ID", "dslJson": "AST JSON字符串", "language": "typescript"}
+            - canvas_push_ui: 推送 UI AST 到画布 (仅用于 svg 画图等代码块无法表达的场景)。
+              args: {"sessionId": "画布ID", "dslJson": "AST JSON字符串", "language": "typescript"}
 
             ## 工具调用流程
 
@@ -331,22 +318,10 @@ public class SystemPromptBuilder {
             ## [FORCE_CANVAS] 强制画布标记
 
             当用户消息以 [FORCE_CANVAS] 开头时,表示用户明确要求在画布上作画/展示。
-            此时你必须:
-            1. 生成对应的 UI AST (UI 界面用 container/text/button/input 等节点; 图形/插画/图标用 svg 节点)
-            2. 调用 canvas_push_ui 工具推送到画布 (不允许只回复文字)
-            3. 推送成功后, 用一句话简述你画了什么
+            优先策略: 用 markdown 代码块返回 UI 代码 (前端自动翻译渲染)。
+            仅图形/插画场景才用 canvas_push_ui 工具推送 svg 节点。
 
-            ## canvas_push_ui 使用示例
-
-            当用户请求 UI 界面时,你可以:
-            1. 先生成 UI 代码 (给用户看)
-            2. 然后调用 canvas_push_ui 推送 AST 到画布 (让用户实时看到效果)
-
-            ```json
-            {"tool": "canvas_push_ui", "args": {"sessionId": "canvas-1", "dslJson": "{\\"type\\":\\"container\\",\\"props\\":{\\"padding\\":16,\\"layout\\":\\"column\\",\\"spacing\\":8},\\"children\\":[{\\"type\\":\\"text\\",\\"props\\":{\\"content\\":\\"Hello\\",\\"fontSize\\":24}}]}", "language": "typescript"}}
-            ```
-
-            ## AST 节点类型 (画布渲染器支持的全部类型)
+            ## AST 节点类型 (canvas_push_ui 工具用, 代码块场景由翻译器自动生成)
 
             - container: 布局容器 (props: layout=row/column/stack/zstack, padding, spacing, backgroundColor, borderRadius, width, height)
             - text: 文本 (props: content, fontSize, color, fontWeight, textAlign)
@@ -360,7 +335,7 @@ public class SystemPromptBuilder {
             - divider: 分隔线 (props: thickness, color)
             - **svg: SVG 矢量图 (props: content=SVG字符串, width, height, fit=contain/cover/fill)**
 
-            ## svg 节点 — 画图/插画/图标/流程图
+            ## svg 节点 — 画图/插画/图标/流程图 (代码块无法表达时用)
 
             当用户请求"画 X"、"画一个企鹅"、"画流程图"等图形任务时,使用 svg 节点。
             content 是完整 SVG 字符串 (viewBox + shape 元素)。LLM 生成 SVG 时应:
@@ -374,6 +349,6 @@ public class SystemPromptBuilder {
             {"tool": "canvas_push_ui", "args": {"sessionId": "canvas-1", "dslJson": "{\\"type\\":\\"svg\\",\\"props\\":{\\"width\\":200,\\"height\\":240,\\"content\\":\\"<svg viewBox='0 0 200 240' xmlns='http://www.w3.org/2000/svg'><ellipse cx='100' cy='130' rx='60' ry='80' fill='#1A1A1A'/><ellipse cx='100' cy='150' rx='40' ry='55' fill='#FFFFFF'/><circle cx='100' cy='55' r='32' fill='#1A1A1A'/><circle cx='88' cy='50' r='5' fill='#FFFFFF'/><circle cx='112' cy='50' r='5' fill='#FFFFFF'/><polygon points='92,62 108,62 100,75' fill='#FFA000'/><ellipse cx='80' cy='205' rx='18' ry='9' fill='#FFA000'/><ellipse cx='120' cy='205' rx='18' ry='9' fill='#FFA000'/></svg>\\"}", "language": "typescript"}}
             ```
 
-            也可以不调用工具,只在回复末尾加 <<<PREVIEW_NEEDED:语言>>> 标记,前端会自动生成预览。""";
+            总结: UI 代码用代码块 (前端自动翻译), 图形/svg 用 canvas_push_ui 工具。""";
     }
 }

@@ -81,7 +81,18 @@ function tokenize(code: string): Token[] {
       continue;
     }
 
-    // 数字
+    // .ident (枚举值 / 修饰符前缀 .red / .padding)
+    // 必须在数字检查之前, 否则 . 会被 /[\d.]/ 当作数字首字符吞掉
+    if (ch === '.' && /[a-zA-Z_]/.test(code[i + 1] || '')) {
+      let id = '.';
+      i++;
+      while (i < n && /[\w$]/.test(code[i])) { id += code[i]; i++; }
+      tokens.push({ type: 'ident', value: id, pos: i });
+      continue;
+    }
+
+    // 数字 (注意: 单独的 . 不会到这里, 因为上面 .ident 已拦截 .letter 的情况;
+    // .5 这种小数会被 /[\d.]/ 匹配)
     if (/[\d.]/.test(ch)) {
       let num = '';
       while (i < n && /[\d.]/.test(code[i])) { num += code[i]; i++; }
@@ -89,7 +100,7 @@ function tokenize(code: string): Token[] {
       continue;
     }
 
-    // 标识符 / 关键字 (含 .)
+    // 标识符 / 关键字
     if (/[a-zA-Z_$]/.test(ch)) {
       let id = '';
       while (i < n && /[\w$]/.test(code[i])) { id += code[i]; i++; }
@@ -99,15 +110,6 @@ function tokenize(code: string): Token[] {
         value: id,
         pos: i,
       });
-      continue;
-    }
-
-    // .ident (枚举值 / 修饰符前缀 .red / .padding)
-    if (ch === '.' && /[a-zA-Z_]/.test(code[i + 1] || '')) {
-      let id = '.';
-      i++;
-      while (i < n && /[\w$]/.test(code[i])) { id += code[i]; i++; }
-      tokens.push({ type: 'ident', value: id, pos: i });
       continue;
     }
 

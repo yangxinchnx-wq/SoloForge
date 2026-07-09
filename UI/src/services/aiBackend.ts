@@ -88,10 +88,23 @@ const FORCE_CANVAS_PATTERNS: RegExp[] = [
 ];
 
 const FORCE_CANVAS_INSTRUCTION = `[FORCE_CANVAS] 用户明确要求在画布上作画/展示。你必须:
-1. 生成对应的 UI AST (UI 界面用 container/text/button 等节点, 图形/插画用 svg 节点)
-2. 调用 canvas_push_ui 工具推送到画布
-3. 不要只回复文字, 必须调用工具
-4. 推送后再用简短文字说明你画了什么`;
+
+## 优先策略 — 返回代码块 (零 token, 推荐)
+SoloForge 前端内置 11 款本地翻译器, 会自动把你的代码块翻译成画布 AST 并推送渲染。
+你只需在回复中用 markdown 代码块返回 UI 代码, 前端自动处理, 无需调用任何工具:
+  - 网页:    \`\`\`html  / \`\`\`tsx  / \`\`\`vue
+  - 移动端:  \`\`\`dart  / \`\`\`swift  / \`\`\`kotlin
+  - 桌面端:  \`\`\`xml  / \`\`\`xaml  / \`\`\`qml
+  - 脚本UI:  \`\`\`python  / \`\`\`c
+
+## 仅以下场景才调用 canvas_push_ui 工具
+- 图形/插画/图标/流程图 (用 svg 节点, 代码块无法表达)
+- 用户明确要求"用 AST 推送"或"实时推送"
+
+## 要求
+1. 不要只回复文字, 必须有代码块或工具调用
+2. 代码块要完整可渲染 (含布局结构 + 样式)
+3. 末尾不要加 <<<PREVIEW_NEEDED>>> 标记 (前端会自动检测代码块)`;
 
 /** 检测用户输入是否包含强制画布关键词, 若包含则返回注入指令, 否则返回 null */
 export function detectForceCanvas(prompt: string): string | null {

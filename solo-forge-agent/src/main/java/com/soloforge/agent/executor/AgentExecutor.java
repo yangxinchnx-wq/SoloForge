@@ -494,10 +494,19 @@ public class AgentExecutor {
         sb.append("]}\n");
         sb.append("```\n\n");
         sb.append("支持组件类型: container, text, button, input, image, list, progress, divider, card\n\n");
-        sb.append("## 何时使用画布\n");
-        sb.append("- 用户请求生成 UI 界面/页面/组件时, 生成代码的同时用 canvas_push_ui 推送 AST 预览\n");
-        sb.append("- 用户要求可视化效果 (图表/仪表盘/原型) 时, 先推 AST 让用户看到效果\n");
-        sb.append("- 生成 UI 代码后在回复末尾加 <<<PREVIEW_NEEDED:语言>>> 标记触发完整预览流\n");
+        sb.append("## 何时使用画布 (重要 — 新机制)\n");
+        sb.append("SoloForge 前端内置 11 款本地翻译器, 会自动把你回复中的 UI 代码块翻译成画布 AST 并渲染。\n\n");
+        sb.append("### 默认行为 — 返回代码块 (推荐, 零 token)\n");
+        sb.append("用户请求 UI 界面/页面/组件时, 直接在回复中用 markdown 代码块返回完整 UI 代码:\n");
+        sb.append("- 网页:    ```html  / ```tsx  / ```vue\n");
+        sb.append("- 移动端:  ```dart  / ```swift  / ```kotlin\n");
+        sb.append("- 桌面端:  ```xml  / ```xaml  / ```qml\n");
+        sb.append("- 脚本UI:  ```python  / ```c\n\n");
+        sb.append("前端自动检测代码块语言 → 调用对应翻译器 → 推送画布。无需调用工具, 无需加标记。\n\n");
+        sb.append("### 仅以下场景才调用 canvas_push_ui 工具\n");
+        sb.append("- 图形/插画/图标/流程图 (用 svg 节点, 代码块无法表达)\n");
+        sb.append("- 用户明确要求\"用 AST 推送\"或\"实时推送\"\n");
+        sb.append("- 不要加 <<<PREVIEW_NEEDED>>> 标记 (已废弃, 前端自动检测代码块)\n");
 
         return sb.toString();
     }

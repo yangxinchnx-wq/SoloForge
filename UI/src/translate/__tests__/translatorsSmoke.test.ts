@@ -239,10 +239,10 @@ describe('qmlTranslator 烟雾测试', () => {
 
 // ──────────────────────────── 统一入口 ────────────────────────────
 
-describe('统一入口: 9 款翻译器', () => {
-  it('getSupportedLanguages 返回 9 个语言', () => {
+describe('统一入口: 11 款翻译器', () => {
+  it('getSupportedLanguages 返回 11 个语言', () => {
     const langs = getSupportedLanguages();
-    expect(langs).toHaveLength(9);
+    expect(langs).toHaveLength(11);
     expect(langs).toContain('html');
     expect(langs).toContain('react');
     expect(langs).toContain('vue');
@@ -252,10 +252,12 @@ describe('统一入口: 9 款翻译器', () => {
     expect(langs).toContain('android');
     expect(langs).toContain('xaml');
     expect(langs).toContain('qml');
+    expect(langs).toContain('python');
+    expect(langs).toContain('c');
   });
 
   it('isLanguageSupported 全部支持', () => {
-    for (const lang of ['html', 'react', 'vue', 'flutter', 'swiftui', 'compose', 'android', 'xaml', 'qml']) {
+    for (const lang of ['html', 'react', 'vue', 'flutter', 'swiftui', 'compose', 'android', 'xaml', 'qml', 'python', 'c']) {
       expect(isLanguageSupported(lang)).toBe(true);
     }
   });
@@ -270,5 +272,7 @@ describe('统一入口: 9 款翻译器', () => {
     expect(() => translateCode('<LinearLayout><TextView android:text="hi" /></LinearLayout>', 'android')).not.toThrow();
     expect(() => translateCode('<StackPanel><TextBlock Text="hi" /></StackPanel>', 'xaml')).not.toThrow();
     expect(() => translateCode(`Rectangle { color: "red" }`, 'qml')).not.toThrow();
+    expect(() => translateCode(`Label(root, text="hi")`, 'python')).not.toThrow();
+    expect(() => translateCode(`GtkWidget *btn = gtk_button_new_with_label("hi");`, 'c')).not.toThrow();
   });
 });

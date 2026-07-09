@@ -25,7 +25,7 @@ import { useStreamingStore } from './streamingStore';
 import { mapPhaseToStreamEvents, type PhaseMapperContext } from '../services/phaseMappers';
 import type { StreamEventKind, StreamEvent, PermissionMode } from '../types/streaming';
 // 2026-07-09: HTML 翻译器 — 本地解析 HTML 代码块为 Universal AST, 直接推画布, 省一次 LLM 调用
-import { translateCode, isLanguageSupported } from '../translate';
+import { translateCode, isLanguageSupported, detectLanguage } from '../translate';
 
 // ==========================================
 // StreamPanel 桥接 — 把 aiBackend 事件喂给 streamingStore
@@ -219,54 +219,93 @@ function detectPreviewFromResponse(text: string): string | null {
 }
 
 /**
- * 2026-07-09: 从 LLM 回复中提取 HTML 代码块内容
+ * 代码块语言标识 (markdown fenced) → 翻译器 language 标识 映射
  *
- * 匹配 ```html ... ``` 或 ```htm ... ``` 代码块, 返回代码内容。
- * 如果没有 fenced 代码块但回复以 < 开头 (整段都是 HTML), 返回整段。
- *
- * @returns HTML 代码字符串, 或 null (无 HTML 代码)
+ * LLM 在 markdown 代码块里用的语言标识 (如 ```jsx / ```dart) 映射到
+ * 翻译器的 language 字段 (如 'react' / 'flutter')。
+ * 这样 LLM 返回任意语言的 UI 代码都能被对应的本地翻译器处理。
  */
-function extractHtmlCodeBlock(text: string): string | null {
+const BLOCK_LANG_TO_TRANSLATOR: Record<string, string> = {
+  html: 'html', htm: 'html',
+  jsx: 'react', tsx: 'react',
+  javascript: 'react', js: 'react',
+  typescript: 'react', ts: 'react',
+  vue: 'vue',
+  dart: 'flutter',
+  swift: 'swiftui',
+  kotlin: 'compose',
+  xml: 'android',     // Android XML 更常见; XAML 通常会明确标 ```xaml
+  xaml: 'xaml',
+  qml: 'qml',
+  python: 'python', py: 'python',
+  c: 'c', cpp: 'c', 'c++': 'c', h: 'c',
+};
+
+/**
+ * 从 LLM 回复中提取 UI 代码块 (支持所有 11 款翻译器语言)
+ *
+ * 提取策略 (按优先级):
+ *   1. fenced 代码块 ```lang ... ``` — 用 BLOCK_LANG_TO_TRANSLATOR 映射语言
+ *   2. 映射表没匹配 → 用 detectLanguage 自动检测代码归属
+ *   3. 整段是 HTML (以 < 开头) → 当作 HTML 处理
+ *
+ * @returns { code, lang } 或 null (无 UI 代码)
+ */
+function extractCodeBlock(text: string): { code: string; lang: string } | null {
   if (!text) return null;
 
-  // 1. fenced 代码块 ```html ... ```
-  const fencedRe = /```(?:html|htm)\s*\n([\s\S]*?)```/i;
-  const match = fencedRe.exec(text);
-  if (match && match[1]) {
-    return match[1].trim();
+  // 1. 扫描所有 fenced 代码块, 收集 UI 相关的候选
+  const fencedRe = /```(\w+)\s*\n([\s\S]*?)```/g;
+  let match: RegExpExecArray | null;
+  while ((match = fencedRe.exec(text)) !== null) {
+    const blockLang = match[1].toLowerCase();
+    const code = match[2].trim();
+    if (!code) continue;
+
+    // 1a. 映射表直接命中
+    const translatorLang = BLOCK_LANG_TO_TRANSLATOR[blockLang];
+    if (translatorLang && isLanguageSupported(translatorLang)) {
+      return { code, lang: translatorLang };
+    }
+
+    // 1b. 映射表没命中 → 用 detectLanguage 自动检测这段代码
+    const detected = detectLanguage(code);
+    if (detected) {
+      return { code, lang: detected.language };
+    }
   }
 
   // 2. 整段是 HTML (以 < 开头, 且不是 JSX <Component />)
   const trimmed = text.trim();
   if (/^<(?:!doctype\s+html|html|div|section|article|body|p|span|button|input|form|ul|ol|li|h[1-6]|nav|header|footer|main)\b/i.test(trimmed)) {
-    return trimmed;
+    return { code: trimmed, lang: 'html' };
   }
 
   return null;
 }
 
 /**
- * 2026-07-09: 本地翻译 HTML 代码块为 Universal AST 并推到画布
+ * 本地翻译代码块为 Universal AST 并推到画布 (支持所有 11 款翻译器)
  *
- * 当 LLM 回复包含 HTML 代码块时:
- *   1. 用 htmlTranslator 本地解析成 UniversalNode (不调 LLM, 零 token 消耗)
+ * 当 LLM 回复包含 UI 代码块 (任意语言) 时:
+ *   1. 用对应的本地翻译器解析成 UniversalNode (不调 LLM, 零 token 消耗)
  *   2. POST 到 Node.js relay /api/canvas/relay/push-ui
  *   3. Node.js 转发到 Flutter /render
  *
  * @returns true 表示已本地翻译并推送, false 表示不适用 (需回退到 LLM 预览流)
  */
-async function tryLocalHtmlTranslateAndPush(
+async function tryLocalTranslateAndPush(
   text: string,
   chatSessionId: string
 ): Promise<boolean> {
-  const htmlCode = extractHtmlCodeBlock(text);
-  if (!htmlCode) return false;
+  const block = extractCodeBlock(text);
+  if (!block) return false;
 
-  // 确认翻译器可用
-  if (!isLanguageSupported('html')) return false;
+  const { code, lang } = block;
+  if (!isLanguageSupported(lang)) return false;
 
   try {
-    const ast = translateCode(htmlCode, 'html');
+    const ast = translateCode(code, lang);
 
     // 推到 Node.js relay → Flutter
     const resp = await fetch('/api/canvas/relay/push-ui', {
@@ -275,23 +314,24 @@ async function tryLocalHtmlTranslateAndPush(
       body: JSON.stringify({
         sessionId: chatSessionId,
         dsl: ast,
-        language: 'html',
+        language: lang,
       }),
     });
 
     if (!resp.ok) {
-      console.warn('[tryLocalHtmlTranslateAndPush] relay push-ui 失败:', resp.status);
+      console.warn('[tryLocalTranslateAndPush] relay push-ui 失败:', resp.status);
       return false;
     }
 
     const data = await resp.json();
-    console.log('[tryLocalHtmlTranslateAndPush] 已推送到画布 (本地翻译, 零 LLM 调用)', {
+    console.log('[tryLocalTranslateAndPush] 已推送到画布 (本地翻译, 零 LLM 调用)', {
       sessionId: chatSessionId,
+      language: lang,
       success: data.success,
     });
     return data.success === true;
   } catch (err) {
-    console.warn('[tryLocalHtmlTranslateAndPush] 翻译或推送失败, 将回退到 LLM 预览流:', err);
+    console.warn('[tryLocalTranslateAndPush] 翻译或推送失败, 将回退到 LLM 预览流:', err);
     return false;
   }
 }
@@ -929,8 +969,8 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
             //   1. LLM 在 system prompt 指示下加 <<<PREVIEW_NEEDED:语言>>> → 用 LLM 指定的语言
             //   2. LLM 忘了标记, 但回复里有 UI 代码块 → 前端强制检测, 自动触发
             //
-            // 2026-07-09 新增: HTML 本地翻译优先路径
-            //   - 如果回复包含 HTML 代码块, 直接用本地 cheerio 翻译器转成 AST 推到画布
+            // 2026-07-09 新增: 本地翻译优先路径 (支持所有 11 款翻译器)
+            //   - 如果回复包含 UI 代码块 (任意语言), 直接用本地翻译器转成 AST 推到画布
             //   - 零 LLM 调用, 零 token 消耗
             //   - 失败时回退到原来的 LLM 预览流
             const previewMatch = accumulatedText.match(/<<<PREVIEW_NEEDED:(\w+)>>>/);
@@ -938,9 +978,9 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
             let previewLang = '';
             let cleanText = accumulatedText;
 
-            // 优先路径: HTML 本地翻译 (不调 LLM)
-            const localHtmlPushed = await tryLocalHtmlTranslateAndPush(accumulatedText, activeChatId);
-            if (localHtmlPushed) {
+            // 优先路径: 本地翻译 (不调 LLM, 支持所有翻译器语言)
+            const localPushed = await tryLocalTranslateAndPush(accumulatedText, activeChatId);
+            if (localPushed) {
               // 本地翻译成功, 不再触发 LLM 预览流
               shouldPreview = false;
               // 如果有 LLM 标记, 仍然从回复中移除标记文本

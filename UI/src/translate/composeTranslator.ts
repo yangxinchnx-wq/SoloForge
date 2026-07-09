@@ -158,6 +158,32 @@ class KotlinParser {
     return t;
   }
 
+  /** 跳过 balanced (...) 括号对 (从当前 pos 的 ( 开始) */
+  private skipBalancedParens(): void {
+    if (this.peek()?.value !== '(') return;
+    this.consume(); // (
+    let depth = 1;
+    while (this.peek() && depth > 0) {
+      const v = this.peek()!.value;
+      if (v === '(') depth++;
+      else if (v === ')') depth--;
+      this.consume();
+    }
+  }
+
+  /** 跳过 balanced { ... } 大括号对 (从当前 pos 的 { 开始) */
+  private skipBalancedBraces(): void {
+    if (this.peek()?.value !== '{') return;
+    this.consume(); // {
+    let depth = 1;
+    while (this.peek() && depth > 0) {
+      const v = this.peek()!.value;
+      if (v === '{') depth++;
+      else if (v === '}') depth--;
+      this.consume();
+    }
+  }
+
   parseValue(): KotlinValue {
     const t = this.peek();
     if (!t) return { kind: 'literal', value: null };
@@ -179,15 +205,41 @@ class KotlinParser {
       return { kind: 'literal', value: null };
     }
 
+    // lambda / 代码块 { ... } — 跳过 (如 onClick = { }, label = { Text("x") })
+    if (t.value === '{') {
+      this.skipBalancedBraces();
+      return { kind: 'literal', value: null };
+    }
+
     if (t.type === 'ident') {
       const name = t.value;
       this.consume();
 
       // Color.Red (成员访问, 简化为 ident "Color.Red")
-      if (this.peek()?.value === '.' && /[A-Z]/.test(this.peek(1)?.value || '')) {
+      // 注意: 只检查首字符大写, 避免 Modifier.fillMaxSize 被误匹配 (fillMaxSize 含 M/S 大写但首字符小写)
+      if (this.peek()?.value === '.' && /^[A-Z]/.test(this.peek(1)?.value || '')) {
         this.consume(); // .
         const prop = this.consume().value;
         return { kind: 'ident', name: `${name}.${prop}` };
+      }
+
+      // 方法链: Modifier.fillMaxSize().padding(16.dp).background(Color.Red)
+      // 消费整个 .method(...) 链, 避免破坏外层 parseCall 的参数解析
+      // (modifier 细节由 parseModifierFromText 从原始代码正则提取, 这里只需跳过)
+      if (this.peek()?.value === '.') {
+        // 把整个链当成一个 ident 返回 (name 保留首段, 仅供判断)
+        // 实际值不重要 — modifier 通过 parseModifierFromText 从 rawCode 提取
+        let chainName = name;
+        while (this.peek()?.value === '.') {
+          this.consume(); // .
+          const method = this.consume().value; // method name
+          chainName += `.${method}`;
+          // 如果后面跟 (), 消费 balanced 括号
+          if (this.peek()?.value === '(') {
+            this.skipBalancedParens();
+          }
+        }
+        return { kind: 'ident', name: chainName };
       }
 
       if (this.peek()?.value === '(') {
@@ -277,14 +329,6 @@ class KotlinParser {
       const callVal = this.parseCall(typeName);
       node.positionalArgs = callVal.positionalArgs;
       node.namedArgs = callVal.namedArgs;
-
-      // 提取 modifier 参数
-      if (node.namedArgs.modifier?.kind === 'call' && node.namedArgs.modifier.name === 'Modifier') {
-        // 简化: Modifier.padding(8.dp).background(Color.Red)
-        // 这里 parseValue 已经把 Modifier 当 ident 消费了, 需要重新解析
-        // 实际上上面 parseValue 会把 Modifier.padding 当成 ident 处理
-        // 为简化, 这里跳过 modifier 解析 (后面用 trailing lambda 的 modifier 提取)
-      }
     }
 
     // 尾随 lambda { ... }
@@ -596,9 +640,17 @@ function findRootComposable(tokens: Token[], rawCode: string): UniversalNode | n
   const parser = new KotlinParser(tokens);
 
   // 策略 1: 找 @Composable fun Xxx() { ... } 内部的第一个 Composable
+  // 注意: @Composable 在 tokenizer 里是 @ (punct) + Composable (ident) 两个 token
   for (let i = 0; i < tokens.length; i++) {
-    if (tokens[i].value === '@Composable' || (tokens[i].value === 'fun' && i > 0 && tokens[i - 1].value === '@Composable')) {
-      // 跳到函数体 { 后面
+    const isComposableAnnotation =
+      (tokens[i].value === '@' && tokens[i + 1]?.value === 'Composable') ||
+      tokens[i].value === '@Composable';
+    const isFunAfterAnnotation =
+      tokens[i].value === 'fun' && i > 0 &&
+      ((tokens[i - 1].value === 'Composable' && i > 1 && tokens[i - 2].value === '@') ||
+       tokens[i - 1].value === '@Composable');
+    if (isComposableAnnotation || isFunAfterAnnotation) {
+      // 跳到函数体 { 后面 (跳过 fun Name() )
       let j = i;
       while (j < tokens.length && tokens[j].value !== '{') j++;
       j++;
