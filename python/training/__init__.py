@@ -1,1 +1,0 @@
-# SoloForge Training Package
