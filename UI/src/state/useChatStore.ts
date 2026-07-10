@@ -108,13 +108,16 @@ function createStreamBridge(chatId: string, mainModel: string, userInput: string
           status: 'running',
         });
         // 流送区新格式: "副模型 → agent → 任务"
-        // content = 副模型名 (副模型是调用者), detail = agent 名 (agent 是被调用资源)
+        // content = 副模型名 (映射到 SubTask.assigneeModel, ModelDelegationTag.fromModel)
+        // detail = 任务描述 (映射到 SubTask.description, ModelDelegationTag.task)
+        // agent 名/头像通过 useAgentName/useAgentAvatar 实时查询, 不放在事件里
         const effectiveSubModel = javaSubModel ?? mainModel;
+        const taskDesc = userInput.length > 60 ? userInput.slice(0, 60) + '...' : userInput;
         ctx.pushStreamEvent('subtask_created', {
           agentId: javaAgentId ?? 'main-model',
           avatar: javaAgentAvatar,
           content: effectiveSubModel,
-          detail: javaAgentName ?? '生成回复',
+          detail: taskDesc,
           status: 'pending',
           subTaskId: singleModelSubId,
         });

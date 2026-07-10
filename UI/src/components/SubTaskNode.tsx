@@ -85,7 +85,7 @@ function SubTaskNodeImpl({ subTask, mainModel, chatId, defaultOpen = true }: Sub
       {subTask.assigneeModel && (
         <div className="px-3 pb-1">
           <ModelDelegationTag
-            fromModel={subTask.content || mainModel}
+            fromModel={subTask.assigneeModel || mainModel}
             task={subTask.description}
             agentName={agentName}
             agentAvatar={agentAvatar}

@@ -11,11 +11,20 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
   if (typeof require !== "undefined") return require.apply(this, arguments);
   throw Error('Dynamic require of "' + x + '" is not supported');
 });
-var __esm = (fn, res) => function __init() {
-  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+var __esm = (fn, res, err) => function __init() {
+  if (err) throw err[0];
+  try {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  } catch (e) {
+    throw err = [e], e;
+  }
 };
 var __commonJS = (cb, mod) => function __require2() {
-  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  try {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  } catch (e) {
+    throw mod = 0, e;
+  }
 };
 var __export = (target, all) => {
   for (var name in all)
@@ -38,10 +47,10 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// src/core/logger/index.ts
+// ../src/core/logger/index.ts
 var SoloForgeLogger, logger;
 var init_logger = __esm({
-  "src/core/logger/index.ts"() {
+  "../src/core/logger/index.ts"() {
     SoloForgeLogger = class {
       minLevel = "INFO" /* INFO */;
       levelOrder = {
@@ -110,13 +119,13 @@ var init_logger = __esm({
   }
 });
 
-// src/core/events/court-events.ts
+// ../src/core/events/court-events.ts
 var init_court_events = __esm({
-  "src/core/events/court-events.ts"() {
+  "../src/core/events/court-events.ts"() {
   }
 });
 
-// src/llm/modelCapabilities.ts
+// ../src/llm/modelCapabilities.ts
 var modelCapabilities_exports = {};
 __export(modelCapabilities_exports, {
   describeCapabilities: () => describeCapabilities,
@@ -277,7 +286,7 @@ function describeCapabilities(modelId) {
 }
 var moduleName, BUILTIN_DB, PREFIX_RULES, probeCache, manualOverrides, CAPABILITIES_FILE;
 var init_modelCapabilities = __esm({
-  "src/llm/modelCapabilities.ts"() {
+  "../src/llm/modelCapabilities.ts"() {
     init_logger();
     moduleName = "ModelCapabilities";
     BUILTIN_DB = {
@@ -350,7 +359,7 @@ var init_modelCapabilities = __esm({
   }
 });
 
-// src/core/events/runtime-events.ts
+// ../src/core/events/runtime-events.ts
 var runtime_events_exports = {};
 __export(runtime_events_exports, {
   RuntimeEvent: () => RuntimeEvent,
@@ -358,7 +367,7 @@ __export(runtime_events_exports, {
 });
 var RuntimeEvent, runtime_events_default;
 var init_runtime_events = __esm({
-  "src/core/events/runtime-events.ts"() {
+  "../src/core/events/runtime-events.ts"() {
     RuntimeEvent = /* @__PURE__ */ ((RuntimeEvent2) => {
       RuntimeEvent2["KernelInitialized"] = "kernel.initialized";
       RuntimeEvent2["RuntimeModeChanged"] = "runtime.mode.changed";
@@ -391,9 +400,9 @@ var init_runtime_events = __esm({
   }
 });
 
-// node_modules/@ioredis/commands/built/commands.json
+// ../node_modules/@ioredis/commands/built/commands.json
 var require_commands = __commonJS({
-  "node_modules/@ioredis/commands/built/commands.json"(exports, module) {
+  "../node_modules/@ioredis/commands/built/commands.json"(exports, module) {
     module.exports = {
       vadd: {
         arity: -5,
@@ -3321,9 +3330,9 @@ var require_commands = __commonJS({
   }
 });
 
-// node_modules/@ioredis/commands/built/index.js
+// ../node_modules/@ioredis/commands/built/index.js
 var require_built = __commonJS({
-  "node_modules/@ioredis/commands/built/index.js"(exports) {
+  "../node_modules/@ioredis/commands/built/index.js"(exports) {
     "use strict";
     var __importDefault = exports && exports.__importDefault || function(mod) {
       return mod && mod.__esModule ? mod : { "default": mod };
@@ -3513,9 +3522,9 @@ var require_built = __commonJS({
   }
 });
 
-// node_modules/standard-as-callback/built/utils.js
+// ../node_modules/standard-as-callback/built/utils.js
 var require_utils = __commonJS({
-  "node_modules/standard-as-callback/built/utils.js"(exports) {
+  "../node_modules/standard-as-callback/built/utils.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.tryCatch = exports.errorObj = void 0;
@@ -3539,9 +3548,9 @@ var require_utils = __commonJS({
   }
 });
 
-// node_modules/standard-as-callback/built/index.js
+// ../node_modules/standard-as-callback/built/index.js
 var require_built2 = __commonJS({
-  "node_modules/standard-as-callback/built/index.js"(exports) {
+  "../node_modules/standard-as-callback/built/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var utils_1 = require_utils();
@@ -3580,9 +3589,9 @@ var require_built2 = __commonJS({
   }
 });
 
-// node_modules/redis-errors/lib/old.js
+// ../node_modules/redis-errors/lib/old.js
 var require_old = __commonJS({
-  "node_modules/redis-errors/lib/old.js"(exports, module) {
+  "../node_modules/redis-errors/lib/old.js"(exports, module) {
     "use strict";
     var assert = __require("assert");
     var util = __require("util");
@@ -3676,9 +3685,9 @@ var require_old = __commonJS({
   }
 });
 
-// node_modules/redis-errors/lib/modern.js
+// ../node_modules/redis-errors/lib/modern.js
 var require_modern = __commonJS({
-  "node_modules/redis-errors/lib/modern.js"(exports, module) {
+  "../node_modules/redis-errors/lib/modern.js"(exports, module) {
     "use strict";
     var assert = __require("assert");
     var RedisError = class extends Error {
@@ -3732,18 +3741,18 @@ var require_modern = __commonJS({
   }
 });
 
-// node_modules/redis-errors/index.js
+// ../node_modules/redis-errors/index.js
 var require_redis_errors = __commonJS({
-  "node_modules/redis-errors/index.js"(exports, module) {
+  "../node_modules/redis-errors/index.js"(exports, module) {
     "use strict";
     var Errors = process.version.charCodeAt(1) < 55 && process.version.charCodeAt(2) === 46 ? require_old() : require_modern();
     module.exports = Errors;
   }
 });
 
-// node_modules/cluster-key-slot/lib/index.js
+// ../node_modules/cluster-key-slot/lib/index.js
 var require_lib = __commonJS({
-  "node_modules/cluster-key-slot/lib/index.js"(exports, module) {
+  "../node_modules/cluster-key-slot/lib/index.js"(exports, module) {
     var lookup = [
       0,
       4129,
@@ -4064,9 +4073,9 @@ var require_lib = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/utils/defaults.js
+// ../node_modules/ioredis/built/utils/defaults.js
 var require_defaults = __commonJS({
-  "node_modules/ioredis/built/utils/defaults.js"(exports) {
+  "../node_modules/ioredis/built/utils/defaults.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.defaults = void 0;
@@ -4131,9 +4140,9 @@ var require_defaults = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/utils/isArguments.js
+// ../node_modules/ioredis/built/utils/isArguments.js
 var require_isArguments = __commonJS({
-  "node_modules/ioredis/built/utils/isArguments.js"(exports) {
+  "../node_modules/ioredis/built/utils/isArguments.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.isArguments = void 0;
@@ -4150,9 +4159,9 @@ var require_isArguments = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/utils/lodash.js
+// ../node_modules/ioredis/built/utils/lodash.js
 var require_lodash = __commonJS({
-  "node_modules/ioredis/built/utils/lodash.js"(exports) {
+  "../node_modules/ioredis/built/utils/lodash.js"(exports) {
     "use strict";
     var __createBinding = exports && exports.__createBinding || (Object.create ? (function(o, m, k, k2) {
       if (k2 === void 0) k2 = k;
@@ -4176,9 +4185,9 @@ var require_lodash = __commonJS({
   }
 });
 
-// node_modules/ms/index.js
+// ../node_modules/ms/index.js
 var require_ms = __commonJS({
-  "node_modules/ms/index.js"(exports, module) {
+  "../node_modules/ms/index.js"(exports, module) {
     var s = 1e3;
     var m = s * 60;
     var h = m * 60;
@@ -4292,9 +4301,9 @@ var require_ms = __commonJS({
   }
 });
 
-// node_modules/debug/src/common.js
+// ../node_modules/debug/src/common.js
 var require_common = __commonJS({
-  "node_modules/debug/src/common.js"(exports, module) {
+  "../node_modules/debug/src/common.js"(exports, module) {
     function setup(env) {
       createDebug.debug = createDebug;
       createDebug.default = createDebug;
@@ -4469,9 +4478,9 @@ var require_common = __commonJS({
   }
 });
 
-// node_modules/debug/src/browser.js
+// ../node_modules/debug/src/browser.js
 var require_browser = __commonJS({
-  "node_modules/debug/src/browser.js"(exports, module) {
+  "../node_modules/debug/src/browser.js"(exports, module) {
     exports.formatArgs = formatArgs;
     exports.save = save;
     exports.load = load;
@@ -4639,9 +4648,9 @@ var require_browser = __commonJS({
   }
 });
 
-// node_modules/debug/src/node.js
+// ../node_modules/debug/src/node.js
 var require_node = __commonJS({
-  "node_modules/debug/src/node.js"(exports, module) {
+  "../node_modules/debug/src/node.js"(exports, module) {
     var tty = __require("tty");
     var util = __require("util");
     exports.init = init;
@@ -4813,9 +4822,9 @@ var require_node = __commonJS({
   }
 });
 
-// node_modules/debug/src/index.js
+// ../node_modules/debug/src/index.js
 var require_src = __commonJS({
-  "node_modules/debug/src/index.js"(exports, module) {
+  "../node_modules/debug/src/index.js"(exports, module) {
     if (typeof process === "undefined" || process.type === "renderer" || process.browser === true || process.__nwjs) {
       module.exports = require_browser();
     } else {
@@ -4824,9 +4833,9 @@ var require_src = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/utils/debug.js
+// ../node_modules/ioredis/built/utils/debug.js
 var require_debug = __commonJS({
-  "node_modules/ioredis/built/utils/debug.js"(exports) {
+  "../node_modules/ioredis/built/utils/debug.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.genRedactedString = exports.getStringValue = exports.MAX_ARGUMENT_LENGTH = void 0;
@@ -4910,9 +4919,9 @@ var require_debug = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/constants/TLSProfiles.js
+// ../node_modules/ioredis/built/constants/TLSProfiles.js
 var require_TLSProfiles = __commonJS({
-  "node_modules/ioredis/built/constants/TLSProfiles.js"(exports) {
+  "../node_modules/ioredis/built/constants/TLSProfiles.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var RedisCloudCA = `-----BEGIN CERTIFICATE-----
@@ -5062,9 +5071,9 @@ WD9f
   }
 });
 
-// node_modules/ioredis/built/utils/index.js
+// ../node_modules/ioredis/built/utils/index.js
 var require_utils2 = __commonJS({
-  "node_modules/ioredis/built/utils/index.js"(exports) {
+  "../node_modules/ioredis/built/utils/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.noop = exports.isArguments = exports.defaults = exports.Debug = exports.getPackageMeta = exports.zipMap = exports.CONNECTION_CLOSED_ERROR_MSG = exports.shuffle = exports.sample = exports.resolveTLSProfile = exports.parseURL = exports.optimizeErrorStack = exports.toArg = exports.convertMapToArray = exports.convertObjectToArray = exports.timeout = exports.packObject = exports.isInt = exports.wrapMultiResult = exports.convertBufferToString = void 0;
@@ -5316,9 +5325,9 @@ var require_utils2 = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/utils/argumentParsers.js
+// ../node_modules/ioredis/built/utils/argumentParsers.js
 var require_argumentParsers = __commonJS({
-  "node_modules/ioredis/built/utils/argumentParsers.js"(exports) {
+  "../node_modules/ioredis/built/utils/argumentParsers.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.parseBlockOption = exports.parseSecondsArgument = void 0;
@@ -5375,9 +5384,9 @@ var require_argumentParsers = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/Command.js
+// ../node_modules/ioredis/built/Command.js
 var require_Command = __commonJS({
-  "node_modules/ioredis/built/Command.js"(exports) {
+  "../node_modules/ioredis/built/Command.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var commands_1 = require_built();
@@ -5771,9 +5780,9 @@ var require_Command = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/errors/ClusterAllFailedError.js
+// ../node_modules/ioredis/built/errors/ClusterAllFailedError.js
 var require_ClusterAllFailedError = __commonJS({
-  "node_modules/ioredis/built/errors/ClusterAllFailedError.js"(exports) {
+  "../node_modules/ioredis/built/errors/ClusterAllFailedError.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var redis_errors_1 = require_redis_errors();
@@ -5792,9 +5801,9 @@ var require_ClusterAllFailedError = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/ScanStream.js
+// ../node_modules/ioredis/built/ScanStream.js
 var require_ScanStream = __commonJS({
-  "node_modules/ioredis/built/ScanStream.js"(exports) {
+  "../node_modules/ioredis/built/ScanStream.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var stream_1 = __require("stream");
@@ -5846,9 +5855,9 @@ var require_ScanStream = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/autoPipelining.js
+// ../node_modules/ioredis/built/autoPipelining.js
 var require_autoPipelining = __commonJS({
-  "node_modules/ioredis/built/autoPipelining.js"(exports) {
+  "../node_modules/ioredis/built/autoPipelining.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.executeWithAutoPipelining = exports.getFirstValueInFlattenedArray = exports.shouldUseAutoPipelining = exports.notAllowedAutoPipelineCommands = exports.kCallbacks = exports.kExec = void 0;
@@ -5986,9 +5995,9 @@ var require_autoPipelining = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/Script.js
+// ../node_modules/ioredis/built/Script.js
 var require_Script = __commonJS({
-  "node_modules/ioredis/built/Script.js"(exports) {
+  "../node_modules/ioredis/built/Script.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var crypto_1 = __require("crypto");
@@ -6051,9 +6060,9 @@ var require_Script = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/utils/Commander.js
+// ../node_modules/ioredis/built/utils/Commander.js
 var require_Commander = __commonJS({
-  "node_modules/ioredis/built/utils/Commander.js"(exports) {
+  "../node_modules/ioredis/built/utils/Commander.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var commands_1 = require_built();
@@ -6167,9 +6176,9 @@ var require_Commander = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/Pipeline.js
+// ../node_modules/ioredis/built/Pipeline.js
 var require_Pipeline = __commonJS({
-  "node_modules/ioredis/built/Pipeline.js"(exports) {
+  "../node_modules/ioredis/built/Pipeline.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var calculateSlot = require_lib();
@@ -6487,9 +6496,9 @@ var require_Pipeline = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/tracing.js
+// ../node_modules/ioredis/built/tracing.js
 var require_tracing = __commonJS({
-  "node_modules/ioredis/built/tracing.js"(exports) {
+  "../node_modules/ioredis/built/tracing.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.traceConnect = exports.traceBatch = exports.traceCommand = exports.sanitizeArgs = void 0;
@@ -6568,9 +6577,9 @@ var require_tracing = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/transaction.js
+// ../node_modules/ioredis/built/transaction.js
 var require_transaction = __commonJS({
-  "node_modules/ioredis/built/transaction.js"(exports) {
+  "../node_modules/ioredis/built/transaction.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.addTransactionSupport = void 0;
@@ -6664,9 +6673,9 @@ var require_transaction = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/utils/applyMixin.js
+// ../node_modules/ioredis/built/utils/applyMixin.js
 var require_applyMixin = __commonJS({
-  "node_modules/ioredis/built/utils/applyMixin.js"(exports) {
+  "../node_modules/ioredis/built/utils/applyMixin.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     function applyMixin(derivedConstructor, mixinConstructor) {
@@ -6678,9 +6687,9 @@ var require_applyMixin = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/cluster/ClusterOptions.js
+// ../node_modules/ioredis/built/cluster/ClusterOptions.js
 var require_ClusterOptions = __commonJS({
-  "node_modules/ioredis/built/cluster/ClusterOptions.js"(exports) {
+  "../node_modules/ioredis/built/cluster/ClusterOptions.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.DEFAULT_CLUSTER_OPTIONS = void 0;
@@ -6706,9 +6715,9 @@ var require_ClusterOptions = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/cluster/util.js
+// ../node_modules/ioredis/built/cluster/util.js
 var require_util = __commonJS({
-  "node_modules/ioredis/built/cluster/util.js"(exports) {
+  "../node_modules/ioredis/built/cluster/util.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getConnectionName = exports.weightSrvRecords = exports.groupSrvRecords = exports.getUniqueHostnamesFromOptions = exports.normalizeNodeOptions = exports.nodeKeyToRedisOptions = exports.getNodeKey = void 0;
@@ -6806,9 +6815,9 @@ var require_util = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/cluster/ClusterSubscriber.js
+// ../node_modules/ioredis/built/cluster/ClusterSubscriber.js
 var require_ClusterSubscriber = __commonJS({
-  "node_modules/ioredis/built/cluster/ClusterSubscriber.js"(exports) {
+  "../node_modules/ioredis/built/cluster/ClusterSubscriber.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var util_1 = require_util();
@@ -6992,9 +7001,9 @@ var require_ClusterSubscriber = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/cluster/ConnectionPool.js
+// ../node_modules/ioredis/built/cluster/ConnectionPool.js
 var require_ConnectionPool = __commonJS({
-  "node_modules/ioredis/built/cluster/ConnectionPool.js"(exports) {
+  "../node_modules/ioredis/built/cluster/ConnectionPool.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var events_1 = __require("events");
@@ -7145,9 +7154,9 @@ var require_ConnectionPool = __commonJS({
   }
 });
 
-// node_modules/denque/index.js
+// ../node_modules/denque/index.js
 var require_denque = __commonJS({
-  "node_modules/denque/index.js"(exports, module) {
+  "../node_modules/denque/index.js"(exports, module) {
     "use strict";
     function Denque(array, options) {
       var options = options || {};
@@ -7460,9 +7469,9 @@ var require_denque = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/cluster/DelayQueue.js
+// ../node_modules/ioredis/built/cluster/DelayQueue.js
 var require_DelayQueue = __commonJS({
-  "node_modules/ioredis/built/cluster/DelayQueue.js"(exports) {
+  "../node_modules/ioredis/built/cluster/DelayQueue.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var utils_1 = require_utils2();
@@ -7516,9 +7525,9 @@ var require_DelayQueue = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/cluster/ShardedSubscriber.js
+// ../node_modules/ioredis/built/cluster/ShardedSubscriber.js
 var require_ShardedSubscriber = __commonJS({
-  "node_modules/ioredis/built/cluster/ShardedSubscriber.js"(exports) {
+  "../node_modules/ioredis/built/cluster/ShardedSubscriber.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var util_1 = require_util();
@@ -7661,9 +7670,9 @@ var require_ShardedSubscriber = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/cluster/ClusterSubscriberGroup.js
+// ../node_modules/ioredis/built/cluster/ClusterSubscriberGroup.js
 var require_ClusterSubscriberGroup = __commonJS({
-  "node_modules/ioredis/built/cluster/ClusterSubscriberGroup.js"(exports) {
+  "../node_modules/ioredis/built/cluster/ClusterSubscriberGroup.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var utils_1 = require_utils2();
@@ -7977,9 +7986,9 @@ var require_ClusterSubscriberGroup = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/cluster/index.js
+// ../node_modules/ioredis/built/cluster/index.js
 var require_cluster = __commonJS({
-  "node_modules/ioredis/built/cluster/index.js"(exports) {
+  "../node_modules/ioredis/built/cluster/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var commands_1 = require_built();
@@ -8824,9 +8833,9 @@ var require_cluster = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/connectors/AbstractConnector.js
+// ../node_modules/ioredis/built/connectors/AbstractConnector.js
 var require_AbstractConnector = __commonJS({
-  "node_modules/ioredis/built/connectors/AbstractConnector.js"(exports) {
+  "../node_modules/ioredis/built/connectors/AbstractConnector.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var utils_1 = require_utils2();
@@ -8856,9 +8865,9 @@ var require_AbstractConnector = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/connectors/StandaloneConnector.js
+// ../node_modules/ioredis/built/connectors/StandaloneConnector.js
 var require_StandaloneConnector = __commonJS({
-  "node_modules/ioredis/built/connectors/StandaloneConnector.js"(exports) {
+  "../node_modules/ioredis/built/connectors/StandaloneConnector.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var net_1 = __require("net");
@@ -8921,9 +8930,9 @@ var require_StandaloneConnector = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/connectors/SentinelConnector/SentinelIterator.js
+// ../node_modules/ioredis/built/connectors/SentinelConnector/SentinelIterator.js
 var require_SentinelIterator = __commonJS({
-  "node_modules/ioredis/built/connectors/SentinelConnector/SentinelIterator.js"(exports) {
+  "../node_modules/ioredis/built/connectors/SentinelConnector/SentinelIterator.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     function isSentinelEql(a, b) {
@@ -8961,9 +8970,9 @@ var require_SentinelIterator = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/connectors/SentinelConnector/FailoverDetector.js
+// ../node_modules/ioredis/built/connectors/SentinelConnector/FailoverDetector.js
 var require_FailoverDetector = __commonJS({
-  "node_modules/ioredis/built/connectors/SentinelConnector/FailoverDetector.js"(exports) {
+  "../node_modules/ioredis/built/connectors/SentinelConnector/FailoverDetector.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.FailoverDetector = void 0;
@@ -9009,9 +9018,9 @@ var require_FailoverDetector = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/connectors/SentinelConnector/index.js
+// ../node_modules/ioredis/built/connectors/SentinelConnector/index.js
 var require_SentinelConnector = __commonJS({
-  "node_modules/ioredis/built/connectors/SentinelConnector/index.js"(exports) {
+  "../node_modules/ioredis/built/connectors/SentinelConnector/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.SentinelIterator = void 0;
@@ -9275,9 +9284,9 @@ var require_SentinelConnector = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/connectors/index.js
+// ../node_modules/ioredis/built/connectors/index.js
 var require_connectors = __commonJS({
-  "node_modules/ioredis/built/connectors/index.js"(exports) {
+  "../node_modules/ioredis/built/connectors/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.SentinelConnector = exports.StandaloneConnector = void 0;
@@ -9288,9 +9297,9 @@ var require_connectors = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/errors/MaxRetriesPerRequestError.js
+// ../node_modules/ioredis/built/errors/MaxRetriesPerRequestError.js
 var require_MaxRetriesPerRequestError = __commonJS({
-  "node_modules/ioredis/built/errors/MaxRetriesPerRequestError.js"(exports) {
+  "../node_modules/ioredis/built/errors/MaxRetriesPerRequestError.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var redis_errors_1 = require_redis_errors();
@@ -9308,9 +9317,9 @@ var require_MaxRetriesPerRequestError = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/errors/index.js
+// ../node_modules/ioredis/built/errors/index.js
 var require_errors = __commonJS({
-  "node_modules/ioredis/built/errors/index.js"(exports) {
+  "../node_modules/ioredis/built/errors/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.MaxRetriesPerRequestError = void 0;
@@ -9319,9 +9328,9 @@ var require_errors = __commonJS({
   }
 });
 
-// node_modules/redis-parser/lib/parser.js
+// ../node_modules/redis-parser/lib/parser.js
 var require_parser = __commonJS({
-  "node_modules/redis-parser/lib/parser.js"(exports, module) {
+  "../node_modules/redis-parser/lib/parser.js"(exports, module) {
     "use strict";
     var Buffer2 = __require("buffer").Buffer;
     var StringDecoder = __require("string_decoder").StringDecoder;
@@ -9720,17 +9729,17 @@ var require_parser = __commonJS({
   }
 });
 
-// node_modules/redis-parser/index.js
+// ../node_modules/redis-parser/index.js
 var require_redis_parser = __commonJS({
-  "node_modules/redis-parser/index.js"(exports, module) {
+  "../node_modules/redis-parser/index.js"(exports, module) {
     "use strict";
     module.exports = require_parser();
   }
 });
 
-// node_modules/ioredis/built/SubscriptionSet.js
+// ../node_modules/ioredis/built/SubscriptionSet.js
 var require_SubscriptionSet = __commonJS({
-  "node_modules/ioredis/built/SubscriptionSet.js"(exports) {
+  "../node_modules/ioredis/built/SubscriptionSet.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var SubscriptionSet = class {
@@ -9770,9 +9779,9 @@ var require_SubscriptionSet = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/DataHandler.js
+// ../node_modules/ioredis/built/DataHandler.js
 var require_DataHandler = __commonJS({
-  "node_modules/ioredis/built/DataHandler.js"(exports) {
+  "../node_modules/ioredis/built/DataHandler.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var Command_1 = require_Command();
@@ -9978,9 +9987,9 @@ var require_DataHandler = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/redis/event_handler.js
+// ../node_modules/ioredis/built/redis/event_handler.js
 var require_event_handler = __commonJS({
-  "node_modules/ioredis/built/redis/event_handler.js"(exports) {
+  "../node_modules/ioredis/built/redis/event_handler.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.readyHandler = exports.errorHandler = exports.closeHandler = exports.connectHandler = void 0;
@@ -10258,9 +10267,9 @@ var require_event_handler = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/redis/RedisOptions.js
+// ../node_modules/ioredis/built/redis/RedisOptions.js
 var require_RedisOptions = __commonJS({
-  "node_modules/ioredis/built/redis/RedisOptions.js"(exports) {
+  "../node_modules/ioredis/built/redis/RedisOptions.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.DEFAULT_REDIS_OPTIONS = void 0;
@@ -10317,9 +10326,9 @@ var require_RedisOptions = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/Redis.js
+// ../node_modules/ioredis/built/Redis.js
 var require_Redis = __commonJS({
-  "node_modules/ioredis/built/Redis.js"(exports) {
+  "../node_modules/ioredis/built/Redis.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var commands_1 = require_built();
@@ -11014,9 +11023,9 @@ var require_Redis = __commonJS({
   }
 });
 
-// node_modules/ioredis/built/index.js
+// ../node_modules/ioredis/built/index.js
 var require_built3 = __commonJS({
-  "node_modules/ioredis/built/index.js"(exports, module) {
+  "../node_modules/ioredis/built/index.js"(exports, module) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.print = exports.ReplyError = exports.SentinelIterator = exports.SentinelConnector = exports.AbstractConnector = exports.Pipeline = exports.ScanStream = exports.Command = exports.Cluster = exports.Redis = exports.default = void 0;
@@ -11077,7 +11086,7 @@ var require_built3 = __commonJS({
   }
 });
 
-// src/data/garnet/client.ts
+// ../src/data/garnet/client.ts
 var client_exports = {};
 __export(client_exports, {
   connect: () => connect,
@@ -11141,7 +11150,7 @@ async function healthCheck() {
 }
 var import_ioredis, DEFAULT_CONFIG2, garnet, compensationClient, client_default;
 var init_client = __esm({
-  "src/data/garnet/client.ts"() {
+  "../src/data/garnet/client.ts"() {
     import_ioredis = __toESM(require_built3(), 1);
     DEFAULT_CONFIG2 = {
       host: process.env.GARNET_HOST || "localhost",
@@ -11184,10 +11193,10 @@ var init_client = __esm({
   }
 });
 
-// src/data/garnet/cache.ts
+// ../src/data/garnet/cache.ts
 var SESSION_PREFIX, SESSION_TTL, TASK_PREFIX, TASK_TTL, COUNTER_PREFIX, CACHE_PREFIX, CACHE_TTL, WS_PREFIX, WS_TTL, SessionCache, TaskCache, Counter, Cache, WsState, sessionCache, taskCache, counter, cache, wsState;
 var init_cache = __esm({
-  "src/data/garnet/cache.ts"() {
+  "../src/data/garnet/cache.ts"() {
     init_client();
     SESSION_PREFIX = "session:";
     SESSION_TTL = 3600;
@@ -11390,10 +11399,10 @@ var init_cache = __esm({
   }
 });
 
-// src/data/garnet/queue.ts
+// ../src/data/garnet/queue.ts
 var TASK_STREAM, TASK_CONSUMER_GROUP, EVENT_STREAM, EVENT_CONSUMER_GROUP, TaskQueue, EventStream, taskQueue, eventStream;
 var init_queue = __esm({
-  "src/data/garnet/queue.ts"() {
+  "../src/data/garnet/queue.ts"() {
     init_client();
     TASK_STREAM = "stream:tasks";
     TASK_CONSUMER_GROUP = "task-processors";
@@ -11603,7 +11612,7 @@ var init_queue = __esm({
   }
 });
 
-// src/data/garnet/lock.ts
+// ../src/data/garnet/lock.ts
 async function withLock(key, fn, options = {}) {
   const value = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   const acquired = await lock.acquireWithRetry(key, value, options);
@@ -11620,7 +11629,7 @@ async function withLock(key, fn, options = {}) {
 }
 var LOCK_PREFIX, DEFAULT_LOCK_TTL, DEFAULT_RETRY_INTERVAL, DEFAULT_MAX_RETRIES, DistributedLock, lock;
 var init_lock = __esm({
-  "src/data/garnet/lock.ts"() {
+  "../src/data/garnet/lock.ts"() {
     init_client();
     LOCK_PREFIX = "lock:";
     DEFAULT_LOCK_TTL = 30;
@@ -11729,7 +11738,7 @@ var init_lock = __esm({
   }
 });
 
-// src/data/garnet/compensation.ts
+// ../src/data/garnet/compensation.ts
 async function withCompensation(fn, compensation) {
   try {
     const result = await fn();
@@ -11745,7 +11754,7 @@ async function withCompensation(fn, compensation) {
 }
 var COMPENSATION_QUEUE, COMPENSATION_DLQ, MAX_RETRIES, CompensationQueue, compensationQueue;
 var init_compensation = __esm({
-  "src/data/garnet/compensation.ts"() {
+  "../src/data/garnet/compensation.ts"() {
     init_client();
     COMPENSATION_QUEUE = "compensation:queue";
     COMPENSATION_DLQ = "compensation:dlq";
@@ -11908,7 +11917,7 @@ var init_compensation = __esm({
   }
 });
 
-// src/data/garnet/index.ts
+// ../src/data/garnet/index.ts
 var garnet_exports = {};
 __export(garnet_exports, {
   cache: () => cache,
@@ -11930,7 +11939,7 @@ __export(garnet_exports, {
   wsState: () => wsState
 });
 var init_garnet = __esm({
-  "src/data/garnet/index.ts"() {
+  "../src/data/garnet/index.ts"() {
     init_client();
     init_cache();
     init_queue();
@@ -11940,7 +11949,7 @@ var init_garnet = __esm({
   }
 });
 
-// src/security/tenantContext.ts
+// ../src/security/tenantContext.ts
 function isValidTenantId(id2) {
   return TENANT_ID_RE.test(id2);
 }
@@ -11992,7 +12001,7 @@ function parseBindings(raw2) {
 }
 var DEFAULT_HEADER, DEFAULT_PATH_PREFIX, DEFAULT_TENANT, WILDCARD, TENANT_ID_RE;
 var init_tenantContext = __esm({
-  "src/security/tenantContext.ts"() {
+  "../src/security/tenantContext.ts"() {
     DEFAULT_HEADER = "X-Tenant-Id";
     DEFAULT_PATH_PREFIX = "/api/t/";
     DEFAULT_TENANT = "_default";
@@ -12001,7 +12010,7 @@ var init_tenantContext = __esm({
   }
 });
 
-// src/security/envKeyResolver.ts
+// ../src/security/envKeyResolver.ts
 function resolveEnvKey(providerId) {
   if (!providerId || typeof providerId !== "string") return null;
   const id2 = providerId.toLowerCase();
@@ -12050,7 +12059,7 @@ function debugListEnvVars() {
 }
 var BUILTIN_ENV_MAP;
 var init_envKeyResolver = __esm({
-  "src/security/envKeyResolver.ts"() {
+  "../src/security/envKeyResolver.ts"() {
     init_logger();
     BUILTIN_ENV_MAP = {
       openai: { keyEnv: "OPENAI_API_KEY", baseEnv: "OPENAI_BASE_URL", defaultBaseUrl: "https://api.openai.com/v1" },
@@ -12072,7 +12081,7 @@ var init_envKeyResolver = __esm({
   }
 });
 
-// src/security/apiKeyVault.ts
+// ../src/security/apiKeyVault.ts
 var apiKeyVault_exports = {};
 __export(apiKeyVault_exports, {
   ApiKeyVault: () => ApiKeyVault,
@@ -12161,7 +12170,7 @@ async function safeFindCredentials(k) {
 }
 var KEYTAR_SERVICE, keytarInstance, keytarLoadError, nodeRequire, memoryFallback, configCache, ApiKeyVault, apiKeyVault;
 var init_apiKeyVault = __esm({
-  "src/security/apiKeyVault.ts"() {
+  "../src/security/apiKeyVault.ts"() {
     init_logger();
     init_envKeyResolver();
     KEYTAR_SERVICE = "SoloForge";
@@ -12369,7 +12378,7 @@ var init_apiKeyVault = __esm({
   }
 });
 
-// src/security/tokenStore.ts
+// ../src/security/tokenStore.ts
 var tokenStore_exports = {};
 __export(tokenStore_exports, {
   DEFAULT_GRACE_PERIOD_MS: () => DEFAULT_GRACE_PERIOD_MS,
@@ -12633,7 +12642,7 @@ function __resetTokenStoreCacheForTest() {
 }
 var VAULT_PROVIDER_ID_V2, VAULT_PROVIDER_ID_V1, DEFAULT_TTL_MS2, DEFAULT_GRACE_PERIOD_MS, DEFAULT_ROTATION_CHECK_INTERVAL_MS, cached2, initPromise;
 var init_tokenStore = __esm({
-  "src/security/tokenStore.ts"() {
+  "../src/security/tokenStore.ts"() {
     VAULT_PROVIDER_ID_V2 = "soloforge.api.tokens.v2";
     VAULT_PROVIDER_ID_V1 = "soloforge.api.tokens";
     DEFAULT_TTL_MS2 = 90 * 24 * 60 * 60 * 1e3;
@@ -12644,7 +12653,7 @@ var init_tokenStore = __esm({
   }
 });
 
-// src/security/tokenFamily.ts
+// ../src/security/tokenFamily.ts
 var tokenFamily_exports = {};
 __export(tokenFamily_exports, {
   DEFAULT_GRACE_PERIOD_MS: () => DEFAULT_GRACE_PERIOD_MS2,
@@ -12723,13 +12732,13 @@ async function processBearerToken(opts) {
 }
 var DEFAULT_GRACE_PERIOD_MS2;
 var init_tokenFamily = __esm({
-  "src/security/tokenFamily.ts"() {
+  "../src/security/tokenFamily.ts"() {
     init_tokenStore();
     DEFAULT_GRACE_PERIOD_MS2 = 30 * 1e3;
   }
 });
 
-// src/security/auth.ts
+// ../src/security/auth.ts
 var auth_exports = {};
 __export(auth_exports, {
   HTTP: () => HTTP,
@@ -13042,7 +13051,7 @@ function loadRevokedTokens() {
 }
 var defaultAuthConfig, ROLE_BY_ROUTE, HTTP, defaultRateLimit, strictRateLimit, RateLimiter, MAX_BODY_BYTES, NO_CREDENTIALS, defaultAuditSink, VAULT_PROVIDER_ID;
 var init_auth = __esm({
-  "src/security/auth.ts"() {
+  "../src/security/auth.ts"() {
     init_tenantContext();
     defaultAuthConfig = {
       apiTokens: (process.env.SOLOFORGE_API_TOKENS || "").split(",").map((s) => s.trim()).filter(Boolean),
@@ -13145,9 +13154,9 @@ var init_auth = __esm({
   }
 });
 
-// node_modules/ws/lib/constants.js
+// ../node_modules/ws/lib/constants.js
 var require_constants = __commonJS({
-  "node_modules/ws/lib/constants.js"(exports, module) {
+  "../node_modules/ws/lib/constants.js"(exports, module) {
     "use strict";
     var BINARY_TYPES = ["nodebuffer", "arraybuffer", "fragments"];
     var hasBlob = typeof Blob !== "undefined";
@@ -13168,9 +13177,9 @@ var require_constants = __commonJS({
   }
 });
 
-// node_modules/ws/lib/buffer-util.js
+// ../node_modules/ws/lib/buffer-util.js
 var require_buffer_util = __commonJS({
-  "node_modules/ws/lib/buffer-util.js"(exports, module) {
+  "../node_modules/ws/lib/buffer-util.js"(exports, module) {
     "use strict";
     var { EMPTY_BUFFER } = require_constants();
     var FastBuffer = Buffer[Symbol.species];
@@ -13243,9 +13252,9 @@ var require_buffer_util = __commonJS({
   }
 });
 
-// node_modules/ws/lib/limiter.js
+// ../node_modules/ws/lib/limiter.js
 var require_limiter = __commonJS({
-  "node_modules/ws/lib/limiter.js"(exports, module) {
+  "../node_modules/ws/lib/limiter.js"(exports, module) {
     "use strict";
     var kDone = /* @__PURE__ */ Symbol("kDone");
     var kRun = /* @__PURE__ */ Symbol("kRun");
@@ -13293,9 +13302,9 @@ var require_limiter = __commonJS({
   }
 });
 
-// node_modules/ws/lib/permessage-deflate.js
+// ../node_modules/ws/lib/permessage-deflate.js
 var require_permessage_deflate = __commonJS({
-  "node_modules/ws/lib/permessage-deflate.js"(exports, module) {
+  "../node_modules/ws/lib/permessage-deflate.js"(exports, module) {
     "use strict";
     var zlib = __require("zlib");
     var bufferUtil = require_buffer_util();
@@ -13676,9 +13685,9 @@ var require_permessage_deflate = __commonJS({
   }
 });
 
-// node_modules/ws/lib/validation.js
+// ../node_modules/ws/lib/validation.js
 var require_validation = __commonJS({
-  "node_modules/ws/lib/validation.js"(exports, module) {
+  "../node_modules/ws/lib/validation.js"(exports, module) {
     "use strict";
     var { isUtf8 } = __require("buffer");
     var { hasBlob } = require_constants();
@@ -13877,9 +13886,9 @@ var require_validation = __commonJS({
   }
 });
 
-// node_modules/ws/lib/receiver.js
+// ../node_modules/ws/lib/receiver.js
 var require_receiver = __commonJS({
-  "node_modules/ws/lib/receiver.js"(exports, module) {
+  "../node_modules/ws/lib/receiver.js"(exports, module) {
     "use strict";
     var { Writable } = __require("stream");
     var PerMessageDeflate2 = require_permessage_deflate();
@@ -14509,9 +14518,9 @@ var require_receiver = __commonJS({
   }
 });
 
-// node_modules/ws/lib/sender.js
+// ../node_modules/ws/lib/sender.js
 var require_sender = __commonJS({
-  "node_modules/ws/lib/sender.js"(exports, module) {
+  "../node_modules/ws/lib/sender.js"(exports, module) {
     "use strict";
     var { Duplex } = __require("stream");
     var { randomFillSync } = __require("crypto");
@@ -15002,9 +15011,9 @@ var require_sender = __commonJS({
   }
 });
 
-// node_modules/ws/lib/event-target.js
+// ../node_modules/ws/lib/event-target.js
 var require_event_target = __commonJS({
-  "node_modules/ws/lib/event-target.js"(exports, module) {
+  "../node_modules/ws/lib/event-target.js"(exports, module) {
     "use strict";
     var { kForOnEventAttribute, kListener } = require_constants();
     var kCode = /* @__PURE__ */ Symbol("kCode");
@@ -15231,9 +15240,9 @@ var require_event_target = __commonJS({
   }
 });
 
-// node_modules/ws/lib/extension.js
+// ../node_modules/ws/lib/extension.js
 var require_extension = __commonJS({
-  "node_modules/ws/lib/extension.js"(exports, module) {
+  "../node_modules/ws/lib/extension.js"(exports, module) {
     "use strict";
     var { tokenChars } = require_validation();
     function push(dest, name, elem) {
@@ -15384,9 +15393,9 @@ var require_extension = __commonJS({
   }
 });
 
-// node_modules/ws/lib/websocket.js
+// ../node_modules/ws/lib/websocket.js
 var require_websocket = __commonJS({
-  "node_modules/ws/lib/websocket.js"(exports, module) {
+  "../node_modules/ws/lib/websocket.js"(exports, module) {
     "use strict";
     var EventEmitter2 = __require("events");
     var https = __require("https");
@@ -16280,9 +16289,9 @@ var require_websocket = __commonJS({
   }
 });
 
-// node_modules/ws/lib/stream.js
+// ../node_modules/ws/lib/stream.js
 var require_stream = __commonJS({
-  "node_modules/ws/lib/stream.js"(exports, module) {
+  "../node_modules/ws/lib/stream.js"(exports, module) {
     "use strict";
     var WebSocket2 = require_websocket();
     var { Duplex } = __require("stream");
@@ -16378,9 +16387,9 @@ var require_stream = __commonJS({
   }
 });
 
-// node_modules/ws/lib/subprotocol.js
+// ../node_modules/ws/lib/subprotocol.js
 var require_subprotocol = __commonJS({
-  "node_modules/ws/lib/subprotocol.js"(exports, module) {
+  "../node_modules/ws/lib/subprotocol.js"(exports, module) {
     "use strict";
     var { tokenChars } = require_validation();
     function parse(header) {
@@ -16423,9 +16432,9 @@ var require_subprotocol = __commonJS({
   }
 });
 
-// node_modules/ws/lib/websocket-server.js
+// ../node_modules/ws/lib/websocket-server.js
 var require_websocket_server = __commonJS({
-  "node_modules/ws/lib/websocket-server.js"(exports, module) {
+  "../node_modules/ws/lib/websocket-server.js"(exports, module) {
     "use strict";
     var EventEmitter2 = __require("events");
     var http3 = __require("http");
@@ -16824,7 +16833,7 @@ var require_websocket_server = __commonJS({
   }
 });
 
-// node_modules/ws/wrapper.mjs
+// ../node_modules/ws/wrapper.mjs
 var wrapper_exports = {};
 __export(wrapper_exports, {
   PerMessageDeflate: () => import_permessage_deflate.default,
@@ -16839,7 +16848,7 @@ __export(wrapper_exports, {
 });
 var import_stream, import_extension, import_permessage_deflate, import_receiver, import_sender, import_subprotocol, import_websocket, import_websocket_server, wrapper_default;
 var init_wrapper = __esm({
-  "node_modules/ws/wrapper.mjs"() {
+  "../node_modules/ws/wrapper.mjs"() {
     import_stream = __toESM(require_stream(), 1);
     import_extension = __toESM(require_extension(), 1);
     import_permessage_deflate = __toESM(require_permessage_deflate(), 1);
@@ -16852,14 +16861,14 @@ var init_wrapper = __esm({
   }
 });
 
-// src/core/agent/agent-event-hub.ts
+// ../src/core/agent/agent-event-hub.ts
 var agent_event_hub_exports = {};
 __export(agent_event_hub_exports, {
   AgentEventHub: () => AgentEventHub
 });
 var AgentEventHub;
 var init_agent_event_hub = __esm({
-  "src/core/agent/agent-event-hub.ts"() {
+  "../src/core/agent/agent-event-hub.ts"() {
     init_wrapper();
     init_logger();
     init_runtime_events();
@@ -17056,7 +17065,7 @@ var init_agent_event_hub = __esm({
   }
 });
 
-// src/security/tokenRotationService.ts
+// ../src/security/tokenRotationService.ts
 var tokenRotationService_exports = {};
 __export(tokenRotationService_exports, {
   TokenRotationService: () => TokenRotationService,
@@ -17073,7 +17082,7 @@ function resetTokenRotationServiceForTest() {
 }
 var LEAD_RATIO, TokenRotationService, singleton;
 var init_tokenRotationService = __esm({
-  "src/security/tokenRotationService.ts"() {
+  "../src/security/tokenRotationService.ts"() {
     init_logger();
     init_tokenStore();
     LEAD_RATIO = 0.1;
@@ -17173,9 +17182,9 @@ var init_tokenRotationService = __esm({
   }
 });
 
-// node_modules/kafkajs/src/loggers/index.js
+// ../node_modules/kafkajs/src/loggers/index.js
 var require_loggers = __commonJS({
-  "node_modules/kafkajs/src/loggers/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/loggers/index.js"(exports, module) {
     var { assign } = Object;
     var LEVELS = {
       NOTHING: 0,
@@ -17235,9 +17244,9 @@ var require_loggers = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/instrumentation/event.js
+// ../node_modules/kafkajs/src/instrumentation/event.js
 var require_event = __commonJS({
-  "node_modules/kafkajs/src/instrumentation/event.js"(exports, module) {
+  "../node_modules/kafkajs/src/instrumentation/event.js"(exports, module) {
     var id2 = 0;
     var nextId = () => {
       if (id2 === Number.MAX_VALUE) {
@@ -17261,9 +17270,9 @@ var require_event = __commonJS({
   }
 });
 
-// node_modules/kafkajs/package.json
+// ../node_modules/kafkajs/package.json
 var require_package = __commonJS({
-  "node_modules/kafkajs/package.json"(exports, module) {
+  "../node_modules/kafkajs/package.json"(exports, module) {
     module.exports = {
       name: "kafkajs",
       version: "2.2.4",
@@ -17351,9 +17360,9 @@ var require_package = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/errors.js
+// ../node_modules/kafkajs/src/errors.js
 var require_errors2 = __commonJS({
-  "node_modules/kafkajs/src/errors.js"(exports, module) {
+  "../node_modules/kafkajs/src/errors.js"(exports, module) {
     var pkgJson = require_package();
     var { bugs } = pkgJson;
     var KafkaJSError = class extends Error {
@@ -17625,9 +17634,9 @@ var require_errors2 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/instrumentation/emitter.js
+// ../node_modules/kafkajs/src/instrumentation/emitter.js
 var require_emitter = __commonJS({
-  "node_modules/kafkajs/src/instrumentation/emitter.js"(exports, module) {
+  "../node_modules/kafkajs/src/instrumentation/emitter.js"(exports, module) {
     var { EventEmitter: EventEmitter2 } = __require("events");
     var InstrumentationEvent = require_event();
     var { KafkaJSError } = require_errors2();
@@ -17661,9 +17670,9 @@ var require_emitter = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/loggers/console.js
+// ../node_modules/kafkajs/src/loggers/console.js
 var require_console = __commonJS({
-  "node_modules/kafkajs/src/loggers/console.js"(exports, module) {
+  "../node_modules/kafkajs/src/loggers/console.js"(exports, module) {
     var { LEVELS: logLevel2 } = require_loggers();
     module.exports = () => ({ namespace, level, label, log: log2 }) => {
       const prefix = namespace ? `[${namespace}] ` : "";
@@ -17686,9 +17695,9 @@ var require_console = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/utils/lock.js
+// ../node_modules/kafkajs/src/utils/lock.js
 var require_lock = __commonJS({
-  "node_modules/kafkajs/src/utils/lock.js"(exports, module) {
+  "../node_modules/kafkajs/src/utils/lock.js"(exports, module) {
     var { format } = __require("util");
     var { KafkaJSLockTimeout } = require_errors2();
     var PRIVATE = {
@@ -17745,9 +17754,9 @@ var require_lock = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/message/compression/gzip.js
+// ../node_modules/kafkajs/src/protocol/message/compression/gzip.js
 var require_gzip = __commonJS({
-  "node_modules/kafkajs/src/protocol/message/compression/gzip.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/message/compression/gzip.js"(exports, module) {
     var { promisify } = __require("util");
     var zlib = __require("zlib");
     var gzip = promisify(zlib.gzip);
@@ -17771,9 +17780,9 @@ var require_gzip = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/message/compression/index.js
+// ../node_modules/kafkajs/src/protocol/message/compression/index.js
 var require_compression = __commonJS({
-  "node_modules/kafkajs/src/protocol/message/compression/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/message/compression/index.js"(exports, module) {
     var { KafkaJSNotImplemented } = require_errors2();
     var COMPRESSION_CODEC_MASK = 7;
     var Types = {
@@ -17810,9 +17819,9 @@ var require_compression = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/apiKeys.js
+// ../node_modules/kafkajs/src/protocol/requests/apiKeys.js
 var require_apiKeys = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/apiKeys.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/apiKeys.js"(exports, module) {
     module.exports = {
       Produce: 0,
       Fetch: 1,
@@ -17868,9 +17877,9 @@ var require_apiKeys = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/utils/long.js
+// ../node_modules/kafkajs/src/utils/long.js
 var require_long = __commonJS({
-  "node_modules/kafkajs/src/utils/long.js"(exports, module) {
+  "../node_modules/kafkajs/src/utils/long.js"(exports, module) {
     var Long = class _Long {
       constructor(value) {
         this.value = value;
@@ -18158,9 +18167,9 @@ var require_long = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/encoder.js
+// ../node_modules/kafkajs/src/protocol/encoder.js
 var require_encoder = __commonJS({
-  "node_modules/kafkajs/src/protocol/encoder.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/encoder.js"(exports, module) {
     var Long = require_long();
     var INT8_SIZE = 1;
     var INT16_SIZE = 2;
@@ -18502,9 +18511,9 @@ var require_encoder = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/crc32.js
+// ../node_modules/kafkajs/src/protocol/crc32.js
 var require_crc32 = __commonJS({
-  "node_modules/kafkajs/src/protocol/crc32.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/crc32.js"(exports, module) {
     var CRC_TABLE = new Int32Array([
       0,
       1996959894,
@@ -18775,9 +18784,9 @@ var require_crc32 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/message/v0/index.js
+// ../node_modules/kafkajs/src/protocol/message/v0/index.js
 var require_v0 = __commonJS({
-  "node_modules/kafkajs/src/protocol/message/v0/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/message/v0/index.js"(exports, module) {
     var Encoder = require_encoder();
     var crc32 = require_crc32();
     var { Types: Compression, COMPRESSION_CODEC_MASK } = require_compression();
@@ -18789,9 +18798,9 @@ var require_v0 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/message/v1/index.js
+// ../node_modules/kafkajs/src/protocol/message/v1/index.js
 var require_v1 = __commonJS({
-  "node_modules/kafkajs/src/protocol/message/v1/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/message/v1/index.js"(exports, module) {
     var Encoder = require_encoder();
     var crc32 = require_crc32();
     var { Types: Compression, COMPRESSION_CODEC_MASK } = require_compression();
@@ -18803,9 +18812,9 @@ var require_v1 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/message/index.js
+// ../node_modules/kafkajs/src/protocol/message/index.js
 var require_message = __commonJS({
-  "node_modules/kafkajs/src/protocol/message/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/message/index.js"(exports, module) {
     var versions = {
       0: require_v0(),
       1: require_v1()
@@ -18814,9 +18823,9 @@ var require_message = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/messageSet/index.js
+// ../node_modules/kafkajs/src/protocol/messageSet/index.js
 var require_messageSet = __commonJS({
-  "node_modules/kafkajs/src/protocol/messageSet/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/messageSet/index.js"(exports, module) {
     var Encoder = require_encoder();
     var MessageProtocol = require_message();
     var { Types } = require_compression();
@@ -18835,9 +18844,9 @@ var require_messageSet = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/produce/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/produce/v0/request.js
 var require_request = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/produce/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/produce/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { Produce: apiKey } = require_apiKeys();
     var MessageSet = require_messageSet();
@@ -18860,9 +18869,9 @@ var require_request = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/decoder.js
+// ../node_modules/kafkajs/src/protocol/decoder.js
 var require_decoder = __commonJS({
-  "node_modules/kafkajs/src/protocol/decoder.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/decoder.js"(exports, module) {
     var { KafkaJSInvalidVarIntError, KafkaJSInvalidLongError } = require_errors2();
     var Long = require_long();
     var INT8_SIZE = 1;
@@ -19100,9 +19109,9 @@ var require_decoder = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/utils/websiteUrl.js
+// ../node_modules/kafkajs/src/utils/websiteUrl.js
 var require_websiteUrl = __commonJS({
-  "node_modules/kafkajs/src/utils/websiteUrl.js"(exports, module) {
+  "../node_modules/kafkajs/src/utils/websiteUrl.js"(exports, module) {
     var BASE_URL = "https://kafka.js.org";
     var stripLeading = (char) => (str) => str.charAt(0) === char ? str.substring(1) : str;
     var stripLeadingSlash = stripLeading("/");
@@ -19111,9 +19120,9 @@ var require_websiteUrl = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/error.js
+// ../node_modules/kafkajs/src/protocol/error.js
 var require_error = __commonJS({
-  "node_modules/kafkajs/src/protocol/error.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/error.js"(exports, module) {
     var { KafkaJSProtocolError } = require_errors2();
     var websiteUrl = require_websiteUrl();
     var errorCodes = [
@@ -19689,9 +19698,9 @@ var require_error = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/produce/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/produce/v0/response.js
 var require_response = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/produce/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/produce/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode } = require_error();
     var partition = (decoder) => ({
@@ -19726,9 +19735,9 @@ var require_response = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/produce/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/produce/v1/request.js
 var require_request2 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/produce/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/produce/v1/request.js"(exports, module) {
     var requestV0 = require_request();
     module.exports = ({ acks, timeout, topicData }) => {
       return Object.assign(requestV0({ acks, timeout, topicData }), { apiVersion: 1 });
@@ -19736,9 +19745,9 @@ var require_request2 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/produce/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/produce/v1/response.js
 var require_response2 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/produce/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/produce/v1/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { parse: parseV0 } = require_response();
     var partition = (decoder) => ({
@@ -19765,9 +19774,9 @@ var require_response2 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/produce/v2/request.js
+// ../node_modules/kafkajs/src/protocol/requests/produce/v2/request.js
 var require_request3 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/produce/v2/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/produce/v2/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { Produce: apiKey } = require_apiKeys();
     var MessageSet = require_messageSet();
@@ -19813,9 +19822,9 @@ var require_request3 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/produce/v2/response.js
+// ../node_modules/kafkajs/src/protocol/requests/produce/v2/response.js
 var require_response3 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/produce/v2/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/produce/v2/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { parse: parseV0 } = require_response();
     var partition = (decoder) => ({
@@ -19843,9 +19852,9 @@ var require_response3 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/recordBatch/header/v0/index.js
+// ../node_modules/kafkajs/src/protocol/recordBatch/header/v0/index.js
 var require_v02 = __commonJS({
-  "node_modules/kafkajs/src/protocol/recordBatch/header/v0/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/recordBatch/header/v0/index.js"(exports, module) {
     var Encoder = require_encoder();
     module.exports = ({ key, value }) => {
       return new Encoder().writeVarIntString(key).writeVarIntBytes(value);
@@ -19853,9 +19862,9 @@ var require_v02 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/recordBatch/record/v0/index.js
+// ../node_modules/kafkajs/src/protocol/recordBatch/record/v0/index.js
 var require_v03 = __commonJS({
-  "node_modules/kafkajs/src/protocol/recordBatch/record/v0/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/recordBatch/record/v0/index.js"(exports, module) {
     var Encoder = require_encoder();
     var Header = require_v02();
     module.exports = ({ offsetDelta = 0, timestampDelta = 0, key, value, headers = {} }) => {
@@ -19883,9 +19892,9 @@ var require_v03 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/recordBatch/crc32C/crc32C.js
+// ../node_modules/kafkajs/src/protocol/recordBatch/crc32C/crc32C.js
 var require_crc32C = __commonJS({
-  "node_modules/kafkajs/src/protocol/recordBatch/crc32C/crc32C.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/recordBatch/crc32C/crc32C.js"(exports, module) {
     var crc32C = (buffer) => {
       let crc = 0 ^ -1;
       for (let i = 0; i < buffer.length; i++) {
@@ -20155,18 +20164,18 @@ var require_crc32C = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/recordBatch/crc32C/index.js
+// ../node_modules/kafkajs/src/protocol/recordBatch/crc32C/index.js
 var require_crc32C2 = __commonJS({
-  "node_modules/kafkajs/src/protocol/recordBatch/crc32C/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/recordBatch/crc32C/index.js"(exports, module) {
     var crc32C = require_crc32C();
     var unsigned = (value) => Uint32Array.from([value])[0];
     module.exports = (buffer) => unsigned(crc32C(buffer));
   }
 });
 
-// node_modules/kafkajs/src/protocol/recordBatch/v0/index.js
+// ../node_modules/kafkajs/src/protocol/recordBatch/v0/index.js
 var require_v04 = __commonJS({
-  "node_modules/kafkajs/src/protocol/recordBatch/v0/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/recordBatch/v0/index.js"(exports, module) {
     var Long = require_long();
     var Encoder = require_encoder();
     var crc32C = require_crc32C2();
@@ -20224,9 +20233,9 @@ var require_v04 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/produce/v3/request.js
+// ../node_modules/kafkajs/src/protocol/requests/produce/v3/request.js
 var require_request4 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/produce/v3/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/produce/v3/request.js"(exports, module) {
     var Long = require_long();
     var Encoder = require_encoder();
     var { Produce: apiKey } = require_apiKeys();
@@ -20309,9 +20318,9 @@ var require_request4 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/produce/v3/response.js
+// ../node_modules/kafkajs/src/protocol/requests/produce/v3/response.js
 var require_response4 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/produce/v3/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/produce/v3/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode } = require_error();
     var partition = (decoder) => ({
@@ -20349,9 +20358,9 @@ var require_response4 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/produce/v4/request.js
+// ../node_modules/kafkajs/src/protocol/requests/produce/v4/request.js
 var require_request5 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/produce/v4/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/produce/v4/request.js"(exports, module) {
     var requestV3 = require_request4();
     module.exports = ({
       acks,
@@ -20376,9 +20385,9 @@ var require_request5 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/produce/v4/response.js
+// ../node_modules/kafkajs/src/protocol/requests/produce/v4/response.js
 var require_response5 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/produce/v4/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/produce/v4/response.js"(exports, module) {
     var { decode: decode2, parse } = require_response4();
     module.exports = {
       decode: decode2,
@@ -20387,9 +20396,9 @@ var require_response5 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/produce/v5/request.js
+// ../node_modules/kafkajs/src/protocol/requests/produce/v5/request.js
 var require_request6 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/produce/v5/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/produce/v5/request.js"(exports, module) {
     var requestV3 = require_request4();
     module.exports = ({
       acks,
@@ -20414,9 +20423,9 @@ var require_request6 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/produce/v5/response.js
+// ../node_modules/kafkajs/src/protocol/requests/produce/v5/response.js
 var require_response6 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/produce/v5/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/produce/v5/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { parse: parseV3 } = require_response4();
     var partition = (decoder) => ({
@@ -20445,9 +20454,9 @@ var require_response6 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/produce/v6/request.js
+// ../node_modules/kafkajs/src/protocol/requests/produce/v6/request.js
 var require_request7 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/produce/v6/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/produce/v6/request.js"(exports, module) {
     var requestV5 = require_request6();
     module.exports = ({
       acks,
@@ -20472,9 +20481,9 @@ var require_request7 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/produce/v6/response.js
+// ../node_modules/kafkajs/src/protocol/requests/produce/v6/response.js
 var require_response7 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/produce/v6/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/produce/v6/response.js"(exports, module) {
     var { parse, decode: decodeV5 } = require_response6();
     var decode2 = async (rawData) => {
       const decoded = await decodeV5(rawData);
@@ -20491,9 +20500,9 @@ var require_response7 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/produce/v7/request.js
+// ../node_modules/kafkajs/src/protocol/requests/produce/v7/request.js
 var require_request8 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/produce/v7/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/produce/v7/request.js"(exports, module) {
     var requestV6 = require_request7();
     module.exports = ({
       acks,
@@ -20518,9 +20527,9 @@ var require_request8 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/produce/v7/response.js
+// ../node_modules/kafkajs/src/protocol/requests/produce/v7/response.js
 var require_response8 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/produce/v7/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/produce/v7/response.js"(exports, module) {
     var { decode: decode2, parse } = require_response7();
     module.exports = {
       decode: decode2,
@@ -20529,9 +20538,9 @@ var require_response8 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/produce/index.js
+// ../node_modules/kafkajs/src/protocol/requests/produce/index.js
 var require_produce = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/produce/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/produce/index.js"(exports, module) {
     var versions = {
       0: ({ acks, timeout, topicData }) => {
         const request = require_request();
@@ -20636,9 +20645,9 @@ var require_produce = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/isolationLevel.js
+// ../node_modules/kafkajs/src/protocol/isolationLevel.js
 var require_isolationLevel = __commonJS({
-  "node_modules/kafkajs/src/protocol/isolationLevel.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/isolationLevel.js"(exports, module) {
     module.exports = {
       // Makes all records visible
       READ_UNCOMMITTED: 0,
@@ -20651,9 +20660,9 @@ var require_isolationLevel = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v0/request.js
 var require_request9 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { Fetch: apiKey } = require_apiKeys();
     module.exports = ({ replicaId, maxWaitTime, minBytes, topics }) => ({
@@ -20673,9 +20682,9 @@ var require_request9 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/message/v0/decoder.js
+// ../node_modules/kafkajs/src/protocol/message/v0/decoder.js
 var require_decoder2 = __commonJS({
-  "node_modules/kafkajs/src/protocol/message/v0/decoder.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/message/v0/decoder.js"(exports, module) {
     module.exports = (decoder) => ({
       attributes: decoder.readInt8(),
       key: decoder.readBytes(),
@@ -20684,9 +20693,9 @@ var require_decoder2 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/message/v1/decoder.js
+// ../node_modules/kafkajs/src/protocol/message/v1/decoder.js
 var require_decoder3 = __commonJS({
-  "node_modules/kafkajs/src/protocol/message/v1/decoder.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/message/v1/decoder.js"(exports, module) {
     module.exports = (decoder) => ({
       attributes: decoder.readInt8(),
       timestamp: decoder.readInt64().toString(),
@@ -20696,9 +20705,9 @@ var require_decoder3 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/message/decoder.js
+// ../node_modules/kafkajs/src/protocol/message/decoder.js
 var require_decoder4 = __commonJS({
-  "node_modules/kafkajs/src/protocol/message/decoder.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/message/decoder.js"(exports, module) {
     var {
       KafkaJSPartialMessageError,
       KafkaJSUnsupportedMagicByteInMessageSet
@@ -20732,9 +20741,9 @@ var require_decoder4 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/messageSet/decoder.js
+// ../node_modules/kafkajs/src/protocol/messageSet/decoder.js
 var require_decoder5 = __commonJS({
-  "node_modules/kafkajs/src/protocol/messageSet/decoder.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/messageSet/decoder.js"(exports, module) {
     var Long = require_long();
     var Decoder = require_decoder();
     var MessageDecoder = require_decoder4();
@@ -20800,9 +20809,9 @@ var require_decoder5 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v0/response.js
 var require_response9 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { KafkaJSOffsetOutOfRange } = require_errors2();
     var { failure, createErrorFromCode, errorCodes } = require_error();
@@ -20847,9 +20856,9 @@ var require_response9 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v1/request.js
 var require_request10 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v1/request.js"(exports, module) {
     var requestV0 = require_request9();
     module.exports = ({ replicaId, maxWaitTime, minBytes, topics }) => {
       return Object.assign(requestV0({ replicaId, maxWaitTime, minBytes, topics }), { apiVersion: 1 });
@@ -20857,9 +20866,9 @@ var require_request10 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v1/response.js
 var require_response10 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v1/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { parse: parseV0 } = require_response9();
     var MessageSetDecoder = require_decoder5();
@@ -20889,9 +20898,9 @@ var require_response10 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v2/request.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v2/request.js
 var require_request11 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v2/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v2/request.js"(exports, module) {
     var requestV0 = require_request9();
     module.exports = ({ replicaId, maxWaitTime, minBytes, topics }) => {
       return Object.assign(requestV0({ replicaId, maxWaitTime, minBytes, topics }), { apiVersion: 2 });
@@ -20899,9 +20908,9 @@ var require_request11 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v2/response.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v2/response.js
 var require_response11 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v2/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v2/response.js"(exports, module) {
     var { decode: decode2, parse } = require_response10();
     module.exports = {
       decode: decode2,
@@ -20910,9 +20919,9 @@ var require_response11 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v3/request.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v3/request.js
 var require_request12 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v3/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v3/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { Fetch: apiKey } = require_apiKeys();
     module.exports = ({ replicaId, maxWaitTime, minBytes, maxBytes, topics }) => ({
@@ -20932,9 +20941,9 @@ var require_request12 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v3/response.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v3/response.js
 var require_response12 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v3/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v3/response.js"(exports, module) {
     var { decode: decode2, parse } = require_response10();
     module.exports = {
       decode: decode2,
@@ -20943,9 +20952,9 @@ var require_response12 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v4/request.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v4/request.js
 var require_request13 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v4/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v4/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { Fetch: apiKey } = require_apiKeys();
     var ISOLATION_LEVEL = require_isolationLevel();
@@ -20973,9 +20982,9 @@ var require_request13 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/recordBatch/header/v0/decoder.js
+// ../node_modules/kafkajs/src/protocol/recordBatch/header/v0/decoder.js
 var require_decoder6 = __commonJS({
-  "node_modules/kafkajs/src/protocol/recordBatch/header/v0/decoder.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/recordBatch/header/v0/decoder.js"(exports, module) {
     module.exports = (decoder) => ({
       key: decoder.readVarIntString(),
       value: decoder.readVarIntBytes()
@@ -20983,9 +20992,9 @@ var require_decoder6 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/timestampTypes.js
+// ../node_modules/kafkajs/src/protocol/timestampTypes.js
 var require_timestampTypes = __commonJS({
-  "node_modules/kafkajs/src/protocol/timestampTypes.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/timestampTypes.js"(exports, module) {
     module.exports = {
       // Timestamp type is unknown
       NO_TIMESTAMP: -1,
@@ -20997,9 +21006,9 @@ var require_timestampTypes = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/recordBatch/record/v0/decoder.js
+// ../node_modules/kafkajs/src/protocol/recordBatch/record/v0/decoder.js
 var require_decoder7 = __commonJS({
-  "node_modules/kafkajs/src/protocol/recordBatch/record/v0/decoder.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/recordBatch/record/v0/decoder.js"(exports, module) {
     var Long = require_long();
     var HeaderDecoder = require_decoder6();
     var TimestampTypes = require_timestampTypes();
@@ -21042,9 +21051,9 @@ var require_decoder7 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/recordBatch/v0/decoder.js
+// ../node_modules/kafkajs/src/protocol/recordBatch/v0/decoder.js
 var require_decoder8 = __commonJS({
-  "node_modules/kafkajs/src/protocol/recordBatch/v0/decoder.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/recordBatch/v0/decoder.js"(exports, module) {
     var Decoder = require_decoder();
     var { KafkaJSPartialMessageError } = require_errors2();
     var { lookupCodecByAttributes } = require_compression();
@@ -21121,9 +21130,9 @@ var require_decoder8 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v4/decodeMessages.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v4/decodeMessages.js
 var require_decodeMessages = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v4/decodeMessages.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v4/decodeMessages.js"(exports, module) {
     var Decoder = require_decoder();
     var MessageSetDecoder = require_decoder5();
     var RecordBatchDecoder = require_decoder8();
@@ -21159,9 +21168,9 @@ var require_decodeMessages = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v4/response.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v4/response.js
 var require_response13 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v4/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v4/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { parse: parseV1 } = require_response10();
     var decodeMessages = require_decodeMessages();
@@ -21197,9 +21206,9 @@ var require_response13 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v5/request.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v5/request.js
 var require_request14 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v5/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v5/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { Fetch: apiKey } = require_apiKeys();
     var ISOLATION_LEVEL = require_isolationLevel();
@@ -21227,9 +21236,9 @@ var require_request14 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v5/response.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v5/response.js
 var require_response14 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v5/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v5/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { parse: parseV1 } = require_response10();
     var decodeMessages = require_decodeMessages();
@@ -21266,9 +21275,9 @@ var require_response14 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v6/request.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v6/request.js
 var require_request15 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v6/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v6/request.js"(exports, module) {
     var ISOLATION_LEVEL = require_isolationLevel();
     var requestV5 = require_request14();
     module.exports = ({
@@ -21292,9 +21301,9 @@ var require_request15 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v6/response.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v6/response.js
 var require_response15 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v6/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v6/response.js"(exports, module) {
     var { decode: decode2, parse } = require_response14();
     module.exports = {
       decode: decode2,
@@ -21303,9 +21312,9 @@ var require_response15 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v7/request.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v7/request.js
 var require_request16 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v7/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v7/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { Fetch: apiKey } = require_apiKeys();
     var ISOLATION_LEVEL = require_isolationLevel();
@@ -21340,9 +21349,9 @@ var require_request16 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v7/response.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v7/response.js
 var require_response16 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v7/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v7/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { parse: parseV1 } = require_response10();
     var decodeMessages = require_decodeMessages();
@@ -21383,9 +21392,9 @@ var require_response16 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v8/request.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v8/request.js
 var require_request17 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v8/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v8/request.js"(exports, module) {
     var ISOLATION_LEVEL = require_isolationLevel();
     var requestV7 = require_request16();
     module.exports = ({
@@ -21416,9 +21425,9 @@ var require_request17 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v8/response.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v8/response.js
 var require_response17 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v8/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v8/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { parse: parseV1 } = require_response10();
     var decodeMessages = require_decodeMessages();
@@ -21460,9 +21469,9 @@ var require_response17 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v9/request.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v9/request.js
 var require_request18 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v9/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v9/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { Fetch: apiKey } = require_apiKeys();
     var ISOLATION_LEVEL = require_isolationLevel();
@@ -21503,9 +21512,9 @@ var require_request18 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v9/response.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v9/response.js
 var require_response18 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v9/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v9/response.js"(exports, module) {
     var { decode: decode2, parse } = require_response17();
     module.exports = {
       decode: decode2,
@@ -21514,9 +21523,9 @@ var require_response18 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v10/request.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v10/request.js
 var require_request19 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v10/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v10/request.js"(exports, module) {
     var ISOLATION_LEVEL = require_isolationLevel();
     var requestV9 = require_request18();
     module.exports = ({
@@ -21547,9 +21556,9 @@ var require_request19 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v10/response.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v10/response.js
 var require_response19 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v10/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v10/response.js"(exports, module) {
     var { decode: decode2, parse } = require_response18();
     module.exports = {
       decode: decode2,
@@ -21558,9 +21567,9 @@ var require_response19 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v11/request.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v11/request.js
 var require_request20 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v11/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v11/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { Fetch: apiKey } = require_apiKeys();
     var ISOLATION_LEVEL = require_isolationLevel();
@@ -21602,9 +21611,9 @@ var require_request20 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/v11/response.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/v11/response.js
 var require_response20 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/v11/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/v11/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { parse: parseV1 } = require_response10();
     var decodeMessages = require_decodeMessages();
@@ -21647,9 +21656,9 @@ var require_response20 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/fetch/index.js
+// ../node_modules/kafkajs/src/protocol/requests/fetch/index.js
 var require_fetch = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/fetch/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/fetch/index.js"(exports, module) {
     var ISOLATION_LEVEL = require_isolationLevel();
     var REPLICA_ID = -1;
     var NETWORK_DELAY = 100;
@@ -21894,9 +21903,9 @@ var require_fetch = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/listOffsets/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/listOffsets/v0/request.js
 var require_request21 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/listOffsets/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/listOffsets/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { ListOffsets: apiKey } = require_apiKeys();
     module.exports = ({ replicaId, topics }) => ({
@@ -21916,9 +21925,9 @@ var require_request21 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/listOffsets/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/listOffsets/v0/response.js
 var require_response21 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/listOffsets/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/listOffsets/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode } = require_error();
     var decode2 = async (rawData) => {
@@ -21954,9 +21963,9 @@ var require_response21 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/listOffsets/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/listOffsets/v1/request.js
 var require_request22 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/listOffsets/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/listOffsets/v1/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { ListOffsets: apiKey } = require_apiKeys();
     module.exports = ({ replicaId, topics }) => ({
@@ -21976,9 +21985,9 @@ var require_request22 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/listOffsets/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/listOffsets/v1/response.js
 var require_response22 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/listOffsets/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/listOffsets/v1/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode } = require_error();
     var decode2 = async (rawData) => {
@@ -22014,9 +22023,9 @@ var require_response22 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/listOffsets/v2/request.js
+// ../node_modules/kafkajs/src/protocol/requests/listOffsets/v2/request.js
 var require_request23 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/listOffsets/v2/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/listOffsets/v2/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { ListOffsets: apiKey } = require_apiKeys();
     module.exports = ({ replicaId, isolationLevel, topics }) => ({
@@ -22036,9 +22045,9 @@ var require_request23 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/listOffsets/v2/response.js
+// ../node_modules/kafkajs/src/protocol/requests/listOffsets/v2/response.js
 var require_response23 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/listOffsets/v2/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/listOffsets/v2/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode } = require_error();
     var decode2 = async (rawData) => {
@@ -22075,17 +22084,17 @@ var require_response23 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/listOffsets/v3/request.js
+// ../node_modules/kafkajs/src/protocol/requests/listOffsets/v3/request.js
 var require_request24 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/listOffsets/v3/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/listOffsets/v3/request.js"(exports, module) {
     var requestV2 = require_request23();
     module.exports = ({ replicaId, isolationLevel, topics }) => Object.assign(requestV2({ replicaId, isolationLevel, topics }), { apiVersion: 3 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/listOffsets/v3/response.js
+// ../node_modules/kafkajs/src/protocol/requests/listOffsets/v3/response.js
 var require_response24 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/listOffsets/v3/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/listOffsets/v3/response.js"(exports, module) {
     var { parse, decode: decodeV2 } = require_response23();
     var decode2 = async (rawData) => {
       const decoded = await decodeV2(rawData);
@@ -22102,9 +22111,9 @@ var require_response24 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/listOffsets/index.js
+// ../node_modules/kafkajs/src/protocol/requests/listOffsets/index.js
 var require_listOffsets = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/listOffsets/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/listOffsets/index.js"(exports, module) {
     var ISOLATION_LEVEL = require_isolationLevel();
     var REPLICA_ID = -1;
     var versions = {
@@ -22136,9 +22145,9 @@ var require_listOffsets = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/metadata/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/metadata/v0/request.js
 var require_request25 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/metadata/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/metadata/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { Metadata: apiKey } = require_apiKeys();
     module.exports = ({ topics }) => ({
@@ -22152,9 +22161,9 @@ var require_request25 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/metadata/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/metadata/v0/response.js
 var require_response25 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/metadata/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/metadata/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode } = require_error();
     var broker = (decoder) => ({
@@ -22205,9 +22214,9 @@ var require_response25 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/metadata/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/metadata/v1/request.js
 var require_request26 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/metadata/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/metadata/v1/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { Metadata: apiKey } = require_apiKeys();
     module.exports = ({ topics }) => ({
@@ -22221,9 +22230,9 @@ var require_request26 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/metadata/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/metadata/v1/response.js
 var require_response26 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/metadata/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/metadata/v1/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { parse: parseV0 } = require_response25();
     var broker = (decoder) => ({
@@ -22260,17 +22269,17 @@ var require_response26 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/metadata/v2/request.js
+// ../node_modules/kafkajs/src/protocol/requests/metadata/v2/request.js
 var require_request27 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/metadata/v2/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/metadata/v2/request.js"(exports, module) {
     var requestV1 = require_request26();
     module.exports = ({ topics }) => Object.assign(requestV1({ topics }), { apiVersion: 2 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/metadata/v2/response.js
+// ../node_modules/kafkajs/src/protocol/requests/metadata/v2/response.js
 var require_response27 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/metadata/v2/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/metadata/v2/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { parse: parseV0 } = require_response25();
     var broker = (decoder) => ({
@@ -22308,17 +22317,17 @@ var require_response27 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/metadata/v3/request.js
+// ../node_modules/kafkajs/src/protocol/requests/metadata/v3/request.js
 var require_request28 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/metadata/v3/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/metadata/v3/request.js"(exports, module) {
     var requestV1 = require_request26();
     module.exports = ({ topics }) => Object.assign(requestV1({ topics }), { apiVersion: 3 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/metadata/v3/response.js
+// ../node_modules/kafkajs/src/protocol/requests/metadata/v3/response.js
 var require_response28 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/metadata/v3/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/metadata/v3/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { parse: parseV0 } = require_response25();
     var broker = (decoder) => ({
@@ -22357,9 +22366,9 @@ var require_response28 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/metadata/v4/request.js
+// ../node_modules/kafkajs/src/protocol/requests/metadata/v4/request.js
 var require_request29 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/metadata/v4/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/metadata/v4/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { Metadata: apiKey } = require_apiKeys();
     module.exports = ({ topics, allowAutoTopicCreation = true }) => ({
@@ -22373,9 +22382,9 @@ var require_request29 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/metadata/v4/response.js
+// ../node_modules/kafkajs/src/protocol/requests/metadata/v4/response.js
 var require_response29 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/metadata/v4/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/metadata/v4/response.js"(exports, module) {
     var { parse: parseV3, decode: decodeV3 } = require_response28();
     module.exports = {
       parse: parseV3,
@@ -22384,17 +22393,17 @@ var require_response29 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/metadata/v5/request.js
+// ../node_modules/kafkajs/src/protocol/requests/metadata/v5/request.js
 var require_request30 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/metadata/v5/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/metadata/v5/request.js"(exports, module) {
     var requestV4 = require_request29();
     module.exports = ({ topics, allowAutoTopicCreation = true }) => Object.assign(requestV4({ topics, allowAutoTopicCreation }), { apiVersion: 5 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/metadata/v5/response.js
+// ../node_modules/kafkajs/src/protocol/requests/metadata/v5/response.js
 var require_response30 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/metadata/v5/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/metadata/v5/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { parse: parseV0 } = require_response25();
     var broker = (decoder) => ({
@@ -22434,17 +22443,17 @@ var require_response30 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/metadata/v6/request.js
+// ../node_modules/kafkajs/src/protocol/requests/metadata/v6/request.js
 var require_request31 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/metadata/v6/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/metadata/v6/request.js"(exports, module) {
     var requestV5 = require_request30();
     module.exports = ({ topics, allowAutoTopicCreation = true }) => Object.assign(requestV5({ topics, allowAutoTopicCreation }), { apiVersion: 6 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/metadata/v6/response.js
+// ../node_modules/kafkajs/src/protocol/requests/metadata/v6/response.js
 var require_response31 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/metadata/v6/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/metadata/v6/response.js"(exports, module) {
     var { parse, decode: decodeV1 } = require_response30();
     var decode2 = async (rawData) => {
       const decoded = await decodeV1(rawData);
@@ -22461,9 +22470,9 @@ var require_response31 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/metadata/index.js
+// ../node_modules/kafkajs/src/protocol/requests/metadata/index.js
 var require_metadata = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/metadata/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/metadata/index.js"(exports, module) {
     var versions = {
       0: ({ topics }) => {
         const request = require_request25();
@@ -22508,9 +22517,9 @@ var require_metadata = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/offsetCommit/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/offsetCommit/v0/request.js
 var require_request32 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/offsetCommit/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/offsetCommit/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { OffsetCommit: apiKey } = require_apiKeys();
     module.exports = ({ groupId, topics }) => ({
@@ -22530,9 +22539,9 @@ var require_request32 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/offsetCommit/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/offsetCommit/v0/response.js
 var require_response32 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/offsetCommit/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/offsetCommit/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode } = require_error();
     var decode2 = async (rawData) => {
@@ -22566,9 +22575,9 @@ var require_response32 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/offsetCommit/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/offsetCommit/v1/request.js
 var require_request33 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/offsetCommit/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/offsetCommit/v1/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { OffsetCommit: apiKey } = require_apiKeys();
     module.exports = ({ groupId, groupGenerationId, memberId, topics }) => ({
@@ -22588,9 +22597,9 @@ var require_request33 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/offsetCommit/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/offsetCommit/v1/response.js
 var require_response33 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/offsetCommit/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/offsetCommit/v1/response.js"(exports, module) {
     var { parse, decode: decode2 } = require_response32();
     module.exports = {
       decode: decode2,
@@ -22599,9 +22608,9 @@ var require_response33 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/offsetCommit/v2/request.js
+// ../node_modules/kafkajs/src/protocol/requests/offsetCommit/v2/request.js
 var require_request34 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/offsetCommit/v2/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/offsetCommit/v2/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { OffsetCommit: apiKey } = require_apiKeys();
     module.exports = ({ groupId, groupGenerationId, memberId, retentionTime, topics }) => ({
@@ -22621,9 +22630,9 @@ var require_request34 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/offsetCommit/v2/response.js
+// ../node_modules/kafkajs/src/protocol/requests/offsetCommit/v2/response.js
 var require_response34 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/offsetCommit/v2/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/offsetCommit/v2/response.js"(exports, module) {
     var { parse, decode: decode2 } = require_response32();
     module.exports = {
       decode: decode2,
@@ -22632,9 +22641,9 @@ var require_response34 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/offsetCommit/v3/request.js
+// ../node_modules/kafkajs/src/protocol/requests/offsetCommit/v3/request.js
 var require_request35 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/offsetCommit/v3/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/offsetCommit/v3/request.js"(exports, module) {
     var requestV2 = require_request34();
     module.exports = ({ groupId, groupGenerationId, memberId, retentionTime, topics }) => Object.assign(requestV2({ groupId, groupGenerationId, memberId, retentionTime, topics }), {
       apiVersion: 3
@@ -22642,9 +22651,9 @@ var require_request35 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/offsetCommit/v3/response.js
+// ../node_modules/kafkajs/src/protocol/requests/offsetCommit/v3/response.js
 var require_response35 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/offsetCommit/v3/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/offsetCommit/v3/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { parse: parseV0 } = require_response32();
     var decode2 = async (rawData) => {
@@ -22669,9 +22678,9 @@ var require_response35 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/offsetCommit/v4/request.js
+// ../node_modules/kafkajs/src/protocol/requests/offsetCommit/v4/request.js
 var require_request36 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/offsetCommit/v4/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/offsetCommit/v4/request.js"(exports, module) {
     var requestV3 = require_request35();
     module.exports = ({ groupId, groupGenerationId, memberId, retentionTime, topics }) => Object.assign(requestV3({ groupId, groupGenerationId, memberId, retentionTime, topics }), {
       apiVersion: 4
@@ -22679,9 +22688,9 @@ var require_request36 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/offsetCommit/v4/response.js
+// ../node_modules/kafkajs/src/protocol/requests/offsetCommit/v4/response.js
 var require_response36 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/offsetCommit/v4/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/offsetCommit/v4/response.js"(exports, module) {
     var { parse, decode: decodeV3 } = require_response35();
     var decode2 = async (rawData) => {
       const decoded = await decodeV3(rawData);
@@ -22698,9 +22707,9 @@ var require_response36 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/offsetCommit/v5/request.js
+// ../node_modules/kafkajs/src/protocol/requests/offsetCommit/v5/request.js
 var require_request37 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/offsetCommit/v5/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/offsetCommit/v5/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { OffsetCommit: apiKey } = require_apiKeys();
     module.exports = ({ groupId, groupGenerationId, memberId, topics }) => ({
@@ -22720,9 +22729,9 @@ var require_request37 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/offsetCommit/v5/response.js
+// ../node_modules/kafkajs/src/protocol/requests/offsetCommit/v5/response.js
 var require_response37 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/offsetCommit/v5/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/offsetCommit/v5/response.js"(exports, module) {
     var { parse, decode: decode2 } = require_response36();
     module.exports = {
       decode: decode2,
@@ -22731,9 +22740,9 @@ var require_response37 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/offsetCommit/index.js
+// ../node_modules/kafkajs/src/protocol/requests/offsetCommit/index.js
 var require_offsetCommit = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/offsetCommit/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/offsetCommit/index.js"(exports, module) {
     var RETENTION_TIME = -1;
     var versions = {
       0: ({ groupId, topics }) => {
@@ -22809,9 +22818,9 @@ var require_offsetCommit = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/offsetFetch/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/offsetFetch/v1/request.js
 var require_request38 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/offsetFetch/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/offsetFetch/v1/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { OffsetFetch: apiKey } = require_apiKeys();
     module.exports = ({ groupId, topics }) => ({
@@ -22831,9 +22840,9 @@ var require_request38 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/offsetFetch/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/offsetFetch/v1/response.js
 var require_response38 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/offsetFetch/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/offsetFetch/v1/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode } = require_error();
     var decode2 = async (rawData) => {
@@ -22869,17 +22878,17 @@ var require_response38 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/offsetFetch/v2/request.js
+// ../node_modules/kafkajs/src/protocol/requests/offsetFetch/v2/request.js
 var require_request39 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/offsetFetch/v2/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/offsetFetch/v2/request.js"(exports, module) {
     var requestV1 = require_request38();
     module.exports = ({ groupId, topics }) => Object.assign(requestV1({ groupId, topics }), { apiVersion: 2 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/offsetFetch/v2/response.js
+// ../node_modules/kafkajs/src/protocol/requests/offsetFetch/v2/response.js
 var require_response39 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/offsetFetch/v2/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/offsetFetch/v2/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode } = require_error();
     var decode2 = async (rawData) => {
@@ -22919,9 +22928,9 @@ var require_response39 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/offsetFetch/v3/request.js
+// ../node_modules/kafkajs/src/protocol/requests/offsetFetch/v3/request.js
 var require_request40 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/offsetFetch/v3/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/offsetFetch/v3/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { OffsetFetch: apiKey } = require_apiKeys();
     module.exports = ({ groupId, topics }) => ({
@@ -22941,9 +22950,9 @@ var require_request40 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/offsetFetch/v3/response.js
+// ../node_modules/kafkajs/src/protocol/requests/offsetFetch/v3/response.js
 var require_response40 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/offsetFetch/v3/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/offsetFetch/v3/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { parse: parseV2 } = require_response39();
     var decode2 = async (rawData) => {
@@ -22971,17 +22980,17 @@ var require_response40 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/offsetFetch/v4/request.js
+// ../node_modules/kafkajs/src/protocol/requests/offsetFetch/v4/request.js
 var require_request41 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/offsetFetch/v4/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/offsetFetch/v4/request.js"(exports, module) {
     var requestV3 = require_request40();
     module.exports = ({ groupId, topics }) => Object.assign(requestV3({ groupId, topics }), { apiVersion: 4 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/offsetFetch/v4/response.js
+// ../node_modules/kafkajs/src/protocol/requests/offsetFetch/v4/response.js
 var require_response41 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/offsetFetch/v4/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/offsetFetch/v4/response.js"(exports, module) {
     var { parse, decode: decodeV3 } = require_response40();
     var decode2 = async (rawData) => {
       const decoded = await decodeV3(rawData);
@@ -22998,9 +23007,9 @@ var require_response41 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/offsetFetch/index.js
+// ../node_modules/kafkajs/src/protocol/requests/offsetFetch/index.js
 var require_offsetFetch = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/offsetFetch/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/offsetFetch/index.js"(exports, module) {
     var versions = {
       1: ({ groupId, topics }) => {
         const request = require_request38();
@@ -23030,9 +23039,9 @@ var require_offsetFetch = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/coordinatorTypes.js
+// ../node_modules/kafkajs/src/protocol/coordinatorTypes.js
 var require_coordinatorTypes = __commonJS({
-  "node_modules/kafkajs/src/protocol/coordinatorTypes.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/coordinatorTypes.js"(exports, module) {
     module.exports = {
       GROUP: 0,
       TRANSACTION: 1
@@ -23040,9 +23049,9 @@ var require_coordinatorTypes = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/findCoordinator/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/findCoordinator/v0/request.js
 var require_request42 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/findCoordinator/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/findCoordinator/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { GroupCoordinator: apiKey } = require_apiKeys();
     module.exports = ({ groupId }) => ({
@@ -23056,9 +23065,9 @@ var require_request42 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/findCoordinator/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/findCoordinator/v0/response.js
 var require_response42 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/findCoordinator/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/findCoordinator/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode, failIfVersionNotSupported } = require_error();
     var decode2 = async (rawData) => {
@@ -23088,9 +23097,9 @@ var require_response42 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/findCoordinator/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/findCoordinator/v1/request.js
 var require_request43 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/findCoordinator/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/findCoordinator/v1/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { GroupCoordinator: apiKey } = require_apiKeys();
     module.exports = ({ coordinatorKey, coordinatorType }) => ({
@@ -23104,9 +23113,9 @@ var require_request43 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/findCoordinator/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/findCoordinator/v1/response.js
 var require_response43 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/findCoordinator/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/findCoordinator/v1/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode, failIfVersionNotSupported } = require_error();
     var decode2 = async (rawData) => {
@@ -23140,17 +23149,17 @@ var require_response43 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/findCoordinator/v2/request.js
+// ../node_modules/kafkajs/src/protocol/requests/findCoordinator/v2/request.js
 var require_request44 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/findCoordinator/v2/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/findCoordinator/v2/request.js"(exports, module) {
     var requestV1 = require_request43();
     module.exports = ({ coordinatorKey, coordinatorType }) => Object.assign(requestV1({ coordinatorKey, coordinatorType }), { apiVersion: 2 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/findCoordinator/v2/response.js
+// ../node_modules/kafkajs/src/protocol/requests/findCoordinator/v2/response.js
 var require_response44 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/findCoordinator/v2/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/findCoordinator/v2/response.js"(exports, module) {
     var { parse, decode: decodeV1 } = require_response43();
     var decode2 = async (rawData) => {
       const decoded = await decodeV1(rawData);
@@ -23167,9 +23176,9 @@ var require_response44 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/findCoordinator/index.js
+// ../node_modules/kafkajs/src/protocol/requests/findCoordinator/index.js
 var require_findCoordinator = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/findCoordinator/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/findCoordinator/index.js"(exports, module) {
     var COORDINATOR_TYPES = require_coordinatorTypes();
     var versions = {
       0: ({ groupId }) => {
@@ -23195,9 +23204,9 @@ var require_findCoordinator = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/joinGroup/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/joinGroup/v0/request.js
 var require_request45 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/joinGroup/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/joinGroup/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { JoinGroup: apiKey } = require_apiKeys();
     module.exports = ({ groupId, sessionTimeout, memberId, protocolType, groupProtocols }) => ({
@@ -23214,9 +23223,9 @@ var require_request45 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/joinGroup/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/joinGroup/v0/response.js
 var require_response45 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/joinGroup/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/joinGroup/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode, failIfVersionNotSupported } = require_error();
     var decode2 = async (rawData) => {
@@ -23248,9 +23257,9 @@ var require_response45 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/joinGroup/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/joinGroup/v1/request.js
 var require_request46 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/joinGroup/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/joinGroup/v1/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { JoinGroup: apiKey } = require_apiKeys();
     module.exports = ({
@@ -23274,9 +23283,9 @@ var require_request46 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/joinGroup/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/joinGroup/v1/response.js
 var require_response46 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/joinGroup/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/joinGroup/v1/response.js"(exports, module) {
     var { parse, decode: decode2 } = require_response45();
     module.exports = {
       decode: decode2,
@@ -23285,9 +23294,9 @@ var require_response46 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/joinGroup/v2/request.js
+// ../node_modules/kafkajs/src/protocol/requests/joinGroup/v2/request.js
 var require_request47 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/joinGroup/v2/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/joinGroup/v2/request.js"(exports, module) {
     var requestV1 = require_request46();
     module.exports = ({
       groupId,
@@ -23310,9 +23319,9 @@ var require_request47 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/joinGroup/v2/response.js
+// ../node_modules/kafkajs/src/protocol/requests/joinGroup/v2/response.js
 var require_response47 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/joinGroup/v2/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/joinGroup/v2/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failIfVersionNotSupported } = require_error();
     var { parse: parseV0 } = require_response45();
@@ -23341,9 +23350,9 @@ var require_response47 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/joinGroup/v3/request.js
+// ../node_modules/kafkajs/src/protocol/requests/joinGroup/v3/request.js
 var require_request48 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/joinGroup/v3/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/joinGroup/v3/request.js"(exports, module) {
     var requestV2 = require_request47();
     module.exports = ({
       groupId,
@@ -23366,9 +23375,9 @@ var require_request48 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/joinGroup/v3/response.js
+// ../node_modules/kafkajs/src/protocol/requests/joinGroup/v3/response.js
 var require_response48 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/joinGroup/v3/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/joinGroup/v3/response.js"(exports, module) {
     var { parse, decode: decodeV2 } = require_response47();
     var decode2 = async (rawData) => {
       const decoded = await decodeV2(rawData);
@@ -23385,9 +23394,9 @@ var require_response48 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/joinGroup/v4/request.js
+// ../node_modules/kafkajs/src/protocol/requests/joinGroup/v4/request.js
 var require_request49 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/joinGroup/v4/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/joinGroup/v4/request.js"(exports, module) {
     var requestV3 = require_request48();
     module.exports = ({
       groupId,
@@ -23410,9 +23419,9 @@ var require_request49 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/joinGroup/v4/response.js
+// ../node_modules/kafkajs/src/protocol/requests/joinGroup/v4/response.js
 var require_response49 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/joinGroup/v4/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/joinGroup/v4/response.js"(exports, module) {
     var { decode: decode2 } = require_response48();
     var { KafkaJSMemberIdRequired } = require_errors2();
     var { failure, createErrorFromCode, errorCodes } = require_error();
@@ -23437,9 +23446,9 @@ var require_response49 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/joinGroup/v5/request.js
+// ../node_modules/kafkajs/src/protocol/requests/joinGroup/v5/request.js
 var require_request50 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/joinGroup/v5/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/joinGroup/v5/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { JoinGroup: apiKey } = require_apiKeys();
     module.exports = ({
@@ -23464,9 +23473,9 @@ var require_request50 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/joinGroup/v5/response.js
+// ../node_modules/kafkajs/src/protocol/requests/joinGroup/v5/response.js
 var require_response50 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/joinGroup/v5/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/joinGroup/v5/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { KafkaJSMemberIdRequired } = require_errors2();
     var {
@@ -23516,9 +23525,9 @@ var require_response50 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/joinGroup/index.js
+// ../node_modules/kafkajs/src/protocol/requests/joinGroup/index.js
 var require_joinGroup = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/joinGroup/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/joinGroup/index.js"(exports, module) {
     var NETWORK_DELAY = 5e3;
     var requestTimeout = ({ rebalanceTimeout, sessionTimeout }) => {
       const timeout = rebalanceTimeout || sessionTimeout;
@@ -23640,9 +23649,9 @@ var require_joinGroup = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/heartbeat/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/heartbeat/v0/request.js
 var require_request51 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/heartbeat/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/heartbeat/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { Heartbeat: apiKey } = require_apiKeys();
     module.exports = ({ groupId, groupGenerationId, memberId }) => ({
@@ -23656,9 +23665,9 @@ var require_request51 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/heartbeat/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/heartbeat/v0/response.js
 var require_response51 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/heartbeat/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/heartbeat/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode, failIfVersionNotSupported } = require_error();
     var decode2 = async (rawData) => {
@@ -23680,17 +23689,17 @@ var require_response51 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/heartbeat/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/heartbeat/v1/request.js
 var require_request52 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/heartbeat/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/heartbeat/v1/request.js"(exports, module) {
     var requestV0 = require_request51();
     module.exports = ({ groupId, groupGenerationId, memberId }) => Object.assign(requestV0({ groupId, groupGenerationId, memberId }), { apiVersion: 1 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/heartbeat/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/heartbeat/v1/response.js
 var require_response52 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/heartbeat/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/heartbeat/v1/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failIfVersionNotSupported } = require_error();
     var { parse: parseV0 } = require_response51();
@@ -23708,17 +23717,17 @@ var require_response52 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/heartbeat/v2/request.js
+// ../node_modules/kafkajs/src/protocol/requests/heartbeat/v2/request.js
 var require_request53 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/heartbeat/v2/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/heartbeat/v2/request.js"(exports, module) {
     var requestV1 = require_request52();
     module.exports = ({ groupId, groupGenerationId, memberId }) => Object.assign(requestV1({ groupId, groupGenerationId, memberId }), { apiVersion: 2 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/heartbeat/v2/response.js
+// ../node_modules/kafkajs/src/protocol/requests/heartbeat/v2/response.js
 var require_response53 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/heartbeat/v2/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/heartbeat/v2/response.js"(exports, module) {
     var { parse, decode: decodeV1 } = require_response52();
     var decode2 = async (rawData) => {
       const decoded = await decodeV1(rawData);
@@ -23735,9 +23744,9 @@ var require_response53 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/heartbeat/v3/request.js
+// ../node_modules/kafkajs/src/protocol/requests/heartbeat/v3/request.js
 var require_request54 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/heartbeat/v3/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/heartbeat/v3/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { Heartbeat: apiKey } = require_apiKeys();
     module.exports = ({ groupId, groupGenerationId, memberId, groupInstanceId }) => ({
@@ -23751,9 +23760,9 @@ var require_request54 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/heartbeat/v3/response.js
+// ../node_modules/kafkajs/src/protocol/requests/heartbeat/v3/response.js
 var require_response54 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/heartbeat/v3/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/heartbeat/v3/response.js"(exports, module) {
     var { parse, decode: decode2 } = require_response53();
     module.exports = {
       decode: decode2,
@@ -23762,9 +23771,9 @@ var require_response54 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/heartbeat/index.js
+// ../node_modules/kafkajs/src/protocol/requests/heartbeat/index.js
 var require_heartbeat = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/heartbeat/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/heartbeat/index.js"(exports, module) {
     var versions = {
       0: ({ groupId, groupGenerationId, memberId }) => {
         const request = require_request51();
@@ -23806,9 +23815,9 @@ var require_heartbeat = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/leaveGroup/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/leaveGroup/v0/request.js
 var require_request55 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/leaveGroup/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/leaveGroup/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { LeaveGroup: apiKey } = require_apiKeys();
     module.exports = ({ groupId, memberId }) => ({
@@ -23822,9 +23831,9 @@ var require_request55 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/leaveGroup/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/leaveGroup/v0/response.js
 var require_response55 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/leaveGroup/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/leaveGroup/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode, failIfVersionNotSupported } = require_error();
     var decode2 = async (rawData) => {
@@ -23846,17 +23855,17 @@ var require_response55 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/leaveGroup/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/leaveGroup/v1/request.js
 var require_request56 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/leaveGroup/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/leaveGroup/v1/request.js"(exports, module) {
     var requestV0 = require_request55();
     module.exports = ({ groupId, memberId }) => Object.assign(requestV0({ groupId, memberId }), { apiVersion: 1 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/leaveGroup/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/leaveGroup/v1/response.js
 var require_response56 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/leaveGroup/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/leaveGroup/v1/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failIfVersionNotSupported } = require_error();
     var { parse: parseV0 } = require_response55();
@@ -23874,17 +23883,17 @@ var require_response56 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/leaveGroup/v2/request.js
+// ../node_modules/kafkajs/src/protocol/requests/leaveGroup/v2/request.js
 var require_request57 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/leaveGroup/v2/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/leaveGroup/v2/request.js"(exports, module) {
     var requestV1 = require_request56();
     module.exports = ({ groupId, memberId }) => Object.assign(requestV1({ groupId, memberId }), { apiVersion: 2 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/leaveGroup/v2/response.js
+// ../node_modules/kafkajs/src/protocol/requests/leaveGroup/v2/response.js
 var require_response57 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/leaveGroup/v2/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/leaveGroup/v2/response.js"(exports, module) {
     var { parse, decode: decodeV1 } = require_response56();
     var decode2 = async (rawData) => {
       const decoded = await decodeV1(rawData);
@@ -23901,9 +23910,9 @@ var require_response57 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/leaveGroup/v3/request.js
+// ../node_modules/kafkajs/src/protocol/requests/leaveGroup/v3/request.js
 var require_request58 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/leaveGroup/v3/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/leaveGroup/v3/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { LeaveGroup: apiKey } = require_apiKeys();
     module.exports = ({ groupId, members }) => ({
@@ -23920,9 +23929,9 @@ var require_request58 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/leaveGroup/v3/response.js
+// ../node_modules/kafkajs/src/protocol/requests/leaveGroup/v3/response.js
 var require_response58 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/leaveGroup/v3/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/leaveGroup/v3/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failIfVersionNotSupported, failure, createErrorFromCode } = require_error();
     var { parse: parseV2 } = require_response57();
@@ -23954,9 +23963,9 @@ var require_response58 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/leaveGroup/index.js
+// ../node_modules/kafkajs/src/protocol/requests/leaveGroup/index.js
 var require_leaveGroup = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/leaveGroup/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/leaveGroup/index.js"(exports, module) {
     var versions = {
       0: ({ groupId, memberId }) => {
         const request = require_request55();
@@ -23998,9 +24007,9 @@ var require_leaveGroup = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/syncGroup/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/syncGroup/v0/request.js
 var require_request59 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/syncGroup/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/syncGroup/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { SyncGroup: apiKey } = require_apiKeys();
     module.exports = ({ groupId, generationId, memberId, groupAssignment }) => ({
@@ -24017,9 +24026,9 @@ var require_request59 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/syncGroup/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/syncGroup/v0/response.js
 var require_response59 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/syncGroup/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/syncGroup/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode, failIfVersionNotSupported } = require_error();
     var decode2 = async (rawData) => {
@@ -24044,17 +24053,17 @@ var require_response59 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/syncGroup/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/syncGroup/v1/request.js
 var require_request60 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/syncGroup/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/syncGroup/v1/request.js"(exports, module) {
     var requestV0 = require_request59();
     module.exports = ({ groupId, generationId, memberId, groupAssignment }) => Object.assign(requestV0({ groupId, generationId, memberId, groupAssignment }), { apiVersion: 1 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/syncGroup/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/syncGroup/v1/response.js
 var require_response60 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/syncGroup/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/syncGroup/v1/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failIfVersionNotSupported } = require_error();
     var { parse: parseV0 } = require_response59();
@@ -24076,17 +24085,17 @@ var require_response60 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/syncGroup/v2/request.js
+// ../node_modules/kafkajs/src/protocol/requests/syncGroup/v2/request.js
 var require_request61 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/syncGroup/v2/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/syncGroup/v2/request.js"(exports, module) {
     var requestV1 = require_request60();
     module.exports = ({ groupId, generationId, memberId, groupAssignment }) => Object.assign(requestV1({ groupId, generationId, memberId, groupAssignment }), { apiVersion: 2 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/syncGroup/v2/response.js
+// ../node_modules/kafkajs/src/protocol/requests/syncGroup/v2/response.js
 var require_response61 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/syncGroup/v2/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/syncGroup/v2/response.js"(exports, module) {
     var { parse, decode: decodeV1 } = require_response60();
     var decode2 = async (rawData) => {
       const decoded = await decodeV1(rawData);
@@ -24103,9 +24112,9 @@ var require_response61 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/syncGroup/v3/request.js
+// ../node_modules/kafkajs/src/protocol/requests/syncGroup/v3/request.js
 var require_request62 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/syncGroup/v3/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/syncGroup/v3/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { SyncGroup: apiKey } = require_apiKeys();
     module.exports = ({
@@ -24128,9 +24137,9 @@ var require_request62 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/syncGroup/v3/response.js
+// ../node_modules/kafkajs/src/protocol/requests/syncGroup/v3/response.js
 var require_response62 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/syncGroup/v3/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/syncGroup/v3/response.js"(exports, module) {
     var { decode: decode2, parse } = require_response61();
     module.exports = {
       decode: decode2,
@@ -24139,9 +24148,9 @@ var require_response62 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/syncGroup/index.js
+// ../node_modules/kafkajs/src/protocol/requests/syncGroup/index.js
 var require_syncGroup = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/syncGroup/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/syncGroup/index.js"(exports, module) {
     var versions = {
       0: ({ groupId, generationId, memberId, groupAssignment }) => {
         const request = require_request59();
@@ -24183,9 +24192,9 @@ var require_syncGroup = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/describeGroups/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/describeGroups/v0/request.js
 var require_request63 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/describeGroups/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/describeGroups/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { DescribeGroups: apiKey } = require_apiKeys();
     module.exports = ({ groupIds }) => ({
@@ -24199,9 +24208,9 @@ var require_request63 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/describeGroups/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/describeGroups/v0/response.js
 var require_response63 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/describeGroups/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/describeGroups/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode } = require_error();
     var decoderMember = (decoder) => ({
@@ -24240,17 +24249,17 @@ var require_response63 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/describeGroups/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/describeGroups/v1/request.js
 var require_request64 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/describeGroups/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/describeGroups/v1/request.js"(exports, module) {
     var requestV0 = require_request63();
     module.exports = ({ groupIds }) => Object.assign(requestV0({ groupIds }), { apiVersion: 1 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/describeGroups/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/describeGroups/v1/response.js
 var require_response64 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/describeGroups/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/describeGroups/v1/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { parse: parseV0 } = require_response63();
     var decoderMember = (decoder) => ({
@@ -24284,17 +24293,17 @@ var require_response64 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/describeGroups/v2/request.js
+// ../node_modules/kafkajs/src/protocol/requests/describeGroups/v2/request.js
 var require_request65 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/describeGroups/v2/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/describeGroups/v2/request.js"(exports, module) {
     var requestV1 = require_request64();
     module.exports = ({ groupIds }) => Object.assign(requestV1({ groupIds }), { apiVersion: 2 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/describeGroups/v2/response.js
+// ../node_modules/kafkajs/src/protocol/requests/describeGroups/v2/response.js
 var require_response65 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/describeGroups/v2/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/describeGroups/v2/response.js"(exports, module) {
     var { parse, decode: decodeV1 } = require_response64();
     var decode2 = async (rawData) => {
       const decoded = await decodeV1(rawData);
@@ -24311,9 +24320,9 @@ var require_response65 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/describeGroups/index.js
+// ../node_modules/kafkajs/src/protocol/requests/describeGroups/index.js
 var require_describeGroups = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/describeGroups/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/describeGroups/index.js"(exports, module) {
     var versions = {
       0: ({ groupIds }) => {
         const request = require_request63();
@@ -24338,9 +24347,9 @@ var require_describeGroups = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/listGroups/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/listGroups/v0/request.js
 var require_request66 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/listGroups/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/listGroups/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { ListGroups: apiKey } = require_apiKeys();
     module.exports = () => ({
@@ -24354,9 +24363,9 @@ var require_request66 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/listGroups/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/listGroups/v0/response.js
 var require_response66 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/listGroups/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/listGroups/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode } = require_error();
     var decodeGroup = (decoder) => ({
@@ -24386,17 +24395,17 @@ var require_response66 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/listGroups/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/listGroups/v1/request.js
 var require_request67 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/listGroups/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/listGroups/v1/request.js"(exports, module) {
     var requestV0 = require_request66();
     module.exports = () => Object.assign(requestV0(), { apiVersion: 1 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/listGroups/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/listGroups/v1/response.js
 var require_response67 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/listGroups/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/listGroups/v1/response.js"(exports, module) {
     var responseV0 = require_response66();
     var Decoder = require_decoder();
     var decode2 = async (rawData) => {
@@ -24417,17 +24426,17 @@ var require_response67 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/listGroups/v2/request.js
+// ../node_modules/kafkajs/src/protocol/requests/listGroups/v2/request.js
 var require_request68 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/listGroups/v2/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/listGroups/v2/request.js"(exports, module) {
     var requestV1 = require_request67();
     module.exports = () => Object.assign(requestV1(), { apiVersion: 2 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/listGroups/v2/response.js
+// ../node_modules/kafkajs/src/protocol/requests/listGroups/v2/response.js
 var require_response68 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/listGroups/v2/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/listGroups/v2/response.js"(exports, module) {
     var { parse, decode: decodeV1 } = require_response67();
     var decode2 = async (rawData) => {
       const decoded = await decodeV1(rawData);
@@ -24444,9 +24453,9 @@ var require_response68 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/listGroups/index.js
+// ../node_modules/kafkajs/src/protocol/requests/listGroups/index.js
 var require_listGroups = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/listGroups/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/listGroups/index.js"(exports, module) {
     var versions = {
       0: () => {
         const request = require_request66();
@@ -24471,9 +24480,9 @@ var require_listGroups = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/saslHandshake/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/saslHandshake/v0/request.js
 var require_request69 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/saslHandshake/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/saslHandshake/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { SaslHandshake: apiKey } = require_apiKeys();
     module.exports = ({ mechanism }) => ({
@@ -24485,9 +24494,9 @@ var require_request69 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/saslHandshake/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/saslHandshake/v0/response.js
 var require_response69 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/saslHandshake/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/saslHandshake/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode, failIfVersionNotSupported } = require_error();
     var decode2 = async (rawData) => {
@@ -24512,17 +24521,17 @@ var require_response69 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/saslHandshake/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/saslHandshake/v1/request.js
 var require_request70 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/saslHandshake/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/saslHandshake/v1/request.js"(exports, module) {
     var requestV0 = require_request69();
     module.exports = ({ mechanism }) => ({ ...requestV0({ mechanism }), apiVersion: 1 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/saslHandshake/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/saslHandshake/v1/response.js
 var require_response70 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/saslHandshake/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/saslHandshake/v1/response.js"(exports, module) {
     var { decode: decodeV0, parse: parseV0 } = require_response69();
     module.exports = {
       decode: decodeV0,
@@ -24531,9 +24540,9 @@ var require_response70 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/saslHandshake/index.js
+// ../node_modules/kafkajs/src/protocol/requests/saslHandshake/index.js
 var require_saslHandshake = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/saslHandshake/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/saslHandshake/index.js"(exports, module) {
     var versions = {
       0: ({ mechanism }) => {
         const request = require_request69();
@@ -24553,9 +24562,9 @@ var require_saslHandshake = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/apiVersions/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/apiVersions/v0/request.js
 var require_request71 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/apiVersions/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/apiVersions/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { ApiVersions: apiKey } = require_apiKeys();
     module.exports = () => ({
@@ -24567,9 +24576,9 @@ var require_request71 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/apiVersions/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/apiVersions/v0/response.js
 var require_response71 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/apiVersions/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/apiVersions/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode, failIfVersionNotSupported } = require_error();
     var apiVersion = (decoder) => ({
@@ -24599,17 +24608,17 @@ var require_response71 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/apiVersions/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/apiVersions/v1/request.js
 var require_request72 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/apiVersions/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/apiVersions/v1/request.js"(exports, module) {
     var requestV0 = require_request71();
     module.exports = () => ({ ...requestV0(), apiVersion: 1 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/apiVersions/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/apiVersions/v1/response.js
 var require_response72 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/apiVersions/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/apiVersions/v1/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failIfVersionNotSupported } = require_error();
     var { parse: parseV0 } = require_response71();
@@ -24637,17 +24646,17 @@ var require_response72 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/apiVersions/v2/request.js
+// ../node_modules/kafkajs/src/protocol/requests/apiVersions/v2/request.js
 var require_request73 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/apiVersions/v2/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/apiVersions/v2/request.js"(exports, module) {
     var requestV0 = require_request71();
     module.exports = () => ({ ...requestV0(), apiVersion: 2 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/apiVersions/v2/response.js
+// ../node_modules/kafkajs/src/protocol/requests/apiVersions/v2/response.js
 var require_response73 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/apiVersions/v2/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/apiVersions/v2/response.js"(exports, module) {
     var { parse, decode: decodeV1 } = require_response72();
     var decode2 = async (rawData) => {
       const decoded = await decodeV1(rawData);
@@ -24664,9 +24673,9 @@ var require_response73 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/apiVersions/index.js
+// ../node_modules/kafkajs/src/protocol/requests/apiVersions/index.js
 var require_apiVersions = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/apiVersions/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/apiVersions/index.js"(exports, module) {
     var logResponseError = false;
     var versions = {
       0: () => {
@@ -24692,9 +24701,9 @@ var require_apiVersions = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/createTopics/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/createTopics/v0/request.js
 var require_request74 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/createTopics/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/createTopics/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { CreateTopics: apiKey } = require_apiKeys();
     module.exports = ({ topics, timeout = 5e3 }) => ({
@@ -24723,9 +24732,9 @@ var require_request74 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/createTopics/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/createTopics/v0/response.js
 var require_response74 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/createTopics/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/createTopics/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode } = require_error();
     var { KafkaJSAggregateError, KafkaJSCreateTopicError } = require_errors2();
@@ -24759,9 +24768,9 @@ var require_response74 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/createTopics/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/createTopics/v1/request.js
 var require_request75 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/createTopics/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/createTopics/v1/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { CreateTopics: apiKey } = require_apiKeys();
     module.exports = ({ topics, validateOnly = false, timeout = 5e3 }) => ({
@@ -24790,9 +24799,9 @@ var require_request75 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/createTopics/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/createTopics/v1/response.js
 var require_response75 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/createTopics/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/createTopics/v1/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { parse: parseV0 } = require_response74();
     var topicNameComparator = (a, b) => a.topic.localeCompare(b.topic);
@@ -24814,17 +24823,17 @@ var require_response75 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/createTopics/v2/request.js
+// ../node_modules/kafkajs/src/protocol/requests/createTopics/v2/request.js
 var require_request76 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/createTopics/v2/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/createTopics/v2/request.js"(exports, module) {
     var requestV1 = require_request75();
     module.exports = ({ topics, validateOnly, timeout }) => Object.assign(requestV1({ topics, validateOnly, timeout }), { apiVersion: 2 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/createTopics/v2/response.js
+// ../node_modules/kafkajs/src/protocol/requests/createTopics/v2/response.js
 var require_response76 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/createTopics/v2/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/createTopics/v2/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { parse: parseV1 } = require_response75();
     var topicNameComparator = (a, b) => a.topic.localeCompare(b.topic);
@@ -24847,17 +24856,17 @@ var require_response76 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/createTopics/v3/request.js
+// ../node_modules/kafkajs/src/protocol/requests/createTopics/v3/request.js
 var require_request77 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/createTopics/v3/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/createTopics/v3/request.js"(exports, module) {
     var requestV2 = require_request76();
     module.exports = ({ topics, validateOnly, timeout }) => Object.assign(requestV2({ topics, validateOnly, timeout }), { apiVersion: 3 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/createTopics/v3/response.js
+// ../node_modules/kafkajs/src/protocol/requests/createTopics/v3/response.js
 var require_response77 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/createTopics/v3/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/createTopics/v3/response.js"(exports, module) {
     var { parse, decode: decodeV2 } = require_response76();
     var decode2 = async (rawData) => {
       const decoded = await decodeV2(rawData);
@@ -24874,9 +24883,9 @@ var require_response77 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/createTopics/index.js
+// ../node_modules/kafkajs/src/protocol/requests/createTopics/index.js
 var require_createTopics = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/createTopics/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/createTopics/index.js"(exports, module) {
     var versions = {
       0: ({ topics, timeout }) => {
         const request = require_request74();
@@ -24906,9 +24915,9 @@ var require_createTopics = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/deleteTopics/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/deleteTopics/v0/request.js
 var require_request78 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/deleteTopics/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/deleteTopics/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { DeleteTopics: apiKey } = require_apiKeys();
     module.exports = ({ topics, timeout = 5e3 }) => ({
@@ -24922,9 +24931,9 @@ var require_request78 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/deleteTopics/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/deleteTopics/v0/response.js
 var require_response78 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/deleteTopics/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/deleteTopics/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode } = require_error();
     var topicNameComparator = (a, b) => a.topic.localeCompare(b.topic);
@@ -24952,17 +24961,17 @@ var require_response78 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/deleteTopics/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/deleteTopics/v1/request.js
 var require_request79 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/deleteTopics/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/deleteTopics/v1/request.js"(exports, module) {
     var requestV0 = require_request78();
     module.exports = ({ topics, timeout }) => Object.assign(requestV0({ topics, timeout }), { apiVersion: 1 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/deleteTopics/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/deleteTopics/v1/response.js
 var require_response79 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/deleteTopics/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/deleteTopics/v1/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { parse: parseV0 } = require_response78();
     var topicNameComparator = (a, b) => a.topic.localeCompare(b.topic);
@@ -24986,9 +24995,9 @@ var require_response79 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/deleteTopics/index.js
+// ../node_modules/kafkajs/src/protocol/requests/deleteTopics/index.js
 var require_deleteTopics = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/deleteTopics/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/deleteTopics/index.js"(exports, module) {
     var versions = {
       0: ({ topics, timeout }) => {
         const request = require_request78();
@@ -25008,9 +25017,9 @@ var require_deleteTopics = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/deleteRecords/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/deleteRecords/v0/request.js
 var require_request80 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/deleteRecords/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/deleteRecords/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { DeleteRecords: apiKey } = require_apiKeys();
     module.exports = ({ topics, timeout = 5e3 }) => ({
@@ -25032,9 +25041,9 @@ var require_request80 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/deleteRecords/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/deleteRecords/v0/response.js
 var require_response80 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/deleteRecords/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/deleteRecords/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { KafkaJSDeleteTopicRecordsError } = require_errors2();
     var { failure, createErrorFromCode } = require_error();
@@ -25080,17 +25089,17 @@ var require_response80 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/deleteRecords/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/deleteRecords/v1/request.js
 var require_request81 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/deleteRecords/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/deleteRecords/v1/request.js"(exports, module) {
     var requestV0 = require_request80();
     module.exports = ({ topics, timeout }) => Object.assign(requestV0({ topics, timeout }), { apiVersion: 1 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/deleteRecords/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/deleteRecords/v1/response.js
 var require_response81 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/deleteRecords/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/deleteRecords/v1/response.js"(exports, module) {
     var responseV0 = require_response80();
     module.exports = ({ topics }) => {
       const { parse, decode: decodeV0 } = responseV0({ topics });
@@ -25110,9 +25119,9 @@ var require_response81 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/deleteRecords/index.js
+// ../node_modules/kafkajs/src/protocol/requests/deleteRecords/index.js
 var require_deleteRecords = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/deleteRecords/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/deleteRecords/index.js"(exports, module) {
     var versions = {
       0: ({ topics, timeout }) => {
         const request = require_request80();
@@ -25132,9 +25141,9 @@ var require_deleteRecords = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/initProducerId/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/initProducerId/v0/request.js
 var require_request82 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/initProducerId/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/initProducerId/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { InitProducerId: apiKey } = require_apiKeys();
     module.exports = ({ transactionalId, transactionTimeout }) => ({
@@ -25148,9 +25157,9 @@ var require_request82 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/initProducerId/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/initProducerId/v0/response.js
 var require_response82 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/initProducerId/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/initProducerId/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode, failIfVersionNotSupported } = require_error();
     var decode2 = async (rawData) => {
@@ -25178,17 +25187,17 @@ var require_response82 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/initProducerId/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/initProducerId/v1/request.js
 var require_request83 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/initProducerId/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/initProducerId/v1/request.js"(exports, module) {
     var requestV0 = require_request82();
     module.exports = ({ transactionalId, transactionTimeout }) => Object.assign(requestV0({ transactionalId, transactionTimeout }), { apiVersion: 1 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/initProducerId/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/initProducerId/v1/response.js
 var require_response83 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/initProducerId/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/initProducerId/v1/response.js"(exports, module) {
     var { parse, decode: decodeV0 } = require_response82();
     var decode2 = async (rawData) => {
       const decoded = await decodeV0(rawData);
@@ -25205,9 +25214,9 @@ var require_response83 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/initProducerId/index.js
+// ../node_modules/kafkajs/src/protocol/requests/initProducerId/index.js
 var require_initProducerId = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/initProducerId/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/initProducerId/index.js"(exports, module) {
     var versions = {
       0: ({ transactionalId, transactionTimeout = 5e3 }) => {
         const request = require_request82();
@@ -25227,9 +25236,9 @@ var require_initProducerId = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/addPartitionsToTxn/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/addPartitionsToTxn/v0/request.js
 var require_request84 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/addPartitionsToTxn/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/addPartitionsToTxn/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { AddPartitionsToTxn: apiKey } = require_apiKeys();
     module.exports = ({ transactionalId, producerId, producerEpoch, topics }) => ({
@@ -25249,9 +25258,9 @@ var require_request84 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/addPartitionsToTxn/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/addPartitionsToTxn/v0/response.js
 var require_response84 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/addPartitionsToTxn/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/addPartitionsToTxn/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode } = require_error();
     var decode2 = async (rawData) => {
@@ -25287,9 +25296,9 @@ var require_response84 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/addPartitionsToTxn/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/addPartitionsToTxn/v1/request.js
 var require_request85 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/addPartitionsToTxn/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/addPartitionsToTxn/v1/request.js"(exports, module) {
     var requestV0 = require_request84();
     module.exports = ({ transactionalId, producerId, producerEpoch, topics }) => Object.assign(
       requestV0({
@@ -25303,9 +25312,9 @@ var require_request85 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/addPartitionsToTxn/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/addPartitionsToTxn/v1/response.js
 var require_response85 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/addPartitionsToTxn/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/addPartitionsToTxn/v1/response.js"(exports, module) {
     var { parse, decode: decodeV0 } = require_response84();
     var decode2 = async (rawData) => {
       const decoded = await decodeV0(rawData);
@@ -25322,9 +25331,9 @@ var require_response85 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/addPartitionsToTxn/index.js
+// ../node_modules/kafkajs/src/protocol/requests/addPartitionsToTxn/index.js
 var require_addPartitionsToTxn = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/addPartitionsToTxn/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/addPartitionsToTxn/index.js"(exports, module) {
     var versions = {
       0: ({ transactionalId, producerId, producerEpoch, topics }) => {
         const request = require_request84();
@@ -25344,9 +25353,9 @@ var require_addPartitionsToTxn = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/addOffsetsToTxn/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/addOffsetsToTxn/v0/request.js
 var require_request86 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/addOffsetsToTxn/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/addOffsetsToTxn/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { AddOffsetsToTxn: apiKey } = require_apiKeys();
     module.exports = ({ transactionalId, producerId, producerEpoch, groupId }) => ({
@@ -25360,9 +25369,9 @@ var require_request86 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/addOffsetsToTxn/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/addOffsetsToTxn/v0/response.js
 var require_response86 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/addOffsetsToTxn/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/addOffsetsToTxn/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode, failIfVersionNotSupported } = require_error();
     var decode2 = async (rawData) => {
@@ -25388,9 +25397,9 @@ var require_response86 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/addOffsetsToTxn/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/addOffsetsToTxn/v1/request.js
 var require_request87 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/addOffsetsToTxn/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/addOffsetsToTxn/v1/request.js"(exports, module) {
     var requestV0 = require_request86();
     module.exports = ({ transactionalId, producerId, producerEpoch, groupId }) => Object.assign(
       requestV0({
@@ -25404,9 +25413,9 @@ var require_request87 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/addOffsetsToTxn/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/addOffsetsToTxn/v1/response.js
 var require_response87 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/addOffsetsToTxn/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/addOffsetsToTxn/v1/response.js"(exports, module) {
     var { parse, decode: decodeV0 } = require_response86();
     var decode2 = async (rawData) => {
       const decoded = await decodeV0(rawData);
@@ -25423,9 +25432,9 @@ var require_response87 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/addOffsetsToTxn/index.js
+// ../node_modules/kafkajs/src/protocol/requests/addOffsetsToTxn/index.js
 var require_addOffsetsToTxn = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/addOffsetsToTxn/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/addOffsetsToTxn/index.js"(exports, module) {
     var versions = {
       0: ({ transactionalId, producerId, producerEpoch, groupId }) => {
         const request = require_request86();
@@ -25445,9 +25454,9 @@ var require_addOffsetsToTxn = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/endTxn/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/endTxn/v0/request.js
 var require_request88 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/endTxn/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/endTxn/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { EndTxn: apiKey } = require_apiKeys();
     module.exports = ({ transactionalId, producerId, producerEpoch, transactionResult }) => ({
@@ -25461,9 +25470,9 @@ var require_request88 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/endTxn/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/endTxn/v0/response.js
 var require_response88 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/endTxn/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/endTxn/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode, failIfVersionNotSupported } = require_error();
     var decode2 = async (rawData) => {
@@ -25489,9 +25498,9 @@ var require_response88 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/endTxn/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/endTxn/v1/request.js
 var require_request89 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/endTxn/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/endTxn/v1/request.js"(exports, module) {
     var requestV0 = require_request88();
     module.exports = ({ transactionalId, producerId, producerEpoch, transactionResult }) => Object.assign(requestV0({ transactionalId, producerId, producerEpoch, transactionResult }), {
       apiVersion: 1
@@ -25499,9 +25508,9 @@ var require_request89 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/endTxn/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/endTxn/v1/response.js
 var require_response89 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/endTxn/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/endTxn/v1/response.js"(exports, module) {
     var { parse, decode: decodeV0 } = require_response88();
     var decode2 = async (rawData) => {
       const decoded = await decodeV0(rawData);
@@ -25518,9 +25527,9 @@ var require_response89 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/endTxn/index.js
+// ../node_modules/kafkajs/src/protocol/requests/endTxn/index.js
 var require_endTxn = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/endTxn/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/endTxn/index.js"(exports, module) {
     var versions = {
       0: ({ transactionalId, producerId, producerEpoch, transactionResult }) => {
         const request = require_request88();
@@ -25546,9 +25555,9 @@ var require_endTxn = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/txnOffsetCommit/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/txnOffsetCommit/v0/request.js
 var require_request90 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/txnOffsetCommit/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/txnOffsetCommit/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { TxnOffsetCommit: apiKey } = require_apiKeys();
     module.exports = ({ transactionalId, groupId, producerId, producerEpoch, topics }) => ({
@@ -25568,9 +25577,9 @@ var require_request90 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/txnOffsetCommit/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/txnOffsetCommit/v0/response.js
 var require_response90 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/txnOffsetCommit/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/txnOffsetCommit/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode } = require_error();
     var decode2 = async (rawData) => {
@@ -25606,9 +25615,9 @@ var require_response90 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/txnOffsetCommit/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/txnOffsetCommit/v1/request.js
 var require_request91 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/txnOffsetCommit/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/txnOffsetCommit/v1/request.js"(exports, module) {
     var requestV0 = require_request90();
     module.exports = ({ transactionalId, groupId, producerId, producerEpoch, topics }) => Object.assign(requestV0({ transactionalId, groupId, producerId, producerEpoch, topics }), {
       apiVersion: 1
@@ -25616,9 +25625,9 @@ var require_request91 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/txnOffsetCommit/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/txnOffsetCommit/v1/response.js
 var require_response91 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/txnOffsetCommit/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/txnOffsetCommit/v1/response.js"(exports, module) {
     var { parse, decode: decodeV1 } = require_response90();
     var decode2 = async (rawData) => {
       const decoded = await decodeV1(rawData);
@@ -25635,9 +25644,9 @@ var require_response91 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/txnOffsetCommit/index.js
+// ../node_modules/kafkajs/src/protocol/requests/txnOffsetCommit/index.js
 var require_txnOffsetCommit = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/txnOffsetCommit/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/txnOffsetCommit/index.js"(exports, module) {
     var versions = {
       0: ({ transactionalId, groupId, producerId, producerEpoch, topics }) => {
         const request = require_request90();
@@ -25663,9 +25672,9 @@ var require_txnOffsetCommit = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/describeAcls/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/describeAcls/v0/request.js
 var require_request92 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/describeAcls/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/describeAcls/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { DescribeAcls: apiKey } = require_apiKeys();
     module.exports = ({ resourceType, resourceName, principal, host, operation, permissionType }) => ({
@@ -25679,9 +25688,9 @@ var require_request92 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/describeAcls/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/describeAcls/v0/response.js
 var require_response92 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/describeAcls/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/describeAcls/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode } = require_error();
     var decodeAcls = (decoder) => ({
@@ -25721,9 +25730,9 @@ var require_response92 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/describeAcls/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/describeAcls/v1/request.js
 var require_request93 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/describeAcls/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/describeAcls/v1/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { DescribeAcls: apiKey } = require_apiKeys();
     module.exports = ({
@@ -25745,9 +25754,9 @@ var require_request93 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/describeAcls/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/describeAcls/v1/response.js
 var require_response93 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/describeAcls/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/describeAcls/v1/response.js"(exports, module) {
     var { parse } = require_response92();
     var Decoder = require_decoder();
     var decodeAcls = (decoder) => ({
@@ -25783,9 +25792,9 @@ var require_response93 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/describeAcls/index.js
+// ../node_modules/kafkajs/src/protocol/requests/describeAcls/index.js
 var require_describeAcls = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/describeAcls/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/describeAcls/index.js"(exports, module) {
     var versions = {
       0: ({ resourceType, resourceName, principal, host, operation, permissionType }) => {
         const request = require_request92();
@@ -25827,9 +25836,9 @@ var require_describeAcls = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/createAcls/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/createAcls/v0/request.js
 var require_request94 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/createAcls/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/createAcls/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { CreateAcls: apiKey } = require_apiKeys();
     var encodeCreations = ({
@@ -25853,9 +25862,9 @@ var require_request94 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/createAcls/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/createAcls/v0/response.js
 var require_response94 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/createAcls/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/createAcls/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode } = require_error();
     var decodeCreationResponse = (decoder) => ({
@@ -25887,9 +25896,9 @@ var require_response94 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/createAcls/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/createAcls/v1/request.js
 var require_request95 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/createAcls/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/createAcls/v1/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { CreateAcls: apiKey } = require_apiKeys();
     var encodeCreations = ({
@@ -25914,9 +25923,9 @@ var require_request95 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/createAcls/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/createAcls/v1/response.js
 var require_response95 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/createAcls/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/createAcls/v1/response.js"(exports, module) {
     var { parse, decode: decodeV0 } = require_response94();
     var decode2 = async (rawData) => {
       const decoded = await decodeV0(rawData);
@@ -25933,9 +25942,9 @@ var require_response95 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/createAcls/index.js
+// ../node_modules/kafkajs/src/protocol/requests/createAcls/index.js
 var require_createAcls = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/createAcls/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/createAcls/index.js"(exports, module) {
     var versions = {
       0: ({ creations }) => {
         const request = require_request94();
@@ -25955,9 +25964,9 @@ var require_createAcls = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/deleteAcls/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/deleteAcls/v0/request.js
 var require_request96 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/deleteAcls/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/deleteAcls/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { DeleteAcls: apiKey } = require_apiKeys();
     var encodeFilters = ({
@@ -25981,9 +25990,9 @@ var require_request96 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/deleteAcls/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/deleteAcls/v0/response.js
 var require_response96 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/deleteAcls/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/deleteAcls/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode } = require_error();
     var decodeMatchingAcls = (decoder) => ({
@@ -26035,9 +26044,9 @@ var require_response96 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/deleteAcls/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/deleteAcls/v1/request.js
 var require_request97 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/deleteAcls/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/deleteAcls/v1/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { DeleteAcls: apiKey } = require_apiKeys();
     var encodeFilters = ({
@@ -26062,9 +26071,9 @@ var require_request97 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/deleteAcls/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/deleteAcls/v1/response.js
 var require_response97 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/deleteAcls/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/deleteAcls/v1/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { parse: parseV0 } = require_response96();
     var decodeMatchingAcls = (decoder) => ({
@@ -26100,9 +26109,9 @@ var require_response97 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/deleteAcls/index.js
+// ../node_modules/kafkajs/src/protocol/requests/deleteAcls/index.js
 var require_deleteAcls = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/deleteAcls/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/deleteAcls/index.js"(exports, module) {
     var versions = {
       0: ({ filters }) => {
         const request = require_request96();
@@ -26122,9 +26131,9 @@ var require_deleteAcls = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/describeConfigs/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/describeConfigs/v0/request.js
 var require_request98 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/describeConfigs/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/describeConfigs/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { DescribeConfigs: apiKey } = require_apiKeys();
     module.exports = ({ resources }) => ({
@@ -26141,9 +26150,9 @@ var require_request98 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/configSource.js
+// ../node_modules/kafkajs/src/protocol/configSource.js
 var require_configSource = __commonJS({
-  "node_modules/kafkajs/src/protocol/configSource.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/configSource.js"(exports, module) {
     module.exports = {
       UNKNOWN: 0,
       TOPIC_CONFIG: 1,
@@ -26156,9 +26165,9 @@ var require_configSource = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/configResourceTypes.js
+// ../node_modules/kafkajs/src/protocol/configResourceTypes.js
 var require_configResourceTypes = __commonJS({
-  "node_modules/kafkajs/src/protocol/configResourceTypes.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/configResourceTypes.js"(exports, module) {
     module.exports = {
       UNKNOWN: 0,
       TOPIC: 2,
@@ -26168,9 +26177,9 @@ var require_configResourceTypes = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/describeConfigs/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/describeConfigs/v0/response.js
 var require_response98 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/describeConfigs/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/describeConfigs/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode } = require_error();
     var ConfigSource = require_configSource();
@@ -26242,9 +26251,9 @@ var require_response98 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/describeConfigs/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/describeConfigs/v1/request.js
 var require_request99 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/describeConfigs/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/describeConfigs/v1/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { DescribeConfigs: apiKey } = require_apiKeys();
     module.exports = ({ resources, includeSynonyms = false }) => ({
@@ -26261,9 +26270,9 @@ var require_request99 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/describeConfigs/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/describeConfigs/v1/response.js
 var require_response99 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/describeConfigs/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/describeConfigs/v1/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { parse: parseV0 } = require_response98();
     var { DEFAULT_CONFIG: DEFAULT_CONFIG5 } = require_configSource();
@@ -26312,17 +26321,17 @@ var require_response99 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/describeConfigs/v2/request.js
+// ../node_modules/kafkajs/src/protocol/requests/describeConfigs/v2/request.js
 var require_request100 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/describeConfigs/v2/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/describeConfigs/v2/request.js"(exports, module) {
     var requestV1 = require_request99();
     module.exports = ({ resources, includeSynonyms }) => Object.assign(requestV1({ resources, includeSynonyms }), { apiVersion: 2 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/describeConfigs/v2/response.js
+// ../node_modules/kafkajs/src/protocol/requests/describeConfigs/v2/response.js
 var require_response100 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/describeConfigs/v2/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/describeConfigs/v2/response.js"(exports, module) {
     var { parse, decode: decodeV1 } = require_response99();
     var decode2 = async (rawData) => {
       const decoded = await decodeV1(rawData);
@@ -26339,9 +26348,9 @@ var require_response100 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/describeConfigs/index.js
+// ../node_modules/kafkajs/src/protocol/requests/describeConfigs/index.js
 var require_describeConfigs = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/describeConfigs/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/describeConfigs/index.js"(exports, module) {
     var versions = {
       0: ({ resources }) => {
         const request = require_request98();
@@ -26366,9 +26375,9 @@ var require_describeConfigs = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/alterConfigs/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/alterConfigs/v0/request.js
 var require_request101 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/alterConfigs/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/alterConfigs/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { AlterConfigs: apiKey } = require_apiKeys();
     module.exports = ({ resources, validateOnly = false }) => ({
@@ -26388,9 +26397,9 @@ var require_request101 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/alterConfigs/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/alterConfigs/v0/response.js
 var require_response101 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/alterConfigs/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/alterConfigs/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode } = require_error();
     var decodeResources = (decoder) => ({
@@ -26422,9 +26431,9 @@ var require_response101 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/alterConfigs/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/alterConfigs/v1/request.js
 var require_request102 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/alterConfigs/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/alterConfigs/v1/request.js"(exports, module) {
     var requestV0 = require_request101();
     module.exports = ({ resources, validateOnly }) => Object.assign(
       requestV0({
@@ -26436,9 +26445,9 @@ var require_request102 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/alterConfigs/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/alterConfigs/v1/response.js
 var require_response102 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/alterConfigs/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/alterConfigs/v1/response.js"(exports, module) {
     var { parse, decode: decodeV0 } = require_response101();
     var decode2 = async (rawData) => {
       const decoded = await decodeV0(rawData);
@@ -26455,9 +26464,9 @@ var require_response102 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/alterConfigs/index.js
+// ../node_modules/kafkajs/src/protocol/requests/alterConfigs/index.js
 var require_alterConfigs = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/alterConfigs/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/alterConfigs/index.js"(exports, module) {
     var versions = {
       0: ({ resources, validateOnly }) => {
         const request = require_request101();
@@ -26477,9 +26486,9 @@ var require_alterConfigs = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/saslAuthenticate/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/saslAuthenticate/v0/request.js
 var require_request103 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/saslAuthenticate/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/saslAuthenticate/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { SaslAuthenticate: apiKey } = require_apiKeys();
     module.exports = ({ authBytes }) => ({
@@ -26493,9 +26502,9 @@ var require_request103 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/saslAuthenticate/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/saslAuthenticate/v0/response.js
 var require_response103 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/saslAuthenticate/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/saslAuthenticate/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var Encoder = require_encoder();
     var {
@@ -26539,17 +26548,17 @@ var require_response103 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/saslAuthenticate/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/saslAuthenticate/v1/request.js
 var require_request104 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/saslAuthenticate/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/saslAuthenticate/v1/request.js"(exports, module) {
     var requestV0 = require_request103();
     module.exports = ({ authBytes }) => Object.assign(requestV0({ authBytes }), { apiVersion: 1 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/saslAuthenticate/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/saslAuthenticate/v1/response.js
 var require_response104 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/saslAuthenticate/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/saslAuthenticate/v1/response.js"(exports, module) {
     var Decoder = require_decoder();
     var Encoder = require_encoder();
     var { parse: parseV0 } = require_response103();
@@ -26576,9 +26585,9 @@ var require_response104 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/saslAuthenticate/index.js
+// ../node_modules/kafkajs/src/protocol/requests/saslAuthenticate/index.js
 var require_saslAuthenticate = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/saslAuthenticate/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/saslAuthenticate/index.js"(exports, module) {
     var versions = {
       0: ({ authBytes }) => {
         const request = require_request103();
@@ -26598,9 +26607,9 @@ var require_saslAuthenticate = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/createPartitions/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/createPartitions/v0/request.js
 var require_request105 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/createPartitions/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/createPartitions/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { CreatePartitions: apiKey } = require_apiKeys();
     module.exports = ({ topicPartitions, validateOnly = false, timeout = 5e3 }) => ({
@@ -26620,9 +26629,9 @@ var require_request105 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/createPartitions/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/createPartitions/v0/response.js
 var require_response105 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/createPartitions/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/createPartitions/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode } = require_error();
     var topicNameComparator = (a, b) => a.topic.localeCompare(b.topic);
@@ -26653,17 +26662,17 @@ var require_response105 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/createPartitions/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/createPartitions/v1/request.js
 var require_request106 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/createPartitions/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/createPartitions/v1/request.js"(exports, module) {
     var requestV0 = require_request105();
     module.exports = ({ topicPartitions, validateOnly, timeout }) => Object.assign(requestV0({ topicPartitions, validateOnly, timeout }), { apiVersion: 1 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/createPartitions/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/createPartitions/v1/response.js
 var require_response106 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/createPartitions/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/createPartitions/v1/response.js"(exports, module) {
     var { parse, decode: decodeV0 } = require_response105();
     var decode2 = async (rawData) => {
       const decoded = await decodeV0(rawData);
@@ -26680,9 +26689,9 @@ var require_response106 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/createPartitions/index.js
+// ../node_modules/kafkajs/src/protocol/requests/createPartitions/index.js
 var require_createPartitions = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/createPartitions/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/createPartitions/index.js"(exports, module) {
     var versions = {
       0: ({ topicPartitions, timeout, validateOnly }) => {
         const request = require_request105();
@@ -26702,9 +26711,9 @@ var require_createPartitions = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/deleteGroups/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/deleteGroups/v0/request.js
 var require_request107 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/deleteGroups/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/deleteGroups/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { DeleteGroups: apiKey } = require_apiKeys();
     module.exports = (groupIds) => ({
@@ -26721,9 +26730,9 @@ var require_request107 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/deleteGroups/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/deleteGroups/v0/response.js
 var require_response107 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/deleteGroups/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/deleteGroups/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode } = require_error();
     var decodeGroup = (decoder) => ({
@@ -26754,17 +26763,17 @@ var require_response107 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/deleteGroups/v1/request.js
+// ../node_modules/kafkajs/src/protocol/requests/deleteGroups/v1/request.js
 var require_request108 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/deleteGroups/v1/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/deleteGroups/v1/request.js"(exports, module) {
     var requestV0 = require_request107();
     module.exports = (groupIds) => Object.assign(requestV0(groupIds), { apiVersion: 1 });
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/deleteGroups/v1/response.js
+// ../node_modules/kafkajs/src/protocol/requests/deleteGroups/v1/response.js
 var require_response108 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/deleteGroups/v1/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/deleteGroups/v1/response.js"(exports, module) {
     var { parse, decode: decodeV0 } = require_response107();
     var decode2 = async (rawData) => {
       const decoded = await decodeV0(rawData);
@@ -26781,9 +26790,9 @@ var require_response108 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/deleteGroups/index.js
+// ../node_modules/kafkajs/src/protocol/requests/deleteGroups/index.js
 var require_deleteGroups = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/deleteGroups/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/deleteGroups/index.js"(exports, module) {
     var versions = {
       0: (groupIds) => {
         const request = require_request107();
@@ -26803,9 +26812,9 @@ var require_deleteGroups = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/alterPartitionReassignments/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/alterPartitionReassignments/v0/request.js
 var require_request109 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/alterPartitionReassignments/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/alterPartitionReassignments/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { AlterPartitionReassignments: apiKey } = require_apiKeys();
     module.exports = ({ topics, timeout = 5e3 }) => ({
@@ -26828,9 +26837,9 @@ var require_request109 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/alterPartitionReassignments/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/alterPartitionReassignments/v0/response.js
 var require_response109 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/alterPartitionReassignments/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/alterPartitionReassignments/v0/response.js"(exports, module) {
     var {
       KafkaJSAggregateError,
       KafkaJSAlterPartitionReassignmentsError
@@ -26897,9 +26906,9 @@ var require_response109 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/alterPartitionReassignments/index.js
+// ../node_modules/kafkajs/src/protocol/requests/alterPartitionReassignments/index.js
 var require_alterPartitionReassignments = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/alterPartitionReassignments/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/alterPartitionReassignments/index.js"(exports, module) {
     var versions = {
       0: ({ topics, timeout }) => {
         const request = require_request109();
@@ -26914,9 +26923,9 @@ var require_alterPartitionReassignments = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/listPartitionReassignments/v0/request.js
+// ../node_modules/kafkajs/src/protocol/requests/listPartitionReassignments/v0/request.js
 var require_request110 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/listPartitionReassignments/v0/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/listPartitionReassignments/v0/request.js"(exports, module) {
     var Encoder = require_encoder();
     var { ListPartitionReassignments: apiKey } = require_apiKeys();
     module.exports = ({ topics = null, timeout = 5e3 }) => ({
@@ -26936,9 +26945,9 @@ var require_request110 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/listPartitionReassignments/v0/response.js
+// ../node_modules/kafkajs/src/protocol/requests/listPartitionReassignments/v0/response.js
 var require_response110 = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/listPartitionReassignments/v0/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/listPartitionReassignments/v0/response.js"(exports, module) {
     var Decoder = require_decoder();
     var { failure, createErrorFromCode } = require_error();
     var decodeReplicas = (decoder) => {
@@ -26987,9 +26996,9 @@ var require_response110 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/listPartitionReassignments/index.js
+// ../node_modules/kafkajs/src/protocol/requests/listPartitionReassignments/index.js
 var require_listPartitionReassignments = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/listPartitionReassignments/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/listPartitionReassignments/index.js"(exports, module) {
     var versions = {
       0: ({ topics, timeout }) => {
         const request = require_request110();
@@ -27004,9 +27013,9 @@ var require_listPartitionReassignments = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/requests/index.js
+// ../node_modules/kafkajs/src/protocol/requests/index.js
 var require_requests = __commonJS({
-  "node_modules/kafkajs/src/protocol/requests/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/requests/index.js"(exports, module) {
     var apiKeys = require_apiKeys();
     var { KafkaJSServerDoesNotSupportApiKey, KafkaJSNotImplemented } = require_errors2();
     var noImplementedRequestDefinitions = {
@@ -27087,9 +27096,9 @@ var require_requests = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/utils/shuffle.js
+// ../node_modules/kafkajs/src/utils/shuffle.js
 var require_shuffle = __commonJS({
-  "node_modules/kafkajs/src/utils/shuffle.js"(exports, module) {
+  "../node_modules/kafkajs/src/utils/shuffle.js"(exports, module) {
     module.exports = (array) => {
       if (!Array.isArray(array)) {
         throw new TypeError("'array' is not an array");
@@ -27109,9 +27118,9 @@ var require_shuffle = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/broker/index.js
+// ../node_modules/kafkajs/src/broker/index.js
 var require_broker = __commonJS({
-  "node_modules/kafkajs/src/broker/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/broker/index.js"(exports, module) {
     var Lock = require_lock();
     var { Types: Compression } = require_compression();
     var { requests, lookup } = require_requests();
@@ -27944,9 +27953,9 @@ var require_broker = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/retry/defaults.test.js
+// ../node_modules/kafkajs/src/retry/defaults.test.js
 var require_defaults_test = __commonJS({
-  "node_modules/kafkajs/src/retry/defaults.test.js"(exports, module) {
+  "../node_modules/kafkajs/src/retry/defaults.test.js"(exports, module) {
     module.exports = {
       maxRetryTime: 1e3,
       initialRetryTime: 50,
@@ -27960,9 +27969,9 @@ var require_defaults_test = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/retry/defaults.js
+// ../node_modules/kafkajs/src/retry/defaults.js
 var require_defaults2 = __commonJS({
-  "node_modules/kafkajs/src/retry/defaults.js"(exports, module) {
+  "../node_modules/kafkajs/src/retry/defaults.js"(exports, module) {
     module.exports = {
       maxRetryTime: 30 * 1e3,
       initialRetryTime: 300,
@@ -27976,9 +27985,9 @@ var require_defaults2 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/retry/index.js
+// ../node_modules/kafkajs/src/retry/index.js
 var require_retry = __commonJS({
-  "node_modules/kafkajs/src/retry/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/retry/index.js"(exports, module) {
     var { KafkaJSNumberOfRetriesExceeded, KafkaJSNonRetriableError } = require_errors2();
     var isTestMode = process.env.NODE_ENV === "test";
     var RETRY_DEFAULT = isTestMode ? require_defaults_test() : require_defaults2();
@@ -28035,9 +28044,9 @@ var require_retry = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/utils/arrayDiff.js
+// ../node_modules/kafkajs/src/utils/arrayDiff.js
 var require_arrayDiff = __commonJS({
-  "node_modules/kafkajs/src/utils/arrayDiff.js"(exports, module) {
+  "../node_modules/kafkajs/src/utils/arrayDiff.js"(exports, module) {
     module.exports = (a, b) => {
       const result = [];
       const length = a.length;
@@ -28053,9 +28062,9 @@ var require_arrayDiff = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/cluster/brokerPool.js
+// ../node_modules/kafkajs/src/cluster/brokerPool.js
 var require_brokerPool = __commonJS({
-  "node_modules/kafkajs/src/cluster/brokerPool.js"(exports, module) {
+  "../node_modules/kafkajs/src/cluster/brokerPool.js"(exports, module) {
     var Broker = require_broker();
     var createRetry = require_retry();
     var shuffle = require_shuffle();
@@ -28343,9 +28352,9 @@ var require_brokerPool = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/utils/sharedPromiseTo.js
+// ../node_modules/kafkajs/src/utils/sharedPromiseTo.js
 var require_sharedPromiseTo = __commonJS({
-  "node_modules/kafkajs/src/utils/sharedPromiseTo.js"(exports, module) {
+  "../node_modules/kafkajs/src/utils/sharedPromiseTo.js"(exports, module) {
     module.exports = (asyncFunction) => {
       let promise = null;
       return (...args) => {
@@ -28358,9 +28367,9 @@ var require_sharedPromiseTo = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/network/socket.js
+// ../node_modules/kafkajs/src/network/socket.js
 var require_socket = __commonJS({
-  "node_modules/kafkajs/src/network/socket.js"(exports, module) {
+  "../node_modules/kafkajs/src/network/socket.js"(exports, module) {
     module.exports = ({
       socketFactory,
       host,
@@ -28382,9 +28391,9 @@ var require_socket = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/request.js
+// ../node_modules/kafkajs/src/protocol/request.js
 var require_request111 = __commonJS({
-  "node_modules/kafkajs/src/protocol/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/request.js"(exports, module) {
     var Encoder = require_encoder();
     module.exports = async ({ correlationId, clientId, request: { apiKey, apiVersion, encode: encode2 } }) => {
       const payload = await encode2();
@@ -28394,9 +28403,9 @@ var require_request111 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/constants.js
+// ../node_modules/kafkajs/src/constants.js
 var require_constants2 = __commonJS({
-  "node_modules/kafkajs/src/constants.js"(exports, module) {
+  "../node_modules/kafkajs/src/constants.js"(exports, module) {
     var EARLIEST_OFFSET = -2;
     var LATEST_OFFSET = -1;
     var INT_32_MAX_VALUE = Math.pow(2, 31) - 1;
@@ -28408,9 +28417,9 @@ var require_constants2 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/env.js
+// ../node_modules/kafkajs/src/env.js
 var require_env = __commonJS({
-  "node_modules/kafkajs/src/env.js"(exports, module) {
+  "../node_modules/kafkajs/src/env.js"(exports, module) {
     module.exports = () => ({
       KAFKAJS_DEBUG_PROTOCOL_BUFFERS: process.env.KAFKAJS_DEBUG_PROTOCOL_BUFFERS,
       KAFKAJS_DEBUG_EXTENDED_PROTOCOL_BUFFERS: process.env.KAFKAJS_DEBUG_EXTENDED_PROTOCOL_BUFFERS
@@ -28418,16 +28427,16 @@ var require_env = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/instrumentation/eventType.js
+// ../node_modules/kafkajs/src/instrumentation/eventType.js
 var require_eventType = __commonJS({
-  "node_modules/kafkajs/src/instrumentation/eventType.js"(exports, module) {
+  "../node_modules/kafkajs/src/instrumentation/eventType.js"(exports, module) {
     module.exports = (namespace) => (type) => `${namespace}.${type}`;
   }
 });
 
-// node_modules/kafkajs/src/network/instrumentationEvents.js
+// ../node_modules/kafkajs/src/network/instrumentationEvents.js
 var require_instrumentationEvents = __commonJS({
-  "node_modules/kafkajs/src/network/instrumentationEvents.js"(exports, module) {
+  "../node_modules/kafkajs/src/network/instrumentationEvents.js"(exports, module) {
     var InstrumentationEventType = require_eventType();
     var eventType = InstrumentationEventType("network");
     module.exports = {
@@ -28438,9 +28447,9 @@ var require_instrumentationEvents = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/network/requestQueue/socketRequest.js
+// ../node_modules/kafkajs/src/network/requestQueue/socketRequest.js
 var require_socketRequest = __commonJS({
-  "node_modules/kafkajs/src/network/requestQueue/socketRequest.js"(exports, module) {
+  "../node_modules/kafkajs/src/network/requestQueue/socketRequest.js"(exports, module) {
     var { KafkaJSRequestTimeoutError, KafkaJSNonRetriableError } = require_errors2();
     var events = require_instrumentationEvents();
     var PRIVATE = {
@@ -28568,9 +28577,9 @@ var require_socketRequest = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/network/requestQueue/index.js
+// ../node_modules/kafkajs/src/network/requestQueue/index.js
 var require_requestQueue = __commonJS({
-  "node_modules/kafkajs/src/network/requestQueue/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/network/requestQueue/index.js"(exports, module) {
     var { EventEmitter: EventEmitter2 } = __require("events");
     var SocketRequest = require_socketRequest();
     var events = require_instrumentationEvents();
@@ -28831,9 +28840,9 @@ var require_requestQueue = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/network/connectionStatus.js
+// ../node_modules/kafkajs/src/network/connectionStatus.js
 var require_connectionStatus = __commonJS({
-  "node_modules/kafkajs/src/network/connectionStatus.js"(exports, module) {
+  "../node_modules/kafkajs/src/network/connectionStatus.js"(exports, module) {
     var CONNECTION_STATUS = {
       CONNECTED: "connected",
       DISCONNECTING: "disconnecting",
@@ -28847,9 +28856,9 @@ var require_connectionStatus = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/sasl/plain/request.js
+// ../node_modules/kafkajs/src/protocol/sasl/plain/request.js
 var require_request112 = __commonJS({
-  "node_modules/kafkajs/src/protocol/sasl/plain/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/sasl/plain/request.js"(exports, module) {
     var Encoder = require_encoder();
     var US_ASCII_NULL_CHAR = "\0";
     module.exports = ({ authorizationIdentity = null, username, password }) => ({
@@ -28862,9 +28871,9 @@ var require_request112 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/sasl/plain/response.js
+// ../node_modules/kafkajs/src/protocol/sasl/plain/response.js
 var require_response111 = __commonJS({
-  "node_modules/kafkajs/src/protocol/sasl/plain/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/sasl/plain/response.js"(exports, module) {
     module.exports = {
       decode: async () => true,
       parse: async () => true
@@ -28872,9 +28881,9 @@ var require_response111 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/sasl/plain/index.js
+// ../node_modules/kafkajs/src/protocol/sasl/plain/index.js
 var require_plain = __commonJS({
-  "node_modules/kafkajs/src/protocol/sasl/plain/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/sasl/plain/index.js"(exports, module) {
     module.exports = {
       request: require_request112(),
       response: require_response111()
@@ -28882,9 +28891,9 @@ var require_plain = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/broker/saslAuthenticator/plain.js
+// ../node_modules/kafkajs/src/broker/saslAuthenticator/plain.js
 var require_plain2 = __commonJS({
-  "node_modules/kafkajs/src/broker/saslAuthenticator/plain.js"(exports, module) {
+  "../node_modules/kafkajs/src/broker/saslAuthenticator/plain.js"(exports, module) {
     var { request, response } = require_plain();
     var { KafkaJSSASLAuthenticationError } = require_errors2();
     var plainAuthenticatorProvider = (sasl) => ({ host, port, logger: logger3, saslAuthenticate }) => {
@@ -28912,9 +28921,9 @@ var require_plain2 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/sasl/scram/firstMessage/request.js
+// ../node_modules/kafkajs/src/protocol/sasl/scram/firstMessage/request.js
 var require_request113 = __commonJS({
-  "node_modules/kafkajs/src/protocol/sasl/scram/firstMessage/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/sasl/scram/firstMessage/request.js"(exports, module) {
     var Encoder = require_encoder();
     module.exports = ({ clientFirstMessage }) => ({
       encode: async () => new Encoder().writeBytes(clientFirstMessage).buffer
@@ -28922,9 +28931,9 @@ var require_request113 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/sasl/scram/firstMessage/response.js
+// ../node_modules/kafkajs/src/protocol/sasl/scram/firstMessage/response.js
 var require_response112 = __commonJS({
-  "node_modules/kafkajs/src/protocol/sasl/scram/firstMessage/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/sasl/scram/firstMessage/response.js"(exports, module) {
     var Decoder = require_decoder();
     var ENTRY_REGEX = /^([rsiev])=(.*)$/;
     module.exports = {
@@ -28942,9 +28951,9 @@ var require_response112 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/sasl/scram/finalMessage/request.js
+// ../node_modules/kafkajs/src/protocol/sasl/scram/finalMessage/request.js
 var require_request114 = __commonJS({
-  "node_modules/kafkajs/src/protocol/sasl/scram/finalMessage/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/sasl/scram/finalMessage/request.js"(exports, module) {
     var Encoder = require_encoder();
     module.exports = ({ finalMessage }) => ({
       encode: async () => new Encoder().writeBytes(finalMessage).buffer
@@ -28952,16 +28961,16 @@ var require_request114 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/sasl/scram/finalMessage/response.js
+// ../node_modules/kafkajs/src/protocol/sasl/scram/finalMessage/response.js
 var require_response113 = __commonJS({
-  "node_modules/kafkajs/src/protocol/sasl/scram/finalMessage/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/sasl/scram/finalMessage/response.js"(exports, module) {
     module.exports = require_response112();
   }
 });
 
-// node_modules/kafkajs/src/protocol/sasl/scram/index.js
+// ../node_modules/kafkajs/src/protocol/sasl/scram/index.js
 var require_scram = __commonJS({
-  "node_modules/kafkajs/src/protocol/sasl/scram/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/sasl/scram/index.js"(exports, module) {
     module.exports = {
       firstMessage: {
         request: require_request113(),
@@ -28975,9 +28984,9 @@ var require_scram = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/broker/saslAuthenticator/scram.js
+// ../node_modules/kafkajs/src/broker/saslAuthenticator/scram.js
 var require_scram2 = __commonJS({
-  "node_modules/kafkajs/src/broker/saslAuthenticator/scram.js"(exports, module) {
+  "../node_modules/kafkajs/src/broker/saslAuthenticator/scram.js"(exports, module) {
     var crypto21 = __require("crypto");
     var scram = require_scram();
     var { KafkaJSSASLAuthenticationError, KafkaJSNonRetriableError } = require_errors2();
@@ -29249,9 +29258,9 @@ var require_scram2 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/broker/saslAuthenticator/scram256.js
+// ../node_modules/kafkajs/src/broker/saslAuthenticator/scram256.js
 var require_scram256 = __commonJS({
-  "node_modules/kafkajs/src/broker/saslAuthenticator/scram256.js"(exports, module) {
+  "../node_modules/kafkajs/src/broker/saslAuthenticator/scram256.js"(exports, module) {
     var { SCRAM, DIGESTS } = require_scram2();
     var scram256AuthenticatorProvider = (sasl) => ({ host, port, logger: logger3, saslAuthenticate }) => {
       const scram = new SCRAM(sasl, host, port, logger3, saslAuthenticate, DIGESTS.SHA256);
@@ -29263,9 +29272,9 @@ var require_scram256 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/broker/saslAuthenticator/scram512.js
+// ../node_modules/kafkajs/src/broker/saslAuthenticator/scram512.js
 var require_scram512 = __commonJS({
-  "node_modules/kafkajs/src/broker/saslAuthenticator/scram512.js"(exports, module) {
+  "../node_modules/kafkajs/src/broker/saslAuthenticator/scram512.js"(exports, module) {
     var { SCRAM, DIGESTS } = require_scram2();
     var scram512AuthenticatorProvider = (sasl) => ({ host, port, logger: logger3, saslAuthenticate }) => {
       const scram = new SCRAM(sasl, host, port, logger3, saslAuthenticate, DIGESTS.SHA512);
@@ -29277,9 +29286,9 @@ var require_scram512 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/sasl/awsIam/request.js
+// ../node_modules/kafkajs/src/protocol/sasl/awsIam/request.js
 var require_request115 = __commonJS({
-  "node_modules/kafkajs/src/protocol/sasl/awsIam/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/sasl/awsIam/request.js"(exports, module) {
     var Encoder = require_encoder();
     var US_ASCII_NULL_CHAR = "\0";
     module.exports = ({ authorizationIdentity, accessKeyId, secretAccessKey, sessionToken = "" }) => ({
@@ -29292,9 +29301,9 @@ var require_request115 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/sasl/awsIam/response.js
+// ../node_modules/kafkajs/src/protocol/sasl/awsIam/response.js
 var require_response114 = __commonJS({
-  "node_modules/kafkajs/src/protocol/sasl/awsIam/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/sasl/awsIam/response.js"(exports, module) {
     module.exports = {
       decode: async () => true,
       parse: async () => true
@@ -29302,9 +29311,9 @@ var require_response114 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/sasl/awsIam/index.js
+// ../node_modules/kafkajs/src/protocol/sasl/awsIam/index.js
 var require_awsIam = __commonJS({
-  "node_modules/kafkajs/src/protocol/sasl/awsIam/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/sasl/awsIam/index.js"(exports, module) {
     module.exports = {
       request: require_request115(),
       response: require_response114()
@@ -29312,9 +29321,9 @@ var require_awsIam = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/broker/saslAuthenticator/awsIam.js
+// ../node_modules/kafkajs/src/broker/saslAuthenticator/awsIam.js
 var require_awsIam2 = __commonJS({
-  "node_modules/kafkajs/src/broker/saslAuthenticator/awsIam.js"(exports, module) {
+  "../node_modules/kafkajs/src/broker/saslAuthenticator/awsIam.js"(exports, module) {
     var { request, response } = require_awsIam();
     var { KafkaJSSASLAuthenticationError } = require_errors2();
     var awsIAMAuthenticatorProvider = (sasl) => ({ host, port, logger: logger3, saslAuthenticate }) => {
@@ -29351,9 +29360,9 @@ var require_awsIam2 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/sasl/oauthBearer/request.js
+// ../node_modules/kafkajs/src/protocol/sasl/oauthBearer/request.js
 var require_request116 = __commonJS({
-  "node_modules/kafkajs/src/protocol/sasl/oauthBearer/request.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/sasl/oauthBearer/request.js"(exports, module) {
     var Encoder = require_encoder();
     var SEPARATOR = "";
     function formatExtensions(extensions) {
@@ -29384,9 +29393,9 @@ var require_request116 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/sasl/oauthBearer/response.js
+// ../node_modules/kafkajs/src/protocol/sasl/oauthBearer/response.js
 var require_response115 = __commonJS({
-  "node_modules/kafkajs/src/protocol/sasl/oauthBearer/response.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/sasl/oauthBearer/response.js"(exports, module) {
     module.exports = {
       decode: async () => true,
       parse: async () => true
@@ -29394,9 +29403,9 @@ var require_response115 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/sasl/oauthBearer/index.js
+// ../node_modules/kafkajs/src/protocol/sasl/oauthBearer/index.js
 var require_oauthBearer = __commonJS({
-  "node_modules/kafkajs/src/protocol/sasl/oauthBearer/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/sasl/oauthBearer/index.js"(exports, module) {
     module.exports = {
       request: require_request116(),
       response: require_response115()
@@ -29404,9 +29413,9 @@ var require_oauthBearer = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/broker/saslAuthenticator/oauthBearer.js
+// ../node_modules/kafkajs/src/broker/saslAuthenticator/oauthBearer.js
 var require_oauthBearer2 = __commonJS({
-  "node_modules/kafkajs/src/broker/saslAuthenticator/oauthBearer.js"(exports, module) {
+  "../node_modules/kafkajs/src/broker/saslAuthenticator/oauthBearer.js"(exports, module) {
     var { request } = require_oauthBearer();
     var { KafkaJSSASLAuthenticationError } = require_errors2();
     var oauthBearerAuthenticatorProvider = (sasl) => ({ host, port, logger: logger3, saslAuthenticate }) => {
@@ -29441,9 +29450,9 @@ var require_oauthBearer2 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/broker/saslAuthenticator/index.js
+// ../node_modules/kafkajs/src/broker/saslAuthenticator/index.js
 var require_saslAuthenticator = __commonJS({
-  "node_modules/kafkajs/src/broker/saslAuthenticator/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/broker/saslAuthenticator/index.js"(exports, module) {
     var { requests, lookup } = require_requests();
     var apiKeys = require_apiKeys();
     var plainAuthenticatorProvider = require_plain2();
@@ -29509,9 +29518,9 @@ var require_saslAuthenticator = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/network/connection.js
+// ../node_modules/kafkajs/src/network/connection.js
 var require_connection = __commonJS({
-  "node_modules/kafkajs/src/network/connection.js"(exports, module) {
+  "../node_modules/kafkajs/src/network/connection.js"(exports, module) {
     var createSocket = require_socket();
     var createRequest = require_request111();
     var Decoder = require_decoder();
@@ -29947,9 +29956,9 @@ var require_connection = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/network/connectionPool.js
+// ../node_modules/kafkajs/src/network/connectionPool.js
 var require_connectionPool = __commonJS({
-  "node_modules/kafkajs/src/network/connectionPool.js"(exports, module) {
+  "../node_modules/kafkajs/src/network/connectionPool.js"(exports, module) {
     var apiKeys = require_apiKeys();
     var Connection = require_connection();
     module.exports = class ConnectionPool {
@@ -30005,9 +30014,9 @@ var require_connectionPool = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/cluster/connectionPoolBuilder.js
+// ../node_modules/kafkajs/src/cluster/connectionPoolBuilder.js
 var require_connectionPoolBuilder = __commonJS({
-  "node_modules/kafkajs/src/cluster/connectionPoolBuilder.js"(exports, module) {
+  "../node_modules/kafkajs/src/cluster/connectionPoolBuilder.js"(exports, module) {
     var { KafkaJSConnectionError, KafkaJSNonRetriableError } = require_errors2();
     var ConnectionPool = require_connectionPool();
     module.exports = ({
@@ -30094,9 +30103,9 @@ var require_connectionPoolBuilder = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/cluster/index.js
+// ../node_modules/kafkajs/src/cluster/index.js
 var require_cluster2 = __commonJS({
-  "node_modules/kafkajs/src/cluster/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/cluster/index.js"(exports, module) {
     var BrokerPool = require_brokerPool();
     var Lock = require_lock();
     var sharedPromiseTo = require_sharedPromiseTo();
@@ -30559,9 +30568,9 @@ var require_cluster2 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/producer/partitioners/default/murmur2.js
+// ../node_modules/kafkajs/src/producer/partitioners/default/murmur2.js
 var require_murmur2 = __commonJS({
-  "node_modules/kafkajs/src/producer/partitioners/default/murmur2.js"(exports, module) {
+  "../node_modules/kafkajs/src/producer/partitioners/default/murmur2.js"(exports, module) {
     var Long = require_long();
     var SEED = Long.fromValue(2538058380);
     var M = Long.fromValue(1540483477);
@@ -30598,9 +30607,9 @@ var require_murmur2 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/producer/partitioners/legacy/randomBytes.js
+// ../node_modules/kafkajs/src/producer/partitioners/legacy/randomBytes.js
 var require_randomBytes = __commonJS({
-  "node_modules/kafkajs/src/producer/partitioners/legacy/randomBytes.js"(exports, module) {
+  "../node_modules/kafkajs/src/producer/partitioners/legacy/randomBytes.js"(exports, module) {
     var { KafkaJSNonRetriableError } = require_errors2();
     var toNodeCompatible = (crypto21) => ({
       randomBytes: (size) => crypto21.getRandomValues(Buffer.allocUnsafe(size))
@@ -30628,9 +30637,9 @@ var require_randomBytes = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/producer/partitioners/legacy/partitioner.js
+// ../node_modules/kafkajs/src/producer/partitioners/legacy/partitioner.js
 var require_partitioner = __commonJS({
-  "node_modules/kafkajs/src/producer/partitioners/legacy/partitioner.js"(exports, module) {
+  "../node_modules/kafkajs/src/producer/partitioners/legacy/partitioner.js"(exports, module) {
     var randomBytes3 = require_randomBytes();
     var toPositive = (x) => x & 2147483647;
     module.exports = (murmur2) => () => {
@@ -30658,18 +30667,18 @@ var require_partitioner = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/producer/partitioners/default/index.js
+// ../node_modules/kafkajs/src/producer/partitioners/default/index.js
 var require_default = __commonJS({
-  "node_modules/kafkajs/src/producer/partitioners/default/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/producer/partitioners/default/index.js"(exports, module) {
     var murmur2 = require_murmur2();
     var createDefaultPartitioner = require_partitioner();
     module.exports = createDefaultPartitioner(murmur2);
   }
 });
 
-// node_modules/kafkajs/src/producer/partitioners/legacy/murmur2.js
+// ../node_modules/kafkajs/src/producer/partitioners/legacy/murmur2.js
 var require_murmur22 = __commonJS({
-  "node_modules/kafkajs/src/producer/partitioners/legacy/murmur2.js"(exports, module) {
+  "../node_modules/kafkajs/src/producer/partitioners/legacy/murmur2.js"(exports, module) {
     var SEED = 2538058380;
     var M = 1540483477;
     var R = 24;
@@ -30704,18 +30713,18 @@ var require_murmur22 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/producer/partitioners/legacy/index.js
+// ../node_modules/kafkajs/src/producer/partitioners/legacy/index.js
 var require_legacy = __commonJS({
-  "node_modules/kafkajs/src/producer/partitioners/legacy/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/producer/partitioners/legacy/index.js"(exports, module) {
     var murmur2 = require_murmur22();
     var createLegacyPartitioner = require_partitioner();
     module.exports = createLegacyPartitioner(murmur2);
   }
 });
 
-// node_modules/kafkajs/src/producer/partitioners/index.js
+// ../node_modules/kafkajs/src/producer/partitioners/index.js
 var require_partitioners = __commonJS({
-  "node_modules/kafkajs/src/producer/partitioners/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/producer/partitioners/index.js"(exports, module) {
     var DefaultPartitioner = require_default();
     var LegacyPartitioner = require_legacy();
     module.exports = {
@@ -30732,9 +30741,9 @@ var require_partitioners = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/producer/eosManager/transactionStates.js
+// ../node_modules/kafkajs/src/producer/eosManager/transactionStates.js
 var require_transactionStates = __commonJS({
-  "node_modules/kafkajs/src/producer/eosManager/transactionStates.js"(exports, module) {
+  "../node_modules/kafkajs/src/producer/eosManager/transactionStates.js"(exports, module) {
     module.exports = {
       UNINITIALIZED: "UNINITIALIZED",
       READY: "READY",
@@ -30745,9 +30754,9 @@ var require_transactionStates = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/producer/eosManager/transactionStateMachine.js
+// ../node_modules/kafkajs/src/producer/eosManager/transactionStateMachine.js
 var require_transactionStateMachine = __commonJS({
-  "node_modules/kafkajs/src/producer/eosManager/transactionStateMachine.js"(exports, module) {
+  "../node_modules/kafkajs/src/producer/eosManager/transactionStateMachine.js"(exports, module) {
     var { EventEmitter: EventEmitter2 } = __require("events");
     var { KafkaJSNonRetriableError } = require_errors2();
     var STATES = require_transactionStates();
@@ -30817,9 +30826,9 @@ var require_transactionStateMachine = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/producer/eosManager/index.js
+// ../node_modules/kafkajs/src/producer/eosManager/index.js
 var require_eosManager = __commonJS({
-  "node_modules/kafkajs/src/producer/eosManager/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/producer/eosManager/index.js"(exports, module) {
     var createRetry = require_retry();
     var Lock = require_lock();
     var { KafkaJSNonRetriableError } = require_errors2();
@@ -31175,9 +31184,9 @@ var require_eosManager = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/producer/groupMessagesPerPartition.js
+// ../node_modules/kafkajs/src/producer/groupMessagesPerPartition.js
 var require_groupMessagesPerPartition = __commonJS({
-  "node_modules/kafkajs/src/producer/groupMessagesPerPartition.js"(exports, module) {
+  "../node_modules/kafkajs/src/producer/groupMessagesPerPartition.js"(exports, module) {
     module.exports = ({ topic, partitionMetadata, messages, partitioner }) => {
       if (partitionMetadata.length === 0) {
         return {};
@@ -31191,9 +31200,9 @@ var require_groupMessagesPerPartition = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/producer/createTopicData.js
+// ../node_modules/kafkajs/src/producer/createTopicData.js
 var require_createTopicData = __commonJS({
-  "node_modules/kafkajs/src/producer/createTopicData.js"(exports, module) {
+  "../node_modules/kafkajs/src/producer/createTopicData.js"(exports, module) {
     module.exports = (topicDataForBroker) => {
       return topicDataForBroker.map(
         ({ topic, partitions, messagesPerPartition, sequencePerPartition }) => ({
@@ -31208,18 +31217,18 @@ var require_createTopicData = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/producer/responseSerializer.js
+// ../node_modules/kafkajs/src/producer/responseSerializer.js
 var require_responseSerializer = __commonJS({
-  "node_modules/kafkajs/src/producer/responseSerializer.js"(exports, module) {
+  "../node_modules/kafkajs/src/producer/responseSerializer.js"(exports, module) {
     module.exports = ({ topics }) => topics.flatMap(
       ({ topicName, partitions }) => partitions.map((partition) => ({ topicName, ...partition }))
     );
   }
 });
 
-// node_modules/kafkajs/src/producer/sendMessages.js
+// ../node_modules/kafkajs/src/producer/sendMessages.js
 var require_sendMessages = __commonJS({
-  "node_modules/kafkajs/src/producer/sendMessages.js"(exports, module) {
+  "../node_modules/kafkajs/src/producer/sendMessages.js"(exports, module) {
     var { KafkaJSMetadataNotLoaded } = require_errors2();
     var { staleMetadata } = require_error();
     var groupMessagesPerPartition = require_groupMessagesPerPartition();
@@ -31347,9 +31356,9 @@ var require_sendMessages = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/producer/messageProducer.js
+// ../node_modules/kafkajs/src/producer/messageProducer.js
 var require_messageProducer = __commonJS({
-  "node_modules/kafkajs/src/producer/messageProducer.js"(exports, module) {
+  "../node_modules/kafkajs/src/producer/messageProducer.js"(exports, module) {
     var createSendMessages = require_sendMessages();
     var { KafkaJSError, KafkaJSNonRetriableError } = require_errors2();
     var { CONNECTION_STATUS } = require_connectionStatus();
@@ -31438,17 +31447,17 @@ var require_messageProducer = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/utils/swapObject.js
+// ../node_modules/kafkajs/src/utils/swapObject.js
 var require_swapObject = __commonJS({
-  "node_modules/kafkajs/src/utils/swapObject.js"(exports, module) {
+  "../node_modules/kafkajs/src/utils/swapObject.js"(exports, module) {
     var { keys } = Object;
     module.exports = (object) => keys(object).reduce((result, key) => ({ ...result, [object[key]]: key }), {});
   }
 });
 
-// node_modules/kafkajs/src/producer/instrumentationEvents.js
+// ../node_modules/kafkajs/src/producer/instrumentationEvents.js
 var require_instrumentationEvents2 = __commonJS({
-  "node_modules/kafkajs/src/producer/instrumentationEvents.js"(exports, module) {
+  "../node_modules/kafkajs/src/producer/instrumentationEvents.js"(exports, module) {
     var swapObject = require_swapObject();
     var networkEvents = require_instrumentationEvents();
     var InstrumentationEventType = require_eventType();
@@ -31476,9 +31485,9 @@ var require_instrumentationEvents2 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/producer/index.js
+// ../node_modules/kafkajs/src/producer/index.js
 var require_producer = __commonJS({
-  "node_modules/kafkajs/src/producer/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/producer/index.js"(exports, module) {
     var createRetry = require_retry();
     var { CONNECTION_STATUS } = require_connectionStatus();
     var { DefaultPartitioner } = require_partitioners();
@@ -31664,26 +31673,26 @@ var require_producer = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/utils/sleep.js
+// ../node_modules/kafkajs/src/utils/sleep.js
 var require_sleep = __commonJS({
-  "node_modules/kafkajs/src/utils/sleep.js"(exports, module) {
+  "../node_modules/kafkajs/src/utils/sleep.js"(exports, module) {
     module.exports = (timeInMs) => new Promise((resolve2) => {
       setTimeout(resolve2, timeInMs);
     });
   }
 });
 
-// node_modules/kafkajs/src/consumer/offsetManager/isInvalidOffset.js
+// ../node_modules/kafkajs/src/consumer/offsetManager/isInvalidOffset.js
 var require_isInvalidOffset = __commonJS({
-  "node_modules/kafkajs/src/consumer/offsetManager/isInvalidOffset.js"(exports, module) {
+  "../node_modules/kafkajs/src/consumer/offsetManager/isInvalidOffset.js"(exports, module) {
     var Long = require_long();
     module.exports = (offset) => !offset && offset !== 0 || Long.fromValue(offset).isNegative();
   }
 });
 
-// node_modules/kafkajs/src/consumer/offsetManager/initializeConsumerOffsets.js
+// ../node_modules/kafkajs/src/consumer/offsetManager/initializeConsumerOffsets.js
 var require_initializeConsumerOffsets = __commonJS({
-  "node_modules/kafkajs/src/consumer/offsetManager/initializeConsumerOffsets.js"(exports, module) {
+  "../node_modules/kafkajs/src/consumer/offsetManager/initializeConsumerOffsets.js"(exports, module) {
     var isInvalidOffset = require_isInvalidOffset();
     var { keys, assign } = Object;
     var indexPartitions = (obj, { partition, offset }) => assign(obj, { [partition]: offset });
@@ -31706,9 +31715,9 @@ var require_initializeConsumerOffsets = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/consumer/instrumentationEvents.js
+// ../node_modules/kafkajs/src/consumer/instrumentationEvents.js
 var require_instrumentationEvents3 = __commonJS({
-  "node_modules/kafkajs/src/consumer/instrumentationEvents.js"(exports, module) {
+  "../node_modules/kafkajs/src/consumer/instrumentationEvents.js"(exports, module) {
     var swapObject = require_swapObject();
     var InstrumentationEventType = require_eventType();
     var networkEvents = require_instrumentationEvents();
@@ -31747,9 +31756,9 @@ var require_instrumentationEvents3 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/consumer/offsetManager/index.js
+// ../node_modules/kafkajs/src/consumer/offsetManager/index.js
 var require_offsetManager = __commonJS({
-  "node_modules/kafkajs/src/consumer/offsetManager/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/consumer/offsetManager/index.js"(exports, module) {
     var Long = require_long();
     var isInvalidOffset = require_isInvalidOffset();
     var initializeConsumerOffsets = require_initializeConsumerOffsets();
@@ -32045,9 +32054,9 @@ var require_offsetManager = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/consumer/filterAbortedMessages.js
+// ../node_modules/kafkajs/src/consumer/filterAbortedMessages.js
 var require_filterAbortedMessages = __commonJS({
-  "node_modules/kafkajs/src/consumer/filterAbortedMessages.js"(exports, module) {
+  "../node_modules/kafkajs/src/consumer/filterAbortedMessages.js"(exports, module) {
     var Long = require_long();
     var ABORTED_MESSAGE_KEY = Buffer.from([0, 0, 0, 0]);
     var isAbortMarker = ({ key }) => {
@@ -32077,9 +32086,9 @@ var require_filterAbortedMessages = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/consumer/batch.js
+// ../node_modules/kafkajs/src/consumer/batch.js
 var require_batch = __commonJS({
-  "node_modules/kafkajs/src/consumer/batch.js"(exports, module) {
+  "../node_modules/kafkajs/src/consumer/batch.js"(exports, module) {
     var Long = require_long();
     var filterAbortedMessages = require_filterAbortedMessages();
     module.exports = class Batch {
@@ -32164,9 +32173,9 @@ var require_batch = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/consumer/seekOffsets.js
+// ../node_modules/kafkajs/src/consumer/seekOffsets.js
 var require_seekOffsets = __commonJS({
-  "node_modules/kafkajs/src/consumer/seekOffsets.js"(exports, module) {
+  "../node_modules/kafkajs/src/consumer/seekOffsets.js"(exports, module) {
     module.exports = class SeekOffsets extends Map {
       getKey(topic, partition) {
         return JSON.stringify([topic, partition]);
@@ -32192,9 +32201,9 @@ var require_seekOffsets = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/consumer/subscriptionState.js
+// ../node_modules/kafkajs/src/consumer/subscriptionState.js
 var require_subscriptionState = __commonJS({
-  "node_modules/kafkajs/src/consumer/subscriptionState.js"(exports, module) {
+  "../node_modules/kafkajs/src/consumer/subscriptionState.js"(exports, module) {
     var createState = (topic) => ({
       topic,
       paused: /* @__PURE__ */ new Set(),
@@ -32303,9 +32312,9 @@ var require_subscriptionState = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/consumer/assignerProtocol.js
+// ../node_modules/kafkajs/src/consumer/assignerProtocol.js
 var require_assignerProtocol = __commonJS({
-  "node_modules/kafkajs/src/consumer/assignerProtocol.js"(exports, module) {
+  "../node_modules/kafkajs/src/consumer/assignerProtocol.js"(exports, module) {
     var Encoder = require_encoder();
     var Decoder = require_decoder();
     var MemberMetadata = {
@@ -32382,9 +32391,9 @@ var require_assignerProtocol = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/consumer/consumerGroup.js
+// ../node_modules/kafkajs/src/consumer/consumerGroup.js
 var require_consumerGroup = __commonJS({
-  "node_modules/kafkajs/src/consumer/consumerGroup.js"(exports, module) {
+  "../node_modules/kafkajs/src/consumer/consumerGroup.js"(exports, module) {
     var sleep = require_sleep();
     var websiteUrl = require_websiteUrl();
     var arrayDiff = require_arrayDiff();
@@ -33015,17 +33024,17 @@ var require_consumerGroup = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/utils/seq.js
+// ../node_modules/kafkajs/src/utils/seq.js
 var require_seq = __commonJS({
-  "node_modules/kafkajs/src/utils/seq.js"(exports, module) {
+  "../node_modules/kafkajs/src/utils/seq.js"(exports, module) {
     var seq = (count, callback = (x) => x) => new Array(count).fill(0).map((_, index) => callback(index));
     module.exports = seq;
   }
 });
 
-// node_modules/kafkajs/src/consumer/fetcher.js
+// ../node_modules/kafkajs/src/consumer/fetcher.js
 var require_fetcher = __commonJS({
-  "node_modules/kafkajs/src/consumer/fetcher.js"(exports, module) {
+  "../node_modules/kafkajs/src/consumer/fetcher.js"(exports, module) {
     var EventEmitter2 = __require("events");
     var createFetcher = ({
       nodeId,
@@ -33094,9 +33103,9 @@ var require_fetcher = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/consumer/worker.js
+// ../node_modules/kafkajs/src/consumer/worker.js
 var require_worker = __commonJS({
-  "node_modules/kafkajs/src/consumer/worker.js"(exports, module) {
+  "../node_modules/kafkajs/src/consumer/worker.js"(exports, module) {
     var sharedPromiseTo = require_sharedPromiseTo();
     var createWorker = ({ handler, workerId }) => {
       const run = sharedPromiseTo(async ({ next }) => {
@@ -33118,9 +33127,9 @@ var require_worker = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/consumer/workerQueue.js
+// ../node_modules/kafkajs/src/consumer/workerQueue.js
 var require_workerQueue = __commonJS({
-  "node_modules/kafkajs/src/consumer/workerQueue.js"(exports, module) {
+  "../node_modules/kafkajs/src/consumer/workerQueue.js"(exports, module) {
     var createWorkerQueue = ({ workers }) => {
       const queue = [];
       const getWorkers = () => workers;
@@ -33141,9 +33150,9 @@ var require_workerQueue = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/consumer/fetchManager.js
+// ../node_modules/kafkajs/src/consumer/fetchManager.js
 var require_fetchManager = __commonJS({
-  "node_modules/kafkajs/src/consumer/fetchManager.js"(exports, module) {
+  "../node_modules/kafkajs/src/consumer/fetchManager.js"(exports, module) {
     var seq = require_seq();
     var createFetcher = require_fetcher();
     var createWorker = require_worker();
@@ -33217,9 +33226,9 @@ var require_fetchManager = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/consumer/runner.js
+// ../node_modules/kafkajs/src/consumer/runner.js
 var require_runner = __commonJS({
-  "node_modules/kafkajs/src/consumer/runner.js"(exports, module) {
+  "../node_modules/kafkajs/src/consumer/runner.js"(exports, module) {
     var { EventEmitter: EventEmitter2 } = __require("events");
     var Long = require_long();
     var createRetry = require_retry();
@@ -33634,9 +33643,9 @@ var require_runner = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/consumer/assigners/roundRobinAssigner/index.js
+// ../node_modules/kafkajs/src/consumer/assigners/roundRobinAssigner/index.js
 var require_roundRobinAssigner = __commonJS({
-  "node_modules/kafkajs/src/consumer/assigners/roundRobinAssigner/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/consumer/assigners/roundRobinAssigner/index.js"(exports, module) {
     var { MemberMetadata, MemberAssignment } = require_assignerProtocol();
     module.exports = ({ cluster }) => ({
       name: "RoundRobinAssigner",
@@ -33708,9 +33717,9 @@ var require_roundRobinAssigner = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/consumer/assigners/index.js
+// ../node_modules/kafkajs/src/consumer/assigners/index.js
 var require_assigners = __commonJS({
-  "node_modules/kafkajs/src/consumer/assigners/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/consumer/assigners/index.js"(exports, module) {
     var roundRobin = require_roundRobinAssigner();
     module.exports = {
       roundRobin
@@ -33718,9 +33727,9 @@ var require_assigners = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/consumer/index.js
+// ../node_modules/kafkajs/src/consumer/index.js
 var require_consumer = __commonJS({
-  "node_modules/kafkajs/src/consumer/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/consumer/index.js"(exports, module) {
     var Long = require_long();
     var createRetry = require_retry();
     var { initialRetryTime } = require_defaults2();
@@ -34110,9 +34119,9 @@ var require_consumer = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/utils/waitFor.js
+// ../node_modules/kafkajs/src/utils/waitFor.js
 var require_waitFor = __commonJS({
-  "node_modules/kafkajs/src/utils/waitFor.js"(exports, module) {
+  "../node_modules/kafkajs/src/utils/waitFor.js"(exports, module) {
     var sleep = require_sleep();
     var { KafkaJSTimeout } = require_errors2();
     module.exports = (fn, { delay = 50, maxWait = 1e4, timeoutMessage = "Timeout", ignoreTimeout = false } = {}) => {
@@ -34155,9 +34164,9 @@ var require_waitFor = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/utils/groupBy.js
+// ../node_modules/kafkajs/src/utils/groupBy.js
 var require_groupBy = __commonJS({
-  "node_modules/kafkajs/src/utils/groupBy.js"(exports, module) {
+  "../node_modules/kafkajs/src/utils/groupBy.js"(exports, module) {
     module.exports = async (array, groupFn) => {
       const result = /* @__PURE__ */ new Map();
       for (const item of array) {
@@ -34169,9 +34178,9 @@ var require_groupBy = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/admin/instrumentationEvents.js
+// ../node_modules/kafkajs/src/admin/instrumentationEvents.js
 var require_instrumentationEvents4 = __commonJS({
-  "node_modules/kafkajs/src/admin/instrumentationEvents.js"(exports, module) {
+  "../node_modules/kafkajs/src/admin/instrumentationEvents.js"(exports, module) {
     var swapObject = require_swapObject();
     var networkEvents = require_instrumentationEvents();
     var InstrumentationEventType = require_eventType();
@@ -34199,9 +34208,9 @@ var require_instrumentationEvents4 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/aclResourceTypes.js
+// ../node_modules/kafkajs/src/protocol/aclResourceTypes.js
 var require_aclResourceTypes = __commonJS({
-  "node_modules/kafkajs/src/protocol/aclResourceTypes.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/aclResourceTypes.js"(exports, module) {
     module.exports = {
       /**
        * Represents any ResourceType which this client cannot understand,
@@ -34238,9 +34247,9 @@ var require_aclResourceTypes = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/aclOperationTypes.js
+// ../node_modules/kafkajs/src/protocol/aclOperationTypes.js
 var require_aclOperationTypes = __commonJS({
-  "node_modules/kafkajs/src/protocol/aclOperationTypes.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/aclOperationTypes.js"(exports, module) {
     module.exports = {
       /**
        * Represents any AclOperation which this client cannot understand, perhaps because this
@@ -34299,9 +34308,9 @@ var require_aclOperationTypes = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/aclPermissionTypes.js
+// ../node_modules/kafkajs/src/protocol/aclPermissionTypes.js
 var require_aclPermissionTypes = __commonJS({
-  "node_modules/kafkajs/src/protocol/aclPermissionTypes.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/aclPermissionTypes.js"(exports, module) {
     module.exports = {
       /**
        * Represents any AclPermissionType which this client cannot understand,
@@ -34324,9 +34333,9 @@ var require_aclPermissionTypes = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/protocol/resourcePatternTypes.js
+// ../node_modules/kafkajs/src/protocol/resourcePatternTypes.js
 var require_resourcePatternTypes = __commonJS({
-  "node_modules/kafkajs/src/protocol/resourcePatternTypes.js"(exports, module) {
+  "../node_modules/kafkajs/src/protocol/resourcePatternTypes.js"(exports, module) {
     module.exports = {
       /**
        * Represents any PatternType which this client cannot understand, perhaps because this client is too old.
@@ -34366,9 +34375,9 @@ var require_resourcePatternTypes = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/admin/index.js
+// ../node_modules/kafkajs/src/admin/index.js
 var require_admin = __commonJS({
-  "node_modules/kafkajs/src/admin/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/admin/index.js"(exports, module) {
     var createRetry = require_retry();
     var waitFor = require_waitFor();
     var groupBy = require_groupBy();
@@ -35465,9 +35474,9 @@ var require_admin = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/network/socketFactory.js
+// ../node_modules/kafkajs/src/network/socketFactory.js
 var require_socketFactory = __commonJS({
-  "node_modules/kafkajs/src/network/socketFactory.js"(exports, module) {
+  "../node_modules/kafkajs/src/network/socketFactory.js"(exports, module) {
     var KEEP_ALIVE_DELAY = 6e4;
     module.exports = () => {
       const net2 = __require("net");
@@ -35484,9 +35493,9 @@ var require_socketFactory = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/utils/once.js
+// ../node_modules/kafkajs/src/utils/once.js
 var require_once = __commonJS({
-  "node_modules/kafkajs/src/utils/once.js"(exports, module) {
+  "../node_modules/kafkajs/src/utils/once.js"(exports, module) {
     module.exports = (fn) => {
       let called = false;
       return (...args) => {
@@ -35499,9 +35508,9 @@ var require_once = __commonJS({
   }
 });
 
-// node_modules/kafkajs/src/index.js
+// ../node_modules/kafkajs/src/index.js
 var require_src2 = __commonJS({
-  "node_modules/kafkajs/src/index.js"(exports, module) {
+  "../node_modules/kafkajs/src/index.js"(exports, module) {
     var {
       createLogger,
       LEVELS: { INFO }
@@ -35701,9 +35710,9 @@ var require_src2 = __commonJS({
   }
 });
 
-// node_modules/kafkajs/index.js
+// ../node_modules/kafkajs/index.js
 var require_kafkajs = __commonJS({
-  "node_modules/kafkajs/index.js"(exports, module) {
+  "../node_modules/kafkajs/index.js"(exports, module) {
     var Kafka2 = require_src2();
     var PartitionAssigners = require_assigners();
     var AssignerProtocol = require_assignerProtocol();
@@ -35736,14 +35745,14 @@ var require_kafkajs = __commonJS({
   }
 });
 
-// src/security/auditSinkKafka.ts
+// ../src/security/auditSinkKafka.ts
 var auditSinkKafka_exports = {};
 __export(auditSinkKafka_exports, {
   KafkaAuditSink: () => KafkaAuditSink
 });
 var import_kafkajs, KafkaAuditSink;
 var init_auditSinkKafka = __esm({
-  "src/security/auditSinkKafka.ts"() {
+  "../src/security/auditSinkKafka.ts"() {
     import_kafkajs = __toESM(require_kafkajs(), 1);
     KafkaAuditSink = class {
       name = "kafka";
@@ -35905,7 +35914,7 @@ var init_auditSinkKafka = __esm({
   }
 });
 
-// src/security/auditChangeFeed.ts
+// ../src/security/auditChangeFeed.ts
 var auditChangeFeed_exports = {};
 __export(auditChangeFeed_exports, {
   AuditChangeFeed: () => AuditChangeFeed
@@ -35934,7 +35943,7 @@ function rowToAuditEvent(r) {
 }
 var AuditChangeFeed;
 var init_auditChangeFeed = __esm({
-  "src/security/auditChangeFeed.ts"() {
+  "../src/security/auditChangeFeed.ts"() {
     init_logger();
     AuditChangeFeed = class {
       constructor(sp, kafkaSink, opts = {}) {
@@ -36019,7 +36028,7 @@ var init_auditChangeFeed = __esm({
   }
 });
 
-// src/data/outbox/outbox.ts
+// ../src/data/outbox/outbox.ts
 async function ensureOutboxSchema(client) {
   await client.query(`
     DEFINE INDEX IF NOT EXISTS idx_outbox_status_created
@@ -36045,7 +36054,7 @@ function startOutboxWorker(client, handler, config) {
 }
 var logger2, DEFAULT_OUTBOX_CONFIG, OutboxWorker;
 var init_outbox = __esm({
-  "src/data/outbox/outbox.ts"() {
+  "../src/data/outbox/outbox.ts"() {
     init_logger();
     logger2 = {
       info: (msg, meta) => logger.info("outbox", msg, meta),
@@ -36223,7 +36232,7 @@ var init_outbox = __esm({
   }
 });
 
-// src/kernel/orchestration/reputation-outbox-bridge.ts
+// ../src/kernel/orchestration/reputation-outbox-bridge.ts
 var reputation_outbox_bridge_exports = {};
 __export(reputation_outbox_bridge_exports, {
   DEFAULT_REP_BRIDGE_CONFIG: () => DEFAULT_REP_BRIDGE_CONFIG,
@@ -36231,7 +36240,7 @@ __export(reputation_outbox_bridge_exports, {
 });
 var log, DEFAULT_REP_BRIDGE_CONFIG, ReputationOutboxBridge;
 var init_reputation_outbox_bridge = __esm({
-  "src/kernel/orchestration/reputation-outbox-bridge.ts"() {
+  "../src/kernel/orchestration/reputation-outbox-bridge.ts"() {
     init_runtime_events();
     init_logger();
     init_outbox();
@@ -36375,7 +36384,7 @@ var init_reputation_outbox_bridge = __esm({
   }
 });
 
-// src/data/garnet/health-monitor.ts
+// ../src/data/garnet/health-monitor.ts
 var health_monitor_exports = {};
 __export(health_monitor_exports, {
   isHealthMonitorRunning: () => isHealthMonitorRunning,
@@ -36426,14 +36435,14 @@ function isHealthMonitorRunning() {
 }
 var healthCheckTimer, HEALTH_CHECK_INTERVAL_MS;
 var init_health_monitor = __esm({
-  "src/data/garnet/health-monitor.ts"() {
+  "../src/data/garnet/health-monitor.ts"() {
     init_client();
     healthCheckTimer = null;
     HEALTH_CHECK_INTERVAL_MS = 3e4;
   }
 });
 
-// src/kernel/scheduler-client.ts
+// ../src/kernel/scheduler-client.ts
 var scheduler_client_exports = {};
 __export(scheduler_client_exports, {
   SoloForgeRustSchedulerClient: () => SoloForgeRustSchedulerClient
@@ -36444,7 +36453,7 @@ import fs5 from "fs";
 import readline from "readline";
 var SoloForgeRustSchedulerClient;
 var init_scheduler_client = __esm({
-  "src/kernel/scheduler-client.ts"() {
+  "../src/kernel/scheduler-client.ts"() {
     SoloForgeRustSchedulerClient = class {
       process = null;
       rl = null;
@@ -36694,7 +36703,7 @@ var init_scheduler_client = __esm({
   }
 });
 
-// src/kernel/config-center.ts
+// ../src/kernel/config-center.ts
 var DEFAULT_CONFIG = {
   // Governor clock timing
   "governor.clock.tick_rate_ms": 50,
@@ -36794,7 +36803,7 @@ var ConfigCenter = class {
 var globalMetricsCollector = new NoopMetricsCollector();
 var globalConfigCenter = new ConfigCenter();
 
-// src/kernel/runtime-kernel.ts
+// ../src/kernel/runtime-kernel.ts
 var InMemoryEventBus = class {
   eventLog = [];
   handlers = /* @__PURE__ */ new Map();
@@ -37143,7 +37152,7 @@ var RuntimeKernel = class _RuntimeKernel {
 };
 var kernel = RuntimeKernel.getInstance();
 
-// src/core/society/role-evolution.ts
+// ../src/core/society/role-evolution.ts
 init_logger();
 import crypto2 from "crypto";
 var RoleEvolutionEngine = class {
@@ -37252,7 +37261,7 @@ var RoleEvolutionEngine = class {
   }
 };
 
-// src/core/society/coalition.ts
+// ../src/core/society/coalition.ts
 init_logger();
 import crypto3 from "crypto";
 var CoalitionEngine = class {
@@ -37433,10 +37442,10 @@ var CoalitionEngine = class {
   }
 };
 
-// src/core/society/social-memory.ts
+// ../src/core/society/social-memory.ts
 import crypto5 from "crypto";
 
-// node_modules/ulid/dist/node/index.js
+// ../node_modules/ulid/dist/node/index.js
 import crypto4 from "node:crypto";
 var ENCODING = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 var ENCODING_LEN = 32;
@@ -37531,7 +37540,7 @@ function ulid(seedTime, prng) {
   return encodeTime(seed, TIME_LEN) + encodeRandom(RANDOM_LEN, currentPRNG);
 }
 
-// src/core/society/social-memory.ts
+// ../src/core/society/social-memory.ts
 init_logger();
 var SocialMemoryEngine = class {
   constructor(kernel2) {
@@ -37709,7 +37718,7 @@ var SocialMemoryEngine = class {
   }
 };
 
-// src/core/law/law-engine.ts
+// ../src/core/law/law-engine.ts
 import crypto6 from "crypto";
 init_logger();
 var LawEngine = class {
@@ -37954,7 +37963,7 @@ var LawEngine = class {
   }
 };
 
-// src/core/society/reputation.ts
+// ../src/core/society/reputation.ts
 import crypto7 from "crypto";
 init_logger();
 var SocialReputationEngine = class {
@@ -38195,10 +38204,10 @@ var SocialReputationEngine = class {
   }
 };
 
-// src/core/society/institution.ts
+// ../src/core/society/institution.ts
 import crypto8 from "crypto";
 
-// src/data/delete_protection.ts
+// ../src/data/delete_protection.ts
 var DeleteProtection = class {
   lockedTypes = /* @__PURE__ */ new Set();
   /** Lock a specific entity type — prevents all deletions of that type */
@@ -38225,7 +38234,7 @@ var DeleteProtection = class {
   }
 };
 
-// src/core/society/institution.ts
+// ../src/core/society/institution.ts
 init_logger();
 var InstitutionEngine = class {
   constructor(kernel2) {
@@ -38389,7 +38398,7 @@ var InstitutionEngine = class {
   }
 };
 
-// src/core/society/governance.ts
+// ../src/core/society/governance.ts
 import crypto9 from "crypto";
 init_logger();
 var GovernancePolicyEngine = class {
@@ -38627,7 +38636,7 @@ var GovernancePolicyEngine = class {
   }
 };
 
-// src/core/court/consensagent.ts
+// ../src/core/court/consensagent.ts
 init_court_events();
 init_logger();
 import crypto10 from "crypto";
@@ -38763,14 +38772,14 @@ var ConsensAgentCourtRoom = class {
   }
 };
 
-// src/core/court/llm_escalation.ts
+// ../src/core/court/llm_escalation.ts
 init_logger();
 import crypto11 from "crypto";
 
-// src/core/agent/tools/function-calling-client.ts
+// ../src/core/agent/tools/function-calling-client.ts
 import { createHash as createHash2 } from "crypto";
 
-// src/llm/llmConfig.ts
+// ../src/llm/llmConfig.ts
 var DEFAULT_BASE_URL = "https://api.openai.com/v1";
 var DEFAULT_MODEL = "gpt-4o-mini";
 var DEFAULT_TIMEOUT_MS = 6e4;
@@ -38805,10 +38814,10 @@ function describeLLMProxyConfig() {
   };
 }
 
-// src/core/agent/tools/function-calling-client.ts
+// ../src/core/agent/tools/function-calling-client.ts
 init_modelCapabilities();
 
-// src/core/agent/tools/tool-definitions.ts
+// ../src/core/agent/tools/tool-definitions.ts
 import fs from "fs/promises";
 import path from "path";
 import { spawn } from "child_process";
@@ -39749,7 +39758,7 @@ ${stderrBuf}` : "")).trim();
   }
 }
 
-// src/core/agent/tools/session-tool-cache.ts
+// ../src/core/agent/tools/session-tool-cache.ts
 init_logger();
 import { createHash } from "crypto";
 var DEFAULT_TTL_MS = 10 * 60 * 1e3;
@@ -39922,7 +39931,7 @@ function isCacheableToolResult(toolName, output) {
   return !nonCacheableTools.has(toolName);
 }
 
-// src/core/agent/tools/function-calling-client.ts
+// ../src/core/agent/tools/function-calling-client.ts
 function estimateTokens(messages) {
   let totalChars = 0;
   for (const m of messages) {
@@ -40339,7 +40348,7 @@ async function callLLMOnce(opts) {
   throw lastError ?? new Error("LLM call failed after all retries");
 }
 
-// src/core/court/llm_escalation.ts
+// ../src/core/court/llm_escalation.ts
 var LlmEscalationRoom = class {
   constructor(kernel2, persistenceManager) {
     this.kernel = kernel2;
@@ -40479,7 +40488,7 @@ ${caseSummary}`
   }
 };
 
-// src/kernel/orchestration/distributed-broker.ts
+// ../src/kernel/orchestration/distributed-broker.ts
 init_runtime_events();
 init_logger();
 import net from "net";
@@ -40645,7 +40654,7 @@ var DistributedProtocolBroker = class {
   }
 };
 
-// src/kernel/observability/telemetry-exporter.ts
+// ../src/kernel/observability/telemetry-exporter.ts
 init_logger();
 var TelemetryMetricExporter = class {
   constructor(kernel2) {
@@ -40717,7 +40726,7 @@ var TelemetryMetricExporter = class {
   }
 };
 
-// src/kernel/orchestration/cluster-runtime-orchestrator.ts
+// ../src/kernel/orchestration/cluster-runtime-orchestrator.ts
 init_runtime_events();
 init_logger();
 import http from "http";
@@ -40853,7 +40862,7 @@ var ClusterRuntimeOrchestrator = class {
   }
 };
 
-// src/kernel/consensus/raft-consensus-node.ts
+// ../src/kernel/consensus/raft-consensus-node.ts
 init_runtime_events();
 init_logger();
 import crypto14 from "crypto";
@@ -41193,7 +41202,7 @@ var RaftConsensusNode = class {
   }
 };
 
-// node_modules/surrealdb/dist/surrealdb.mjs
+// ../node_modules/surrealdb/dist/surrealdb.mjs
 function normalizePath(prefix, path6) {
   return `/${[...prefix.split("/"), ...path6.split("/")].filter(Boolean).join("/")}`;
 }
@@ -47680,7 +47689,7 @@ var Surreal = class Surreal2 extends SurrealSession {
   }
 };
 
-// node_modules/surrealdb/dist/surrealdb.server.mjs
+// ../node_modules/surrealdb/dist/surrealdb.server.mjs
 import { inspect } from "node:util";
 var colors = {
   black: "\x1B[30m",
@@ -47919,7 +47928,7 @@ ${lines.join(`${separator}
 ${suffix}`;
 }
 
-// src/data/surreal_persistence.ts
+// ../src/data/surreal_persistence.ts
 var SurrealPersistence = class _SurrealPersistence {
   name = "surreal";
   // åé¨å­å¨ï¼ç¨äºæµè¯ï¼
@@ -48268,10 +48277,10 @@ var SurrealPersistence = class _SurrealPersistence {
 };
 var surrealPersistence = new SurrealPersistence();
 
-// src/index.ts
+// ../src/index.ts
 init_garnet();
 
-// src/data/consumers/society-evolution-consumer.ts
+// ../src/data/consumers/society-evolution-consumer.ts
 init_runtime_events();
 init_logger();
 function initializeSocietyEvolutionConsumer(kernel2) {
@@ -48376,7 +48385,7 @@ function initializeSocietyEvolutionConsumer(kernel2) {
   });
 }
 
-// src/data/consumers/social-memory-consumer.ts
+// ../src/data/consumers/social-memory-consumer.ts
 init_runtime_events();
 init_logger();
 function initializeSocialMemoryConsumer(kernel2) {
@@ -48419,7 +48428,7 @@ function initializeSocialMemoryConsumer(kernel2) {
   });
 }
 
-// src/data/consumers/law-compliance-consumer.ts
+// ../src/data/consumers/law-compliance-consumer.ts
 init_runtime_events();
 init_logger();
 function initializeLawComplianceConsumer(kernel2) {
@@ -48482,7 +48491,7 @@ function initializeLawComplianceConsumer(kernel2) {
   });
 }
 
-// src/data/consumers/reputation-analytics-consumer.ts
+// ../src/data/consumers/reputation-analytics-consumer.ts
 init_runtime_events();
 init_logger();
 function initializeReputationAnalyticsConsumer(kernel2) {
@@ -48545,7 +48554,7 @@ function initializeReputationAnalyticsConsumer(kernel2) {
   });
 }
 
-// src/data/consumers/court-adjudication-consumer.ts
+// ../src/data/consumers/court-adjudication-consumer.ts
 init_runtime_events();
 init_logger();
 function initializeCourtAdjudicationConsumer(kernel2) {
@@ -48608,7 +48617,7 @@ function initializeCourtAdjudicationConsumer(kernel2) {
   });
 }
 
-// src/data/consumers/telemetry-aggregation-consumer.ts
+// ../src/data/consumers/telemetry-aggregation-consumer.ts
 init_runtime_events();
 function initializeTelemetryAggregationConsumer(kernel2, exporter) {
   if (!kernel2 || !kernel2.eventBus || !exporter) return;
@@ -48650,7 +48659,7 @@ function initializeTelemetryAggregationConsumer(kernel2, exporter) {
   });
 }
 
-// src/data/consumers/consensus-audit-consumer.ts
+// ../src/data/consumers/consensus-audit-consumer.ts
 init_runtime_events();
 init_logger();
 function initializeConsensusAuditConsumer(kernel2) {
@@ -48685,10 +48694,10 @@ function initializeConsensusAuditConsumer(kernel2) {
   });
 }
 
-// src/index.ts
+// ../src/index.ts
 init_logger();
 
-// src/observability/otel-init.ts
+// ../src/observability/otel-init.ts
 var initialized = false;
 async function initOpenTelemetry() {
   if (initialized) return;
@@ -48754,11 +48763,11 @@ async function initOpenTelemetry() {
   }
 }
 
-// src/api-server.ts
+// ../src/api-server.ts
 import http2 from "http";
 import crypto17 from "crypto";
 
-// src/data/data-archiver.ts
+// ../src/data/data-archiver.ts
 init_cache();
 import fs2 from "fs";
 import path2 from "path";
@@ -49038,11 +49047,11 @@ var DataArchiverService = class {
 };
 var dataArchiver = new DataArchiverService(new SurrealPersistence());
 
-// src/api-server.ts
+// ../src/api-server.ts
 init_logger();
 init_auth();
 
-// src/security/auditSinkSurreal.ts
+// ../src/security/auditSinkSurreal.ts
 init_logger();
 var MAX_QUEUE = 1e3;
 var FLUSH_THRESHOLD = 50;
@@ -49260,10 +49269,10 @@ function createAuditSinkFromSurreal(sp, extra) {
   });
 }
 
-// src/api-server.ts
+// ../src/api-server.ts
 init_tenantContext();
 
-// src/llm/openaiStreamClient.ts
+// ../src/llm/openaiStreamClient.ts
 var DEFAULT_TIMEOUT_MS2 = 6e4;
 async function* streamOpenAIChat(opts) {
   const cfg = getLLMProxyConfig();
@@ -49350,7 +49359,7 @@ async function* streamOpenAIChat(opts) {
   }
 }
 
-// src/llm/openaiSyncClient.ts
+// ../src/llm/openaiSyncClient.ts
 var DEFAULT_TIMEOUT_MS3 = 3e4;
 async function callOpenAIChat(opts) {
   const cfg = getLLMProxyConfig();
@@ -49418,11 +49427,11 @@ async function callOpenAIChat(opts) {
   };
 }
 
-// src/llm/llmProxyHandler.ts
+// ../src/llm/llmProxyHandler.ts
 init_apiKeyVault();
 init_logger();
 
-// src/observability/metrics.ts
+// ../src/observability/metrics.ts
 function labelKey(labels, names) {
   if (!names.length) return "";
   return names.map((n) => `${n}=${labels[n] ?? ""}`).join("|");
@@ -49584,7 +49593,7 @@ var httpRequestLatency = new Histogram({
 });
 defaultRegistry.register(httpRequestLatency);
 
-// src/observability/sentryAdapter.ts
+// ../src/observability/sentryAdapter.ts
 init_logger();
 import crypto15 from "crypto";
 function parseDsn(dsn) {
@@ -49763,7 +49772,7 @@ function getDefaultSentry() {
   return _default;
 }
 
-// src/llm/llmProxyHandler.ts
+// ../src/llm/llmProxyHandler.ts
 async function handleLLMStreamProxy(req, res, body) {
   const cfg = getLLMProxyConfig();
   if (cfg.apiToken.length > 0) {
@@ -49999,7 +50008,7 @@ async function handleLLMHealth(req) {
   }
 }
 
-// src/server/routes-canvas.ts
+// ../src/server/routes-canvas.ts
 init_logger();
 var canvasPortRegistry = /* @__PURE__ */ new Map();
 function handleCanvasPortRegister(body) {
@@ -50130,7 +50139,7 @@ async function handleCanvasRelayPushUi(body) {
   }
 }
 
-// src/server/middleware.ts
+// ../src/server/middleware.ts
 init_auth();
 init_tenantContext();
 function parseBody(req, maxBytes = MAX_BODY_BYTES) {
@@ -50282,7 +50291,7 @@ async function runMiddleware(req, res, deps) {
   };
 }
 
-// src/server/ws-manager.ts
+// ../src/server/ws-manager.ts
 var SseManager = class {
   clients = /* @__PURE__ */ new Set();
   /** Register a new SSE client connection */
@@ -50363,7 +50372,7 @@ var AgentEventHubManager = class {
   }
 };
 
-// src/server/routes-agent.ts
+// ../src/server/routes-agent.ts
 init_logger();
 async function handleAgentSnapshot(deps) {
   if (!deps.agentRegistry) {
@@ -50624,7 +50633,7 @@ async function handleTestReputationEnqueue(body, deps) {
   }
 }
 
-// src/server/routes-system.ts
+// ../src/server/routes-system.ts
 import fs4 from "fs";
 import path4 from "path";
 import os from "os";
@@ -51346,7 +51355,7 @@ function handleAnalyticsParquet(body) {
   return { status: 200, headers: { "Content-Type": "application/json" }, body: { out_dir: outDir, files } };
 }
 
-// src/security/auditQuery.ts
+// ../src/security/auditQuery.ts
 var MAX_LIMIT = 500;
 var DEFAULT_LIMIT = 100;
 var MAX_SPAN_MS = 7 * 24 * 60 * 60 * 1e3;
@@ -51428,14 +51437,14 @@ function coerceRow(r) {
   };
 }
 
-// src/server/routes-vault.ts
+// ../src/server/routes-vault.ts
 init_tenantContext();
 
-// src/security/vaultHandler.ts
+// ../src/security/vaultHandler.ts
 init_apiKeyVault();
 init_logger();
 
-// src/security/vaultExport.ts
+// ../src/security/vaultExport.ts
 init_logger();
 init_apiKeyVault();
 import crypto16 from "crypto";
@@ -51615,7 +51624,7 @@ async function verifyPassphrase(passphrase, blobStr) {
   }
 }
 
-// src/security/vaultHandler.ts
+// ../src/security/vaultHandler.ts
 function jsonResponse(status, body) {
   return { status, headers: { "Content-Type": "application/json" }, body };
 }
@@ -51807,7 +51816,7 @@ async function handleVaultVerifyPassphrase(body) {
   return jsonResponse(200, { ok });
 }
 
-// src/server/routes-vault.ts
+// ../src/server/routes-vault.ts
 var VAULT_PUBLIC_FIELDS = /* @__PURE__ */ new Set([
   "id",
   "baseUrl",
@@ -51984,7 +51993,7 @@ async function handleVaultVerifyPassphrase2(body) {
   return vaultResultToApi(await handleVaultVerifyPassphrase(body));
 }
 
-// src/api-server.ts
+// ../src/api-server.ts
 var SoloForgeApiServer = class {
   server = null;
   port;
@@ -52412,10 +52421,10 @@ var SoloForgeApiServer = class {
   }
 };
 
-// src/core/agent/agent-registry.ts
+// ../src/core/agent/agent-registry.ts
 import crypto19 from "crypto";
 
-// src/core/agent/autonomous_agent.ts
+// ../src/core/agent/autonomous_agent.ts
 import crypto18 from "crypto";
 var AutonomousNetworkAgent = class {
   agentId;
@@ -52505,11 +52514,11 @@ var AutonomousNetworkAgent = class {
   }
 };
 
-// src/core/agent/agent-registry.ts
+// ../src/core/agent/agent-registry.ts
 init_court_events();
 init_runtime_events();
 
-// src/core/agent/reputation/multi-dimensional-reputation.ts
+// ../src/core/agent/reputation/multi-dimensional-reputation.ts
 init_logger();
 var MultiDimensionalReputation = class {
   moduleName = "MultiDimReputation";
@@ -52639,7 +52648,7 @@ var MultiDimensionalReputation = class {
   }
 };
 
-// src/core/agent/communication/agent-communication-bus.ts
+// ../src/core/agent/communication/agent-communication-bus.ts
 init_logger();
 var AgentCommunicationBus = class {
   constructor(kernel2, transportConfig) {
@@ -52922,10 +52931,10 @@ var AgentCommunicationBus = class {
   }
 };
 
-// src/core/agent/agent-registry.ts
+// ../src/core/agent/agent-registry.ts
 init_logger();
 
-// src/core/agent/tools/agent-loop.ts
+// ../src/core/agent/tools/agent-loop.ts
 init_logger();
 async function runAgentLoop(ctx, userTask) {
   const start = Date.now();
@@ -53106,10 +53115,10 @@ ${ctx.activeKnowledge.map((k, i) => `${i + 1}. ${k}`).join("\n")}`);
   return parts.length > 0 ? parts.join("\n\n") : null;
 }
 
-// src/core/agent/evolution/training-scheduler.ts
+// ../src/core/agent/evolution/training-scheduler.ts
 init_logger();
 
-// src/core/agent/evolution/auto-training-trigger.ts
+// ../src/core/agent/evolution/auto-training-trigger.ts
 init_logger();
 import { EventEmitter } from "events";
 var DEFAULT_TRIGGER_CONFIG = {
@@ -53224,7 +53233,7 @@ var AutoTrainingTrigger = class extends EventEmitter {
   }
 };
 
-// src/core/agent/evolution/training-scheduler.ts
+// ../src/core/agent/evolution/training-scheduler.ts
 var TrainingScheduler = class _TrainingScheduler {
   static instance = null;
   // 所有 Agent 的触发器
@@ -53596,7 +53605,7 @@ var TrainingScheduler = class _TrainingScheduler {
   }
 };
 
-// src/core/agent/specialized-agent.ts
+// ../src/core/agent/specialized-agent.ts
 var SpecializedAgent = class {
   config;
   trigger;
@@ -53777,7 +53786,7 @@ ${JSON.stringify(task.context, null, 2)}`);
   }
 };
 
-// src/core/agent/utils/file-content-compactor.ts
+// ../src/core/agent/utils/file-content-compactor.ts
 var DEFAULT_CONFIG3 = {
   budget: 4e3,
   headRatio: 0.375,
@@ -53842,7 +53851,7 @@ ${signatures}`);
   return parts.join("");
 }
 
-// src/core/agent/agent-registry.ts
+// ../src/core/agent/agent-registry.ts
 var DEFAULT_AGENT_SEEDS = [
   { id: "agent_alpha_fast_edge", strategy: "direct", reputation: 0.92, initialComponents: { competence: 0.85, reliability: 0.95, integrity: 0.9, collaboration: 0.8 } },
   { id: "agent_alpha_mirror_edge", strategy: "direct", reputation: 0.85, initialComponents: { competence: 0.8, reliability: 0.88, integrity: 0.85, collaboration: 0.75 } },
@@ -54321,12 +54330,12 @@ ${compactFileContent(activeFile.content, activeFile.name)}
   }
 };
 
-// src/core/agent/agent-decision-orchestrator.ts
+// ../src/core/agent/agent-decision-orchestrator.ts
 import crypto20 from "crypto";
 import { existsSync as existsSync3, mkdirSync as mkdirSync2 } from "fs";
 import { join as join3 } from "path";
 
-// src/core/decision/rtr-racer-engine.ts
+// ../src/core/decision/rtr-racer-engine.ts
 var SoloForgeRTRRacerEngine = class {
   kernel;
   schedulerClient;
@@ -54501,11 +54510,11 @@ var SoloForgeRTRRacerEngine = class {
   }
 };
 
-// src/core/agent/agent-decision-orchestrator.ts
+// ../src/core/agent/agent-decision-orchestrator.ts
 init_runtime_events();
 init_logger();
 
-// src/core/agent/evolution/experience-cache.ts
+// ../src/core/agent/evolution/experience-cache.ts
 init_logger();
 import { createHash as createHash4 } from "crypto";
 import { existsSync as existsSync2, mkdirSync, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "fs";
@@ -54752,7 +54761,7 @@ var ExperienceCache = class _ExperienceCache {
   }
 };
 
-// src/core/agent/utils/history-selector.ts
+// ../src/core/agent/utils/history-selector.ts
 var DEFAULT_CONFIG4 = {
   /** 最近 N 条必保 (保证连续性) */
   recentKeep: 3,
@@ -54835,7 +54844,7 @@ function formatHistoryAsText(history) {
   return history.map((h) => `[${h.sender}]: ${h.content}`).join("\n");
 }
 
-// src/core/agent/agent-decision-orchestrator.ts
+// ../src/core/agent/agent-decision-orchestrator.ts
 var AgentDecisionOrchestrator = class {
   moduleName = "AgentDecisionOrchestrator";
   racerEngine;
@@ -55341,7 +55350,7 @@ ${rec.finalAnswer.slice(0, 1500)}
   }
 };
 
-// src/index.ts
+// ../src/index.ts
 async function mainSystemIgnitionEngine() {
   try {
     await initOpenTelemetry();

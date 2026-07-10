@@ -132,9 +132,10 @@ function buildPromptWithCanvasForce(prompt: string): string {
  *   POST /api/java-agent/api/chat/stream (Node.js 直连到 8770/api/chat/stream)
  *   Response: SSE stream — event:text/done/error, data:{...}
  */
-// ── RACER 模式开关: true=Node.js RACER Agent, false=Java Agent ──
-// 可通过 _setUseRacer(false) 在测试中关闭, 强制走 Java 路径
-let _useRacer = true;
+// ── RACER 模式开关: true=Node.js RACER Agent (后台训练, 不进流送区), false=Java Agent (真实执行) ──
+// 默认 Java: 真实任务走 Java 链路, 主/副模型调用 agent 都在流送区显示
+// RACER 仅作后台训练, 不干扰流送区
+let _useRacer = false;
 /** @internal 测试用: 切换 RACER / Java 路径 */
 export function _setUseRacer(v: boolean): void { _useRacer = v; }
 /** @internal 测试用: 获取当前模式 */
