@@ -58,6 +58,7 @@ public class ChatController {
                 request.getMessage(),
                 request.getSettings(),
                 request.getProvider(),
+                request.getSubProviders(),
                 request.getHistory(),
                 request.getFileContext());
 
@@ -104,12 +105,17 @@ public class ChatController {
                 request.setSettings(new com.soloforge.agent.dto.ChatSettings());
             }
 
+            // agent 事件改由 SubModelWorker 在执行时发送 (携带 subModel 字段)
+            // 这样前端流送区能准确显示 "副模型 → agent → 任务"
+
             Flux<String> textFlux = agentOrchestrator.orchestrateStream(
                 request.getMessage(),
                 request.getSettings(),
                 request.getProvider(),
+                request.getSubProviders(),
                 request.getHistory(),
-                request.getFileContext());
+                request.getFileContext(),
+                emitter);
 
             textFlux.subscribe(
                 chunk -> {
@@ -192,6 +198,7 @@ public class ChatController {
         Map<String, Object> m = new HashMap<>();
         m.put("id", agent.getId());
         m.put("name", agent.getName());
+        m.put("avatar", agent.getAvatar());
         m.put("role", agent.getRole());
         m.put("domain", agent.getDomain());
         m.put("level", agent.getLevel());
@@ -211,6 +218,32 @@ public class ChatController {
         m.put("status", agent.getStatus());
         m.put("enabled", agent.getEnabled());
         return m;
+    }
+
+    /**
+     * 更新 Agent 显示名称和头像 (前端 AgentSettingsModal 调用)
+     */
+    @PutMapping("/api/agents/{id}/profile")
+    public ResponseEntity<Map<String, Object>> updateAgentProfile(
+            @PathVariable String id,
+            @RequestBody Map<String, String> body) {
+        String name = body.get("name");
+        String avatar = body.get("avatar");
+        if (name == null || name.isBlank()) {
+            return badRequest("name 不能为空");
+        }
+        try {
+            agentRepo.updateProfile(id, name, avatar);
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("agentId", id);
+            result.put("name", name);
+            result.put("avatar", avatar);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            log.error("Failed to update agent profile: {}", e.getMessage(), e);
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
+        }
     }
 
     private ResponseEntity<Map<String, Object>> badRequest(String message) {

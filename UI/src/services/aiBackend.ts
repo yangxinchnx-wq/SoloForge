@@ -18,8 +18,9 @@
 export type ChatStreamEvent =
   | { kind: 'text'; text: string; taskId?: string }
   | { kind: 'phase'; phase: string; taskId?: string; [k: string]: any }
+  | { kind: 'agent'; agentId: string; name: string; avatar?: string; role?: string; domain?: string; modelBinding?: string; mainModel?: string; subModels?: string[]; subModel?: string; taskId?: string }
   | { kind: 'error'; error: string; taskId?: string }
-  | { kind: 'done'; taskId?: string; experienceFingerprint?: string; strategy?: string };
+  | { kind: 'done'; taskId?: string; agentId?: string; experienceFingerprint?: string; strategy?: string };
 
 export interface ChatRequest {
   prompt: string;
@@ -168,6 +169,12 @@ function buildJavaRequestBody(req: ChatRequest): any {
           model: req.mainProvider.model,
         }
       : null,
+    // 副模型列表: Java agent 事件带回前端流送区显示 (主模型 → agent (副模型))
+    subProviders: (req.subProviders || []).map(sp => ({
+      baseUrl: sp.baseUrl,
+      apiKey: sp.apiKey,
+      model: sp.model,
+    })),
     history: req.history || [],
     fileContext: req.fileContext || undefined,
     settings: {
@@ -229,6 +236,7 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
   let buffer = '';
   let currentEvent = '';
   let currentData = '';
+  let doneSent = false;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -248,10 +256,13 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
             const data = JSON.parse(currentData);
             if (currentEvent === 'text' && data.content) {
               onEvent({ kind: 'text', text: data.content, taskId });
+            } else if (currentEvent === 'agent') {
+              onEvent({ kind: 'agent', agentId: data.agentId, name: data.name, avatar: data.avatar, role: data.role, domain: data.domain, modelBinding: data.modelBinding, mainModel: data.mainModel, subModels: data.subModels, subModel: data.subModel, taskId });
             } else if (currentEvent === 'error') {
               onEvent({ kind: 'error', error: data.error || 'Unknown error', taskId });
             } else if (currentEvent === 'done') {
-              onEvent({ kind: 'done', taskId });
+              doneSent = true;
+              onEvent({ kind: 'done', taskId, agentId: data.agentId });
             }
           } catch {}
         }
@@ -266,10 +277,19 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
       const data = JSON.parse(currentData);
       if (currentEvent === 'text' && data.content) {
         onEvent({ kind: 'text', text: data.content, taskId });
+      } else if (currentEvent === 'agent') {
+        onEvent({ kind: 'agent', agentId: data.agentId, name: data.name, avatar: data.avatar, role: data.role, domain: data.domain, modelBinding: data.modelBinding, mainModel: data.mainModel, subModels: data.subModels, subModel: data.subModel, taskId });
       } else if (currentEvent === 'done') {
-        onEvent({ kind: 'done', taskId });
+        doneSent = true;
+        onEvent({ kind: 'done', taskId, agentId: data.agentId });
       }
     } catch {}
+  }
+
+  // ★ 2026-07-11: 合成 done 事件 (同 parseRacerSSE)
+  if (!doneSent && !signal.aborted) {
+    console.log('[aiBackend] Java SSE 流结束, 后端未发 done 事件 → 合成 done');
+    onEvent({ kind: 'done', taskId });
   }
 }
 
@@ -289,6 +309,7 @@ async function parseRacerSSE(
   let currentEvent = '';
   let currentData = '';
 
+  let doneSent = false;
   const processEvent = (): void => {
     if (!currentEvent || !currentData || signal.aborted) return;
     try {
@@ -306,6 +327,7 @@ async function parseRacerSSE(
           onEvent({ kind: 'error', error: data.error || 'Unknown error', taskId });
           break;
         case 'done':
+          doneSent = true;
           onEvent({ kind: 'done', taskId, experienceFingerprint: data.experienceFingerprint, strategy: data.strategy });
           break;
       }
@@ -334,6 +356,14 @@ async function parseRacerSSE(
 
   // Process any remaining event in buffer
   processEvent();
+
+  // ★ 2026-07-11: 如果后端没发 done 事件就关闭了连接, 必须合成一个
+  //   否则 useChatStore 的 done handler 不会执行 → tryLocalTranslateAndPush 不会被调用
+  //   → 画布永远收不到推送
+  if (!doneSent && !signal.aborted) {
+    console.log('[aiBackend] SSE 流结束, 后端未发 done 事件 → 合成 done');
+    onEvent({ kind: 'done', taskId });
+  }
 }
 
 /**
@@ -360,9 +390,13 @@ async function startChatViaFetch(req: ChatRequest, onEvent: (e: ChatStreamEvent)
     try {
       if (_useRacer) {
         // ── RACER path: Node.js AgentDecisionOrchestrator (SSE streaming) ──
-        //   Sends Accept: text/event-stream to get real-time phase events
-        //   Falls back to JSON if server doesn't support SSE
+        //   RACER 是后台训练链路, phase 事件不进流送区 (避免种子 agent 名污染)
+        //   只透传 text/done/error, phase 事件全部丢弃
         //   Non-timeout errors auto-fallback to Java Agent
+        const racerOnEvent: typeof onEvent = (e) => {
+          if (e.kind === 'phase') return; // 阻断 RACER phase 事件进流送区
+          onEvent(e);
+        };
         try {
           const res = await fetch('/api/agents/dispatch', {
             method: 'POST',
@@ -384,22 +418,22 @@ async function startChatViaFetch(req: ChatRequest, onEvent: (e: ChatStreamEvent)
           const contentType = res.headers.get('content-type') || '';
           if (contentType.includes('text/event-stream') && res.body) {
             // ── SSE streaming path ──
-            await parseRacerSSE(res, signal, taskId, onEvent);
+            await parseRacerSSE(res, signal, taskId, racerOnEvent);
           } else {
             // ── Fallback: JSON response (server didn't return SSE) ──
             const result = await res.json();
             if (result.output) {
-              onEvent({ kind: 'text', text: result.output, taskId });
+              racerOnEvent({ kind: 'text', text: result.output, taskId });
             }
-            onEvent({ kind: 'done', taskId });
+            racerOnEvent({ kind: 'done', taskId });
           }
         } catch (racerErr: any) {
           if (racerErr?.name === 'AbortError') {
             return;
           }
-          // RACER 非超时错误 → fallback 到 Java Agent
+          // RACER 非超时错误 → fallback 到 Java Agent (Java 路径会正常推 phase 事件)
           const reason = racerErr?.message || String(racerErr);
-          onEvent({ kind: 'phase', phase: 'fallback_to_java', taskId, reason });
+          console.log(`[aiBackend] RACER failed (${reason}), falling back to Java Agent`);
           try {
             await executeJavaPath(req, signal, taskId, onEvent);
           } catch (javaErr: any) {

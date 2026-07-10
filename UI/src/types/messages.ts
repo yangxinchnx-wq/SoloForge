@@ -92,6 +92,7 @@ export interface UISubTaskCreatedPart {
   type: 'subtask-created';
   subTaskId: string;
   assigneeModel: string;
+  agentId?: string;         // 执行此子任务的 Agent ID（用于实时查询 agent 名字）
   description: string;
   source: SubTaskSource;
 }
@@ -123,6 +124,7 @@ export interface UIModelDelegationPart {
   type: 'model-delegation';
   fromModel: string;
   toModel: string;
+  agentId?: string;         // 被委派的 Agent ID（用于实时查询 agent 名字）
   detail?: string;
   timestamp: number;
 }

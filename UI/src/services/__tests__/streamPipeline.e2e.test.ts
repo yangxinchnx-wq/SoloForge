@@ -3,7 +3,7 @@
  *
  * 覆盖完整数据流:
  *   用户 prompt → createTaskWithActor → dispatchStreamEvent (SSE 模拟)
- *   → 三层状态同步验证 (streamingStore / Actor / uiMessageStore)
+ *   → 三层状态同步验证 (streamingStore meta / Actor / uiMessageStore)
  *   → useStreamSummary 派生验证
  *   → clearChatAll 全链路清理验证
  *
@@ -76,6 +76,18 @@ function makeEvent(
   };
 }
 
+/** 从 uiMessageStore 最后一条 assistant 消息派生 phase (替代 streamingStore.tasks.phase) */
+function derivePhase(chatId: string): string | undefined {
+  const msg = uiMessageStore.getLastAssistantMessage(chatId);
+  if (!msg) return undefined;
+  for (let i = msg.parts.length - 1; i >= 0; i--) {
+    if (msg.parts[i].type === 'phase-change') {
+      return (msg.parts[i] as any).to;
+    }
+  }
+  return undefined;
+}
+
 /** 从 uiMessageStore 派生摘要 (复制 useStreamSummary 逻辑) */
 function deriveSummary(chatId: string) {
   const msg = uiMessageStore.getLastAssistantMessage(chatId);
@@ -111,7 +123,7 @@ describe('E2E: 完整生命周期 (create → events → clear)', () => {
     const task = createTaskWithActor('c1', '你好', 'normal');
 
     // 验证三层初始状态
-    expect(useStreamingStore.getState().tasks['c1']).toBeDefined();
+    expect(useStreamingStore.getState().getStreamTaskMeta('c1')).toBeDefined();
     expect(taskActorSystem.getActorByChat('c1')).toBeDefined();
     expect(uiMessageStore.getLastAssistantMessage('c1')).toBeDefined();
     expect(uiMessageStore.getLastAssistantMessage('c1')!.status).toBe('streaming');
@@ -145,11 +157,9 @@ describe('E2E: 完整生命周期 (create → events → clear)', () => {
 
     await flushMicrotask();
 
-    // ── 验证 streamingStore ──
-    const storeTask = useStreamingStore.getState().tasks['c1'];
-    expect(storeTask.phase).toBe('DONE');
+    // ── 验证 uiMessageStore (phase 从 parts 派生) ──
+    expect(derivePhase('c1')).toBe('DONE');
 
-    // ── 验证 uiMessageStore ──
     const lastMsg = uiMessageStore.getLastAssistantMessage('c1')!;
     expect(lastMsg.parts.length).toBeGreaterThan(0);
 
@@ -176,7 +186,7 @@ describe('E2E: 完整生命周期 (create → events → clear)', () => {
     // 6. 清理
     clearChatAll('c1');
 
-    expect(useStreamingStore.getState().tasks['c1']).toBeUndefined();
+    expect(useStreamingStore.getState().getStreamTaskMeta('c1')).toBeUndefined();
     expect(taskActorSystem.getActorByChat('c1')).toBeUndefined();
     expect(uiMessageStore.getMessages('c1').length).toBe(0);
     expect(streamPersistence.clearChat).toHaveBeenCalledWith('c1');
@@ -188,15 +198,16 @@ describe('E2E: 完整生命周期 (create → events → clear)', () => {
     // Phase: DECOMPOSING
     dispatchStreamEvent(makeEvent('c1', task.id, 'phase_change', { content: 'DECOMPOSING' }));
 
-    // 3 个 subtask
+    // 3 个 subtask (事件携带 subTaskId)
     const subIds: string[] = [];
     for (let i = 0; i < 3; i++) {
+      const sid = `sub-${i}`;
       dispatchStreamEvent(makeEvent('c1', task.id, 'subtask_created', {
         content: `model-${i}`,
         detail: `task-${i}`,
         agentId: `agent-${i}`,
+        subTaskId: sid,
       }));
-      const sid = useStreamingStore.getState().getLastSubTaskId('c1')!;
       subIds.push(sid);
     }
 
@@ -240,13 +251,9 @@ describe('E2E: 完整生命周期 (create → events → clear)', () => {
 
     await flushMicrotask();
 
-    // ── 验证 streamingStore ──
-    const storeTask = useStreamingStore.getState().tasks['c1'];
-    expect(storeTask.phase).toBe('DONE');
-    expect(storeTask.subTasks).toHaveLength(3);
-    expect(storeTask.subTasks.every(s => s.status === 'done')).toBe(true);
+    // ── 验证 uiMessageStore (phase + subtask 从 parts 派生) ──
+    expect(derivePhase('c1')).toBe('DONE');
 
-    // ── 验证 uiMessageStore ──
     const lastMsg = uiMessageStore.getLastAssistantMessage('c1')!;
     const partTypes = lastMsg.parts.map(p => p.type);
 
@@ -257,6 +264,10 @@ describe('E2E: 完整生命周期 (create → events → clear)', () => {
     expect(partTypes.filter(t => t === 'text')).toHaveLength(3); // 3 个独立 text part (不同 subtask)
     expect(partTypes.filter(t => t === 'subtask-done')).toHaveLength(3);
     expect(partTypes).toContain('delivery');
+
+    // 所有 subtask-done parts 状态为 done
+    const doneParts = lastMsg.parts.filter(p => p.type === 'subtask-done');
+    expect(doneParts.every((p: any) => p.status === 'done')).toBe(true);
 
     // ── 验证 useStreamSummary ──
     const summary = deriveSummary('c1');
@@ -274,10 +285,10 @@ describe('E2E: 完整生命周期 (create → events → clear)', () => {
     const task = createTaskWithActor('c1', 'code review task', 'normal');
 
     dispatchStreamEvent(makeEvent('c1', task.id, 'phase_change', { content: 'DECOMPOSING' }));
+    const subId = 'sub-audit-1';
     dispatchStreamEvent(makeEvent('c1', task.id, 'subtask_created', {
-      content: 'GPT-4o', detail: 'generate code', agentId: 'a0',
+      content: 'GPT-4o', detail: 'generate code', agentId: 'a0', subTaskId: subId,
     }));
-    const subId = useStreamingStore.getState().getLastSubTaskId('c1')!;
 
     dispatchStreamEvent(makeEvent('c1', task.id, 'phase_change', { content: 'EXECUTING' }));
     dispatchStreamEvent(makeEvent('c1', task.id, 'text_chunk', {
@@ -327,8 +338,8 @@ describe('E2E: 完整生命周期 (create → events → clear)', () => {
     expect(findingPart.finding.target).toBe('function tooLong');
     expect(findingPart.finding.suggestion).toBe('建议拆分为小函数');
 
-    // ── 验证 streamingStore ──
-    expect(useStreamingStore.getState().tasks['c1'].phase).toBe('DONE');
+    // ── 验证 phase 从 parts 派生 ──
+    expect(derivePhase('c1')).toBe('DONE');
   });
 });
 
@@ -336,15 +347,15 @@ describe('E2E: 完整生命周期 (create → events → clear)', () => {
 // E2E-3: 双路径一致性
 // ================================================================
 
-describe('E2E: 双路径一致性 (streamingStore ↔ uiMessageStore)', () => {
-  it('phase 在两层同步', () => {
+describe('E2E: 双路径一致性 (uiMessageStore parts 派生)', () => {
+  it('phase 从 uiMessageStore parts 派生', () => {
     const task = createTaskWithActor('c1', 'test', 'normal');
 
     for (const phase of ['DECOMPOSING', 'DISPATCHING', 'EXECUTING'] as TaskPhase[]) {
       dispatchStreamEvent(makeEvent('c1', task.id, 'phase_change', { content: phase }));
 
-      // streamingStore
-      expect(useStreamingStore.getState().tasks['c1'].phase).toBe(phase);
+      // 派生 phase
+      expect(derivePhase('c1')).toBe(phase);
       // uiMessageStore (最后一个 phase-change part)
       const msg = uiMessageStore.getLastAssistantMessage('c1')!;
       const phaseParts = msg.parts.filter(p => p.type === 'phase-change');
@@ -352,19 +363,17 @@ describe('E2E: 双路径一致性 (streamingStore ↔ uiMessageStore)', () => {
     }
   });
 
-  it('subtask count 在两层同步', () => {
+  it('subtask count 从 uiMessageStore parts 派生', () => {
     const task = createTaskWithActor('c1', 'test', 'normal');
     dispatchStreamEvent(makeEvent('c1', task.id, 'phase_change', { content: 'DECOMPOSING' }));
 
     for (let i = 0; i < 5; i++) {
       dispatchStreamEvent(makeEvent('c1', task.id, 'subtask_created', {
-        content: `model-${i}`, detail: `t-${i}`, agentId: `a-${i}`,
+        content: `model-${i}`, detail: `t-${i}`, agentId: `a-${i}`, subTaskId: `sub-${i}`,
       }));
     }
 
-    // streamingStore
-    expect(useStreamingStore.getState().tasks['c1'].subTasks).toHaveLength(5);
-    // uiMessageStore
+    // uiMessageStore parts
     const msg = uiMessageStore.getLastAssistantMessage('c1')!;
     expect(msg.parts.filter(p => p.type === 'subtask-created')).toHaveLength(5);
   });
@@ -374,10 +383,10 @@ describe('E2E: 双路径一致性 (streamingStore ↔ uiMessageStore)', () => {
     dispatchStreamEvent(makeEvent('c1', task.id, 'phase_change', { content: 'DECOMPOSING' }));
 
     // 创建 subtask 以获得有效的 subTaskId
+    const subId = 'sub-text-1';
     dispatchStreamEvent(makeEvent('c1', task.id, 'subtask_created', {
-      content: 'GPT-4o', detail: 'gen', agentId: 'a0',
+      content: 'GPT-4o', detail: 'gen', agentId: 'a0', subTaskId: subId,
     }));
-    const subId = useStreamingStore.getState().getLastSubTaskId('c1')!;
 
     dispatchStreamEvent(makeEvent('c1', task.id, 'phase_change', { content: 'SINGLE_MODEL' }));
 
@@ -398,29 +407,26 @@ describe('E2E: 双路径一致性 (streamingStore ↔ uiMessageStore)', () => {
     expect((textParts[0] as any).streaming).toBe(true);
   });
 
-  it('subtask_done 后 streamingStore.status 和 uiMessageStore part status 一致', () => {
+  it('subtask_done 后 uiMessageStore part status 一致', () => {
     const task = createTaskWithActor('c1', 'test', 'normal');
     dispatchStreamEvent(makeEvent('c1', task.id, 'phase_change', { content: 'DECOMPOSING' }));
+    const subId = 'sub-done-1';
     dispatchStreamEvent(makeEvent('c1', task.id, 'subtask_created', {
-      content: 'A', detail: 't1', agentId: 'a0',
+      content: 'A', detail: 't1', agentId: 'a0', subTaskId: subId,
     }));
-    const subId = useStreamingStore.getState().getLastSubTaskId('c1')!;
 
     // 成功
     dispatchStreamEvent(makeEvent('c1', task.id, 'subtask_done', {
       subTaskId: subId, content: 'ok', progress: 100, status: 'success',
     }));
 
-    // streamingStore
-    const st = useStreamingStore.getState().tasks['c1'].subTasks[0];
-    expect(st.status).toBe('done');
     // uiMessageStore
     const msg = uiMessageStore.getLastAssistantMessage('c1')!;
     const donePart = msg.parts.find(p => p.type === 'subtask-done') as any;
     expect(donePart.status).toBe('done');
   });
 
-  it('error 事件后两层都记录错误', () => {
+  it('error 事件后 uiMessageStore 记录错误', () => {
     const task = createTaskWithActor('c1', 'test', 'normal');
     dispatchStreamEvent(makeEvent('c1', task.id, 'phase_change', { content: 'EXECUTING' }));
     dispatchStreamEvent(makeEvent('c1', task.id, 'error', {
@@ -461,9 +467,9 @@ describe('E2E: 边界情况', () => {
       subTaskId: 's2', content: 'c2 text', status: 'running',
     }));
 
-    // 验证隔离
-    expect(useStreamingStore.getState().tasks['c1'].phase).toBe('DECOMPOSING');
-    expect(useStreamingStore.getState().tasks['c2'].phase).toBe('SINGLE_MODEL');
+    // 验证隔离 (phase 从 parts 派生)
+    expect(derivePhase('c1')).toBe('DECOMPOSING');
+    expect(derivePhase('c2')).toBe('SINGLE_MODEL');
 
     const msg1 = uiMessageStore.getLastAssistantMessage('c1')!;
     const msg2 = uiMessageStore.getLastAssistantMessage('c2')!;
@@ -518,9 +524,10 @@ describe('E2E: 边界情况', () => {
     expect(actor2.taskId).toBe(task2.id);
     expect(actor2).not.toBe(actor1);
 
-    // streamingStore: 新 task 替代旧 task
-    expect(useStreamingStore.getState().tasks['c1'].id).toBe(task2.id);
-    expect(useStreamingStore.getState().tasks['c1'].userInput).toBe('second');
+    // streamingStore: 新 streamTaskMeta 替代旧 meta
+    const meta = useStreamingStore.getState().getStreamTaskMeta('c1')!;
+    expect(meta.rootTaskId).toBe(task2.id);
+    expect(meta.userInput).toBe('second');
 
     // uiMessageStore: 应有 2 条 assistant 消息 (旧的 + 新的)
     const msgs = uiMessageStore.getMessages('c1');
@@ -554,8 +561,8 @@ describe('E2E: 边界情况', () => {
       dispatchStreamEvent(makeEvent('c1', task.id, 'phase_change', { content: phase }));
     }
 
-    // streamingStore 同步路径: 最后一个 phase 是 DELIVERING
-    expect(useStreamingStore.getState().tasks['c1'].phase).toBe('DELIVERING');
+    // uiMessageStore 同步路径: 最后一个 phase 是 DELIVERING
+    expect(derivePhase('c1')).toBe('DELIVERING');
 
     await flushMicrotask();
 

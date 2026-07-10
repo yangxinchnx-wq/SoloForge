@@ -74,6 +74,7 @@ export function streamEventToUIPart(event: StreamEvent, prevPhase?: TaskPhase): 
         type: 'subtask-created',
         subTaskId: event.subTaskId ?? '',
         assigneeModel: event.content,
+        agentId: event.agentId,
         description: event.detail ?? '',
         source: 'llm' as SubTaskSource,
       };
@@ -118,6 +119,7 @@ export function streamEventToUIPart(event: StreamEvent, prevPhase?: TaskPhase): 
         type: 'model-delegation',
         fromModel: '', // 由调用方填充
         toModel: event.content,
+        agentId: event.agentId,
         detail: event.detail,
         timestamp: event.ts,
       };

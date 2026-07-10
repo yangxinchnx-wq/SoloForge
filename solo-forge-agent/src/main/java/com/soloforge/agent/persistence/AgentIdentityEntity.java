@@ -45,6 +45,9 @@ public class AgentIdentityEntity {
     /** 显示名称 */
     private String name;
 
+    /** 头像: emoji 字符 (如 "🎨") 或图片 URL (如 "/avatars/code.png") 或 null */
+    private String avatar;
+
     /** 专业领域: code-dev / planning / debugging / documentation */
     private String domain;
 

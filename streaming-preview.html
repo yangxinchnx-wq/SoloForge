@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>SoloForge 流送区真实实现图</title>
+<style>
+  :root {
+    --color-bg: #fafafa;
+    --color-surface: #ffffff;
+    --color-surface-bright: #f4f4f5;
+    --color-primary: #6366f1;
+    --color-primary-rgb: 99, 102, 241;
+    --color-on-surface: #18181b;
+    --color-outline: #e4e4e7;
+    --font-sans: "Inter", "Segoe UI", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    --font-mono: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: var(--color-bg);
+    font-family: var(--font-sans);
+    color: var(--color-on-surface);
+    min-height: 100vh;
+    padding: 40px 24px;
+  }
+
+  /* 模拟应用主容器：三栏布局的 chat panel 区域 */
+  .app-shell {
+    max-width: 760px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+  }
+
+  .section-label {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: rgba(24, 24, 27, 0.4);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+    padding-left: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-label::before {
+    content: "";
+    width: 4px;
+    height: 4px;
+    background: var(--color-primary);
+    border-radius: 50%;
+  }
+
+  /* 模拟 ChatPanel 消息流容器 */
+  .chat-stream {
+    background: var(--color-bg);
+    border-radius: 12px;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  /* 用户消息气泡 */
+  .user-msg {
+    align-self: flex-end;
+    max-width: 80%;
+    background: var(--color-primary);
+    color: #fff;
+    padding: 10px 14px;
+    border-radius: 14px;
+    border-bottom-right-radius: 4px;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  /* ============ StreamPanel 容器 ============ */
+  .stream-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 16px;
+    text-align: left;
+  }
+
+  /* 模型头像行 */
+  .assistant-row {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    margin-bottom: 4px;
+  }
+  .avatar {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: rgba(24, 24, 27, 0.05);
+    border: 1px solid rgba(24, 24, 27, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 18px;
+  }
+  .avatar-text {
+    font-size: 20px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .assistant-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .assistant-name {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--color-primary);
+  }
+  .assistant-time {
+    font-size: 9px;
+    font-family: var(--font-mono);
+    color: rgba(24, 24, 27, 0.3);
+  }
+
+  /* 流送区主体卡片 */
+  .stream-card {
+    max-width: 90%;
+    margin-left: 58px;
+  }
+  .stream-card-inner {
+    background: var(--color-surface);
+    border: 1px solid rgba(228, 228, 231, 0.3);
+    padding: 14px;
+    border-radius: 12px;
+    color: var(--color-on-surface);
+    font-size: 12px;
+    line-height: 1.65;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  /* 用户输入摘要 */
+  .user-input-summary {
+    color: rgba(24, 24, 27, 0.9);
+  }
+
+  /* 可折叠执行流程容器 */
+  .flow-container {
+    border: 1px solid rgba(228, 228, 231, 0.3);
+    border-radius: 8px;
+    overflow: hidden;
+    background: rgba(250, 250, 250, 0.5);
+  }
+
+  /* 流程 Header */
+  .flow-header {
+    padding: 10px;
+    background: var(--color-surface);
+    border-bottom: 1px solid rgba(228, 228, 231, 0.3);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+  }
+  .flow-header-left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: rgba(24, 24, 27, 0.8);
+  }
+  .chevron {
+    width: 14px;
+    height: 14px;
+    transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .chevron.collapsed { transform: rotate(-90deg); }
+  .flow-title {
+    font-weight: 600;
+  }
+
+  /* 状态徽章 */
+  .badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-weight: 700;
+  }
+  .badge-active {
+    color: var(--color-primary);
+    background: rgba(var(--color-primary-rgb), 0.1);
+  }
+  .badge-done {
+    color: #4ade80;
+    background: rgba(74, 222, 128, 0.1);
+  }
+  .badge-error {
+    color: #f87171;
+    background: rgba(248, 113, 113, 0.1);
+  }
+
+  /* 右侧 spinner */
+  .spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(var(--color-primary-rgb), 0.2);
+    border-top-color: var(--color-primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* 流程内容区 */
+  .flow-content {
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  /* ============ TaskTree ============ */
+  .task-tree {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 4px;
+  }
+  .status-row .spinner-small {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(99, 102, 241, 0.2);
+    border-top-color: var(--color-primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+  }
+  .phase-badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 500;
+  }
+  .phase-badge.active { color: #60a5fa; background: rgba(96, 165, 250, 0.1); }
+  .phase-badge.done { color: #4ade80; background: rgba(74, 222, 128, 0.1); }
+  .phase-badge.error { color: #f87171; background: rgba(248, 113, 113, 0.1); }
+
+  .user-input-line {
+    font-size: 11px;
+    color: rgba(24, 24, 27, 0.5);
+    padding: 0 4px;
+    line-height: 1.5;
+  }
+  .user-input-label {
+    color: rgba(24, 24, 27, 0.3);
+  }
+
+  /* 子任务列表 */
+  .subtask-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 4px;
+  }
+
+  /* ============ SubTaskNode ============ */
+  .subtask {
+    border: 1px solid rgba(228, 228, 231, 0.15);
+    border-radius: 8px;
+    overflow: hidden;
+    background: rgba(250, 250, 250, 0.3);
+  }
+  .subtask-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 150ms;
+  }
+  .subtask-header:hover {
+    background: rgba(24, 24, 27, 0.02);
+  }
+  .subtask-chevron {
+    width: 14px;
+    height: 14px;
+    color: rgba(24, 24, 27, 0.4);
+    transition: transform 200ms;
+    flex-shrink: 0;
+  }
+  .subtask-chevron.open { transform: rotate(0); }
+  .subtask-chevron.closed { transform: rotate(-90deg); }
+
+  .status-icon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+  }
+  .status-icon.done { color: #4ade80; }
+  .status-icon.error { color: #f87171; }
+  .status-icon.running { color: #60a5fa; animation: spin 0.8s linear infinite; }
+  .status-icon.pending { color: rgba(24, 24, 27, 0.3); }
+
+  .source-tag {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    color: rgba(24, 24, 27, 0.3);
+    background: rgba(24, 24, 27, 0.05);
+    padding: 2px 4px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+  .subtask-desc {
+    font-size: 11px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .subtask-desc.done {
+    color: rgba(24, 24, 27, 0.5);
+    text-decoration: line-through;
+  }
+  .subtask-desc.active {
+    color: var(--color-on-surface);
+  }
+
+  /* 子任务展开内容 */
+  .subtask-body {
+    padding: 0 12px 8px;
+    border-top: 1px solid rgba(228, 228, 231, 0.05);
+    padding-top: 8px;
+  }
+  .step-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .step-item {
+    font-size: 10px;
+    color: rgba(24, 24, 27, 0.6);
+    font-family: var(--font-mono);
+    padding: 2px 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .step-dot {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: rgba(24, 24, 27, 0.2);
+    flex-shrink: 0;
+  }
+  .step-dot.running {
+    background: #60a5fa;
+    box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.2);
+  }
+  .step-dot.done { background: #4ade80; }
+
+  /* 流式文本缓冲 */
+  .text-buffer {
+    padding: 8px 12px;
+    border-top: 1px solid rgba(228, 228, 231, 0.05);
+    font-size: 11px;
+    color: rgba(24, 24, 27, 0.7);
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: var(--font-mono);
+  }
+  .cursor {
+    display: inline-block;
+    width: 6px;
+    height: 12px;
+    background: #60a5fa;
+    animation: pulse 1s infinite;
+    margin-left: 2px;
+    vertical-align: middle;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  /* ============ PromptCard (阻塞型) ============ */
+  .prompt-card {
+    background: var(--color-surface);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    border-radius: 12px;
+    padding: 14px;
+    box-shadow: 0 4px 16px rgba(99, 102, 241, 0.08);
+  }
+  .prompt-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .prompt-icon {
+    width: 18px;
+    height: 18px;
+    color: var(--color-primary);
+  }
+  .prompt-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--color-on-surface);
+  }
+  .prompt-body {
+    font-size: 11px;
+    color: rgba(24, 24, 27, 0.7);
+    line-height: 1.6;
+    margin-bottom: 10px;
+  }
+  .prompt-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .prompt-btn {
+    font-size: 11px;
+    padding: 5px 12px;
+    border-radius: 6px;
+    border: 1px solid rgba(228, 228, 231, 0.5);
+    background: var(--color-surface);
+    color: var(--color-on-surface);
+    font-family: var(--font-sans);
+  }
+  .prompt-btn.primary {
+    background: var(--color-primary);
+    color: #fff;
+    border-color: var(--color-primary);
+  }
+
+  /* ============ UIMessagePartsRenderer 时间线 ============ */
+  .parts-timeline {
+    border-top: 1px solid rgba(228, 228, 231, 0.15);
+    padding-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .part-item {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    color: rgba(24, 24, 27, 0.5);
+    padding: 2px 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .part-type {
+    color: var(--color-primary);
+    font-weight: 600;
+    min-width: 90px;
+  }
+  .part-detail {
+    color: rgba(24, 24, 27, 0.5);
+  }
+
+  /* ============ 总结态 (折叠后) ============ */
+  .summary-view {
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .summary-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: rgba(24, 24, 27, 0.8);
+    margin-bottom: 6px;
+  }
+  .summary-title {
+    font-weight: 600;
+    font-size: 11px;
+  }
+  .summary-count {
+    font-size: 10px;
+    color: rgba(24, 24, 27, 0.4);
+    margin-left: auto;
+    font-family: var(--font-mono);
+  }
+  .summary-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    padding: 2px 0;
+  }
+  .summary-item-icon {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+  }
+  .summary-item-icon.done { color: #4ade80; }
+  .summary-item-icon.error { color: #f87171; }
+  .summary-item-icon.pending { color: rgba(24, 24, 27, 0.3); }
+  .summary-item-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .summary-item-text.done {
+    color: rgba(24, 24, 27, 0.5);
+    text-decoration: line-through;
+  }
+  .summary-item-text.active {
+    color: rgba(24, 24, 27, 0.8);
+  }
+
+  /* ============ 淡入淡出动画 ============ */
+  .fade-in {
+    animation: fadeIn 220ms ease-out both;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  .fade-out {
+    animation: fadeOut 180ms ease-in both;
+  }
+  @keyframes fadeOut {
+    from { opacity: 1; }
+    to { opacity: 0; }
+  }
+
+  /* SVG 图标统一 */
+  svg { display: inline-block; vertical-align: middle; }
+</style>
+</head>
+<body>
+
+<div class="app-shell">
+
+  <!-- ============ 场景 1: 任务进行中 ============ -->
+  <div>
+    <div class="section-label">场景 1 · 任务进行中（EXECUTING 阶段）</div>
+    <div class="chat-stream">
+
+      <!-- 用户消息 -->
+      <div class="user-msg">帮我分析一下这个 React 项目的性能瓶颈，并给出优化建议</div>
+
+      <!-- StreamPanel -->
+      <div class="stream-panel">
+        <div class="assistant-row">
+          <div class="avatar"><span class="avatar-text">D</span></div>
+          <div class="assistant-meta">
+            <span class="assistant-name">DeepSeek-V3</span>
+            <span class="assistant-time">14:23:08</span>
+          </div>
+        </div>
+
+        <div class="stream-card">
+          <div class="stream-card-inner">
+            <p class="user-input-summary">帮我分析一下这个 React 项目的性能瓶颈，并给出优化建议</p>
+
+            <div class="flow-container">
+              <!-- Header -->
+              <div class="flow-header">
+                <div class="flow-header-left">
+                  <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                  <span class="flow-title">AI 执行流程</span>
+                  <span class="badge badge-active">进行中 (1/3)</span>
+                </div>
+                <div class="spinner"></div>
+              </div>
+
+              <!-- 流程内容 -->
+              <div class="flow-content">
+                <!-- TaskTree -->
+                <div class="task-tree">
+                  <div class="status-row">
+                    <div class="spinner-small"></div>
+                    <span class="phase-badge active">执行中</span>
+                  </div>
+                  <div class="user-input-line">
+                    <span class="user-input-label">任务: </span>帮我分析一下这个 React 项目的性能瓶颈，并给出优化建议
+                  </div>
+
+                  <!-- 子任务列表 -->
+                  <div class="subtask-list">
+                    <!-- 子任务 1: 已完成 -->
+                    <div class="subtask">
+                      <div class="subtask-header">
+                        <svg class="subtask-chevron open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        <svg class="status-icon done" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                        <span class="source-tag">LLM</span>
+                        <span class="subtask-desc done">扫描项目结构，识别大型组件文件</span>
+                      </div>
+                      <div class="subtask-body">
+                        <div class="step-list">
+                          <div class="step-item"><div class="step-dot done"></div>READ_TASK · 读取任务描述</div>
+                          <div class="step-item"><div class="step-dot done"></div>ANALYZE · 分析 src/ 目录结构</div>
+                          <div class="step-item"><div class="step-dot done"></div>REPORT · 找到 12 个 &gt;500 行的组件</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 子任务 2: 进行中 -->
+                    <div class="subtask">
+                      <div class="subtask-header">
+                        <svg class="subtask-chevron open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        <svg class="status-icon running" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg>
+                        <span class="source-tag">LLM</span>
+                        <span class="subtask-desc active">分析渲染性能，检测不必要的重渲染</span>
+                      </div>
+                      <div class="subtask-body">
+                        <div class="step-list">
+                          <div class="step-item"><div class="step-dot done"></div>READ_TASK · 读取任务描述</div>
+                          <div class="step-item"><div class="step-dot running"></div>ANALYZE · 检查 useState/useEffect 依赖项</div>
+                        </div>
+                        <div class="text-buffer">正在分析 HistoryAndEditorPanel.tsx 的 useStreamSummary hook，发现该 hook 在每次 parts 数组变化时都会重新计算整个摘要对象...<span class="cursor"></span></div>
+                      </div>
+                    </div>
+
+                    <!-- 子任务 3: 待执行 -->
+                    <div class="subtask">
+                      <div class="subtask-header">
+                        <svg class="subtask-chevron closed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        <svg class="status-icon pending" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                        <span class="source-tag">LLM</span>
+                        <span class="subtask-desc active">生成优化建议报告</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- UIMessagePartsRenderer 时间线 -->
+                <div class="parts-timeline">
+                  <div class="part-item"><span class="part-type">phase-change</span><span class="part-detail">CLARIFY → PLANNING</span></div>
+                  <div class="part-item"><span class="part-type">phase-change</span><span class="part-detail">PLANNING → DECOMPOSING</span></div>
+                  <div class="part-item"><span class="part-type">subtask-created</span><span class="part-detail">扫描项目结构</span></div>
+                  <div class="part-item"><span class="part-type">subtask-done</span><span class="part-detail">扫描项目结构 ✓</span></div>
+                  <div class="part-item"><span class="part-type">subtask-created</span><span class="part-detail">分析渲染性能</span></div>
+                  <div class="part-item"><span class="part-type">text</span><span class="part-detail">正在分析 HistoryAndEditor...</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ============ 场景 2: 阻塞型 PromptCard ============ -->
+  <div>
+    <div class="section-label">场景 2 · 阻塞型 PromptCard（追问用户）</div>
+    <div class="chat-stream">
+      <div class="user-msg">帮我重构这个模块</div>
+
+      <div class="stream-panel">
+        <!-- PromptCard -->
+        <div class="prompt-card">
+          <div class="prompt-card-header">
+            <svg class="prompt-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+            <span class="prompt-title">需要确认重构范围</span>
+          </div>
+          <div class="prompt-body">
+            检测到 <code>streamingStore.ts</code> 有 870 行代码。请选择重构范围：<br>
+            · 仅拆分文件（低风险）<br>
+            · 拆分 + 迁移到新数据源（中风险）
+          </div>
+          <div class="prompt-actions">
+            <button class="prompt-btn primary">仅拆分</button>
+            <button class="prompt-btn">完整迁移</button>
+            <button class="prompt-btn">取消</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 场景 3: 任务刚完成（2秒内，未折叠） ============ -->
+  <div>
+    <div class="section-label">场景 3 · 任务刚完成（2 秒内，尚未折叠）</div>
+    <div class="chat-stream">
+      <div class="user-msg">帮我分析一下这个 React 项目的性能瓶颈</div>
+
+      <div class="stream-panel">
+        <div class="assistant-row">
+          <div class="avatar"><span class="avatar-text">D</span></div>
+          <div class="assistant-meta">
+            <span class="assistant-name">DeepSeek-V3</span>
+            <span class="assistant-time">14:25:42</span>
+          </div>
+        </div>
+
+        <div class="stream-card">
+          <div class="stream-card-inner">
+            <p class="user-input-summary">帮我分析一下这个 React 项目的性能瓶颈</p>
+
+            <div class="flow-container">
+              <div class="flow-header">
+                <div class="flow-header-left">
+                  <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                  <span class="flow-title">AI 执行流程</span>
+                  <span class="badge badge-done">已完成</span>
+                </div>
+              </div>
+
+              <div class="flow-content">
+                <div class="task-tree">
+                  <div class="status-row">
+                    <span class="phase-badge done">完成</span>
+                  </div>
+                  <div class="user-input-line">
+                    <span class="user-input-label">任务: </span>帮我分析一下这个 React 项目的性能瓶颈
+                  </div>
+
+                  <div class="subtask-list">
+                    <div class="subtask">
+                      <div class="subtask-header">
+                        <svg class="subtask-chevron closed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        <svg class="status-icon done" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                        <span class="source-tag">LLM</span>
+                        <span class="subtask-desc done">扫描项目结构，识别大型组件文件</span>
+                      </div>
+                    </div>
+                    <div class="subtask">
+                      <div class="subtask-header">
+                        <svg class="subtask-chevron closed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        <svg class="status-icon done" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                        <span class="source-tag">LLM</span>
+                        <span class="subtask-desc done">分析渲染性能，检测不必要的重渲染</span>
+                      </div>
+                    </div>
+                    <div class="subtask">
+                      <div class="subtask-header">
+                        <svg class="subtask-chevron closed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        <svg class="status-icon done" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                        <span class="source-tag">LLM</span>
+                        <span class="subtask-desc done">生成优化建议报告</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 场景 4: 已折叠（总结态，2秒后） ============ -->
+  <div>
+    <div class="section-label">场景 4 · 任务完成后 2 秒（已折叠，显示总结）</div>
+    <div class="chat-stream">
+      <div class="user-msg">帮我分析一下这个 React 项目的性能瓶颈</div>
+
+      <div class="stream-panel">
+        <div class="assistant-row">
+          <div class="avatar"><span class="avatar-text">D</span></div>
+          <div class="assistant-meta">
+            <span class="assistant-name">DeepSeek-V3</span>
+            <span class="assistant-time">14:25:44</span>
+          </div>
+        </div>
+
+        <div class="stream-card">
+          <div class="stream-card-inner">
+            <p class="user-input-summary">帮我分析一下这个 React 项目的性能瓶颈</p>
+
+            <div class="flow-container">
+              <div class="flow-header">
+                <div class="flow-header-left">
+                  <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                  <span class="flow-title">AI 执行流程</span>
+                  <span class="badge badge-done">已完成</span>
+                </div>
+              </div>
+
+              <!-- 总结视图（淡入） -->
+              <div class="summary-view fade-in">
+                <div class="summary-header">
+                  <svg class="status-icon done" style="width:14px;height:14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                  <span class="summary-title">任务总结</span>
+                  <span class="summary-count">3/3 完成</span>
+                </div>
+                <div class="summary-item">
+                  <svg class="summary-item-icon done" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                  <span class="summary-item-text done">扫描项目结构，识别大型组件文件</span>
+                </div>
+                <div class="summary-item">
+                  <svg class="summary-item-icon done" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                  <span class="summary-item-text done">分析渲染性能，检测不必要的重渲染</span>
+                </div>
+                <div class="summary-item">
+                  <svg class="summary-item-icon done" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                  <span class="summary-item-text done">生成优化建议报告</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 场景 5: 错误态（2秒后折叠总结） ============ -->
+  <div>
+    <div class="section-label">场景 5 · 任务出错（2 秒后折叠总结）</div>
+    <div class="chat-stream">
+      <div class="user-msg">执行浏览器自动化登录测试</div>
+
+      <div class="stream-panel">
+        <div class="assistant-row">
+          <div class="avatar"><span class="avatar-text">D</span></div>
+          <div class="assistant-meta">
+            <span class="assistant-name">DeepSeek-V3</span>
+            <span class="assistant-time">14:30:15</span>
+          </div>
+        </div>
+
+        <div class="stream-card">
+          <div class="stream-card-inner">
+            <p class="user-input-summary">执行浏览器自动化登录测试</p>
+
+            <div class="flow-container">
+              <div class="flow-header">
+                <div class="flow-header-left">
+                  <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                  <span class="flow-title">AI 执行流程</span>
+                  <span class="badge badge-error">错误</span>
+                </div>
+              </div>
+
+              <div class="summary-view fade-in">
+                <div class="summary-header">
+                  <svg class="status-icon error" style="width:14px;height:14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                  <span class="summary-title">任务总结</span>
+                  <span class="summary-count">1/2 完成</span>
+                </div>
+                <div class="summary-item">
+                  <svg class="summary-item-icon done" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                  <span class="summary-item-text done">打开登录页面</span>
+                </div>
+                <div class="summary-item">
+                  <svg class="summary-item-icon error" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                  <span class="summary-item-text active">填写表单并提交（超时：元素未找到）</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

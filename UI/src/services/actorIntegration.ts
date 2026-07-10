@@ -12,13 +12,14 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import type { StreamEvent, RootTask, PermissionMode, SubAgent, TaskPhase } from '../types/streaming';
+import type { StreamEvent, PermissionMode, SubAgent, TaskPhase, PromptCardSpec } from '../types/streaming';
 import type { UIPhaseChangePart } from '../types/messages';
 import { useStreamingStore } from '../state/streamingStore';
 import { taskActorSystem, type ActorStateSnapshot } from './taskActor';
 import { taskActorSupervisor, type ActorErrorEvent } from './supervisorStrategy';
 import { streamPersistence } from './streamPersistence';
 import { uiMessageStore } from './uiMessageStore';
+import { promptCardPool } from './promptCardPool';
 import { createTaskMachineActor, type Actor as XstateActor, type TaskMachineSnapshot } from './taskMachine';
 
 // ==================== 初始化 (应用启动时调用) ====================
@@ -52,7 +53,7 @@ export async function initActorSystem(): Promise<void> {
 
   // 2. 设置监督策略: 错误事件通知 UI
   taskActorSupervisor.onError((event: ActorErrorEvent) => {
-    // 将 Actor 错误转换为 StreamEvent, 投递到 streamingStore
+    // 将 Actor 错误转换为 StreamEvent, 投递到 uiMessageStore
     if (event.decision.action === 'stop') {
       // Actor 已停止, 标记任务为 ERROR
       const errorEvent: StreamEvent = {
@@ -65,7 +66,7 @@ export async function initActorSystem(): Promise<void> {
         ts: event.timestamp,
         status: 'error',
       };
-      useStreamingStore.getState().applyEvent(errorEvent);
+      dispatchStreamEvent(errorEvent);
     }
     // 非致命错误 (restart/resume) 不发 error 事件, Actor 会自动恢复
   });
@@ -98,28 +99,54 @@ export async function initActorSystem(): Promise<void> {
 // ==================== 事件投递适配器 ====================
 
 /**
- * 增强版 applyEvent: 同时投递到 streamingStore 和 TaskActor
+ * 事件分发: 投递到 TaskActor + uiMessageStore + 持久化
  *
  * 使用方式:
- *   旧代码: useStreamingStore.getState().applyEvent(event)
- *   新代码: dispatchStreamEvent(event)
+ *   dispatchStreamEvent(event)
  *
  * 行为:
- *   1. streamingStore.applyEvent (向后兼容, 立即执行)
+ *   1. promptCardPool 直投 (clarify_request / browser_enable_request / tool_suggestion)
  *   2. taskActorSystem.tell (mailbox 排队, 微任务异步处理)
  *   3. uiMessageStore.appendEventAsPart (Data Parts 模式)
  *   4. streamPersistence.appendEvents (持久化日志)
  */
 export function dispatchStreamEvent(event: StreamEvent): void {
-  // 1. 旧 store 同步处理 (状态机后端, UI 不再直接订阅 tasks)
-  useStreamingStore.getState().applyEvent(event);
+  const meta = useStreamingStore.getState().getStreamTaskMeta(event.chatId);
+
+  // 1. promptCardPool 直投 (原由 applyEvent handler 处理, 现直接调用)
+  if (meta) {
+    handlePromptCardEvent(event, meta.mode);
+  }
+
+  // 1.5. subtask_created: 自动创建 SubAgent 入池
+  // Java 链路: agentId 是真实 agent id (如 "code_agent"), name 是中文显示名 (如 "代码工程师")
+  // RACER 链路不进流送区 (aiBackend 已阻断 phase 事件), 所以这里只处理 Java 链路的 subtask
+  if (event.kind === 'subtask_created' && event.agentId) {
+    const store = useStreamingStore.getState();
+    const existing = store.getAgents(event.chatId).find(a => a.id === event.agentId);
+    if (!existing) {
+      const agent: SubAgent = {
+        id: event.agentId,
+        chatId: event.chatId,
+        name: event.detail || event.agentId, // detail 字段带 Java 传来的 agent 中文 name
+        avatar: event.avatar,                 // Java 传来的 emoji 或图片 URL
+        role: 'assistant',
+        parentModelId: meta?.rootTaskId ?? '',
+        reputation: 0.5,
+        createdAt: Date.now(),
+        lastActiveAt: Date.now(),
+      };
+      store.addAgent(event.chatId, agent);
+    } else if (existing && event.avatar && existing.avatar !== event.avatar) {
+      // 已存在但 avatar 变了 (用户在设置页改了头像) → 更新
+      store.renameAgent(event.chatId, event.agentId, existing.name, event.avatar);
+    }
+  }
 
   // 2. Actor 系统异步处理 (mailbox 串行)
   taskActorSystem.tell(event.chatId, event);
 
   // 3. Data Parts: 追加到 uiMessageStore
-  // P0: rootTaskId 从 streamTaskMeta 获取 (替代 streamingStore.tasks[chatId].id)
-  const meta = useStreamingStore.getState().getStreamTaskMeta(event.chatId);
   const rootTaskId = meta?.rootTaskId;
   if (rootTaskId) {
     // 找到或创建 assistant 消息
@@ -188,6 +215,66 @@ export function dispatchStreamEvent(event: StreamEvent): void {
 }
 
 /**
+ * 处理需要 promptCardPool 的事件 (原 applyEvent handler 逻辑)
+ * 从 dispatchStreamEvent 调用, mode 从 streamTaskMeta 获取
+ */
+function handlePromptCardEvent(event: StreamEvent, mode: PermissionMode): void {
+  if (event.kind === 'clarify_request') {
+    const spec: PromptCardSpec = {
+      id: `clarify-${event.id}`,
+      type: 'clarification',
+      title: '需要你补充信息',
+      message: event.content,
+      countdown: event.detail?.includes('urgent') ? 30 : 120,
+      options: [
+        { id: 'answer', label: '回答', action: { kind: 'custom', payload: { chatId: event.chatId } }, isRecommended: true },
+        { id: 'skip', label: '跳过', action: { kind: 'skip' } },
+      ],
+      defaultAction: { kind: 'skip' },
+      context: { chatId: event.chatId, eventId: event.id },
+      priority: 'blocking',
+    };
+    promptCardPool.upsert(spec, mode);
+  } else if (event.kind === 'browser_enable_request') {
+    const spec: PromptCardSpec = {
+      id: `browser-enable-${event.id}`,
+      type: 'browser_tool_enable',
+      title: '启用浏览器自动化',
+      message: event.content,
+      countdown: 60,
+      options: [
+        { id: 'enable', label: '启用', action: { kind: 'accept' }, isRecommended: true },
+        { id: 'skip', label: '跳过', action: { kind: 'skip' } },
+      ],
+      defaultAction: { kind: 'skip' },
+      context: { chatId: event.chatId, url: event.detail, eventId: event.id },
+      priority: 'non_blocking',
+      cooldown: 30,
+      groupKey: `browser-enable-${event.detail ?? 'default'}`,
+    };
+    promptCardPool.upsert(spec, mode);
+  } else if (event.kind === 'tool_suggestion') {
+    const spec: PromptCardSpec = {
+      id: `tool-suggest-${event.id}`,
+      type: 'tool_suggestion',
+      title: `建议使用工具: ${event.content}`,
+      message: event.detail ?? `模型建议使用工具 ${event.content}`,
+      countdown: 90,
+      options: [
+        { id: 'accept', label: '使用', action: { kind: 'accept' }, isRecommended: true },
+        { id: 'skip', label: '跳过', action: { kind: 'skip' } },
+      ],
+      defaultAction: { kind: 'skip' },
+      context: { chatId: event.chatId, tool: event.content, eventId: event.id },
+      priority: 'non_blocking',
+      cooldown: 15,
+      groupKey: `tool-suggest-${event.content}`,
+    };
+    promptCardPool.upsert(spec, mode);
+  }
+}
+
+/**
  * P0: 从 UIMessage 的 parts 中派生最后一个 phase (替代 streamingStore.tasks[chatId].phase)
  */
 function derivePhaseFromLastMessage(msg: { parts: Array<{ type: string; to?: string }> } | undefined): import('../types/streaming').TaskPhase | undefined {
@@ -210,15 +297,15 @@ export function createTaskWithActor(
   chatId: string,
   userInput: string,
   mode: PermissionMode,
-): RootTask {
-  // 1. 旧 store 创建任务
+): { id: string; chatId: string; phase: 'CLARIFY' } {
+  // 1. store 创建任务元数据 (streamTaskMeta)
   const task = useStreamingStore.getState().createTask(chatId, userInput, mode);
 
-  // 2. 创建 Actor
-  taskActorSystem.createActor(task.id, chatId, task.phase);
+  // 2. 创建 Actor (初始 phase 永远是 CLARIFY)
+  taskActorSystem.createActor(task.id, chatId, 'CLARIFY');
 
   // 2.5 P2: 创建 taskMachine actor (声明式 FSM 跟踪 phase)
-  const machineActor = createTaskMachineActor(task.id, chatId, task.phase);
+  const machineActor = createTaskMachineActor(task.id, chatId, 'CLARIFY');
   machineActor.start();
   taskMachineActors.set(chatId, machineActor);
 

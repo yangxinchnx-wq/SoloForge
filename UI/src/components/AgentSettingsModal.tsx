@@ -63,8 +63,12 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
   };
 
   // Phase 4: 从 Java 服务拉取 Agent 列表 (用于 Agent 角色选择)
-  const [agentOptions, setAgentOptions] = useState<Array<{ id: string; name: string; role: string; strategy: string }>>([]);
+  const [agentOptions, setAgentOptions] = useState<Array<{ id: string; name: string; avatar?: string; role: string; strategy: string }>>([]);
   const [agentLoading, setAgentLoading] = useState(false);
+  // agent profile 编辑 (名称 + 头像)
+  const [editingAvatar, setEditingAvatar] = useState('');
+  const [editingName, setEditingName] = useState('');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
 
   const fetchAgentOptions = useCallback(async () => {
     setAgentLoading(true);
@@ -72,13 +76,50 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
       const res = await fetch('/api/java-agent/api/agents');
       if (!res.ok) return;
       const data = await res.json();
-      if (Array.isArray(data)) setAgentOptions(data);
+      if (Array.isArray(data)) {
+        setAgentOptions(data);
+        // 同步当前选中 agent 的 name/avatar 到编辑框
+        const current = data.find((a: any) => a.id === activeSettings.agentId);
+        if (current) {
+          setEditingName(current.name || '');
+          setEditingAvatar(current.avatar || '');
+        }
+      }
     } catch {
       // Java 服务未启动时静默失败, 保留默认 code_agent
     } finally {
       setAgentLoading(false);
     }
-  }, []);
+  }, [activeSettings.agentId]);
+
+  // 切换 agent 时同步编辑框
+  useEffect(() => {
+    const current = agentOptions.find(a => a.id === activeSettings.agentId);
+    if (current) {
+      setEditingName(current.name || '');
+      setEditingAvatar(current.avatar || '');
+    }
+  }, [activeSettings.agentId, agentOptions]);
+
+  const saveAgentProfile = async () => {
+    const agentId = activeSettings.agentId || 'code_agent';
+    setIsSavingProfile(true);
+    try {
+      const res = await fetch(`/api/java-agent/api/agents/${agentId}/profile`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: editingName, avatar: editingAvatar }),
+      });
+      if (res.ok) {
+        // 更新本地 agentOptions
+        setAgentOptions(prev => prev.map(a => a.id === agentId ? { ...a, name: editingName, avatar: editingAvatar } : a));
+      }
+    } catch {
+      // 静默失败
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
 
   useEffect(() => {
     fetchAgentOptions();
@@ -662,7 +703,7 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
               <option value="code_agent">code_agent (默认 · 代码开发)</option>
               {agentOptions.map(ag => (
                 <option key={ag.id} value={ag.id}>
-                  {ag.id} · {ag.name} ({ag.role}/{ag.strategy})
+                  {ag.avatar ? ag.avatar + ' ' : ''}{ag.id} · {ag.name} ({ag.role}/{ag.strategy})
                 </option>
               ))}
             </select>
@@ -670,6 +711,44 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
               <p className="text-[9px] text-on-surface/30 mt-1 font-mono">
                 · Java 服务未启动, 使用默认 code_agent (8770 离线)
               </p>
+            )}
+            {/* Agent 名称 + 头像编辑 (Java 服务在线时可用) */}
+            {agentOptions.length > 0 && (
+              <div className="mt-2 p-2 rounded-lg bg-surface-bright/50 border border-outline/20 space-y-1.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[9px] text-on-surface/50 font-mono shrink-0 w-8">名称</span>
+                  <input
+                    type="text"
+                    value={editingName}
+                    onChange={(e) => setEditingName(e.target.value)}
+                    placeholder="代码工程师"
+                    className="flex-1 text-[10px] bg-bg border border-outline/30 focus:border-primary/50 rounded px-1.5 py-1 outline-none"
+                  />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[9px] text-on-surface/50 font-mono shrink-0 w-8">头像</span>
+                  <input
+                    type="text"
+                    value={editingAvatar}
+                    onChange={(e) => setEditingAvatar(e.target.value)}
+                    placeholder="💻 或 /avatars/code.png"
+                    className="flex-1 text-[10px] bg-bg border border-outline/30 focus:border-primary/50 rounded px-1.5 py-1 outline-none"
+                  />
+                  {editingAvatar && (
+                    editingAvatar.startsWith('http') || editingAvatar.startsWith('/') || editingAvatar.startsWith('data:')
+                      ? <img src={editingAvatar} alt="" className="w-5 h-5 rounded-full object-cover shrink-0" />
+                      : <span className="text-base leading-none shrink-0">{editingAvatar}</span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={saveAgentProfile}
+                  disabled={isSavingProfile || !editingName.trim()}
+                  className="text-[9px] font-mono px-2 py-0.5 rounded bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  {isSavingProfile ? '保存中...' : '保存'}
+                </button>
+              </div>
             )}
           </div>
 

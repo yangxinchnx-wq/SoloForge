@@ -116,6 +116,7 @@ export class AgentDecisionOrchestrator {
       subtasks: candidates.map((c, i) => ({
         workerIdx: i,
         modelName: c.modelName,
+        agentId: c.modelName,
         taskDesc: c.reasoningStrategy ?? `Worker ${i}`,
       })),
       ts: Date.now(),
@@ -154,6 +155,7 @@ export class AgentDecisionOrchestrator {
           chatId,
           workerIdx: effectiveWorkerIdx,
           modelName: selected.modelName,
+          agentId: selected.modelName,
           provider: effectiveProvider?.model ?? 'unknown',
           ts: Date.now(),
         });

@@ -15,6 +15,8 @@ import { StepRecordItem } from './StepRecordItem';
 import { ModelDelegationTag } from './ModelDelegationTag';
 // P0: 从 parts 派生文本, 替代 streamingStore.textBuffers
 import { useTextFromParts } from '../services/usePartsDerived';
+// 实时查询 agent 名字和头像 — agent 改名/改头像后自动响应式更新
+import { useAgentName, useAgentAvatar } from '../state/streamingStore';
 
 interface SubTaskNodeProps {
   subTask: SubTask;
@@ -50,6 +52,10 @@ function SubTaskNodeImpl({ subTask, mainModel, chatId, defaultOpen = true }: Sub
   const textBuffer = useDeferredValue(rawTextBuffer);
   const isTextStale = rawTextBuffer !== textBuffer;
 
+  // 实时查询 agent 名字和头像 — agent 改名/改头像后自动响应式更新, 不缓存旧值
+  const agentName = useAgentName(chatId, subTask.agentId);
+  const agentAvatar = useAgentAvatar(chatId, subTask.agentId);
+
   const statusIcon = isDone
     ? <CheckCircle2 className="w-3.5 h-3.5 text-green-400 shrink-0" />
     : isError
@@ -57,8 +63,6 @@ function SubTaskNodeImpl({ subTask, mainModel, chatId, defaultOpen = true }: Sub
     : isRunning
     ? <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin shrink-0" />
     : <Clock className="w-3.5 h-3.5 text-on-surface/30 shrink-0" />;
-
-  const progressColor = isRunning ? 'bg-blue-500' : isDone ? 'bg-green-500' : isError ? 'bg-red-500' : 'bg-on-surface/20';
 
   return (
     <div className="border border-outline/15 rounded-lg overflow-hidden bg-bg/30">
@@ -75,28 +79,16 @@ function SubTaskNodeImpl({ subTask, mainModel, chatId, defaultOpen = true }: Sub
         <span className={`text-[11px] font-medium truncate ${isDone ? 'text-on-surface/50 line-through' : 'text-on-surface'}`}>
           {subTask.description}
         </span>
-
-        {/* 进度条 */}
-        <div className="flex items-center gap-2 ml-auto shrink-0">
-          <div className="w-16 h-1.5 rounded-full bg-on-surface/10 overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all duration-300 ${progressColor}`}
-              style={{ width: `${subTask.progress}%` }}
-            />
-          </div>
-          <span className={`text-[11px] font-mono font-bold w-8 text-right ${isRunning ? 'text-blue-400' : isDone ? 'text-green-400' : 'text-on-surface/40'}`}>
-            {subTask.progress}%
-          </span>
-        </div>
       </div>
 
-      {/* 模型分配标签 */}
+      {/* 模型分配标签: 副模型 → agent → 任务 */}
       {subTask.assigneeModel && (
         <div className="px-3 pb-1">
           <ModelDelegationTag
-            fromModel={mainModel}
-            toModel={subTask.assigneeModel}
+            fromModel={subTask.content || mainModel}
             task={subTask.description}
+            agentName={agentName}
+            agentAvatar={agentAvatar}
           />
         </div>
       )}

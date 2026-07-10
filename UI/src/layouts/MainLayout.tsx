@@ -208,6 +208,11 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           selectedChatId={selectedChatId}
           canvasId={bridge.canvasId}
           canvasReady={bridge.ready}
+          canvases={bridge.canvases}
+          maxCanvases={bridge.maxCanvases}
+          onSelectCanvas={bridge.selectCanvas}
+          onCreateCanvas={bridge.createCanvasForChat}
+          onRenameCanvas={bridge.renameCanvas}
         />
       </div>
 

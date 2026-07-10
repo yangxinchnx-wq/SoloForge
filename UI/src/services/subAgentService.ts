@@ -7,6 +7,7 @@
  */
 import type { SubAgent } from '../types/streaming';
 import { getDefaultStore } from '../state/settings';
+import { useStreamingStore } from '../state/streamingStore';
 
 const STORAGE_KEY = 'soloforge_sub_agents';
 const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -27,6 +28,15 @@ export function getSubAgentsByChat(chatId: string): SubAgent[] {
   return all[chatId] ?? [];
 }
 
+/** 生成默认 Agent 名字 */
+function defaultAgentName(role: 'auditor' | 'assistant', chatId: string): string {
+  const all = loadSubAgents();
+  const agents = all[chatId] ?? [];
+  if (role === 'auditor') return '审查员';
+  const assistants = agents.filter(a => a.role === 'assistant');
+  return `助手-${assistants.length + 1}`;
+}
+
 /** 创建子Agent */
 export function createSubAgent(
   chatId: string,
@@ -37,6 +47,7 @@ export function createSubAgent(
   const agent: SubAgent = {
     id: uid(),
     chatId,
+    name: defaultAgentName(role, chatId),
     role,
     parentModelId,
     reputation: 0.5,
@@ -46,6 +57,19 @@ export function createSubAgent(
   all[chatId] = [...(all[chatId] ?? []), agent];
   saveSubAgents(all);
   return agent;
+}
+
+/** 重命名子Agent — 同步更新 localStorage + streamingStore */
+export function renameSubAgent(agentId: string, chatId: string, newName: string): void {
+  const all = loadSubAgents();
+  const agents = all[chatId];
+  if (!agents) return;
+  const idx = agents.findIndex(a => a.id === agentId);
+  if (idx === -1) return;
+  agents[idx] = { ...agents[idx], name: newName };
+  saveSubAgents(all);
+  // 同步更新 streamingStore.agentsMap（响应式触发流送区重渲染）
+  useStreamingStore.getState().renameAgent(chatId, agentId, newName);
 }
 
 /** 更新子Agent活跃时间 */

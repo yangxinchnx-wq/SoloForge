@@ -26,6 +26,9 @@ public class ChatRequest {
     /** LLM 提供商配置 (动态注入, 不依赖 application.yml) */
     private LlmProvider provider;
 
+    /** 副模型提供商列表 (并行 worker 使用, 如 Qwen2.5-Coder / DeepSeek-V3 等) */
+    private List<LlmProvider> subProviders;
+
     /** 聊天设置 */
     @Builder.Default
     private ChatSettings settings = new ChatSettings();

@@ -12,7 +12,9 @@ import WebAstPreview from './WebAstPreview';
 import {
   drainCanvasNotifications,
   type CanvasNotification,
+  type CanvasResource,
 } from '../services/canvas/sessionApi';
+import { CanvasResourceBar } from './CanvasResourceBar';
 
 interface PreviewPanelProps {
   width?: number;
@@ -23,6 +25,16 @@ interface PreviewPanelProps {
   canvasId?: string | null;
   /** P0: 画布 ID 是否已就绪 (首次进入 chat 时, 后台拉取+建画布可能耗时) */
   canvasReady?: boolean;
+  /** P0: 画布池资源列表 (用于 CanvasResourceBar chip 栏) */
+  canvases?: CanvasResource[];
+  /** P0: 画布池上限 */
+  maxCanvases?: number;
+  /** P0: 切换画布 */
+  onSelectCanvas?: (canvasId: string) => void;
+  /** P0: 新建画布 (返回新画布 ID; 已满返回 null) */
+  onCreateCanvas?: () => Promise<string | null>;
+  /** P0: 改画布描述 */
+  onRenameCanvas?: (canvasId: string, description: string) => Promise<boolean>;
 }
 
 type CanvasState = 'idle' | 'starting' | 'running' | 'error';
@@ -109,7 +121,12 @@ function getSizePreset(key: string) {
   return SIZE_PRESETS.find(p => p.key === key);
 }
 
-export default function PreviewPanel({ width = 385, isResizing = false, dragStartWidth = 385, selectedChatId, canvasId, canvasReady }: PreviewPanelProps) {
+export default function PreviewPanel({
+  width = 385, isResizing = false, dragStartWidth = 385,
+  selectedChatId, canvasId, canvasReady,
+  canvases = [], maxCanvases = 10,
+  onSelectCanvas, onCreateCanvas, onRenameCanvas,
+}: PreviewPanelProps) {
   // 2026-07-06 阶段3: 订阅 AST 预览流状态
   const previewEntry = usePreviewStreamStore(s => selectedChatId ? s.entries[selectedChatId] : undefined);
   const previewIsStreaming = previewEntry?.isStreaming ?? false;
@@ -594,6 +611,18 @@ export default function PreviewPanel({ width = 385, isResizing = false, dragStar
           </div>
           {renderCanvasStatus()}
         </div>
+        )}
+
+        {/* P0: 画布资源池 chip 栏 — 切换/新建画布 */}
+        {!noCanvas && onSelectCanvas && onCreateCanvas && onRenameCanvas && (
+          <CanvasResourceBar
+            canvases={canvases}
+            activeCanvasId={canvasId ?? null}
+            maxCanvases={maxCanvases}
+            onSelect={onSelectCanvas}
+            onCreate={onCreateCanvas}
+            onRename={onRenameCanvas}
+          />
         )}
 
         {/* TOOLBAR — 无画布待机时隐藏 */}

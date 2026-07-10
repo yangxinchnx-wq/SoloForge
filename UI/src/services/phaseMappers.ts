@@ -20,8 +20,8 @@ export interface PhaseMapperContext {
   getSubTaskId: (chatId: string, workerIdx: number) => string | undefined;
   /** 把 workerIdx → subTaskId 反向绑定 (新子任务创建时调用) */
   bindSubTask: (chatId: string, workerIdx: number, subTaskId: string) => void;
-  /** 取 chatId 根任务最后创建的 subTaskId (子任务创建后立即调用) */
-  getLastSubTaskId: (chatId: string) => string | undefined;
+  /** 生成新的 subTaskId (替代 getLastSubTaskId 反查) */
+  newSubTaskId: () => string;
 }
 
 /**
@@ -67,15 +67,18 @@ function decomposeAndDispatch(subtasks: any[], ctx: PhaseMapperContext, detailSu
     const taskDesc: string = typeof s === 'string' ? `Worker ${i}` : (s.taskDesc ?? `Worker ${s.workerIdx ?? i}`);
     const workerIdx: number = typeof s === 'string' ? i : (s.workerIdx ?? i);
 
+    // 生成 subTaskId 放入 event, 不再反查 store
+    const subId = ctx.newSubTaskId();
+    // 从后端事件读取真实 agentId (后端 phase0_subtask 生成), 回退到占位符
+    const agentId: string | undefined = typeof s === 'object' ? s.agentId : undefined;
     ctx.pushStreamEvent('subtask_created', {
-      agentId: `agent-${workerIdx}`,
+      agentId: agentId ?? `agent-${workerIdx}`,
       content: modelName,
       detail: taskDesc,
       status: 'pending',
+      subTaskId: subId,
     });
-    // 立即绑定 workerIdx → subTaskId (新子任务创建后)
-    const newSubId = ctx.getLastSubTaskId(ctx.activeChatId);
-    if (newSubId) ctx.bindSubTask(ctx.activeChatId, workerIdx, newSubId);
+    ctx.bindSubTask(ctx.activeChatId, workerIdx, subId);
   }
   ctx.pushStreamEvent('phase_change', {
     content: 'DISPATCHING',

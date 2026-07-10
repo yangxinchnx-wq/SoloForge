@@ -4,7 +4,6 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { streamPersistence } from '../../services/streamPersistence';
-import type { RootTask } from '../../types/streaming';
 
 // Mock localStorage for node environment
 function createMockLocalStorage() {
@@ -16,19 +15,6 @@ function createMockLocalStorage() {
     clear: () => store.clear(),
     key: (index: number) => Array.from(store.keys())[index] ?? null,
     get length() { return store.size; },
-  };
-}
-
-function makeTask(id: string, chatId: string, phase: RootTask['phase'] = 'EXECUTING'): RootTask {
-  return {
-    id,
-    chatId,
-    userInput: 'test task',
-    phase,
-    progress: 50,
-    subTasks: [],
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
   };
 }
 
@@ -58,20 +44,31 @@ describe('StreamPersistenceManager', () => {
     expect(p.getConfig().hotFlushInterval).toBe(5000);
   });
 
-  it('应该能 flush 和 restore 热状态', async () => {
+  it('应该能 flush 和 restore 热状态 (messages)', async () => {
     const { streamPersistence: p } = await import('../../services/streamPersistence');
-    const tasks: Record<string, RootTask> = {
-      'chat-1': makeTask('task-1', 'chat-1', 'EXECUTING'),
+    const messages = {
+      'chat-1': [
+        {
+          id: 'msg-1',
+          role: 'assistant' as const,
+          parts: [{ type: 'phase-change' as const, from: 'CLARIFY' as const, to: 'EXECUTING' as const, timestamp: Date.now() }],
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          chatId: 'chat-1',
+          rootTaskId: 'task-1',
+          status: 'streaming' as const,
+        },
+      ],
     };
 
-    p.scheduleFlush({ tasks });
+    p.scheduleFlush({ messages });
     p.flushNow();
 
     const restored = p.restoreHotState();
     expect(restored).not.toBeNull();
-    expect(restored!.tasks).toBeDefined();
-    expect(restored!.tasks!['chat-1'].id).toBe('task-1');
-    expect(restored!.tasks!['chat-1'].phase).toBe('EXECUTING');
+    expect(restored!.messages).toBeDefined();
+    expect(restored!.messages!['chat-1']).toHaveLength(1);
+    expect(restored!.messages!['chat-1'][0].id).toBe('msg-1');
   });
 
   it('应该在没有数据时返回 null', async () => {

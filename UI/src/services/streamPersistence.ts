@@ -7,10 +7,10 @@
  *   - Erlang/OTP: 状态快照 + 事件日志 (WAL)
  *
  * 持久化策略:
- *   1. 热状态 (streamingStore): 完整 RootTask 对象 → localStorage (快速恢复)
- *   2. 消息流 (uiMessageStore): UIMessage[] → IndexedDB (大容量, 异步)
+ *   1. 热状态 (streamingStore): streamTaskMeta + agentsMap → localStorage (快速恢复)
+ *   2. 消息流 (uiMessageStore): UIMessage[] → localStorage + IndexedDB (权威数据源)
  *   3. Actor 快照 (taskActorSystem): ActorStateSnapshot[] → localStorage
- *   4. 事件日志 (eventBuffer): 最近 N 条 StreamEvent → IndexedDB (回放用)
+ *   4. 事件日志: 最近 N 条 StreamEvent → IndexedDB (回放用)
  *
  * 恢复策略:
  *   1. 页面加载时: 从 localStorage 恢复热状态 (同步, 快)
@@ -20,7 +20,7 @@
  * 2026-07-10: P3-3 实现
  */
 
-import type { RootTask, StreamEvent, SubAgent } from '../types/streaming';
+import type { StreamEvent, SubAgent } from '../types/streaming';
 import type { UIMessage } from '../types/messages';
 import type { ActorStateSnapshot } from './taskActor';
 
@@ -28,7 +28,6 @@ import type { ActorStateSnapshot } from './taskActor';
 
 const STORAGE_PREFIX = 'soloforge:stream:';
 const KEYS = {
-  tasks: `${STORAGE_PREFIX}tasks`,
   agents: `${STORAGE_PREFIX}agents`,
   actorSnapshots: `${STORAGE_PREFIX}actorSnapshots`,
   messages: `${STORAGE_PREFIX}messages`,
@@ -40,10 +39,9 @@ const KEYS = {
 // ==================== 持久化数据类型 ====================
 
 interface PersistedState {
-  tasks: Record<string, RootTask>;
   agents: Record<string, SubAgent[]>;
   actorSnapshots: ActorStateSnapshot[];
-  /** P0: uiMessageStore 的 messages (替代 tasks + textBuffers) */
+  /** uiMessageStore 的 messages (权威数据源) */
   messages?: Record<string, UIMessage[]>;
   /** 持久化时间戳 */
   savedAt: number;
@@ -327,7 +325,6 @@ class StreamPersistenceManager {
     if (Object.keys(this.pendingFlush).length === 0) return;
 
     const state: PersistedState = {
-      tasks: this.pendingFlush.tasks ?? this.ls.read<Record<string, RootTask>>(KEYS.tasks) ?? {},
       agents: this.pendingFlush.agents ?? this.ls.read<Record<string, SubAgent[]>>(KEYS.agents) ?? {},
       actorSnapshots: this.pendingFlush.actorSnapshots ?? this.ls.read<ActorStateSnapshot[]>(KEYS.actorSnapshots) ?? [],
       messages: this.pendingFlush.messages ?? this.ls.read<Record<string, UIMessage[]>>(KEYS.messages) ?? {},
@@ -335,7 +332,6 @@ class StreamPersistenceManager {
       version: 1,
     };
 
-    this.ls.write(KEYS.tasks, state.tasks);
     this.ls.write(KEYS.agents, state.agents);
     this.ls.write(KEYS.actorSnapshots, state.actorSnapshots);
     if (state.messages) this.ls.write(KEYS.messages, state.messages);
@@ -350,16 +346,13 @@ class StreamPersistenceManager {
   restoreHotState(): Partial<PersistedState> | null {
     if (!this.config.enabled) return null;
 
-    // P0: 优先恢复 messages (新路径), 回退到 tasks (旧路径)
     const messages = this.ls.read<Record<string, UIMessage[]>>(KEYS.messages);
-    const tasks = this.ls.read<Record<string, RootTask>>(KEYS.tasks);
-    if (!messages && (!tasks || Object.keys(tasks).length === 0)) return null;
+    if (!messages || Object.keys(messages).length === 0) return null;
 
     return {
-      tasks: tasks ?? {},
       agents: this.ls.read<Record<string, SubAgent[]>>(KEYS.agents) ?? {},
       actorSnapshots: this.ls.read<ActorStateSnapshot[]>(KEYS.actorSnapshots) ?? [],
-      messages: messages ?? undefined,
+      messages,
     };
   }
 
@@ -395,13 +388,13 @@ class StreamPersistenceManager {
 
   /** 清除指定 chatId 的所有持久化数据 */
   async clearChat(chatId: string): void {
-    this.ls.remove(KEYS.tasks); // 热状态是全量的, 不按 chatId 分
+    this.ls.remove(KEYS.messages); // 热状态是全量的, 不按 chatId 分
     await this.idb.clearChat(chatId);
   }
 
   /** 清除所有持久化数据 */
   async clearAll(): void {
-    this.ls.remove(KEYS.tasks);
+    this.ls.remove(KEYS.messages);
     this.ls.remove(KEYS.agents);
     this.ls.remove(KEYS.actorSnapshots);
     await this.idb.clearAll();
@@ -428,7 +421,7 @@ export const streamPersistence = new StreamPersistenceManager();
  * 从持久化存储恢复完整的流送状态
  * 在应用启动时调用
  *
- * @returns 恢复的 chatId 列表 (有未完成任务的)
+ * @returns 恢复的 chatId 列表 (有未完成 messages 的)
  */
 export async function restoreStreamingState(): Promise<string[]> {
   const hotState = streamPersistence.restoreHotState();
@@ -436,10 +429,11 @@ export async function restoreStreamingState(): Promise<string[]> {
 
   const restoredChatIds: string[] = [];
 
-  // 返回有未完成任务的 chatId 列表
-  if (hotState.tasks) {
-    for (const [chatId, task] of Object.entries(hotState.tasks)) {
-      if (task.phase !== 'DONE' && task.phase !== 'ERROR') {
+  // 从 uiMessageStore.messages 派生: 有 assistant message 且最后一个 phase part 不是终态的 chatId
+  if (hotState.messages) {
+    for (const [chatId, messages] of Object.entries(hotState.messages)) {
+      const hasAssistant = messages.some(m => m.role === 'assistant');
+      if (hasAssistant) {
         restoredChatIds.push(chatId);
       }
     }

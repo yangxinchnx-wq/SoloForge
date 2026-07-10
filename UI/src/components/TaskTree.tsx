@@ -3,7 +3,7 @@
  * 展示根任务、子任务列表、审查区、进度条
  */
 import React, { memo } from 'react';
-import { Layers, ChevronDown } from '../utils/icons';
+import { Layers, ChevronDown, Loader2 } from '../utils/icons';
 import type { RootTask, PermissionMode } from '../types/streaming';
 import type { ArbitrationResult } from '../types/streaming';
 import { SubTaskNode } from './SubTaskNode';
@@ -34,22 +34,15 @@ const PHASE_LABELS: Record<string, string> = {
 export const TaskTree = memo(function TaskTree({ task, mainModel, modelCount, mode, chatId, arbitrationResult }: TaskTreeProps) {
   const isDone = task.phase === 'DONE';
   const isError = task.phase === 'ERROR';
-
-  const progressColor = isError ? 'bg-red-500' : isDone ? 'bg-green-500' : 'bg-blue-500';
+  const isActive = !isDone && !isError;
 
   return (
     <div className="flex flex-col gap-2">
-      {/* 全局进度条 */}
+      {/* 状态指示行 */}
       <div className="flex items-center gap-2 px-1">
-        <div className="flex-1 h-2 rounded-full bg-on-surface/10 overflow-hidden">
-          <div
-            className={`h-full rounded-full ${progressColor} sf-anim-progress`}
-            style={{ width: `${task.progress}%` }}
-          />
-        </div>
-        <span className="text-[11px] font-mono font-bold text-on-surface/60 w-8 text-right">
-          {task.progress}%
-        </span>
+        {isActive && (
+          <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin shrink-0" />
+        )}
         <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
           isDone ? 'text-green-400 bg-green-500/10'
             : isError ? 'text-red-400 bg-red-500/10'

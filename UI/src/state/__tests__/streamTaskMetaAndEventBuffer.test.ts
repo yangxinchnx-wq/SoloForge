@@ -5,20 +5,6 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useStreamingStore } from '../streamingStore';
-import type { StreamEvent } from '../../types/streaming';
-
-function makeEvt(partial: Partial<StreamEvent>): StreamEvent {
-  return {
-    id: `evt-${Math.random().toString(36).slice(2, 8)}`,
-    chatId: 'c1',
-    rootTaskId: 't',
-    kind: 'phase_change',
-    content: '',
-    ts: Date.now(),
-    status: 'running',
-    ...partial,
-  };
-}
 
 beforeEach(() => {
   useStreamingStore.getState().__reset();
@@ -93,43 +79,5 @@ describe('C fix: streamTaskMeta — 多 chat 隔离', () => {
     useStreamingStore.getState().clearChat('c1');
     expect(useStreamingStore.getState().streamTaskMeta['c1']).toBeUndefined();
     expect(useStreamingStore.getState().getSubTaskId('c1', 0)).toBeUndefined();
-  });
-});
-
-describe('C 联调: 双 chat 并发场景', () => {
-  it('chatA 和 chatB 同时跑, streamTaskMeta 互不干扰', () => {
-    useStreamingStore.getState().createTask('chatA', 'A', 'normal');
-    useStreamingStore.getState().createTask('chatB', 'B', 'normal');
-
-    // 模拟两个 chat 同时创建子任务 (subtask_created 真正建 SubTask)
-    useStreamingStore.getState().applyEvent(makeEvt({
-      chatId: 'chatA', kind: 'subtask_created',
-      content: 'model-A', detail: 'A task', agentId: 'a-0',
-    }));
-    const subIdA = useStreamingStore.getState().tasks.chatA.subTasks[0].id;
-    useStreamingStore.getState().applyEvent(makeEvt({
-      chatId: 'chatB', kind: 'subtask_created',
-      content: 'model-B', detail: 'B task', agentId: 'b-0',
-    }));
-    const subIdB = useStreamingStore.getState().tasks.chatB.subTasks[0].id;
-
-    // 模拟 SSE 推送: 各 chat 的 worker 进度独立
-    useStreamingStore.getState().applyEvent(makeEvt({
-      chatId: 'chatA', kind: 'subtask_progress', subTaskId: subIdA, progress: 50, status: 'running',
-    }));
-    useStreamingStore.getState().applyEvent(makeEvt({
-      chatId: 'chatB', kind: 'subtask_progress', subTaskId: subIdB, progress: 30, status: 'running',
-    }));
-
-    // chatA 的子任务进度是 50, chatB 的子任务进度是 30
-    const subA = useStreamingStore.getState().tasks.chatA.subTasks[0];
-    const subB = useStreamingStore.getState().tasks.chatB.subTasks[0];
-    expect(subA.progress).toBe(50);
-    expect(subB.progress).toBe(30);
-
-    // streamTaskMeta 互不干扰
-    expect(useStreamingStore.getState().streamTaskMeta.chatA.rootTaskId).not.toBe(
-      useStreamingStore.getState().streamTaskMeta.chatB.rootTaskId
-    );
   });
 });

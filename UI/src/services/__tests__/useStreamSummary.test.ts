@@ -102,8 +102,8 @@ describe('useStreamSummary 派生逻辑', () => {
   it('subtask parts 派生 count + progress', () => {
     const task = createTaskWithActor('c1', 'test', 'normal');
     dispatchStreamEvent(makeEvent('c1', task.id, 'phase_change', { content: 'DECOMPOSING' }));
-    dispatchStreamEvent(makeEvent('c1', task.id, 'subtask_created', { content: 'GPT-4o', detail: 'task1' }));
-    dispatchStreamEvent(makeEvent('c1', task.id, 'subtask_created', { content: 'Claude', detail: 'task2' }));
+    dispatchStreamEvent(makeEvent('c1', task.id, 'subtask_created', { content: 'GPT-4o', detail: 'task1', subTaskId: 'sub-1' }));
+    dispatchStreamEvent(makeEvent('c1', task.id, 'subtask_created', { content: 'Claude', detail: 'task2', subTaskId: 'sub-2' }));
 
     const s = deriveSummary('c1');
     expect(s.subtaskCount).toBe(2);
@@ -114,10 +114,10 @@ describe('useStreamSummary 派生逻辑', () => {
   it('subtask-done part 增加 doneCount + progress', () => {
     const task = createTaskWithActor('c1', 'test', 'normal');
     dispatchStreamEvent(makeEvent('c1', task.id, 'phase_change', { content: 'DECOMPOSING' }));
-    dispatchStreamEvent(makeEvent('c1', task.id, 'subtask_created', { content: 'A', detail: 't1' }));
-    dispatchStreamEvent(makeEvent('c1', task.id, 'subtask_created', { content: 'B', detail: 't2' }));
+    dispatchStreamEvent(makeEvent('c1', task.id, 'subtask_created', { content: 'A', detail: 't1', subTaskId: 'sub-1' }));
+    dispatchStreamEvent(makeEvent('c1', task.id, 'subtask_created', { content: 'B', detail: 't2', subTaskId: 'sub-2' }));
 
-    const subId = useStreamingStore.getState().getLastSubTaskId('c1')!;
+    const subId = 'sub-2';
     dispatchStreamEvent(makeEvent('c1', task.id, 'subtask_done', {
       subTaskId: subId, content: 'done', progress: 100, status: 'success',
     }));

@@ -32,6 +32,7 @@ import {
   Globe,
 } from '../utils/icons';
 import { useLastAssistantMessage } from '../services/uiMessageStore';
+import { useAgentName, useAgentAvatar } from '../state/streamingStore';
 import type {
   UIPart,
   UITextPart,
@@ -89,6 +90,7 @@ export const UIMessagePartsRenderer = memo(function UIMessagePartsRenderer({
             part={part}
             isStreaming={isStreaming}
             isLast={index === deferredParts.length - 1}
+            chatId={chatId}
           />
         </motion.div>
       ))}
@@ -102,9 +104,10 @@ interface PartRendererProps {
   part: UIPart;
   isStreaming: boolean;
   isLast: boolean;
+  chatId: string;
 }
 
-const PartRenderer = memo(function PartRenderer({ part, isStreaming, isLast }: PartRendererProps) {
+const PartRenderer = memo(function PartRenderer({ part, isStreaming, isLast, chatId }: PartRendererProps) {
   switch (part.type) {
     case 'text':
       return <TextPartView part={part} isStreaming={isStreaming && isLast} />;
@@ -119,7 +122,7 @@ const PartRenderer = memo(function PartRenderer({ part, isStreaming, isLast }: P
     case 'subtask-done':
       return <SubTaskDonePartView part={part} />;
     case 'model-delegation':
-      return <ModelDelegationPartView part={part} />;
+      return <ModelDelegationPartView part={part} chatId={chatId} />;
     case 'audit-start':
       return <AuditStartPartView part={part} />;
     case 'audit-finding':
@@ -330,13 +333,26 @@ const SubTaskDonePartView = memo(function SubTaskDonePartView({ part }: { part: 
   );
 });
 
-const ModelDelegationPartView = memo(function ModelDelegationPartView({ part }: { part: UIModelDelegationPart }) {
+const ModelDelegationPartView = memo(function ModelDelegationPartView({ part, chatId }: { part: UIModelDelegationPart; chatId: string }) {
+  // 实时查询 agent 名字和头像 — agent 改名/改头像后自动响应式更新, 不缓存旧值
+  const agentName = useAgentName(chatId, part.agentId);
+  const agentAvatar = useAgentAvatar(chatId, part.agentId);
+  // 新格式: "副模型 → agent → 任务"
+  // part.fromModel = 副模型名, part.detail = 任务描述
   return (
     <div className="flex items-center gap-1.5 text-[10px] font-mono text-on-surface/50">
       <span className="text-on-surface/40">{part.fromModel}</span>
       <ArrowRight className="w-3 h-3 text-on-surface/30" />
-      <span className="text-primary font-bold">{part.toModel}</span>
-      {part.detail && <span className="text-on-surface/30 truncate">{part.detail}</span>}
+      {agentAvatar && (
+        agentAvatar.startsWith('http') || agentAvatar.startsWith('/') || agentAvatar.startsWith('data:')
+          ? <img src={agentAvatar} alt="" className="w-3.5 h-3.5 rounded-full object-cover" />
+          : <span className="text-xs leading-none">{agentAvatar}</span>
+      )}
+      {agentName && (
+        <span className="text-primary font-bold">{agentName}</span>
+      )}
+      <ArrowRight className="w-3 h-3 text-on-surface/30" />
+      {part.detail && <span className="text-on-surface/70 font-medium truncate max-w-[120px]">{part.detail}</span>}
     </div>
   );
 });

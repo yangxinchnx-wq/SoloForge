@@ -12,7 +12,7 @@
  * 参考: Dan Abramov "Before You memo()" — https://overreacted.io/before-you-memo/
  */
 import React, { useEffect, useState } from 'react';
-import { ChevronDown } from '../utils/icons';
+import { ChevronDown, Loader2, CheckCircle2, AlertCircle, Clock } from '../utils/icons';
 import type { PermissionMode } from '../types/streaming';
 import { useStreamingStore } from '../state/streamingStore';
 import { promptCardPool } from '../services/promptCardPool';
@@ -24,6 +24,7 @@ import { ModelIcon } from './ModelIcon';
 import { useAutoPersist, clearChatAll } from '../services/actorIntegration';
 // P3 集成: Data Parts 模式渲染器 — 与 TaskTree 并行, 展示 UIMessage parts 时间线
 import { UIMessagePartsRenderer } from './UIMessagePartsRenderer';
+import { MountTransition } from './MountTransition';
 // H-3 迁移: 从 uiMessageStore 派生摘要状态, 替代直接订阅 streamingStore.tasks[chatId]
 import { useStreamSummary } from '../services/useStreamSummary';
 // P0 迁移: 从 parts 派生完整 RootTask, 替代 streamingStore.tasks[chatId]
@@ -118,11 +119,23 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
   // 旧路径: useStreamingStore(s => s.tasks[chatId]) — 高频全量更新
   // 新路径: useRootTaskFromParts — 从 parts 聚合, 只在 part 变化时更新
   const summary = useStreamSummary(chatId);
-  // userInput / rootTaskId 仍从 streamingStore 读取 (控制流字段, 不在 parts 中, 低频)
-  const userInput = useStreamingStore(s => s.tasks[chatId]?.userInput);
-  const rootTaskId = useStreamingStore(s => s.streamTaskMeta[chatId]?.rootTaskId);
+  // userInput / rootTaskId 从 streamTaskMeta 读取 (控制流字段, 不在 parts 中, 低频)
+  const streamMeta = useStreamingStore(s => s.streamTaskMeta[chatId]);
+  const userInput = streamMeta?.userInput;
+  const rootTaskId = streamMeta?.rootTaskId;
   const task = useRootTaskFromParts(chatId, userInput, rootTaskId);
   const [isExpanded, setIsExpanded] = useState(true);
+
+  // 任务完成后2秒自动折叠具体信息, 显示总结
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => {
+    if (!summary.isDone && !summary.isError) {
+      setCollapsed(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setCollapsed(true), 2000);
+    return () => window.clearTimeout(timer);
+  }, [summary.isDone, summary.isError]);
 
   if (!task && !summary.hasData) return null;
 
@@ -131,7 +144,6 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
   const isActive = summary.isActive;
   const subCount = summary.subtaskCount;
   const doneCount = summary.doneCount;
-  const progress = summary.progress;
 
   return (
     <>
@@ -176,13 +188,13 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
                   </span>
                 )}
               </div>
-              <span className="text-[10px] text-on-surface/40 font-mono">
-                {progress}%
-              </span>
+              {isActive && (
+                <Loader2 className="w-3.5 h-3.5 text-primary animate-spin shrink-0" />
+              )}
             </div>
 
-            {/* 流程内容 */}
-            {isExpanded && (
+            {/* 流程内容 — 任务完成后2秒自动淡出 */}
+            <MountTransition show={isExpanded && !collapsed} variant="fade" duration={180}>
               <div className="p-3 space-y-2">
                 <TaskTree
                   task={task}
@@ -196,7 +208,36 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
                   <UIMessagePartsRenderer chatId={chatId} />
                 </div>
               </div>
-            )}
+            </MountTransition>
+
+            {/* 任务总结 — 折叠后淡入显示 */}
+            <MountTransition show={collapsed} variant="fade" duration={220}>
+              <div className="p-3 space-y-1">
+                <div className="flex items-center gap-1.5 text-on-surface/80 mb-1.5">
+                  {isError
+                    ? <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+                    : <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />
+                  }
+                  <span className="font-semibold text-[11px]">任务总结</span>
+                  <span className="text-[10px] text-on-surface/40 ml-auto font-mono">
+                    {doneCount}/{subCount} 完成
+                  </span>
+                </div>
+                {task?.subTasks.map(st => (
+                  <div key={st.id} className="flex items-center gap-2 text-[11px] py-0.5">
+                    {st.status === 'done'
+                      ? <CheckCircle2 className="w-3 h-3 text-green-400 shrink-0" />
+                      : st.status === 'error'
+                      ? <AlertCircle className="w-3 h-3 text-red-400 shrink-0" />
+                      : <Clock className="w-3 h-3 text-on-surface/30 shrink-0" />
+                    }
+                    <span className={`truncate ${st.status === 'done' ? 'text-on-surface/50 line-through' : 'text-on-surface/80'}`}>
+                      {st.description}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </MountTransition>
           </div>
         </div>
       </div>

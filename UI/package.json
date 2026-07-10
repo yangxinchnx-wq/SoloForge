@@ -10,7 +10,8 @@
     "dev": "node start.mjs",
     "dev:server": "tsx server.ts",
     "dev:electron": "node electron/launch.cjs .",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=esm --packages=external --sourcemap --outfile=dist/server.mjs",
+    "build": "npm run build:core && vite build && esbuild server.ts --bundle --platform=node --format=esm --packages=bundle --sourcemap --outfile=dist/server.mjs --banner:js=\"import _module from 'module';const require=_module.createRequire(import.meta.url);\"",
+    "build:core": "esbuild ../src/index.ts --bundle --platform=node --format=esm --packages=bundle --sourcemap --outfile=resources/core/server.mjs --banner:js=\"import _module from 'module';const require=_module.createRequire(import.meta.url);\"",
     "start": "node dist/server.mjs",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
@@ -33,9 +34,30 @@
       {
         "from": "resources/canvas/canvas-dist",
         "to": "canvas",
-        "filter": [
-          "**/*"
-        ]
+        "filter": ["**/*"]
+      },
+      {
+        "from": "resources/core",
+        "to": "core",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../bin/garnet/portable/net10.0",
+        "to": "garnet",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "git-service",
+        "to": "git-service",
+        "filter": ["git-service.exe", "**/*.dll"]
+      },
+      {
+        "from": "../bin/scheduler.exe",
+        "to": "bin/scheduler.exe"
+      },
+      {
+        "from": "../bin/surreal.exe",
+        "to": "bin/surreal.exe"
       }
     ],
     "win": {

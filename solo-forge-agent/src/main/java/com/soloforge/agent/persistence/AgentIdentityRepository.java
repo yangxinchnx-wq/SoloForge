@@ -39,6 +39,7 @@ public class AgentIdentityRepository {
         e.setReputationId(rs.getString("reputation_id"));
         e.setStatus(rs.getString("status"));
         e.setName(rs.getString("name"));
+        e.setAvatar(rs.getString("avatar"));
         e.setDomain(rs.getString("domain"));
         e.setCapabilities(rs.getString("capabilities"));
         e.setStrategy(rs.getString("strategy"));
@@ -104,6 +105,16 @@ public class AgentIdentityRepository {
     }
 
     /**
+     * 更新显示名称和头像 (由前端 AgentSettingsModal 调用)
+     */
+    public void updateProfile(String agentId, String name, String avatar) {
+        jdbcTemplate.update(
+            "UPDATE agent_identity SET name = ?, avatar = ?, updated_at = ? WHERE id = ?",
+            name, avatar, LocalDateTime.now().toString(), agentId);
+        log.info("Agent {} profile updated: name={}, avatar={}", agentId, name, avatar);
+    }
+
+    /**
      * 创建新 Agent
      */
     public void save(AgentIdentityEntity entity) {
@@ -115,9 +126,9 @@ public class AgentIdentityRepository {
             INSERT OR REPLACE INTO agent_identity
             (id, role, model_binding, system_prompt, system_prompt_version,
              current_checkpoint_path, checkpoint_version, task_count, reputation_id,
-             status, name, domain, capabilities, strategy, level,
+             status, name, avatar, domain, capabilities, strategy, level,
              temperature, max_rounds, enabled, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             entity.getId(), entity.getRole(), entity.getModelBinding(),
             entity.getSystemPrompt(),
@@ -127,7 +138,7 @@ public class AgentIdentityRepository {
             entity.getTaskCount() != null ? entity.getTaskCount() : 0,
             entity.getReputationId(),
             entity.getStatus() != null ? entity.getStatus() : "active",
-            entity.getName(), entity.getDomain(),
+            entity.getName(), entity.getAvatar(), entity.getDomain(),
             entity.getCapabilities() != null ? entity.getCapabilities() : "[]",
             entity.getStrategy() != null ? entity.getStrategy() : "direct",
             entity.getLevel() != null ? entity.getLevel() : "senior",

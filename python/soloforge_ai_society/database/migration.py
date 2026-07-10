@@ -150,6 +150,7 @@ def upgrade_to_v3(conn: sqlite3.Connection) -> None:
             reputation_id TEXT,
             status TEXT DEFAULT 'active',
             name TEXT,
+            avatar TEXT,
             domain TEXT,
             capabilities TEXT DEFAULT '[]',
             strategy TEXT DEFAULT 'direct',
@@ -194,6 +195,7 @@ def upgrade_to_v3(conn: sqlite3.Connection) -> None:
             "model_binding": "gpt-4o",
             "system_prompt": "你是 SoloForge 的代码工程师 Agent。专精代码编写、重构、调试、架构设计。优先使用工具查看真实代码,不要猜测。",
             "name": "代码工程师",
+            "avatar": "💻",
             "domain": "code-dev",
             "capabilities": '["read","write","search","execute","analyze"]',
             "strategy": "direct",
@@ -207,6 +209,7 @@ def upgrade_to_v3(conn: sqlite3.Connection) -> None:
             "model_binding": "gpt-4o",
             "system_prompt": "你是 SoloForge 的规划师 Agent。专精任务拆解、方案设计、技术选型。先理解需求再给方案,避免直接编码。",
             "name": "规划师",
+            "avatar": "📋",
             "domain": "planning",
             "capabilities": '["read","search","analyze"]',
             "strategy": "chain_of_thought",
@@ -220,6 +223,7 @@ def upgrade_to_v3(conn: sqlite3.Connection) -> None:
             "model_binding": "gpt-4o",
             "system_prompt": "你是 SoloForge 的调试专家 Agent。专精 bug 定位、根因分析、修复验证。系统化排查,不要瞎猜。",
             "name": "调试专家",
+            "avatar": "🔍",
             "domain": "debugging",
             "capabilities": '["read","search","execute","analyze"]',
             "strategy": "chain_of_thought",
@@ -233,6 +237,7 @@ def upgrade_to_v3(conn: sqlite3.Connection) -> None:
             "model_binding": "gpt-4o",
             "system_prompt": "你是 SoloForge 的文档作家 Agent。专精文档撰写、注释、README。语言简洁清晰。",
             "name": "文档作家",
+            "avatar": "📝",
             "domain": "documentation",
             "capabilities": '["read","write","search"]',
             "strategy": "direct",
@@ -242,16 +247,22 @@ def upgrade_to_v3(conn: sqlite3.Connection) -> None:
         },
     ]
 
+    # 旧库兼容: 若 agent_identity 表缺少 avatar 列则补上
+    try:
+        cursor.execute("SELECT avatar FROM agent_identity LIMIT 1")
+    except Exception:
+        cursor.execute("ALTER TABLE agent_identity ADD COLUMN avatar TEXT")
+
     for agent in preset_agents:
         cursor.execute("""
             INSERT OR IGNORE INTO agent_identity
             (id, role, model_binding, system_prompt, system_prompt_version,
-             task_count, status, name, domain, capabilities, strategy, level,
+             task_count, status, name, avatar, domain, capabilities, strategy, level,
              temperature, max_rounds, enabled, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 0, 0, 'active', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+            VALUES (?, ?, ?, ?, 0, 0, 'active', ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
         """, (
             agent["id"], agent["role"], agent["model_binding"],
-            agent["system_prompt"], agent["name"], agent["domain"],
+            agent["system_prompt"], agent["name"], agent["avatar"], agent["domain"],
             agent["capabilities"], agent["strategy"], agent["level"],
             agent["temperature"], agent["max_rounds"], now, now
         ))

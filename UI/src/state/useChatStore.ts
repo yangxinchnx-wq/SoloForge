@@ -28,6 +28,8 @@ import type { StreamEventKind, StreamEvent, PermissionMode } from '../types/stre
 import { createTaskWithActor, dispatchStreamEvent, clearChatAll } from '../services/actorIntegration';
 // 2026-07-09: HTML 翻译器 — 本地解析 HTML 代码块为 Universal AST, 直接推画布, 省一次 LLM 调用
 import { translateCode, isLanguageSupported, detectLanguage } from '../translate';
+// 2026-07-11: 本地翻译成功后同步写入 previewStreamStore, 让 PreviewPanel 也能显示 WebAstPreview
+import { usePreviewStreamStore } from './previewStreamStore';
 // P2-7: handleSend 拆分出的纯逻辑 (错误分类 / 越界检测 / 预览触发判定)
 import { classifyStreamError, mentionsOutsideWorkspace, detectPreviewTrigger } from './useChatStore.helpers';
 
@@ -43,7 +45,8 @@ import { classifyStreamError, mentionsOutsideWorkspace, detectPreviewTrigger } f
 interface StreamBridge {
   onText: (text: string) => void;
   onPhase: (evt: any) => void;
-  onDone: () => void;
+  onAgent: (agentId: string, name: string, avatar: string | undefined, mainModel?: string, subModels?: string[], role?: string, domain?: string, subModel?: string) => void;
+  onDone: (agentId?: string) => void;
   onError: (error: string) => void;
 }
 
@@ -55,6 +58,12 @@ function createStreamBridge(chatId: string, mainModel: string, userInput: string
   let isFirstText = true;
   let hasPhaseEvents = false;
   let textAccumulated = '';
+  // Java 链路传来的真实 agent 信息 (替代 'main-model' 硬编码)
+  let javaAgentId: string | null = null;
+  let javaAgentName: string | null = null;
+  let javaAgentAvatar: string | undefined = undefined;
+  // Java 链路传来的副模型信息 (流送区显示 "副模型 → agent → 任务")
+  let javaSubModel: string | null = null;
 
   const ctx: PhaseMapperContext = {
     activeChatId: chatId,
@@ -77,8 +86,11 @@ function createStreamBridge(chatId: string, mainModel: string, userInput: string
     },
     getSubTaskId: (cid: string, wIdx: number) => useStreamingStore.getState().getSubTaskId(cid, wIdx),
     bindSubTask: (cid: string, wIdx: number, subId: string) => useStreamingStore.getState().bindSubTask(cid, wIdx, subId),
-    getLastSubTaskId: (cid: string) => useStreamingStore.getState().getLastSubTaskId(cid),
+    newSubTaskId: () => `sub-${crypto.randomUUID()}`,
   };
+
+  // 单模型模式下, 首次 text 时创建的 subTaskId (本地保存, 后续 step/text_chunk/done 复用)
+  let singleModelSubId: string | null = null;
 
   return {
     onText(text: string) {
@@ -87,30 +99,35 @@ function createStreamBridge(chatId: string, mainModel: string, userInput: string
       // 单模型模式: 首次 text 到达时创建 SINGLE_MODEL + subtask
       if (isFirstText && !hasPhaseEvents) {
         isFirstText = false;
+        singleModelSubId = ctx.newSubTaskId();
+        const phaseLabel = javaAgentId ? 'AGENT_EXEC' : 'SINGLE_MODEL';
+        const phaseDetail = javaAgentName ? `${javaAgentName} 执行` : '单模型直接生成';
         ctx.pushStreamEvent('phase_change', {
-          content: 'SINGLE_MODEL',
-          detail: '单模型直接生成',
+          content: phaseLabel,
+          detail: phaseDetail,
           status: 'running',
         });
+        // 流送区新格式: "副模型 → agent → 任务"
+        // content = 副模型名 (副模型是调用者), detail = agent 名 (agent 是被调用资源)
+        const effectiveSubModel = javaSubModel ?? mainModel;
         ctx.pushStreamEvent('subtask_created', {
-          agentId: 'main-model',
-          content: mainModel,
-          detail: '生成回复',
+          agentId: javaAgentId ?? 'main-model',
+          avatar: javaAgentAvatar,
+          content: effectiveSubModel,
+          detail: javaAgentName ?? '生成回复',
           status: 'pending',
+          subTaskId: singleModelSubId,
         });
-        const subId = useStreamingStore.getState().getLastSubTaskId(chatId);
-        if (subId) {
-          ctx.pushStreamEvent('subtask_step', {
-            subTaskId: subId,
-            content: 'EXECUTE',
-            status: 'running',
-          });
-        }
+        ctx.pushStreamEvent('subtask_step', {
+          subTaskId: singleModelSubId,
+          content: 'EXECUTE',
+          status: 'running',
+        });
       }
       // text_chunk 只在单模型模式下推送 (多模型模式下 text 是最终交付)
-      if (!hasPhaseEvents) {
+      if (!hasPhaseEvents && singleModelSubId) {
         ctx.pushStreamEvent('text_chunk', {
-          subTaskId: useStreamingStore.getState().getLastSubTaskId(chatId),
+          subTaskId: singleModelSubId,
           content: text,
           status: 'running',
         });
@@ -120,18 +137,22 @@ function createStreamBridge(chatId: string, mainModel: string, userInput: string
       hasPhaseEvents = true;
       mapPhaseToStreamEvents(evt, ctx);
     },
-    onDone() {
+    onAgent(agentId: string, name: string, avatar: string | undefined, _mainM?: string, _subMs?: string[], _role?: string, _domain?: string, subM?: string) {
+      // Java 链路 SubModelWorker 发来的 agent 事件 (副模型选定的 agent)
+      javaAgentId = agentId;
+      javaAgentName = name;
+      javaAgentAvatar = avatar;
+      javaSubModel = subM ?? null;
+    },
+    onDone(_agentId?: string) {
       // 单模型模式: 完成子任务
-      if (!hasPhaseEvents && !isFirstText) {
-        const subId = useStreamingStore.getState().getLastSubTaskId(chatId);
-        if (subId) {
-          ctx.pushStreamEvent('subtask_done', {
-            subTaskId: subId,
-            content: textAccumulated,
-            progress: 100,
-            status: 'success',
-          });
-        }
+      if (!hasPhaseEvents && !isFirstText && singleModelSubId) {
+        ctx.pushStreamEvent('subtask_done', {
+          subTaskId: singleModelSubId,
+          content: textAccumulated,
+          progress: 100,
+          status: 'success',
+        });
       }
       // 交付 + 完成
       if (textAccumulated) {
@@ -306,16 +327,59 @@ async function tryLocalTranslateAndPush(
   text: string,
   chatSessionId: string
 ): Promise<boolean> {
+  console.log('[tryLocalTranslateAndPush] 开始检查, text长度=', text.length, 'chatId=', chatSessionId);
   const block = extractCodeBlock(text);
-  if (!block) return false;
+  if (!block) {
+    console.log('[tryLocalTranslateAndPush] 未检测到 UI 代码块, 跳过');
+    return false;
+  }
 
   const { code, lang } = block;
-  if (!isLanguageSupported(lang)) return false;
+  console.log('[tryLocalTranslateAndPush] 检测到代码块, lang=', lang, 'code长度=', code.length);
+  if (!isLanguageSupported(lang)) {
+    console.log('[tryLocalTranslateAndPush] 语言不支持:', lang);
+    return false;
+  }
 
   try {
     const ast = translateCode(code, lang);
 
-    // 推到 Node.js relay → Flutter
+    // ★ 2026-07-11: 优先使用 Electron IPC 直推画布 (不经过 HTTP relay)
+    //   之前走 HTTP /api/canvas/relay/push-ui 有两个问题:
+    //   1. relay 注册的 sessionId 是 canvas-${chatId}, 但这里传的是 chatId → 不匹配
+    //   2. 后端 3001 可能未启动 → 502
+    //   Electron IPC 直推: window.soloforge.canvas.push(sessionId, dsl) → main.cjs → Flutter
+    if (typeof window !== 'undefined' && window.soloforge?.canvas?.push) {
+      // PreviewPanel 用的 sessionId 格式: canvas-${chatId} (fallback) 或 canvas_N (bridge)
+      // 这里用 fallback 格式, 与 PreviewPanel 的 fallbackId 一致
+      const canvasSessionId = `canvas-${chatSessionId}`;
+      const dsl = {
+        ...ast,
+        platform: 'material',
+      };
+      const result = await window.soloforge.canvas.push(canvasSessionId, dsl);
+      if (result.ok) {
+        console.log('[tryLocalTranslateAndPush] ✓ Electron IPC 推送成功', {
+          canvasSessionId, language: lang,
+        });
+        // ★ 同步写入 previewStreamStore, 让 PreviewPanel 的 WebAstPreview 也能显示
+        const previewStore = usePreviewStreamStore.getState();
+        previewStore.initEntry(chatSessionId, { language: lang, sessionId: canvasSessionId });
+        previewStore.updateStream(chatSessionId, {
+          raw: code,
+          payload: { language: lang, framework: lang, source_code: code, preview: { root: ast } } as any,
+          errors: [],
+          done: true,
+        });
+        previewStore.confirmPayload(chatSessionId, { language: lang, framework: lang, source_code: code, preview: { root: ast } } as any);
+        return true;
+      } else {
+        console.warn('[tryLocalTranslateAndPush] Electron IPC 推送失败:', result.error);
+        // 继续尝试 HTTP relay 作为 fallback
+      }
+    }
+
+    // HTTP relay fallback (非 Electron 环境 或 IPC 失败)
     const resp = await fetch('/api/canvas/relay/push-ui', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -332,7 +396,7 @@ async function tryLocalTranslateAndPush(
     }
 
     const data = await resp.json();
-    console.log('[tryLocalTranslateAndPush] 已推送到画布 (本地翻译, 零 LLM 调用)', {
+    console.log('[tryLocalTranslateAndPush] 已推送到画布 (HTTP relay)', {
       sessionId: chatSessionId,
       language: lang,
       success: data.success,
@@ -895,6 +959,11 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
             get().handlePhase(evt, currentChatMsgs);
             break;
           }
+          case 'agent': {
+            // Java 链路 SubModelWorker 发来的 agent 事件 (副模型选定的 agent + subModel)
+            streamBridge.onAgent(evt.agentId, evt.name, evt.avatar, evt.mainModel, evt.subModels, evt.role, evt.domain, evt.subModel);
+            break;
+          }
           case 'error': {
             streamBridge.onError(evt.error);
             console.error('[aiBackend error]', evt.error);
@@ -918,7 +987,8 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
             break;
           }
           case 'done': {
-            streamBridge.onDone();
+            console.log('[useChatStore] done 事件到达, accumulatedText长度=', accumulatedText.length, '前100字符:', accumulatedText.slice(0, 100));
+            streamBridge.onDone(evt.agentId);
             // 清理 streamState, 避免残留的流送面板在下次发送时闪现
             set({ isGenerating: false, streamState: { ...emptyStreamState } });
 
@@ -950,8 +1020,10 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
             // P2-7: 预览触发判定抽到 detectPreviewTrigger (纯函数, 可独立单测)
             //       本地翻译 (tryLocalTranslateAndPush) 仍在此处调用, 因为它依赖画布运行时
             const localPushed = await tryLocalTranslateAndPush(accumulatedText, activeChatId);
+            console.log('[useChatStore] tryLocalTranslateAndPush 结果:', localPushed);
             const previewResult = detectPreviewTrigger(accumulatedText, localPushed, detectPreviewFromResponse);
             const { shouldPreview, previewLang, cleanText } = previewResult;
+            console.log('[useChatStore] detectPreviewTrigger 结果:', { shouldPreview, previewLang, localHandled: previewResult.localHandled });
             const hasMarker = accumulatedText !== cleanText;
 
             // 文本被清理过 (有 LLM 标记或本地翻译成功) → 更新最后一条 assistant 消息

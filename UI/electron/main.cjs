@@ -1,9 +1,21 @@
 // ─────────────────────────────────────────────────────────────────
 // SoloForge Electron 主进程
 // 入口：package.json "main" 指向本文件
-// 加载 UI/ 前端（开发态 = UI/server.ts，端口 3000；生产态 = vite build 产物）
-// 原 SoloForge 后端（tsx src/index.ts，端口 3001）需独立启动，不由本进程拉起
+//
+// dev 模式: 开发者手动启动 `npm run dev` (Vite + Node.js 3000)
+//           Electron 从 http://localhost:3000 加载前端, 有 HMR 热更新
+//
+// prod 模式: Electron 自动拉起所有后端服务 (UI Server 3000 + RACER 3001
+//            + Garnet 6379 + git-service 3002), 从 dist/index.html 加载
 // ─────────────────────────────────────────────────────────────────
+
+// ★ 2026-07-11: 必须在 require('electron') 之前清除 ELECTRON_RUN_AS_NODE
+//   CatPaw IDE 等宿主环境会设置此变量, 导致 Electron 以纯 Node.js 模式运行
+//   → sandbox 渲染器崩溃: "Cannot destructure property 'preloadScripts' of 'binding.startupData' as it is null"
+//   清除后 Electron 才能正常以主进程模式启动
+if (process.env.ELECTRON_RUN_AS_NODE) {
+  delete process.env.ELECTRON_RUN_AS_NODE;
+}
 
 const { app, BrowserWindow, shell, Menu, session, ipcMain, nativeImage, screen, dialog } = require('electron');
 const path = require('path');
@@ -12,14 +24,180 @@ const net = require('net');
 const http = require('http');
 const fs = require('fs');
 
-// 2026 改造：UI server.ts 在 3000 端口（含 Vite middleware + Gemini 代理）
-// 原 SoloForge 后端在 3001 端口（SurrealDB/Garnet/AI 社会系统）
-// 当前阶段：UI 全部走 3000 提供的 /api/*；3001 处于备用 / 未来集成
+// dev 模式: Vite dev server (3000) + 外部独立后端
+// prod 模式: Electron 自动启动所有服务
 const DEV_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:3000';
 const BACKEND_URL = process.env.SOLOFORGE_BACKEND_URL || 'http://localhost:3001';
 
 let isDev = false;
 let mainWindow = null;
+
+  // ── 生产模式服务管理 ──────────────────────────────────────────
+  // 打包后 Electron 需要自动拉起所有后端进程
+  const spawnedChildren = [];
+
+/**
+ * 在生产模式下启动所有必要的后端服务 (分阶段, 确保依赖顺序)
+ * 1. Garnet (6379) — 无依赖
+ * 2. SurrealDB (8400) — 无依赖
+ * 3. git-service (3002) — 无依赖
+ * 4. RACER Core (3001) — 依赖 Garnet + SurrealDB
+ * 5. UI Server (3000) — 依赖 RACER Core
+ */
+async function startProductionServices() {
+    if (isDev) return; // dev 模式下服务由 npm run dev 管理
+
+    const resourcesPath = process.resourcesPath || path.resolve(__dirname, '..');
+    const appPath = app.getAppPath();
+
+    // 创建 RACER Core 需要的运行时目录
+    const runtimeDirs = [
+      path.join(resourcesPath, 'data', 'soloforge_vault'),
+      path.join(resourcesPath, 'data', 'jsonl', 'archive'),
+      path.join(resourcesPath, 'data', 'soloforge_db'),
+      path.join(resourcesPath, 'logs'),
+    ];
+    for (const dir of runtimeDirs) {
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    }
+
+    // ── 阶段 1: 启动无依赖的基础服务 ──
+
+  // ── 1a. 启动 Garnet (6379) ──
+  const garnetExe = path.join(resourcesPath, 'garnet', 'GarnetServer.exe');
+  if (fs.existsSync(garnetExe)) {
+    console.log('[services] Starting Garnet (6379)...');
+    const garnet = spawn(garnetExe, ['--port', '6379'], {
+      cwd: path.dirname(garnetExe),
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    garnet.stdout?.on('data', (d) => process.stdout.write(`[garnet] ${d}`));
+    garnet.stderr?.on('data', (d) => process.stderr.write(`[garnet] ${d}`));
+    garnet.on('exit', (code) => console.warn(`[garnet] exited with code ${code}`));
+    spawnedChildren.push(garnet);
+    await waitForPort(6379, 10000).then(ok => console.log(ok ? '[services] ✓ Garnet ready' : '[services] ✗ Garnet timeout'));
+  } else {
+    console.warn('[services] Garnet not found at', garnetExe, '— running without Garnet (degraded mode)');
+  }
+
+  // ── 1b. 启动 SurrealDB (8400) ──
+  const surrealExe = path.join(resourcesPath, 'bin', 'surreal.exe');
+  if (fs.existsSync(surrealExe)) {
+    const surrealDataDir = path.join(resourcesPath, 'surreal_data');
+    if (!fs.existsSync(surrealDataDir)) fs.mkdirSync(surrealDataDir, { recursive: true });
+    console.log('[services] Starting SurrealDB (8400)...');
+    const surreal = spawn(surrealExe, [
+      'start',
+      '--bind', '0.0.0.0:8400',
+      '--user', 'root',
+      '--pass', 'root',
+      `rocksdb:${surrealDataDir}`,
+    ], {
+      cwd: path.dirname(surrealExe),
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    surreal.stdout?.on('data', (d) => process.stdout.write(`[surreal] ${d}`));
+    surreal.stderr?.on('data', (d) => process.stderr.write(`[surreal] ${d}`));
+    surreal.on('exit', (code) => console.warn(`[surreal] exited with code ${code}`));
+    spawnedChildren.push(surreal);
+    await waitForPort(8400, 10000).then(ok => console.log(ok ? '[services] ✓ SurrealDB ready' : '[services] ✗ SurrealDB timeout'));
+  } else {
+    console.warn('[services] SurrealDB not found at', surrealExe, '— persistence will fail');
+  }
+
+  // ── 1c. 启动 git-service (3002) ──
+  const gitExe = path.join(resourcesPath, 'git-service', 'git-service.exe');
+  if (fs.existsSync(gitExe)) {
+    const repoRoot = path.resolve(appPath, '..', '..');
+    console.log('[services] Starting git-service (3002)...');
+    const gitSvc = spawn(gitExe, ['--port', '3002', '--repo', repoRoot], {
+      cwd: path.dirname(gitExe),
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    gitSvc.stdout?.on('data', (d) => process.stdout.write(`[git-service] ${d}`));
+    gitSvc.stderr?.on('data', (d) => process.stderr.write(`[git-service] ${d}`));
+    gitSvc.on('exit', (code) => console.warn(`[git-service] exited with code ${code}`));
+    spawnedChildren.push(gitSvc);
+  } else {
+    console.warn('[services] git-service not found at', gitExe);
+  }
+
+  // ── 阶段 2: 启动依赖 Garnet + SurrealDB 的 RACER Core (3001) ──
+  const coreEntry = path.join(resourcesPath, 'core', 'server.mjs');
+  if (fs.existsSync(coreEntry)) {
+    console.log('[services] Starting RACER Core (3001)...');
+    const coreEnv = { ...process.env };
+    delete coreEnv.ELECTRON_RUN_AS_NODE;
+    // cwd 设为 resourcesPath, 这样 RACER Core 的 process.cwd() 能找到 bin/scheduler.exe
+    const coreProc = spawn(process.execPath, [coreEntry], {
+      cwd: resourcesPath,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: coreEnv,
+      windowsHide: true,
+    });
+    coreProc.stdout?.on('data', (d) => process.stdout.write(`[core] ${d}`));
+    coreProc.stderr?.on('data', (d) => process.stderr.write(`[core] ${d}`));
+    coreProc.on('exit', (code) => console.warn(`[core] exited with code ${code}`));
+    spawnedChildren.push(coreProc);
+    await waitForPort(3001, 15000).then(ok => console.log(ok ? '[services] ✓ RACER Core ready' : '[services] ✗ RACER Core timeout'));
+  } else {
+    console.warn('[services] RACER Core not found at', coreEntry, '— LLM dispatch will fail (502)');
+  }
+
+  // ── 阶段 3: 启动 UI Server (3000) ──
+  const uiServer = path.join(appPath, 'dist', 'server.mjs');
+  if (fs.existsSync(uiServer)) {
+    console.log('[services] Starting UI Server (3000)...');
+    const uiEnv = { ...process.env, NODE_ENV: 'production' };
+    delete uiEnv.ELECTRON_RUN_AS_NODE;
+    const uiProc = spawn(process.execPath, [uiServer], {
+      cwd: appPath,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: uiEnv,
+      windowsHide: true,
+    });
+    uiProc.stdout?.on('data', (d) => process.stdout.write(`[ui-server] ${d}`));
+    uiProc.stderr?.on('data', (d) => process.stderr.write(`[ui-server] ${d}`));
+    uiProc.on('exit', (code) => console.warn(`[ui-server] exited with code ${code}`));
+    spawnedChildren.push(uiProc);
+  } else {
+    console.error('[services] UI Server not found at', uiServer);
+  }
+}
+
+/** 等待端口就绪 (最多 15s) */
+function waitForPort(port, timeoutMs = 15000) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const check = () => {
+      const sock = new net.Socket();
+      sock.setTimeout(1000);
+      sock.on('connect', () => { sock.destroy(); resolve(true); });
+      sock.on('error', () => {
+        sock.destroy();
+        if (Date.now() - start > timeoutMs) { resolve(false); return; }
+        setTimeout(check, 300);
+      });
+      sock.on('timeout', () => {
+        sock.destroy();
+        if (Date.now() - start > timeoutMs) { resolve(false); return; }
+        setTimeout(check, 300);
+      });
+      sock.connect(port, '127.0.0.1');
+    };
+    check();
+  });
+}
+
+/** 优雅退出所有子进程 */
+function killAllChildren() {
+  for (const child of spawnedChildren) {
+    try { child.kill(); } catch {}
+  }
+}
 
 /** 画布宿主窗口（隐藏），作为 Flutter 子窗口的 SetParent 目标 */
 let canvasHostWindow = null;
@@ -119,12 +297,16 @@ function buildCspHeader() {
 function applyCsp() {
   const csp = buildCspHeader();
   session.defaultSession.webRequest.onHeadersReceived((details, cb) => {
-    cb({
-      responseHeaders: {
-        ...details.responseHeaders,
-        'Content-Security-Policy': [csp],
-      },
-    });
+    const responseHeaders = {
+      ...details.responseHeaders,
+      'Content-Security-Policy': [csp],
+      // 2026-07-11: 强制 no-store,让 Chromium 不写任何磁盘缓存
+      //   防止 V8 Code Cache 缓存旧字节码导致用户看到旧代码
+      'cache-control': ['no-store, no-cache, must-revalidate'],
+      'pragma': ['no-cache'],
+      'expires': ['0'],
+    };
+    cb({ responseHeaders });
   });
 }
 
@@ -1673,20 +1855,18 @@ function createWindow() {
   }
 
   // 2026-07-02 修复"强制刷新看到几个版本前的代码"问题:
-  //   file:// 协议没有 Cache-Control 响应头,Chromium 把 dist/ 下的 JS/CSS
-  //   硬缓存到磁盘,Ctrl+Shift+R 也清不掉。加 mtime 时间戳作 query 强制绕开
-  //   内存缓存 + clearCache() 兜底清掉之前的磁盘缓存。
+  //   dev 模式: 从 Vite dev server (3000) 加载, 有 HMR
+  //   prod 模式: 从已启动的 UI Server (3000) 加载 (HTTP 协议, 无 file:// 缓存问题)
+  //   两者都走 http://localhost:3000, 区别在于 dev 有 DevTools + HMR
   if (isDev) {
     mainWindow.loadURL(DEV_URL);
     mainWindow.webContents.openDevTools({ mode: 'detach' });
     console.log(`[electron] ▶ renderer loadURL: ${DEV_URL} (isDev=${isDev})`);
   } else {
-    const distIndex = path.join(__dirname, '..', 'dist', 'index.html');
-    const mtime = fs.existsSync(distIndex)
-      ? fs.statSync(distIndex).mtimeMs
-      : Date.now();
-    mainWindow.loadFile(distIndex, { query: { v: mtime } });
-    console.log(`[electron] ▶ renderer loadFile: ${distIndex}?v=${mtime} (isDev=${isDev})`);
+    // 生产模式: UI Server (3000) 已由 startProductionServices() 启动
+    //   走 HTTP 协议而非 file://, 避免 Chromium 硬缓存问题
+    mainWindow.loadURL(DEV_URL);
+    console.log(`[electron] ▶ renderer loadURL: ${DEV_URL} (isDev=${isDev}, prod mode)`);
   }
   // 创建窗口时立即清一次缓存,把上一版本的 dist/ 残留从磁盘清掉
   try { mainWindow.webContents.session.clearCache(); } catch {}
@@ -1801,47 +1981,64 @@ if (process.platform === 'win32') {
     app.commandLine.appendSwitch('disable-pinch');
     // 强制使用 IME 默认值(可能与 snap 无关,但减少 OS 干预)
     app.commandLine.appendSwitch('disable-features', 'InputEventOnAnimationFrame');
+    // ── 2026-07-11: 彻底禁用 Chromium 磁盘缓存,防止旧代码残留 ──
+    // V8 Code Cache (字节码缓存) 是"e壳子出现旧代码"的根因:
+    //   Chromium 会把编译过的 JS 字节码写到 user-data-dir/Code Cache/,
+    //   即使 Vite HMR 推了新代码,Chromium 也可能复用旧字节码 → 用户看到旧 UI。
+    app.commandLine.appendSwitch('disable-http-cache');
+    app.commandLine.appendSwitch('disable-features', 'BlinkCodeCache,V8CodeCache');
+    app.commandLine.appendSwitch('js-flags', '--no-flush-bytecode --no-lazy');
   } catch (e) { /* ignore */ }
 }
 
 // ── 主进程入口 ──
-app.whenReady().then(() => {
-  // 2026-07-02 修复"强制刷新看到几个版本前的代码"问题(方案 C,根因修复):
-  //   原 isDev = process.defaultApp || !app.isPackaged 在某些启动场景下
-  //   会走到 false 分支 → loadFile('dist/index.html') → file:// 协议无
-  //   Cache-Control 响应头 → Chromium 硬缓存 dist/ 的 JS/CSS 到磁盘,
-  //   Ctrl+Shift+R 也清不掉 → 用户看到几个版本前的代码。
-  //   强制 isDev = true → 永远走 Vite dev server (3000) → 走 HTTP 协议,
-  //   有正常 Cache-Control + HMR → 永远拿到最新源码,不再有缓存问题。
-  //   如果未来要打 release 包,需要在 electron-builder 打包前把这一行
-  //   改回原表达式(并提供环境变量开关覆盖,例如 SOLOFORGE_FORCE_DEV)。
-  isDev = true;
-  if (process.env.SOLOFORGE_FORCE_PROD === '1') {
-    isDev = process.defaultApp || !app.isPackaged;
-    console.log('[electron] SOLOFORGE_FORCE_PROD=1, 走 dist/ 产物');
+app.whenReady().then(async () => {
+  // ── dev/prod 模式判定 ──
+  //   dev: 开发者通过 npm run dev 启动, Vite dev server 在 3000
+  //         环境变量 SOLOFORGE_FORCE_DEV=1 也强制 dev (从 IDE 启动调试时用)
+  //   prod: 打包后双击 exe, Electron 自动拉起所有后端服务
+  //         file:// 加载 dist/index.html (加 mtime 防缓存)
+  if (process.env.SOLOFORGE_FORCE_DEV === '1') {
+    isDev = true;
+    console.log('[electron] SOLOFORGE_FORCE_DEV=1, 走 Vite dev server (3000)');
   } else {
-    console.log('[electron] 强制 dev 模式 → Vite dev server (3000),绕过 file:// 缓存');
+    isDev = process.defaultApp || !app.isPackaged;
+    console.log(`[electron] isDev=${isDev} (defaultApp=${process.defaultApp}, isPackaged=${app.isPackaged})`);
+  }
+
+  // ── 生产模式: 自动启动所有后端服务 ──
+  if (!isDev) {
+    await startProductionServices();
+    // 等待 UI Server (3000) 就绪, 最多 15s
+    console.log('[electron] 等待 UI Server (3000) 就绪...');
+    const ready = await waitForPort(3000, 15000);
+    if (ready) {
+      console.log('[electron] ✓ UI Server (3000) 就绪');
+    } else {
+      console.error('[electron] ✗ UI Server (3000) 未在 15s 内就绪, 渲染器可能白屏');
+    }
   }
   applyCsp();
   setupApiProxy();
 
-  // 2026-07-02 修复"强制刷新看到几个版本前的代码"问题:
-  //   Electron renderer 在 user-data-dir 写了一大堆磁盘缓存
-  //   (Code Cache 295MB / Cache 55MB / GPUCache),这些是 Chromium 编译过的 JS
-  //   字节码,即使走 HTTP 协议 3000,Chromium 也会优先复用本地字节码 →
-  //   用户看到旧版 UI。
-  //   启动时清全部缓存 + dev 模式禁用磁盘 HTTP cache,让 Vite HMR 永远拿最新 JS。
-  //   fire-and-forget(不 await):createWindow 不阻塞,清缓存失败也不会让窗口打不开。
-  //   注意:session.clearCache() / clearStorageData 都不删 Code Cache(那是 V8 字节码
-  //   缓存,Chromium 不在 session API 里暴露),必须用 fs.rm 直接删 user-data-dir。
-  Promise.all([
-    session.defaultSession.clearCache().catch((e) => console.warn('[electron] clearCache:', e?.message)),
-    session.defaultSession.clearStorageData({
-      storages: ['shadercache', 'cachestorage', 'serviceworkers'],
-    }).catch((e) => console.warn('[electron] clearStorageData:', e?.message)),
-  ]).then(() => {
-    console.log('[electron] ✓ session 缓存已清');
-  });
+  // 2026-07-11 修复"e壳子出现旧代码"问题 (方案 D, 根因修复):
+  //   原方案 C 的问题:清缓存是 fire-and-forget(不 await),窗口可能在缓存清完前就
+  //   加载了旧字节码。改为 await 确保全部清完再 createWindow。
+  //   同时注入 onHeadersReceived 强制 no-store,让 Chromium 不写任何磁盘缓存。
+  try {
+    await Promise.all([
+      session.defaultSession.clearCache().catch((e) => console.warn('[electron] clearCache:', e?.message)),
+      session.defaultSession.clearStorageData({
+        storages: ['shadercache', 'cachestorage', 'serviceworkers'],
+      }).catch((e) => console.warn('[electron] clearStorageData:', e?.message)),
+    ]);
+    console.log('[electron] ✓ session 缓存已清 (awaited)');
+  } catch (e) {
+    console.warn('[electron] 清 session 缓存失败:', e?.message);
+  }
+
+  // ★ no-store 响应头已在 applyCsp() 中统一注入 (CSP + cache-control 合并)
+  //   此处不再重复设置 onHeadersReceived,避免覆盖 CSP 头
 
   // ★ 直接删 user-data-dir 里的所有持久化数据 (绕过 session API 限制)
   //   session.clearCache() / clearStorageData() 都不删 localStorage / IndexedDB
@@ -1913,6 +2110,8 @@ app.on('window-all-closed', () => {
     if (s.process && !s.process.killed) killProcessTree(s.process);
   }
   canvasSessions.clear();
+  // 生产模式: 退出所有后端服务
+  killAllChildren();
   if (process.platform !== 'darwin') app.quit();
 });
 
@@ -1921,4 +2120,6 @@ app.on('before-quit', () => {
     stopWatchdog(s);
     if (s.process && !s.process.killed) killProcessTree(s.process);
   }
+  // 生产模式: 退出所有后端服务
+  killAllChildren();
 });

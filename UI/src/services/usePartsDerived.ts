@@ -70,6 +70,7 @@ export function deriveSubTasksFromParts(
             rootTaskId: '', // parts 不携带 rootTaskId, 由调用方填充
             assigneeModel: p.assigneeModel,
             assigneeModelId: '',
+            agentId: p.agentId,
             description: p.description,
             currentStep: 'READ_TASK',
             progress: 0,
@@ -223,7 +224,8 @@ export function deriveDelegationLogFromParts(
     if (part.type === 'model-delegation') {
       const p = part as UIModelDelegationPart;
       const ts = new Date(p.timestamp).toISOString();
-      log.push(`${ts} ${p.fromModel} → ${p.toModel}${p.detail ? ` (${p.detail})` : ''}`);
+      // 新格式: "副模型 → agent → 任务"
+      log.push(`${ts} ${p.fromModel} → ${p.toModel}${p.detail ? ` → ${p.detail}` : ''}`);
     }
   }
   return log.length > 0 ? log : EMPTY_LOG;

@@ -100,6 +100,7 @@ export interface SubTask {
   rootTaskId: string;
   assigneeModel: string;    // 分配给哪个模型
   assigneeModelId: string;
+  agentId?: string;         // 执行此子任务的 Agent ID（用于实时查询 agent 名字）
   description: string;      // 子目标描述
   currentStep: SubTaskStep;
   progress: number;         // 0-100
@@ -170,6 +171,8 @@ export interface ArbitrationResult {
 export interface SubAgent {
   id: string;
   chatId: string;
+  name: string;             // Agent 显示名（可重命名，流送区实时显示）
+  avatar?: string;          // 头像: emoji 字符 (如 "🎨") 或图片 URL 或 null
   role: 'auditor' | 'assistant';
   parentModelId: string;
   reputation: number;
@@ -216,6 +219,7 @@ export interface StreamEvent {
   rootTaskId: string;
   subTaskId?: string;
   agentId?: string;
+  avatar?: string;          // agent 头像 (emoji 或图片 URL), subtask_created 时带
   kind: StreamEventKind;
   content: string;
   detail?: string;

@@ -24,8 +24,25 @@ const REPAIRABLE_ERRORS = ['parse-failed', 'repaired-truncation'] as const;
 export type StreamError = (typeof REPAIRABLE_ERRORS)[number] | 'empty-input';
 
 function tryParse(raw: string): PreviewPayload | null {
+  // ★ 2026-07-11: LLM 经常把 JSON 包在 markdown code fence 里 (```json ... ```)
+  //   或在前后加解释文字。需要先提取 JSON 主体再 parse。
+  let jsonStr = raw;
+
+  // 1. 尝试提取 ```json ... ``` 或 ``` ... ``` 代码块
+  const fenceMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
+  if (fenceMatch) {
+    jsonStr = fenceMatch[1].trim();
+  } else {
+    // 2. 没有代码块, 尝试提取第一个 { 到最后一个 } (JSON 主体)
+    const firstBrace = jsonStr.indexOf('{');
+    const lastBrace = jsonStr.lastIndexOf('}');
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      jsonStr = jsonStr.slice(firstBrace, lastBrace + 1);
+    }
+  }
+
   try {
-    const v = JSON.parse(raw);
+    const v = JSON.parse(jsonStr);
     if (v && typeof v === 'object' && 'preview' in v && (v as any).preview) {
       return v as PreviewPayload;
     }

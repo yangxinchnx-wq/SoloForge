@@ -103,7 +103,7 @@ export interface AgentDispatchResult {
 }
 
 /**
- * 默认 agent 种子配置
+ * 默认 agent 种子配置 (RACER 训练链路用, 不在流送区显示)
  */
 const DEFAULT_AGENT_SEEDS: Array<{
   id: string;

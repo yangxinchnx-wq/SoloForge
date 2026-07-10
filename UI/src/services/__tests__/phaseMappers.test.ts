@@ -14,10 +14,11 @@ import type { StreamEvent, StreamEventKind } from '../../types/streaming';
 let pushed: Array<{ kind: StreamEventKind; extra: Partial<StreamEvent> }>;
 let subTaskBindings: Array<{ chatId: string; workerIdx: number; subTaskId: string }>;
 let subTaskById: Map<string, string>;
-let lastSubTaskId: string | undefined;
+let subIdCounter: number;
 
 function makeCtx(chatId: string): PhaseMapperContext {
   subTaskById = new Map();
+  subIdCounter = 0;
   return {
     activeChatId: chatId,
     pushStreamEvent: (kind, extra) => { pushed.push({ kind, extra: extra ?? {} }); },
@@ -26,7 +27,7 @@ function makeCtx(chatId: string): PhaseMapperContext {
       subTaskBindings.push({ chatId, workerIdx, subTaskId });
       subTaskById.set(`w${workerIdx}`, subTaskId);
     },
-    getLastSubTaskId: () => lastSubTaskId,
+    newSubTaskId: () => `sub-${++subIdCounter}`,
   };
 }
 
@@ -34,7 +35,7 @@ beforeEach(() => {
   pushed = [];
   subTaskBindings = [];
   subTaskById = new Map();
-  lastSubTaskId = undefined;
+  subIdCounter = 0;
 });
 
 describe('phaseMappers — 边界', () => {
@@ -66,12 +67,7 @@ describe('phaseMappers — Ensemble s3.3 phase', () => {
 
   it('phase0_subtask → DECOMPOSING + N 个 subtask_created + 绑定 + DISPATCHING', () => {
     const ctx = makeCtx('c1');
-    // 模拟 store 行为: 每次 subtask_created 后, lastSubTaskId 立即可读
-    ctx.getLastSubTaskId = () => {
-      // 模拟 N 个子任务依次创建, 每次返回最新的
-      const idx = pushed.filter(p => p.kind === 'subtask_created').length;
-      return `sub-${idx}`;
-    };
+    // newSubTaskId 在 makeCtx 中用计数器实现, 每次调用返回 sub-1, sub-2, ...
     mapPhaseToStreamEvents({
       phase: 'phase0_subtask',
       subtasks: [
@@ -143,10 +139,6 @@ describe('phaseMappers — Ensemble s3.3 phase', () => {
 describe('phaseMappers — 旧版 phase 兼容', () => {
   it('dispatch (旧版: subtasks=string[]) → 拆解+绑定', () => {
     const ctx = makeCtx('c1');
-    ctx.getLastSubTaskId = () => {
-      const idx = pushed.filter(p => p.kind === 'subtask_created').length;
-      return `sub-${idx}`;
-    };
     mapPhaseToStreamEvents({ phase: 'dispatch', subtasks: ['Qwen 2.5', 'Kimi K2'] }, ctx);
     expect(pushed.filter(p => p.kind === 'subtask_created')).toHaveLength(2);
     expect(subTaskBindings).toEqual([
