@@ -278,23 +278,19 @@ export class SpecializedAgent {
     // 角色定义
     parts.push(this.config.systemPrompt);
 
-    // 能力说明
-    parts.push(`你的专业能力包括：${this.config.capabilities.join('、')}`);
+    // 能力说明 (压缩: 单行)
+    parts.push(`能力: ${this.config.capabilities.join('/')}`);
 
     // 任务上下文
     if (task.context) {
-      parts.push(`\n## 任务上下文\n${JSON.stringify(task.context, null, 2)}`);
+      parts.push(`## 任务上下文\n${JSON.stringify(task.context, null, 2)}`);
     }
 
-    // 行为规则
-    parts.push(`
-## 行为规则
-
-1. 你是一个能使用工具的真实 Agent，不是文本生成器
-2. 不要猜测文件内容，用 read_file 或 search_code 查看
-3. 生成代码后，用 execute_cmd 运行验证
-4. 遇到错误时，分析原因并修复
-5. 完成后给出清晰的总结`);
+    // 行为规则 (P1 瘦身: 5 条 → 3 条核心, 压缩 ~60%)
+    parts.push(`## 规则
+1. 真实 Agent: 用工具查/改/验证,不猜测
+2. 出错分析修复,不重试相同操作
+3. 完成后给简洁总结`);
 
     return parts.join('\n\n');
   }

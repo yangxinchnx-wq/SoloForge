@@ -67,9 +67,13 @@ async function mainSystemIgnitionEngine(): Promise<void> {
       kernel.setGarnetClient(getClient());
       // 预初始化事件流消费者组
       const eventStreamModule = await import('./data/garnet/index');
+      // 启动 Garnet 健康监控（30s ping 检测，失败自动重连）
+      const { startHealthMonitor, stopHealthMonitor } = await import('./data/garnet/health-monitor');
+      startHealthMonitor(30000);
+      process.on('SIGTERM', () => stopHealthMonitor());
       logger.info('SYSTEM_MAIN', '🔥 [Garnet Hot Layer] ✓ Session/Task/Counter caches live. TTL-backed, zero-persistence.');
-    } catch (garnetErr: any) {
-      logger.warn('SYSTEM_MAIN', '⚠️ [Garnet Hot Layer] Connection failed - system degrades to direct SurrealDB writes', { error: garnetErr.message });
+    } catch (garnetErr: unknown) {
+      logger.warn('SYSTEM_MAIN', '⚠️ [Garnet Hot Layer] Connection failed - system degrades to direct SurrealDB writes', { error: garnetErr instanceof Error ? garnetErr.message : String(garnetErr) });
     }
 
     // Step 1.5: Initialize core bus linkages (CommandBus, TransactionManager, etc.)

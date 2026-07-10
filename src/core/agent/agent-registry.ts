@@ -20,6 +20,8 @@ import { logger } from '../logger';
 import type { RuntimeKernel } from '../../kernel/runtime-kernel';
 import { SpecializedAgent } from './specialized-agent';
 import { executeToolCall } from './tools/tool-definitions';
+// P4: 文件内容增量压缩
+import { compactFileContent } from './utils/file-content-compactor';
 
 export interface AgentSnapshot {
   agentId: string;
@@ -341,7 +343,7 @@ export class AgentRegistry {
       taskDesc = `## 对话历史\n${historyText}\n\n## 当前问题\n${prompt}`;
     }
     if (activeFile) {
-      taskDesc += `\n\n## 当前文件: ${activeFile.name}\n\`\`\`\n${activeFile.content.slice(0, 4000)}\n\`\`\``;
+      taskDesc += `\n\n## 当前文件: ${activeFile.name}\n\`\`\`\n${compactFileContent(activeFile.content, activeFile.name)}\n\`\`\``;
     }
     if (workspaceFolder) {
       taskDesc += `\n\n## 工作区\n当前对话已绑定工作区文件夹: \`${workspaceFolder}\`\n你的所有文件操作 (读写/创建/删除) 必须限制在此文件夹范围内。如果需要操作文件夹外的资源, 请在回复中明确说明原因并询问用户。`;

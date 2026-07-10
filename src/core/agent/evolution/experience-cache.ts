@@ -32,6 +32,8 @@ export interface ExperienceRecord {
   normalizedPrompt: string;
   /** 原始问题 (截断 200 字符) */
   originalPrompt: string;
+  /** 来源类型: racer_agent_loop = RACER 多轮, direct_llm_qa = 简单问答缓存 */
+  sourceType?: 'racer_agent_loop' | 'direct_llm_qa';
   /** 成功的工具调用序列 [{tool, args, result摘要}] */
   toolSteps: Array<{
     tool: string;
@@ -134,16 +136,22 @@ export class ExperienceCache {
 
   /**
    * 查询经验
-   * 优先精确匹配, 其次模糊匹配 (前 64 字符相同)
+   * 优先精确匹配 (RACER 与 DirectLLM QA 两种指纹), 其次模糊匹配 (前 64 字符相同)
    */
   lookup(prompt: string): ExperienceLookup | null {
     const normalized = ExperienceCache.normalize(prompt);
     const fp = ExperienceCache.fingerprint(normalized);
 
-    // 1) 精确匹配
+    // 1) 精确匹配: RACER 经验 (无前缀)
     const exact = this.cache.get(fp);
     if (exact) {
       return { record: exact, matchType: 'exact', similarity: 1.0 };
+    }
+
+    // 1b) 精确匹配: DirectLLM QA 经验 (qa_ 前缀)
+    const qaExact = this.cache.get(`qa_${fp}`);
+    if (qaExact) {
+      return { record: qaExact, matchType: 'exact', similarity: 1.0 };
     }
 
     // 2) 模糊匹配: 归一化后前 64 字符相同 (相似问题复用)
@@ -202,6 +210,7 @@ export class ExperienceCache {
         fingerprint: fp,
         normalizedPrompt: normalized,
         originalPrompt: entry.prompt.slice(0, 200),
+        sourceType: 'racer_agent_loop',
         toolSteps: entry.toolSteps,
         finalAnswer: entry.finalAnswer.slice(0, 2000),
         tokenCost: entry.tokenCost,
@@ -214,6 +223,64 @@ export class ExperienceCache {
       this.cache.set(fp, rec);
       logger.info('ExperienceCache', `保存经验 [${fp}] reuseCount=0 tokens=${entry.tokenCost}`);
     }
+    this.dirty = true;
+    this.scheduleFlush();
+  }
+
+  /**
+   * 保存 DirectLLM 简单问答结果到轻量级 QA 缓存
+   *
+   * 设计原则:
+   * - 只缓存短 prompt (<200 字符), 避免复杂任务误入
+   * - 默认置信度 0.8 (低于 RACER 的 1.0), 保守复用
+   * - 截断答案长度 (1500 字符), 节省存储
+   * - 加 qa_ 前缀的指纹, 区分 RACER 与 DirectLLM 来源
+   *
+   * @param prompt 用户原始输入
+   * @param answer LLM 回复内容
+   * @param tokenCost 消耗的 token 数
+   * @param durationMs 耗时 (毫秒)
+   */
+  saveDirectLLMQA(
+    prompt: string,
+    answer: string,
+    tokenCost: number,
+    durationMs: number,
+  ): void {
+    const normalized = ExperienceCache.normalize(prompt);
+
+    // 过滤: 只缓存短问答 (2-200 字符)
+    if (normalized.length > 200 || normalized.length < 2) {
+      return;
+    }
+
+    const fp = `qa_${ExperienceCache.fingerprint(normalized)}`;
+    const existing = this.cache.get(fp);
+
+    if (existing) {
+      // 已有记录 → 更新答案 + 增加复用计数
+      existing.finalAnswer = answer.slice(0, 1500);
+      existing.reuseCount += 1;
+      existing.lastUsedAt = Date.now();
+    } else {
+      // 新记录
+      const qaRecord: ExperienceRecord = {
+        fingerprint: fp,
+        normalizedPrompt: normalized,
+        originalPrompt: prompt.slice(0, 200),
+        sourceType: 'direct_llm_qa',
+        toolSteps: [],
+        finalAnswer: answer.slice(0, 1500),
+        tokenCost,
+        durationMs,
+        reuseCount: 0,
+        successRate: 0.8, // QA 默认置信度低于 RACER
+        createdAt: Date.now(),
+        lastUsedAt: Date.now(),
+      };
+      this.cache.set(fp, qaRecord);
+    }
+
     this.dirty = true;
     this.scheduleFlush();
   }
@@ -270,6 +337,9 @@ export class ExperienceCache {
     const normalized = ExperienceCache.normalize(prompt);
     const fp = ExperienceCache.fingerprint(normalized);
     if (this.cache.has(fp)) return fp;
+    // DirectLLM QA 经验 (qa_ 前缀)
+    const qaFp = `qa_${fp}`;
+    if (this.cache.has(qaFp)) return qaFp;
     // 模糊查找
     const lookup = this.lookup(prompt);
     return lookup ? lookup.record.fingerprint : null;

@@ -70,13 +70,23 @@ export class LLMClient {
     const viteEnv = (typeof import.meta !== 'undefined' && (import.meta as any).env) || {};
     const nodeEnv = (typeof process !== 'undefined' ? process.env : undefined) || {};
 
-    const provider = viteEnv.VITE_LLM_PROVIDER || nodeEnv.LLM_PROVIDER || 'backend';
+    const provider = viteEnv.VITE_LLM_PROVIDER || nodeEnv.LLM_PROVIDER;
     const apiKey = viteEnv.VITE_LLM_API_KEY || nodeEnv.LLM_API_KEY;
     const baseUrl = viteEnv.VITE_LLM_BASE_URL || nodeEnv.LLM_BASE_URL;
     const model = viteEnv.VITE_LLM_MODEL || nodeEnv.LLM_MODEL;
     // 浏览器端 apiBase 留空 → 相对 URL, 走 3000 代理
     const apiBase = nodeEnv.VITE_API_BASE ?? '';
     const token = viteEnv.VITE_LLM_API_TOKEN || nodeEnv.VITE_LLM_API_TOKEN;
+
+    // 未显式指定 provider 时的默认行为:
+    //   - 浏览器环境 → backend 代理 (API key 不出前端)
+    //   - Node/测试环境 + 无 API key → mock (安全默认值)
+    if (!provider) {
+      if (typeof window === 'undefined' && !apiKey && !token) {
+        return LLMClient.mock();
+      }
+      return LLMClient.fromBackend({ apiBase, token, defaultModel: model });
+    }
 
     // 优先级：backend > 直连 > mock
     if (provider === 'backend' || (provider === 'auto' && !apiKey)) {

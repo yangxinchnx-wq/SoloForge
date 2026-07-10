@@ -31,6 +31,17 @@ import { TelemetryMetricExporter } from './kernel/observability/telemetry-export
 import { initializeTelemetryAggregationConsumer } from './data/consumers/telemetry-aggregation-consumer';
 import { RaftConsensusNode } from './kernel/consensus/raft-consensus-node';
 import { initializeConsensusAuditConsumer } from './data/consumers/consensus-audit-consumer';
+import type {
+  ICommandBus,
+  ICommand,
+  ICommandResult,
+  ITransactionManager,
+  ITransaction,
+  IProjectionManager,
+  ISnapshotManager,
+  ISchedulerClient,
+  BootstrapDeps,
+} from './types/bootstrap-deps';
 
 // ─────────────────────────────────────────────────────────────────
 // 阶段化初始化子函数
@@ -42,31 +53,26 @@ import { initializeConsensusAuditConsumer } from './data/consumers/consensus-aud
  */
 async function initInfrastructure(
   kernel: RuntimeKernel
-): Promise<{
-  commandBus: any;
-  transactionManager: any;
-  projectionManager: any;
-  snapshotManager: any;
-  scheduler: any;
-}> {
+): Promise<BootstrapDeps> {
   // 1. 刚性契约保底桩（防止缺失文件导致崩溃）
-  let commandBus: any = {
+  // 类型由接口契约约束，确保后续替换为真实实现时类型安全
+  let commandBus: ICommandBus = {
     registerHandler: () => {},
-    execute: async (cmd: any) => ({ success: true, payload: cmd.payload })
+    execute: async (cmd: ICommand): Promise<ICommandResult> => ({ success: true, payload: cmd.payload })
   };
-  let transactionManager: any = {
-    begin: async () => ({ id: 'tx_stub' }),
-    commit: async () => {},
-    rollback: async () => {},
-    drain: async () => {}
+  let transactionManager: ITransactionManager = {
+    begin: async (_commandId: string, _domain: string, _initialPayload?: unknown): Promise<ITransaction> => ({ id: 'tx_stub', status: 'pending' }),
+    commit: async (_txId: string): Promise<void> => {},
+    rollback: async (_commandId: string, _error: unknown): Promise<void> => {},
+    drain: async (): Promise<void> => {}
   };
-  let projectionManager: any = { updateAll: () => {}, replayEvent: async () => {} };
-  let snapshotManager: any = {
+  let projectionManager: IProjectionManager = { updateAll: () => {}, replayEvent: async () => {} };
+  let snapshotManager: ISnapshotManager = {
     createFullSnapshot: async () => 'snap_stub',
     recover: async () => {},
     replayEvent: async () => {}
   };
-  let scheduler: any = { drain: async () => {} };
+  let scheduler: ISchedulerClient = { drain: async () => {} };
 
   // 🔥 Garnet 热数据层初始化（优先于所有领域模块，确保热缓存在组件启动前就位）
   try {
@@ -74,9 +80,9 @@ async function initInfrastructure(
     await garnetConnect();
     kernel.setGarnetClient(getGarnetClient());
     logger.info('Bootstrap', '🔥 [Garnet Hot Layer] ✓ Session/Task/Counter/EventStream caches online.');
-  } catch (garnetErr: any) {
+  } catch (garnetErr: unknown) {
     logger.warn('Bootstrap', '⚠️ [Garnet Hot Layer] Connection failed - proceeding with direct SurrealDB writes', {
-      error: garnetErr.message
+      error: garnetErr instanceof Error ? garnetErr.message : String(garnetErr)
     });
   }
 
@@ -96,8 +102,8 @@ async function initInfrastructure(
       scheduler = new schedulerModule.SoloForgeRustSchedulerClient();
       scheduler.initialize?.();
     }
-  } catch (e: any) {
-    logger.warn('Bootstrap', `部分底层模块尚未就位，启用防护桩`, { error: e.message });
+  } catch (e: unknown) {
+    logger.warn('Bootstrap', `部分底层模块尚未就位，启用防护桩`, { error: e instanceof Error ? e.message : String(e) });
   }
 
   return { commandBus, transactionManager, projectionManager, snapshotManager, scheduler };
@@ -109,13 +115,7 @@ async function initInfrastructure(
  */
 async function initCoreServices(
   kernel: RuntimeKernel,
-  deps: {
-    commandBus: any;
-    transactionManager: any;
-    projectionManager: any;
-    snapshotManager: any;
-    scheduler: any;
-  }
+  deps: BootstrapDeps
 ): Promise<void> {
   const { commandBus, transactionManager, projectionManager, snapshotManager, scheduler } = deps;
 
@@ -130,10 +130,10 @@ async function initCoreServices(
 
   // 4. 纯净心跳转发（唯一允许的”业务入口”）
   if (commandBus?.registerHandler) {
-    commandBus.registerHandler('SYS_HEARTBEAT', async (cmd: any) => {
+    commandBus.registerHandler('SYS_HEARTBEAT', async (cmd: ICommand): Promise<ICommandResult> => {
       // 纯粹的事件化转发，不含任何业务逻辑
       const eventPayload = {
-        ...cmd.payload,
+        ...(cmd.payload as Record<string, unknown> | undefined),
         timestamp: Date.now(),
         source: 'SYS_HEARTBEAT'
       };
@@ -361,8 +361,8 @@ async function initNetworkLayer(kernel: RuntimeKernel): Promise<void> {
     const lifecycleManager = kernel.getLifecycleManager();
     lifecycleManager.register(garnetBridge);
     logger.info('Bootstrap', '🔥 [Garnet Bridge] ↔ EventBus ↔ Garnet Streams interlocked.');
-  } catch (bridgeErr: any) {
-    logger.warn('Bootstrap', '⚠️ Garnet Bridge 未就位，事件仍走 SurrealDB 直写', { error: bridgeErr.message });
+  } catch (bridgeErr: unknown) {
+    logger.warn('Bootstrap', '⚠️ Garnet Bridge 未就位，事件仍走 SurrealDB 直写', { error: bridgeErr instanceof Error ? bridgeErr.message : String(bridgeErr) });
   }
 }
 
@@ -383,7 +383,7 @@ async function initNetworkLayer(kernel: RuntimeKernel): Promise<void> {
  */
 export async function bootstrapSystemNetwork(
   kernel: RuntimeKernel,
-  surrealClient: any
+  surrealClient: unknown
 ): Promise<void> {
   logger.info('Bootstrap', '⚙️ 总装厂点火：执行纯净基础设施连线...');
 
@@ -446,11 +446,11 @@ export class ShadowOrchestrator {
   /**
    * 处理心跳事件，获取 PPO 决策（Shadow 模式）
    */
-  private async handleHeartbeat(payload: any): Promise<void> {
+  private async handleHeartbeat(payload: unknown): Promise<void> {
     if (!this.shadowClient || !this.isConnected) return;
 
     try {
-      const shadowResponse = await this.shadowClient.getShadowAction(payload as any);
+      const shadowResponse = await this.shadowClient.getShadowAction(payload);
 
       // 通过 EventBus 发出 Shadow 决策事件（Event Sourcing）
       this.kernel.eventBus.emit('shadow.decision.recorded', {

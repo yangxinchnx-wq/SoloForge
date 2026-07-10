@@ -328,6 +328,10 @@ export default function HistoryAndEditorPanel({
       return { conversations: convos, configs, streamState: { ...emptyStreamState }, isGenerating: false };
     });
 
+    // P3 集成: 清除流送区 + Actor + uiMessageStore + 持久化 (统一清理)
+    const { clearChatAll } = await import('../services/actorIntegration');
+    clearChatAll(id);
+
     // 清除终端日志
     const { useTerminalLogStore } = await import('../components/terminal/store/terminalLogStore');
     useTerminalLogStore.getState().removeChat(id);

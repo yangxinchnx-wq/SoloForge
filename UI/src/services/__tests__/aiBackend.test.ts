@@ -9,7 +9,7 @@
  *     6. isElectronIpcAvailable() 检测 dispatchAgent + onAgentEvent
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { startChat, isElectronIpcAvailable } from '../aiBackend';
+import { startChat, isElectronIpcAvailable, _setUseRacer } from '../aiBackend';
 
 describe('aiBackend — dev (fetch → Java Agent) path', () => {
   let originalFetch: typeof globalThis.fetch;
@@ -21,6 +21,8 @@ describe('aiBackend — dev (fetch → Java Agent) path', () => {
     if (typeof globalThis.window !== 'undefined') {
       delete (globalThis as any).window.soloforge;
     }
+    // 测试 Java Agent 路径 (USE_RACER=false)
+    _setUseRacer(false);
   });
 
   afterEach(() => {
@@ -28,6 +30,8 @@ describe('aiBackend — dev (fetch → Java Agent) path', () => {
     if (typeof globalThis.window !== 'undefined' && originalSoloforge) {
       (globalThis as any).window.soloforge = originalSoloforge;
     }
+    // 恢复默认 RACER 模式
+    _setUseRacer(true);
   });
 
   it('isElectronIpcAvailable() returns false when window.soloforge missing', () => {
@@ -39,7 +43,7 @@ describe('aiBackend — dev (fetch → Java Agent) path', () => {
       // 验证请求体映射为 Java DTO
       const body = JSON.parse(init.body);
       expect(body.message).toBe('hi');
-      expect(body.stream).toBe(false);
+      expect(body.stream).toBe(true);
       expect(body.settings.agentId).toBe('code_agent');
       return new Response(
         JSON.stringify({ success: true, content: 'Hello from Java', sessionId: 's1', agentId: 'code_agent' }),
@@ -54,7 +58,7 @@ describe('aiBackend — dev (fetch → Java Agent) path', () => {
     await new Promise(r => setTimeout(r, 50));
 
     expect(fetchSpy).toHaveBeenCalledOnce();
-    expect(fetchSpy.mock.calls[0][0]).toBe('/api/java-agent/api/chat/send');
+    expect(fetchSpy.mock.calls[0][0]).toBe('/api/java-agent/api/chat/stream');
     expect(events.map(e => e.kind)).toEqual(['text', 'done']);
     expect(events[0].text).toBe('Hello from Java');
     expect(handle.taskId).toMatch(/^java-/);
@@ -123,7 +127,7 @@ describe('aiBackend — dev (fetch → Java Agent) path', () => {
     expect(capturedBody.settings.enabledSkills).toEqual(['skill-1']);
     expect(capturedBody.settings.enabledKnowledge).toEqual(['kb-1']);
     expect(capturedBody.settings.workspaceFolder).toBe('/tmp/work');
-    expect(capturedBody.stream).toBe(false);
+    expect(capturedBody.stream).toBe(true);
   });
 
   it('abort() cancels in-flight fetch', async () => {

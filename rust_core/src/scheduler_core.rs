@@ -109,7 +109,8 @@ impl PartialEq for ScoredTaskItem {
 impl Ord for ScoredTaskItem {
     fn cmp(&self, other: &Self) -> Ordering {
         // 降序排列（BinaryHeap 默认最大堆，高优先级先弹出）
-        other.score.partial_cmp(&self.score).unwrap_or(Ordering::Equal)
+        // 修复：参数顺序从 other→self 改为 self→other（原代码导致 Max-Heap 变 Min-Heap）
+        self.score.partial_cmp(&other.score).unwrap_or(Ordering::Equal)
     }
 }
 
@@ -138,8 +139,23 @@ impl Scheduler {
     }
 
     /// 启动调度器
+    /// 遵循状态机验证：Initializing → Ready → Running
     pub fn start(&mut self) {
-        self.state = SchedulerState::Running;
+        let _ = self.transition_to(SchedulerState::Ready);
+        let _ = self.transition_to(SchedulerState::Running);
+    }
+
+    /// 带验证的状态转换
+    /// 文档要求：防止非法状态组合
+    pub fn transition_to(&mut self, target: SchedulerState) -> Result<(), SchedulerError> {
+        if !self.state.can_transition_to(target) {
+            return Err(SchedulerError::InvalidState(format!(
+                "Cannot transition from {:?} to {:?}",
+                self.state, target
+            )));
+        }
+        self.state = target;
+        Ok(())
     }
 
     /// 停止调度器
@@ -190,6 +206,16 @@ impl Scheduler {
     pub fn get_stats(&self) -> &SchedulerStats {
         self.queue.stats()
     }
+
+    /// 获取队列快照（用于持久化）
+    pub fn snapshot_queue(&self) -> Vec<TaskItem> {
+        self.queue.snapshot()
+    }
+
+    /// 从快照恢复队列（用于崩溃恢复）
+    pub fn restore_queue(&mut self, items: Vec<TaskItem>) {
+        self.queue.restore(items);
+    }
 }
 
 /// 调度器执行状态
@@ -205,6 +231,36 @@ pub enum SchedulerState {
     Paused,
     /// 关闭
     Shutdown,
+}
+
+impl SchedulerState {
+    pub fn name(&self) -> &'static str {
+        match self {
+            SchedulerState::Initializing => "initializing",
+            SchedulerState::Ready => "ready",
+            SchedulerState::Running => "running",
+            SchedulerState::Paused => "paused",
+            SchedulerState::Shutdown => "shutdown",
+        }
+    }
+
+    /// 状态转换验证表（基于 rust-fsm typestate pattern）
+    /// 文档要求：防止非法状态组合
+    pub fn can_transition_to(&self, target: SchedulerState) -> bool {
+        matches!(
+            (self, target),
+            // 启动流程
+            (SchedulerState::Initializing, SchedulerState::Ready) |
+            // 运行流程
+            (SchedulerState::Ready, SchedulerState::Running) |
+            (SchedulerState::Running, SchedulerState::Paused) |
+            (SchedulerState::Paused, SchedulerState::Running) |
+            // 关闭流程
+            (SchedulerState::Running, SchedulerState::Shutdown) |
+            (SchedulerState::Paused, SchedulerState::Shutdown) |
+            (SchedulerState::Ready, SchedulerState::Shutdown)
+        )
+    }
 }
 
 /// 调度器统计

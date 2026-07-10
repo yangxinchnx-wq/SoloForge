@@ -24,8 +24,12 @@ import type { ToolCall, HashlineReadCall, HashlineEditCall, HashlineBatchCall } 
 import { useStreamingStore } from './streamingStore';
 import { mapPhaseToStreamEvents, type PhaseMapperContext } from '../services/phaseMappers';
 import type { StreamEventKind, StreamEvent, PermissionMode } from '../types/streaming';
+// P3 集成: Actor 系统 + Data Parts 模式
+import { createTaskWithActor, dispatchStreamEvent, clearChatAll } from '../services/actorIntegration';
 // 2026-07-09: HTML 翻译器 — 本地解析 HTML 代码块为 Universal AST, 直接推画布, 省一次 LLM 调用
 import { translateCode, isLanguageSupported, detectLanguage } from '../translate';
+// P2-7: handleSend 拆分出的纯逻辑 (错误分类 / 越界检测 / 预览触发判定)
+import { classifyStreamError, mentionsOutsideWorkspace, detectPreviewTrigger } from './useChatStore.helpers';
 
 // ==========================================
 // StreamPanel 桥接 — 把 aiBackend 事件喂给 streamingStore
@@ -44,8 +48,9 @@ interface StreamBridge {
 }
 
 function createStreamBridge(chatId: string, mainModel: string, userInput: string, mode: PermissionMode): StreamBridge {
-  // 创建新任务 (createTask 内部会归档旧任务)
-  useStreamingStore.getState().createTask(chatId, userInput, mode);
+  // P3 集成: 用 createTaskWithActor 替代 createTask
+  // createTaskWithActor 内部调用 createTask + 创建 Actor + 创建 UIMessage + 持久化
+  createTaskWithActor(chatId, userInput, mode);
 
   let isFirstText = true;
   let hasPhaseEvents = false;
@@ -56,7 +61,9 @@ function createStreamBridge(chatId: string, mainModel: string, userInput: string
     pushStreamEvent: (kind: StreamEventKind, extra: Partial<StreamEvent> = {}) => {
       const t = useStreamingStore.getState().tasks[chatId];
       if (!t) return;
-      useStreamingStore.getState().applyEvent({
+      // P3 集成: 用 dispatchStreamEvent 替代 applyEvent
+      // dispatchStreamEvent 内部双写: streamingStore.applyEvent + actor.tell + uiMessageStore + persistence
+      dispatchStreamEvent({
         id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         chatId,
         rootTaskId: t.id,
@@ -693,45 +700,33 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     const workspaceFolder = chatInfo?.workspaceFolder;
     if (workspaceFolder) {
       const alwaysAllow = localStorage.getItem(`soloforge_workspace_always_allow_${selectedChatId}`) === '1';
-      if (!alwaysAllow) {
-        // 检测用户是否提到需要在文件夹外操作
-        const boundaryKeywords = [
-          '文件夹外', '目录外', '工作区外', '外面做', '外部操作',
-          'outside folder', 'outside the folder', 'outside workspace',
-          'outside directory', 'not in folder',
-        ];
-        const mentionsOutside = boundaryKeywords.some(kw =>
-          finalContent.toLowerCase().includes(kw.toLowerCase())
-        );
+      if (!alwaysAllow && mentionsOutsideWorkspace(finalContent)) {
+        // 弹出审批对话框
+        set({
+          workspaceApproval: {
+            chatId: selectedChatId,
+            message: `检测到您可能需要在工作区文件夹 "${workspaceFolder}" 外进行操作。是否允许？`,
+          },
+        });
 
-        if (mentionsOutside) {
-          // 弹出审批对话框
-          set({
-            workspaceApproval: {
-              chatId: selectedChatId,
-              message: `检测到您可能需要在工作区文件夹 "${workspaceFolder}" 外进行操作。是否允许？`,
-            },
-          });
+        // 等待用户决策
+        const decision = await new Promise<'allow' | 'deny' | 'always'>((resolve) => {
+          const handler = (e: Event) => {
+            const detail = (e as CustomEvent).detail;
+            if (detail?.chatId === selectedChatId) {
+              window.removeEventListener('soloforge-workspace-approval-resolved', handler);
+              resolve(detail.decision as 'allow' | 'deny' | 'always');
+            }
+          };
+          window.addEventListener('soloforge-workspace-approval-resolved', handler);
+        });
 
-          // 等待用户决策
-          const decision = await new Promise<'allow' | 'deny' | 'always'>((resolve) => {
-            const handler = (e: Event) => {
-              const detail = (e as CustomEvent).detail;
-              if (detail?.chatId === selectedChatId) {
-                window.removeEventListener('soloforge-workspace-approval-resolved', handler);
-                resolve(detail.decision as 'allow' | 'deny' | 'always');
-              }
-            };
-            window.addEventListener('soloforge-workspace-approval-resolved', handler);
-          });
-
-          if (decision === 'deny') {
-            // 用户拒绝, 不发送消息, 清空输入框
-            set({ inputValue: '' });
-            return;
-          }
-          // 'allow' 或 'always' → 继续发送
+        if (decision === 'deny') {
+          // 用户拒绝, 不发送消息, 清空输入框
+          set({ inputValue: '' });
+          return;
         }
+        // 'allow' 或 'always' → 继续发送
       }
     }
 
@@ -902,31 +897,8 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
           case 'error': {
             streamBridge.onError(evt.error);
             console.error('[aiBackend error]', evt.error);
-            // 智能解析错误类型, 给出更精准的提示
-            const rawErr = evt.error || '';
-            let friendlyMsg = '';
-            if (rawErr.includes('HTTP 429') || rawErr.includes('rate limit')) {
-              friendlyMsg = 'LLM 服务商返回 **429 速率限制**：免费额度已用尽或请求过于频繁。请稍后重试，或在「设置 → 模型」中更换/升级服务商。';
-            } else if (rawErr.includes('HTTP 401') || rawErr.includes('Unauthorized') || rawErr.includes('API key')) {
-              friendlyMsg = 'LLM 服务商返回 **401 认证失败**：API Key 无效或已过期。请在「设置 → 模型」中重新输入正确的 API Key。';
-            } else if (rawErr.includes('HTTP 404')) {
-              friendlyMsg = 'LLM 服务商返回 **404 未找到**：请求的模型不存在或端点错误。请检查「设置 → 模型」中的模型 ID 和 Base URL。';
-            } else if (rawErr.includes('HTTP 500') || rawErr.includes('LLM_EXECUTION_FAILED')) {
-              // 区分: LLM_EXECUTION_FAILED 但内部是 429 等 → 已经被上面的条件捕获
-              // 真正的后端 500 → 后端服务异常
-              if (rawErr.includes('LLM HTTP')) {
-                // LLM 调用失败 (非 429/401/404), 提取状态码
-                const m = rawErr.match(/LLM HTTP (\d+)/);
-                const code = m ? m[1] : '';
-                friendlyMsg = `LLM 调用失败 (HTTP ${code})。服务商可能暂时不可用，请稍后重试。`;
-              } else {
-                friendlyMsg = '后端服务异常，请检查 /api/agents/dispatch 是否在运行。';
-              }
-            } else if (rawErr.includes('fetch') || rawErr.includes('NetworkError') || rawErr.includes('Failed to fetch')) {
-              friendlyMsg = '网络连接失败：无法连接到后端服务。请确认后端服务已启动且端口未被占用。';
-            } else {
-              friendlyMsg = `${rawErr}\n\n如持续出现此错误，请检查后端 /api/agents/dispatch 是否在运行。`;
-            }
+            // P2-7: 错误分类抽到 classifyStreamError (纯函数, 可独立单测)
+            const friendlyMsg = classifyStreamError(evt.error || '');
             set((s) => {
               const currentList = s.conversations[activeChatId] || [];
               if (currentList.length === 0) return { isGenerating: false, streamState: { ...emptyStreamState } };
@@ -973,61 +945,30 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
             //   - 如果回复包含 UI 代码块 (任意语言), 直接用本地翻译器转成 AST 推到画布
             //   - 零 LLM 调用, 零 token 消耗
             //   - 失败时回退到原来的 LLM 预览流
-            const previewMatch = accumulatedText.match(/<<<PREVIEW_NEEDED:(\w+)>>>/);
-            let shouldPreview = false;
-            let previewLang = '';
-            let cleanText = accumulatedText;
-
-            // 优先路径: 本地翻译 (不调 LLM, 支持所有翻译器语言)
+            //
+            // P2-7: 预览触发判定抽到 detectPreviewTrigger (纯函数, 可独立单测)
+            //       本地翻译 (tryLocalTranslateAndPush) 仍在此处调用, 因为它依赖画布运行时
             const localPushed = await tryLocalTranslateAndPush(accumulatedText, activeChatId);
-            if (localPushed) {
-              // 本地翻译成功, 不再触发 LLM 预览流
-              shouldPreview = false;
-              // 如果有 LLM 标记, 仍然从回复中移除标记文本
-              if (previewMatch) {
-                cleanText = accumulatedText.replace(/\n*<<<PREVIEW_NEEDED:\w+>>>\s*$/, '');
-                set((s) => {
-                  const currentList = s.conversations[activeChatId] || [];
-                  if (currentList.length === 0) return {};
-                  const newList = [...currentList];
-                  const lastMsg = { ...newList[newList.length - 1] };
-                  if (lastMsg.sender === 'assistant') {
-                    lastMsg.content = cleanText;
-                    newList[newList.length - 1] = lastMsg;
-                  }
-                  return { conversations: { ...s.conversations, [activeChatId]: newList } };
-                });
-              }
-            } else if (previewMatch) {
-              // 层1: LLM 自标记
-              shouldPreview = true;
-              previewLang = previewMatch[1];
-              cleanText = accumulatedText.replace(/\n*<<<PREVIEW_NEEDED:\w+>>>\s*$/, '');
-            } else {
-              // 层2: 强制代码块检测 — 不依赖 LLM 自觉
-              const forcedLang = detectPreviewFromResponse(accumulatedText);
-              if (forcedLang) {
-                shouldPreview = true;
-                previewLang = forcedLang;
-              }
+            const previewResult = detectPreviewTrigger(accumulatedText, localPushed, detectPreviewFromResponse);
+            const { shouldPreview, previewLang, cleanText } = previewResult;
+            const hasMarker = accumulatedText !== cleanText;
+
+            // 文本被清理过 (有 LLM 标记或本地翻译成功) → 更新最后一条 assistant 消息
+            if (hasMarker) {
+              set((s) => {
+                const currentList = s.conversations[activeChatId] || [];
+                if (currentList.length === 0) return {};
+                const newList = [...currentList];
+                const lastMsg = { ...newList[newList.length - 1] };
+                if (lastMsg.sender === 'assistant') {
+                  lastMsg.content = cleanText;
+                  newList[newList.length - 1] = lastMsg;
+                }
+                return { conversations: { ...s.conversations, [activeChatId]: newList } };
+              });
             }
 
             if (shouldPreview && typeof window !== 'undefined') {
-              // 如果有 LLM 标记, 从回复中移除标记文本
-              if (previewMatch) {
-                set((s) => {
-                  const currentList = s.conversations[activeChatId] || [];
-                  if (currentList.length === 0) return {};
-                  const newList = [...currentList];
-                  const lastMsg = { ...newList[newList.length - 1] };
-                  if (lastMsg.sender === 'assistant') {
-                    lastMsg.content = cleanText;
-                    newList[newList.length - 1] = lastMsg;
-                  }
-                  return { conversations: { ...s.conversations, [activeChatId]: newList } };
-                });
-              }
-
               // 触发预览流 (LLM 标记 或 强制检测 均走此路径)
               window.dispatchEvent(new CustomEvent('soloforge-preview-trigger', {
                 detail: {

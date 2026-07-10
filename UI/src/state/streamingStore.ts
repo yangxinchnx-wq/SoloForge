@@ -24,9 +24,22 @@ import { promptCardPool } from '../services/promptCardPool';
 
 interface StreamingState {
   // 当前对话的任务映射
+  // @deprecated for display — 高频显示状态 (phase, progress, subtask counts) 已迁移到 uiMessageStore
+  //   旧路径: useStreamingStore(s => s.tasks[chatId])
+  //   新路径: useStreamSummary(chatId) — 从 Data Parts 派生
+  //   保留用于: userInput (原始 prompt), TaskTree 组件, Actor 系统控制流
   tasks: Record<string, RootTask>;       // chatId -> active task
   taskHistory: Record<string, RootTask[]>; // chatId -> completed tasks
   mode: PermissionMode;
+
+  // 解耦文本缓冲: subTaskId -> 累积文本
+  // 高频 text_chunk 事件只更新此 record, 不触发 RootTask 重渲染
+  // SubTaskNode 通过 useTextBuffer(subTaskId) 独立订阅
+  // @deprecated for display — text 内容已迁移到 uiMessageStore 的 text parts
+  //   旧路径: streamingStore.textBuffers[subTaskId]
+  //   新路径: uiMessageStore.getLastAssistantMessage(chatId).parts.filter(p => p.type === 'text')
+  //   保留用于: SubTaskNode 旧组件兼容 + Actor 系统控制流
+  textBuffers: Record<string, string>;
 
   // 流送区事件缓冲 (按 chatId 隔离, StreamPanel.events 真正从这里取)
   // 容量上限 500, 超出后丢弃最早的
@@ -338,10 +351,16 @@ const EVENT_HANDLERS: Record<StreamEventKind, EventHandler> = {
   },
 
   // ============== Delivery ==============
+  // Fix: 将 phase 变更合并到 updateTask 中, 避免内外 set 竞态覆盖
+  // 之前: updateTask(set, ...) + get().transitionTaskPhase(...) → 外层 set 的 taskPatch
+  //        覆盖了内层 transitionTaskPhase 的 phase 变更 (预存在 bug)
+  // 现在: 单次 updateTask 同时写入 deliverResult + phase, 无竞态
 
-  delivery: (event, { set, get, task }) => {
-    updateTask(set, event.chatId, t => ({ ...t, deliverResult: event.content, updatedAt: event.ts }));
-    get().transitionTaskPhase(task.id, 'DONE');
+  delivery: (event, { set }) => {
+    updateTask(set, event.chatId, t => {
+      const nextPhase = transitionPhase(t.phase, 'DONE');
+      return { ...t, deliverResult: event.content, phase: nextPhase ?? t.phase, updatedAt: event.ts };
+    });
   },
 
   // ============== Agent family ==============
@@ -551,21 +570,35 @@ const EVENT_HANDLERS: Record<StreamEventKind, EventHandler> = {
 
   // ============== Text chunk (流式文本累积) ==============
 
-  text_chunk: (event, { set }) => {
+  text_chunk: (event, { set, task }) => {
     if (!event.content) return;
-    updateTask(set, event.chatId, t => {
-      if (t.subTasks.length === 0) return t;
-      const targetId = event.subTaskId ?? t.subTasks[t.subTasks.length - 1].id;
-      const newSubTasks = t.subTasks.map(st => {
-        if (st.id !== targetId) return st;
+    if (task.subTasks.length === 0) return;
+    const targetId = event.subTaskId ?? task.subTasks[task.subTasks.length - 1].id;
+
+    // 解耦策略: 只更新 textBuffers record, 不触发 RootTask 重渲染
+    // 仅当 subtask 状态从 pending → running 时才更新 RootTask (一次性)
+    set(s => {
+      const prev = s.textBuffers[targetId] ?? '';
+      const target = task.subTasks.find(st => st.id === targetId);
+      const needStatusUpdate = target && target.status === 'pending';
+
+      if (needStatusUpdate) {
+        const newSubTasks = task.subTasks.map(st => {
+          if (st.id !== targetId) return st;
+          return { ...st, status: 'running' as const, updatedAt: event.ts };
+        });
+        const updated = { ...task, subTasks: newSubTasks, updatedAt: event.ts };
+        updated.progress = calcRootProgress(updated);
         return {
-          ...st,
-          textBuffer: (st.textBuffer ?? '') + event.content,
-          status: st.status === 'pending' ? 'running' as const : st.status,
-          updatedAt: event.ts,
+          textBuffers: { ...s.textBuffers, [targetId]: prev + event.content },
+          tasks: { ...s.tasks, [event.chatId]: updated },
         };
-      });
-      return { ...t, subTasks: newSubTasks };
+      }
+
+      // 高频路径: 只更新 textBuffers, 不动 RootTask
+      return {
+        textBuffers: { ...s.textBuffers, [targetId]: prev + event.content },
+      };
     });
   },
 
@@ -580,6 +613,7 @@ export const useStreamingStore = create<StreamingState>((set, get) => ({
   tasks: {},
   taskHistory: {},
   mode: 'normal',
+  textBuffers: {},
   eventBuffer: {},
   streamTaskMeta: {},
   agentsMap: {},
@@ -774,9 +808,14 @@ export const useStreamingStore = create<StreamingState>((set, get) => ({
       const existingHistory = s.taskHistory[chatId] ?? [];
       // 同步清掉 promptCardPool 里同 chatId 的所有卡片
       promptCardPool.clearChat(chatId);
+      // 清理该 chatId 下所有 subtask 的 textBuffer
+      const subTaskIds = removed?.subTasks.map(st => st.id) ?? [];
+      const restTextBuffers = { ...s.textBuffers };
+      for (const sid of subTaskIds) delete restTextBuffers[sid];
       return {
         tasks: restTasks,
         taskHistory: removed ? { ...s.taskHistory, [chatId]: [...existingHistory, removed] } : s.taskHistory,
+        textBuffers: restTextBuffers,
         eventBuffer: restBuf,
         streamTaskMeta: restMeta,
         agentsMap: restAgents,
@@ -883,6 +922,7 @@ export const useStreamingStore = create<StreamingState>((set, get) => ({
       tasks: {},
       taskHistory: {},
       mode: 'normal',
+      textBuffers: {},
       eventBuffer: {},
       streamTaskMeta: {},
       agentsMap: {},
@@ -932,3 +972,31 @@ export const useAuditTaskByChatId = (chatId: string | null | undefined) =>
 
 export const useAgentsByChatId = (chatId: string | null | undefined) =>
   useStreamingStore(useShallow((s) => (chatId ? s.agentsMap[chatId] ?? [] : [])));
+
+// ==================== 解耦缓冲选择器 (2026-07-10 性能优化) ====================
+// text_chunk 高频事件只更新 textBuffers record, 不触发 RootTask 重渲染。
+// SubTaskNode 通过 useTextBuffer 独立订阅自己的文本流, 互不干扰。
+
+/** 订阅指定 subTask 的流式文本缓冲 (解耦于 RootTask) */
+export const useTextBuffer = (subTaskId: string | null | undefined) =>
+  useStreamingStore((s) => (subTaskId ? s.textBuffers[subTaskId] : undefined));
+
+/** 订阅指定 chatId 的任务阶段 (只在 phase 变化时触发重渲染) */
+export const useTaskPhase = (chatId: string | null | undefined) =>
+  useStreamingStore((s) => (chatId ? s.tasks[chatId]?.phase : undefined));
+
+/** 订阅指定 chatId 的任务进度 (只在 progress 变化时触发重渲染) */
+export const useTaskProgress = (chatId: string | null | undefined) =>
+  useStreamingStore((s) => (chatId ? s.tasks[chatId]?.progress : undefined));
+
+/** 订阅指定 chatId 的交付结果 */
+export const useDeliverResult = (chatId: string | null | undefined) =>
+  useStreamingStore((s) => (chatId ? s.tasks[chatId]?.deliverResult : undefined));
+
+/** 订阅指定 chatId 的模型委派日志 */
+export const useDelegationLog = (chatId: string | null | undefined) =>
+  useStreamingStore(useShallow((s) => (chatId ? s.tasks[chatId]?.delegationLog ?? [] : [])));
+
+/** 订阅指定 chatId 的模型动作日志 */
+export const useModelActionLog = (chatId: string | null | undefined) =>
+  useStreamingStore(useShallow((s) => (chatId ? s.tasks[chatId]?.modelActionLog ?? [] : [])));

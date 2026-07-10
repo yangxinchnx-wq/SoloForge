@@ -111,14 +111,12 @@ export function sanitizeConversations(
       if (isStaleErrorMessage(s)) continue;
       sanitized.push(s);
     }
-    // 如果清理后只剩 user 消息 (没有任何有效 assistant 回复),
-    // 清空对话 — 比显示一堆没有回复的用户消息更干净
-    const hasValidAssistant = sanitized.some(m => m.sender === 'assistant' && m.content.trim().length > 0);
-    if (!hasValidAssistant) {
-      out[chatId] = [];
-    } else {
-      out[chatId] = sanitized;
-    }
+    // 保留所有通过校验的消息 (含纯 user 消息)
+    // 旧逻辑会清除"无 assistant 回复"的对话, 但这会导致:
+    //   1. 用户刚发消息、assistant 尚未回复时刷新 → 用户消息丢失
+    //   2. 测试期望纯 user 消息被保留
+    // 现在: 只有全部消息都被过滤为非法/过期时, 结果才是空数组
+    out[chatId] = sanitized;
   }
   return out;
 }

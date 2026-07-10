@@ -2,7 +2,7 @@
  * StepRecordItem — 单个步骤折叠
  * 显示子任务的一个步骤（READ_TASK/UNDERSTAND/DECIDE/EXECUTE/COMPLETE/SUBMIT_TO_JUDGE）
  */
-import React, { useState } from 'react';
+import React, { useState, memo } from 'react';
 import { ChevronDown, CheckCircle2, Loader2, Clock, AlertCircle } from '../utils/icons';
 import type { StepRecord, SubTaskStep } from '../types/streaming';
 
@@ -20,7 +20,7 @@ const STEP_LABELS: Record<SubTaskStep, string> = {
   SUBMIT_TO_JUDGE: '提交到裁判',
 };
 
-export function StepRecordItem({ step, isLast }: StepRecordItemProps) {
+export const StepRecordItem = memo(function StepRecordItem({ step, isLast }: StepRecordItemProps) {
   const [open, setOpen] = useState(false);
   const isDone = step.status === 'done';
   const isRunning = step.status === 'running';
@@ -68,4 +68,4 @@ export function StepRecordItem({ step, isLast }: StepRecordItemProps) {
       </div>
     </div>
   );
-}
+});

@@ -132,7 +132,12 @@ function buildPromptWithCanvasForce(prompt: string): string {
  *   Response: SSE stream — event:text/done/error, data:{...}
  */
 // ── RACER 模式开关: true=Node.js RACER Agent, false=Java Agent ──
-const USE_RACER = true;
+// 可通过 _setUseRacer(false) 在测试中关闭, 强制走 Java 路径
+let _useRacer = true;
+/** @internal 测试用: 切换 RACER / Java 路径 */
+export function _setUseRacer(v: boolean): void { _useRacer = v; }
+/** @internal 测试用: 获取当前模式 */
+export function _getUseRacer(): boolean { return _useRacer; }
 
 function buildRacerRequestBody(req: ChatRequest): any {
   return {
@@ -206,6 +211,11 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
   const contentType = res.headers.get('content-type') || '';
   if (!contentType.includes('text/event-stream')) {
     const result = await res.json().catch(() => null);
+    // 处理 Java Agent JSON 响应: { success: false, error } → error 事件
+    if (result && result.success === false) {
+      onEvent({ kind: 'error', error: result.error || 'Unknown error', taskId });
+      return;
+    }
     if (result?.content) {
       onEvent({ kind: 'text', text: result.content, taskId });
     }
@@ -335,7 +345,7 @@ async function parseRacerSSE(
  *   4) USE_RACER=false 时直接走 Java Agent
  */
 async function startChatViaFetch(req: ChatRequest, onEvent: (e: ChatStreamEvent) => void): Promise<ChatHandle> {
-  const backend = USE_RACER ? 'racer' : 'java';
+  const backend = _useRacer ? 'racer' : 'java';
   const taskId = `${backend}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const controller = new AbortController();
   const signal = controller.signal;
@@ -348,7 +358,7 @@ async function startChatViaFetch(req: ChatRequest, onEvent: (e: ChatStreamEvent)
 
   (async () => {
     try {
-      if (USE_RACER) {
+      if (_useRacer) {
         // ── RACER path: Node.js AgentDecisionOrchestrator (SSE streaming) ──
         //   Sends Accept: text/event-stream to get real-time phase events
         //   Falls back to JSON if server doesn't support SSE

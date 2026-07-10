@@ -20,6 +20,10 @@ import type { RuntimeKernel } from '../../kernel/runtime-kernel';
 import { callLLMWithTools, type LLMMessage } from './tools/function-calling-client';
 import { getLLMProxyConfig } from '../../llm/llmConfig';
 import { ExperienceCache, type ExperienceLookup } from './evolution/experience-cache';
+// P3: 对话历史智能裁剪
+import { selectRelevantHistory, formatHistoryAsText } from './utils/history-selector';
+// P4: 文件内容增量压缩
+import { compactFileContent } from './utils/file-content-compactor';
 
 export class AgentDecisionOrchestrator {
   private readonly moduleName = 'AgentDecisionOrchestrator';
@@ -182,7 +186,12 @@ export class AgentDecisionOrchestrator {
             activeSkills,
             activeKnowledge,
             peerAgentIds,
-            maxRounds: workerIdx === 0 ? undefined : 8,
+            // P5: 分级 maxRounds — winner 不限, sub-worker 递减
+            // workerIdx=0: undefined (继承默认 20, 主力深度执行)
+            // workerIdx=1: 10 (第一备选, 中等深度)
+            // workerIdx=2: 6  (第二备选, 轻量探索)
+            // workerIdx=3+: 4 (后续备选, 快速试探)
+            maxRounds: workerIdx === 0 ? undefined : (workerIdx === 1 ? 10 : (workerIdx === 2 ? 6 : 4)),
           },
         );
         const out = execResult.output;
@@ -389,20 +398,18 @@ export class AgentDecisionOrchestrator {
     // 构建消息列表 (与 Agent Loop 相同的格式,但不注入 Agent 角色)
     const messages: LLMMessage[] = [];
 
-    // 如果有对话历史,作为上下文注入
+    // P3: 智能裁剪历史 (替换固定 slice(-10))
     if (history.length > 0) {
-      const historyText = history
-        .slice(-10)
-        .map(h => `[${h.sender}]: ${h.content}`)
-        .join('\n');
+      const selected = selectRelevantHistory(history, prompt);
+      const historyText = formatHistoryAsText(selected);
       messages.push({ role: 'system', content: `对话历史:\n${historyText}` });
     }
 
-    // 如果有文件上下文,注入
+    // 如果有文件上下文,注入 (P4: 增量压缩替换 slice(0, 4000))
     if (activeFile?.content) {
       messages.push({
         role: 'system',
-        content: `当前文件: ${activeFile.name}\n\`\`\`\n${activeFile.content.slice(0, 4000)}\n\`\`\``,
+        content: `当前文件: ${activeFile.name}\n\`\`\`\n${compactFileContent(activeFile.content, activeFile.name)}\n\`\`\``,
       });
     }
 
@@ -459,6 +466,18 @@ export class AgentDecisionOrchestrator {
     logger.info(this.moduleName,
       `L1 direct: ${result.totalDurationMs}ms, ~${result.totalTokensEstimated} est tokens${tokenLog}${result.cacheHits ? `, cache=${result.cacheHits}` : ''}`
     );
+
+    // 保存到 DirectLLM QA 经验缓存 (短问答才入缓存, 复用率 0.8)
+    try {
+      this.experience.saveDirectLLMQA(
+        prompt,
+        output,
+        atu?.totalTokens ?? result.totalTokensEstimated ?? 0,
+        Date.now() - start,
+      );
+    } catch (e) {
+      logger.warn(this.moduleName, `保存 DirectLLM QA 经验失败: ${e instanceof Error ? e.message : e}`);
+    }
 
     return {
       packetUuid,
@@ -517,9 +536,15 @@ ${rec.finalAnswer.slice(0, 1500)}
 
     const messages: LLMMessage[] = [expSystemMsg];
 
-    // 注入 history
+    // P3: 注入 history (智能裁剪,上限 4 条)
     if (req.history && req.history.length > 0) {
-      for (const h of req.history.slice(-4)) {
+      const selected = selectRelevantHistory(req.history, prompt, {
+        recentKeep: 2,
+        maxEntries: 4,
+        freshThresholdMs: 5 * 60 * 1000,
+        minContentLength: 50,
+      });
+      for (const h of selected) {
         messages.push({ role: h.sender === 'user' ? 'user' : 'assistant', content: h.content });
       }
     }

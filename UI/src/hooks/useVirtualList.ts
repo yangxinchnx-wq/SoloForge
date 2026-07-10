@@ -1,6 +1,57 @@
 import React from 'react';
 
 /**
+ * Default item count threshold above which virtualization kicks in.
+ * Lists with fewer items render all at once (no measurement overhead).
+ */
+export const DEFAULT_VIRTUALIZE_THRESHOLD = 50;
+
+/**
+ * Pure function: compute which items are visible given scroll state.
+ *
+ * @param totalItems  Total item count
+ * @param rowHeight   Height of each row in px
+ * @param scrollTop   Current scroll offset in px
+ * @param clientHeight Viewport height in px (0 = container not yet rendered)
+ * @param overscan    Extra items to render above/below viewport
+ * @returns Array of { index, top } for visible items
+ */
+export function computeVisibleItems(
+  totalItems: number,
+  rowHeight: number,
+  scrollTop: number,
+  clientHeight: number,
+  overscan: number,
+): { index: number; top: number }[] {
+  if (totalItems <= 0 || rowHeight <= 0) return [];
+
+  // Clamp negative scrollTop
+  const st = Math.max(0, scrollTop);
+
+  // Defensive: if clientHeight is 0 (container not rendered), show at least first item
+  if (clientHeight <= 0) {
+    return [{ index: 0, top: 0 }];
+  }
+
+  const firstIdx = Math.max(0, Math.floor(st / rowHeight) - overscan);
+  const endIdx = Math.min(
+    totalItems - 1,
+    Math.ceil((st + clientHeight) / rowHeight) + overscan,
+  );
+
+  if (firstIdx > endIdx) {
+    // Scroll past end: show last item only
+    return [{ index: endIdx, top: endIdx * rowHeight }];
+  }
+
+  const result: { index: number; top: number }[] = [];
+  for (let i = firstIdx; i <= endIdx; i++) {
+    result.push({ index: i, top: i * rowHeight });
+  }
+  return result;
+}
+
+/**
  * Lightweight windowing hook for dnd-kit sortable lists.
  *
  * Why not react-virtuoso? It doesn't play well with dnd-kit's

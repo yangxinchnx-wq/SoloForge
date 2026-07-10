@@ -9,6 +9,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::events::RuntimeEvent;
+use crate::runtime::{ModuleStatus, RuntimeError, RuntimeModule};
+use crate::snapshot::{
+    SnapshotData, SnapshotError, SnapshotType, Snapshotable, StateSnapshot,
+};
+
 /// 中断动作枚举
 /// 文档要求：四种中断类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -81,6 +87,21 @@ impl InterruptStatus {
             InterruptStatus::Failed => "failed",
             InterruptStatus::Ignored => "ignored",
         }
+    }
+
+    /// 状态转换验证表（基于 rust-fsm typestate pattern）
+    /// 文档要求：防止非法状态组合
+    pub fn can_transition_to(&self, target: InterruptStatus) -> bool {
+        matches!(
+            (self, target),
+            (InterruptStatus::Requested, InterruptStatus::Processing) |
+            (InterruptStatus::Processing, InterruptStatus::Processed) |
+            (InterruptStatus::Processing, InterruptStatus::Failed) |
+            (InterruptStatus::Processed, InterruptStatus::Completed) |
+            (InterruptStatus::Processed, InterruptStatus::Ignored) |
+            // 失败后可重试
+            (InterruptStatus::Failed, InterruptStatus::Requested)
+        )
     }
 }
 
@@ -214,6 +235,8 @@ pub struct InterruptHandler {
     completed_history: Vec<Interrupt>,
     /// 中断统计
     stats: InterruptStats,
+    /// 模块状态（用于 RuntimeModule）
+    module_status: ModuleStatus,
 }
 
 impl InterruptHandler {
@@ -224,6 +247,7 @@ impl InterruptHandler {
             processing: HashMap::new(),
             completed_history: Vec::new(),
             stats: InterruptStats::default(),
+            module_status: ModuleStatus::Uninitialized,
         }
     }
 
@@ -349,6 +373,153 @@ impl InterruptHandler {
 impl Default for InterruptHandler {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Snapshotable + RuntimeModule 实现
+// 遵循包装器模式：直接在 InterruptHandler 上实现统一接口
+// ─────────────────────────────────────────────────────────────────
+
+impl Snapshotable for InterruptHandler {
+    fn save(&self) -> StateSnapshot {
+        let data = SnapshotData::Custom(serde_json::json!({
+            "pending_count": self.pending_interrupts.len(),
+            "processing_count": self.processing.len(),
+            "completed_count": self.completed_history.len(),
+            "stats": {
+                "total_requested": self.stats.total_requested,
+                "total_processed": self.stats.total_processed,
+                "total_completed": self.stats.total_completed,
+                "total_failed": self.stats.total_failed,
+                "total_ignored": self.stats.total_ignored,
+            }
+        }));
+
+        StateSnapshot::new(SnapshotType::Full, data, "interrupt_handler".to_string())
+    }
+
+    fn restore(&mut self, snapshot: StateSnapshot) -> Result<(), SnapshotError> {
+        match snapshot.data {
+            SnapshotData::Custom(ref value) => {
+                // 恢复统计信息
+                if let Some(stats) = value.get("stats") {
+                    self.stats.total_requested =
+                        stats.get("total_requested").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                    self.stats.total_processed =
+                        stats.get("total_processed").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                    self.stats.total_completed =
+                        stats.get("total_completed").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                    self.stats.total_failed =
+                        stats.get("total_failed").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                    self.stats.total_ignored =
+                        stats.get("total_ignored").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                }
+
+                // 清空当前状态，准备恢复
+                self.pending_interrupts.clear();
+                self.processing.clear();
+                self.completed_history.clear();
+
+                Ok(())
+            }
+            _ => Err(SnapshotError::InvalidSnapshotType(
+                "Expected Custom snapshot data for InterruptHandler".to_string(),
+            )),
+        }
+    }
+}
+
+impl RuntimeModule for InterruptHandler {
+    fn name(&self) -> String {
+        "InterruptHandler".to_string()
+    }
+
+    fn initialize(&mut self) -> Result<(), RuntimeError> {
+        self.module_status = ModuleStatus::Ready;
+        Ok(())
+    }
+
+    fn handle_event(
+        &mut self,
+        event: RuntimeEvent,
+        payload: Option<&serde_json::Value>,
+    ) -> Result<Vec<RuntimeEvent>, RuntimeError> {
+        match event {
+            RuntimeEvent::TaskPaused => {
+                log::info!("InterruptHandler received TaskPaused event");
+                if let Some(payload) = payload {
+                    if let Some(task_id) = payload.get("task_id").and_then(|v| v.as_str()) {
+                        let interrupt = Interrupt::new(
+                            task_id.to_string(),
+                            InterruptAction::Pause,
+                            "Task paused via event".to_string(),
+                            InterruptPriority::Medium,
+                            InterruptSource::System,
+                        );
+                        self.request_interrupt(interrupt);
+                    }
+                }
+            }
+            RuntimeEvent::TaskResumed => {
+                log::info!("InterruptHandler received TaskResumed event");
+                if let Some(payload) = payload {
+                    if let Some(task_id) = payload.get("task_id").and_then(|v| v.as_str()) {
+                        let interrupt = Interrupt::new(
+                            task_id.to_string(),
+                            InterruptAction::Resume,
+                            "Task resumed via event".to_string(),
+                            InterruptPriority::Medium,
+                            InterruptSource::System,
+                        );
+                        self.request_interrupt(interrupt);
+                    }
+                }
+            }
+            RuntimeEvent::TaskCancelled => {
+                log::info!("InterruptHandler received TaskCancelled event");
+                if let Some(payload) = payload {
+                    if let Some(task_id) = payload.get("task_id").and_then(|v| v.as_str()) {
+                        let interrupt = Interrupt::new(
+                            task_id.to_string(),
+                            InterruptAction::Cancel,
+                            "Task cancelled via event".to_string(),
+                            InterruptPriority::High,
+                            InterruptSource::System,
+                        );
+                        self.request_interrupt(interrupt);
+                    }
+                }
+            }
+            RuntimeEvent::SchedulerPreempted => {
+                log::info!("InterruptHandler received SchedulerPreempted event");
+                if let Some(payload) = payload {
+                    if let Some(task_id) = payload.get("task_id").and_then(|v| v.as_str()) {
+                        let high_priority_id = payload
+                            .get("preempted_by")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown");
+                        let interrupt = Interrupt::preempt(
+                            task_id.to_string(),
+                            high_priority_id.to_string(),
+                            InterruptSource::Scheduler,
+                        );
+                        self.request_interrupt(interrupt);
+                    }
+                }
+            }
+            RuntimeEvent::SystemShutdown => {
+                log::info!("InterruptHandler shutting down");
+                self.module_status = ModuleStatus::Stopped;
+            }
+            _ => {}
+        }
+
+        Ok(Vec::new())
+    }
+
+    fn get_status(&self) -> ModuleStatus {
+        self.module_status
     }
 }
 

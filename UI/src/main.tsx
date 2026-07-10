@@ -7,6 +7,7 @@ import { installStreamDevHooks } from './state/streamingStore';
 import { installWorkdirSyncChannel } from './components/terminal';
 import { useChatsStore, initChatsEventBridge } from './state/chatsStore';
 import { useChatStore } from './state/useChatStore';
+import { initActorSystem } from './services/actorIntegration';
 
 // ── 一次性清理: 移除旧版占位 mock 数据 (v1 → v2 迁移) ──────────
 // 旧版在 localStorage 里写入了 6 条硬编码假对话 (id 1~6),
@@ -67,6 +68,14 @@ if (typeof window !== 'undefined') {
   initChatsEventBridge();
   useChatsStore.getState().loadFromBackend();
   useChatStore.getState().loadConversationsFromBackend();
+
+  // 2026-07-10: 初始化 Actor 系统 + 持久化恢复 (P3 集成)
+  //   - 从 IndexedDB/localStorage 恢复热状态 (tasks, textBuffers, actors)
+  //   - 注册监督策略错误回调
+  //   - 失败不阻塞 UI, 降级为纯 streamingStore 模式
+  initActorSystem().catch((e) => {
+    console.warn('[main] Actor 系统初始化失败, 降级为纯 streamingStore 模式', e);
+  });
 }
 
 // 2026-07-02: 挂载 streaming dev hook 到 window (perf test / 控制台调试)

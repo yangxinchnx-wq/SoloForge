@@ -22,6 +22,7 @@ export type TaskPhase =
   | 'DISPATCHING'   // 子任务分配中
   | 'EXECUTING'     // 子任务执行中
   | 'REVIEWING'     // 裁判审查中
+  | 'AUDITING'      // 审计检查中 (phaseMappers 已推送, 之前缺失)
   | 'DELIVERING'    // 交付结果中
   | 'SINGLE_MODEL'  // 单模型直跑模式 (跳过拆解/分发/审查)
   | 'DONE'          // 完成
@@ -40,13 +41,14 @@ export const PHASE_TRANSITIONS: Record<TaskPhase, TaskPhase[]> = {
   CLARIFY:       ['PLANNING', 'DECOMPOSING', 'SINGLE_MODEL', 'EXECUTING', 'CLARIFY', 'ERROR'],
   PLANNING:      ['DECOMPOSING', 'EXECUTING', 'PLANNING', 'ERROR'],
   DECOMPOSING:   ['DISPATCHING', 'EXECUTING', 'DECOMPOSING', 'ERROR'],
-  DISPATCHING:   ['EXECUTING', 'REVIEWING', 'DISPATCHING', 'ERROR'],
-  EXECUTING:     ['REVIEWING', 'EXECUTING', 'ERROR'],
-  REVIEWING:     ['DELIVERING', 'EXECUTING', 'REVIEWING', 'ERROR'],
+  DISPATCHING:   ['EXECUTING', 'REVIEWING', 'AUDITING', 'DISPATCHING', 'ERROR'],
+  EXECUTING:     ['REVIEWING', 'AUDITING', 'EXECUTING', 'ERROR'],
+  REVIEWING:     ['DELIVERING', 'AUDITING', 'EXECUTING', 'REVIEWING', 'ERROR'],
+  AUDITING:      ['DELIVERING', 'REVIEWING', 'EXECUTING', 'AUDITING', 'ERROR'],
   DELIVERING:    ['DONE', 'DELIVERING', 'ERROR'],
   SINGLE_MODEL:  ['EXECUTING', 'DELIVERING', 'DONE', 'SINGLE_MODEL', 'ERROR'],
   DONE:          [],
-  ERROR:         ['CLARIFY', 'PLANNING', 'DECOMPOSING', 'DISPATCHING', 'REVIEWING', 'DELIVERING'],
+  ERROR:         ['CLARIFY', 'PLANNING', 'DECOMPOSING', 'DISPATCHING', 'REVIEWING', 'AUDITING', 'DELIVERING'],
 };
 
 // ==================== 子任务步骤 ====================
@@ -113,7 +115,8 @@ export interface SubTask {
   screenshot_b64?: string;
   maxSteps?: number;
   currentStepIndex?: number;
-  // 流式文本累积缓冲 (text_chunk 事件写入)
+  // 流式文本累积缓冲 — 已弃用, 改用 streamingStore.textBuffers (解耦缓冲)
+  // 保留字段是为了类型兼容, 新代码应使用 useTextBuffer(subTaskId) 选择器
   textBuffer?: string;
 }
 

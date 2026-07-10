@@ -25,7 +25,8 @@ impl PartialEq for ScoredTask {
 
 impl Ord for ScoredTask {
     fn cmp(&self, other: &Self) -> Ordering {
-        other.score.partial_cmp(&self.score).unwrap_or(Ordering::Equal)
+        // 修复：参数顺序从 other→self 改为 self→other（原代码导致 Max-Heap 变 Min-Heap）
+        self.score.partial_cmp(&other.score).unwrap_or(Ordering::Equal)
     }
 }
 

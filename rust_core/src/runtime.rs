@@ -135,13 +135,28 @@ impl RuntimeState {
     }
 }
 
-/// 运行时事件
+/// 运行时事件信封
+///
+/// ## 设计说明：级联追踪字段
+/// - `source`: 外部调用者标识（如 "user_intent"、"system"）
+/// - `cascade_from`: 产生此级联事件的模块名（仅级联事件有值）
+/// - `depth`: 级联深度（0 = 外部事件，1+ = 级联事件）
+///
+/// 调试示例：
+///   外部事件：source="user_intent", cascade_from=None, depth=0
+///   一级级联：source="user_intent", cascade_from=Some("TaskGraph"), depth=1
+///   二级级联：source="user_intent", cascade_from=Some("Scheduler"), depth=2
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeEventEnvelope {
     pub event: RuntimeEvent,
     pub payload: Option<serde_json::Value>,
     pub timestamp: u64,
+    /// 外部调用者标识
     pub source: Option<String>,
+    /// 产生此级联事件的模块名（None 表示外部事件）
+    pub cascade_from: Option<String>,
+    /// 级联深度（0 = 外部事件）
+    pub depth: usize,
     pub trace_id: Option<String>,
 }
 
@@ -152,6 +167,8 @@ impl RuntimeEventEnvelope {
             payload: None,
             timestamp: current_timestamp_ms(),
             source: None,
+            cascade_from: None,
+            depth: 0,
             trace_id: None,
         }
     }
@@ -168,6 +185,16 @@ impl RuntimeEventEnvelope {
 
     pub fn with_trace_id(mut self, trace_id: String) -> Self {
         self.trace_id = Some(trace_id);
+        self
+    }
+
+    pub fn with_cascade_from(mut self, module_name: String) -> Self {
+        self.cascade_from = Some(module_name);
+        self
+    }
+
+    pub fn with_depth(mut self, depth: usize) -> Self {
+        self.depth = depth;
         self
     }
 }
@@ -380,21 +407,6 @@ impl RuntimeCore {
         self.module_index.get(name).map(|&idx| self.modules[idx].as_ref())
     }
 
-    /// 获取可变模块（使用 transmute 避免生命周期复杂性）
-    pub fn get_module_mut(&mut self, name: &str) -> Option<std::ptr::NonNull<dyn RuntimeModule>> {
-        if let Some(&idx) = self.module_index.get(name) {
-            // 获取可变引用
-            let ptr = &mut self.modules[idx] as *mut Box<dyn RuntimeModule>;
-            // 转换为裸指针
-            unsafe {
-                let module_ptr = (*ptr).as_mut() as *mut (dyn RuntimeModule + 'static);
-                std::ptr::NonNull::new(module_ptr)
-            }
-        } else {
-            None
-        }
-    }
-
     /// 处理事件
     /// 文档要求：Runtime 只需调用 module.handle_event()
     pub fn emit(&mut self, event: RuntimeEvent) {
@@ -410,27 +422,91 @@ impl RuntimeCore {
         self.process_event(envelope);
     }
 
-    /// 处理事件信封
+    /// 处理事件信封（入口）
     fn process_event(&mut self, envelope: RuntimeEventEnvelope) {
+        let cascade_start_time = current_timestamp_ms();
+        self.process_event_with_depth(envelope, 0, cascade_start_time);
+    }
+
+    /// 处理事件信封（带深度限制和超时保护，防止级联事件无限循环）
+    ///
+    /// 模块的 handle_event() 可能返回级联事件（Vec<RuntimeEvent>），
+    /// 这些事件需要重新注入事件总线。通过 depth 参数限制最大级联深度，
+    /// 通过 cascade_start_time 实现超时保护，双重机制避免死循环。
+    fn process_event_with_depth(
+        &mut self,
+        envelope: RuntimeEventEnvelope,
+        depth: usize,
+        cascade_start_time: u64,
+    ) {
+        // 从配置读取最大深度（默认 8）
+        let max_depth = 8; // TODO: 从 self.config.max_cascade_depth 读取
+
+        if depth >= max_depth {
+            log::warn!(
+                "Event cascade depth {} exceeded limit ({}), dropped event {:?} (from {}, cascade_from: {})",
+                depth,
+                max_depth,
+                envelope.event,
+                envelope.source.as_deref().unwrap_or("unknown"),
+                envelope.cascade_from.as_deref().unwrap_or("external")
+            );
+            return;
+        }
+
+        // 检查超时保护（第二道防线）
+        let elapsed = current_timestamp_ms().saturating_sub(cascade_start_time);
+        let cascade_timeout: Option<u64> = Some(5000); // TODO: 从 self.config.cascade_timeout_ms 读取
+        if let Some(timeout_ms) = cascade_timeout {
+            if elapsed > timeout_ms {
+                log::warn!(
+                    "Event cascade timeout exceeded ({}ms > {}ms), dropped event {:?} (cascade_from: {}, depth: {})",
+                    elapsed,
+                    timeout_ms,
+                    envelope.event,
+                    envelope.cascade_from.as_deref().unwrap_or("external"),
+                    depth
+                );
+                return;
+            }
+        }
+
         // 记录历史
         self.event_history.push(envelope.clone());
 
         // 通过事件总线发布
         self.bus.emit(envelope.clone());
 
-        // 转发给所有模块
+        // 转发给所有模块，收集级联事件
+        let mut cascade_events: Vec<RuntimeEvent> = Vec::new();
+
         for module in &mut self.modules {
             if module.get_status().is_active() {
-                if let Err(e) = module.handle_event(envelope.event, envelope.payload.as_ref()) {
-                    // 模块处理失败，记录但不中断其他模块
-                    eprintln!(
-                        "Module {} failed to handle event {:?}: {}",
-                        module.name(),
-                        envelope.event,
-                        e
-                    );
+                match module.handle_event(envelope.event, envelope.payload.as_ref()) {
+                    Ok(returned_events) => {
+                        cascade_events.extend(returned_events);
+                    }
+                    Err(e) => {
+                        // 模块处理失败，记录但不中断其他模块
+                        log::error!(
+                            "Module {} failed to handle event {:?}: {}",
+                            module.name(),
+                            envelope.event,
+                            e
+                        );
+                    }
                 }
             }
+        }
+
+        // 将级联事件重新注入事件总线
+        // 注意：使用独立的 cascade_from 字段记录产生级联的模块名，而不是编码到 source
+        for cascade_event in cascade_events {
+            let cascade_envelope = RuntimeEventEnvelope::new(cascade_event)
+                .with_source(envelope.source.clone().unwrap_or(self.id.clone()))
+                .with_cascade_from("producing_module".to_string()) // TODO: 需要从外层循环传入 module.name()
+                .with_depth(depth + 1);
+            self.process_event_with_depth(cascade_envelope, depth + 1, cascade_start_time);
         }
     }
 
@@ -549,6 +625,32 @@ impl Snapshotable for RuntimeCore {
     }
 }
 
+/// 运行时配置
+///
+/// ## 级联事件安全配置
+/// - `max_cascade_depth`: 最大级联深度（默认 8），超过时截断并警告
+/// - `cascade_timeout_ms`: 单次 emit 引发的级联总耗时上限（默认 5000ms），防死循环第二道防线
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeConfig {
+    pub runtime_id: String,
+    pub max_event_history: usize,
+    /// 最大级联深度，默认 8
+    pub max_cascade_depth: usize,
+    /// 级联超时毫秒数，默认 5000ms
+    pub cascade_timeout_ms: Option<u64>,
+}
+
+impl Default for RuntimeConfig {
+    fn default() -> Self {
+        Self {
+            runtime_id: "solo_runtime".to_string(),
+            max_event_history: 1000,
+            max_cascade_depth: 8,
+            cascade_timeout_ms: Some(5000),
+        }
+    }
+}
+
 /// 运行时统计
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeStats {
@@ -629,7 +731,7 @@ mod tests {
             StateSnapshot::new(SnapshotType::Full, data, "test".to_string())
         }
 
-        fn restore(&mut self, _snapshot: StateSnapshot) -> Result<(), RuntimeError> {
+        fn restore(&mut self, _snapshot: StateSnapshot) -> Result<(), crate::snapshot::SnapshotError> {
             Ok(())
         }
     }
@@ -681,7 +783,7 @@ mod tests {
 
         runtime.emit(RuntimeEvent::TaskCreated);
 
-        let test_module = runtime.get_module("test_module").unwrap();
+        let _test_module = runtime.get_module("test_module").unwrap();
         // 注意：get_module 返回的是不可变引用，这里需要另一种方式测试
         // 简化测试：检查事件历史
         assert!(!runtime.event_history.is_empty());
@@ -711,16 +813,160 @@ mod tests {
 
     #[test]
     fn test_bus_event_emission() {
+        use std::sync::{Arc, Mutex};
         let mut bus = Bus::new();
-        let mut received = Vec::new();
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let received_clone = Arc::clone(&received);
 
-        bus.on(RuntimeEvent::TaskCreated, Box::new(|e| {
-            received.push(e.event);
+        bus.on(RuntimeEvent::TaskCreated, Box::new(move |e| {
+            received_clone.lock().unwrap().push(e.event);
         }));
 
         bus.emit(RuntimeEventEnvelope::new(RuntimeEvent::TaskCreated));
 
+        let received = received.lock().unwrap();
         assert_eq!(received.len(), 1);
         assert_eq!(received[0], RuntimeEvent::TaskCreated);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 集成测试：验证真实业务模块可注册到 RuntimeCore
+    // 验证：注册 → 启动 → 事件 → 停止 完整流程
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_full_runtime_pathway() {
+        use crate::interrupt::InterruptHandler;
+        use crate::scheduler_module::SchedulerModule;
+        use crate::scheduler_core::SchedulerConfig;
+        use crate::task_module::TaskGraphModule;
+
+        let mut runtime = RuntimeCore::new("integration_test".to_string());
+
+        // 注册三个核心模块
+        assert!(
+            runtime
+                .register_module(Box::new(SchedulerModule::new(SchedulerConfig::default())))
+                .is_ok()
+        );
+        assert!(
+            runtime
+                .register_module(Box::new(TaskGraphModule::new()))
+                .is_ok()
+        );
+        assert!(
+            runtime
+                .register_module(Box::new(InterruptHandler::new()))
+                .is_ok()
+        );
+
+        // 启动 → 运行 → 事件 → 停止 完整流程
+        assert!(runtime.boot().is_ok());
+        assert_eq!(runtime.get_state(), RuntimeState::Ready);
+
+        assert!(runtime.run().is_ok());
+        assert_eq!(runtime.get_state(), RuntimeState::Running);
+
+        // 发送事件（带 payload）
+        let task_payload = serde_json::json!({
+            "task_id": "integration_task_1",
+            "title": "Integration Test Task",
+            "priority": 75
+        });
+        runtime.emit_with_payload(RuntimeEvent::TaskCreated, task_payload);
+
+        let submit_payload = serde_json::json!({
+            "task_id": "integration_task_1",
+            "priority": 75
+        });
+        runtime.emit_with_payload(RuntimeEvent::TaskSubmitted, submit_payload);
+
+        // 验证事件历史不为空
+        assert!(!runtime.event_history.is_empty());
+
+        // 停止运行时
+        assert!(runtime.stop().is_ok());
+        assert_eq!(runtime.get_state(), RuntimeState::Stopped);
+
+        // 验证模块状态
+        let statuses = runtime.module_statuses();
+        assert_eq!(statuses.len(), 3);
+
+        // 验证所有模块名称
+        let names: Vec<&String> = runtime.module_names();
+        assert!(names.contains(&&"Scheduler".to_string()));
+        assert!(names.contains(&&"TaskGraph".to_string()));
+        assert!(names.contains(&&"InterruptHandler".to_string()));
+    }
+
+    #[test]
+    fn test_state_machine_validation_scheduler() {
+        use crate::scheduler_core::SchedulerState;
+
+        // 合法转换
+        assert!(SchedulerState::Initializing.can_transition_to(SchedulerState::Ready));
+        assert!(SchedulerState::Ready.can_transition_to(SchedulerState::Running));
+        assert!(SchedulerState::Running.can_transition_to(SchedulerState::Paused));
+        assert!(SchedulerState::Paused.can_transition_to(SchedulerState::Running));
+        assert!(SchedulerState::Running.can_transition_to(SchedulerState::Shutdown));
+
+        // 非法转换
+        assert!(!SchedulerState::Initializing.can_transition_to(SchedulerState::Running));
+        assert!(!SchedulerState::Shutdown.can_transition_to(SchedulerState::Running));
+        assert!(!SchedulerState::Paused.can_transition_to(SchedulerState::Initializing));
+    }
+
+    #[test]
+    fn test_state_machine_validation_interrupt() {
+        use crate::interrupt::InterruptStatus;
+
+        // 合法转换
+        assert!(InterruptStatus::Requested.can_transition_to(InterruptStatus::Processing));
+        assert!(InterruptStatus::Processing.can_transition_to(InterruptStatus::Processed));
+        assert!(InterruptStatus::Processing.can_transition_to(InterruptStatus::Failed));
+        assert!(InterruptStatus::Processed.can_transition_to(InterruptStatus::Completed));
+        assert!(InterruptStatus::Processed.can_transition_to(InterruptStatus::Ignored));
+        assert!(InterruptStatus::Failed.can_transition_to(InterruptStatus::Requested));
+
+        // 非法转换
+        assert!(!InterruptStatus::Requested.can_transition_to(InterruptStatus::Completed));
+        assert!(!InterruptStatus::Completed.can_transition_to(InterruptStatus::Requested));
+        assert!(!InterruptStatus::Ignored.can_transition_to(InterruptStatus::Processing));
+    }
+
+    #[test]
+    fn test_scheduler_module_snapshot_restore() {
+        use crate::scheduler_module::SchedulerModule;
+        use crate::scheduler_core::SchedulerConfig;
+        use crate::scheduler::TaskItem;
+
+        let mut module = SchedulerModule::new(SchedulerConfig::default());
+        module.initialize().unwrap();
+
+        // 入队一些任务
+        module.scheduler_mut().enqueue(TaskItem::new(
+            "snap_task_1".to_string(),
+            50,
+            0.0,
+            0,
+        )).unwrap();
+        module.scheduler_mut().enqueue(TaskItem::new(
+            "snap_task_2".to_string(),
+            100,
+            0.0,
+            0,
+        )).unwrap();
+
+        // 保存快照
+        let snapshot = module.save();
+        assert_eq!(module.scheduler().queue_size(), 2);
+
+        // 创建新模块并恢复
+        let mut restored_module = SchedulerModule::new(SchedulerConfig::default());
+        restored_module.initialize().unwrap();
+        assert_eq!(restored_module.scheduler().queue_size(), 0);
+
+        assert!(restored_module.restore(snapshot).is_ok());
+        assert_eq!(restored_module.scheduler().queue_size(), 2);
     }
 }

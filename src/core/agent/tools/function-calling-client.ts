@@ -19,6 +19,8 @@ import { getLLMProxyConfig } from '../../../llm/llmConfig';
 import { supportsTools, learnCapability, describeCapabilities } from '../../../llm/modelCapabilities';
 import type { ToolSchema, ToolCallRequest, ToolCallResult } from './tool-definitions';
 import { executeToolCall } from './tool-definitions';
+// P2: 跨 Dispatch 工具结果缓存
+import { sessionToolCache, isCacheableToolResult } from './session-tool-cache';
 
 // ─── 类型定义 ───────────────────────────────────────────────────────
 
@@ -66,6 +68,11 @@ export interface CallWithToolsOptions {
    * 设为 0 或 Infinity 可禁用。
    */
   tokenBudget?: number;
+  /**
+   * P2: 会话 ID, 用于跨 dispatch 工具结果缓存。
+   * 不传时禁用 session-level 缓存 (仅用 in-dispatch 缓存)。
+   */
+  chatId?: string;
 }
 
 export interface CallWithToolsResult {
@@ -365,7 +372,7 @@ export async function callLLMWithTools(opts: CallWithToolsOptions): Promise<Call
       // 缓存 key: toolName + 参数 hash
       const cacheKey = `${request.name}:${JSON.stringify(request.arguments)}`;
 
-      // 缓存命中: 直接复用, 不执行工具, 不消耗 IO
+      // L1 缓存命中 (In-Dispatch): 直接复用, 不执行工具, 不消耗 IO
       const cached = toolResultCache.get(cacheKey);
       if (cached) {
         cacheHits++;
@@ -376,14 +383,33 @@ export async function callLLMWithTools(opts: CallWithToolsOptions): Promise<Call
         };
       }
 
+      // P2: L2 缓存查询 (Cross-Dispatch Session)
+      if (opts.chatId && isCacheableToolResult(request.name, '')) {
+        const sessionCached = sessionToolCache.lookup(opts.chatId, request.name, request.arguments);
+        if (sessionCached !== null) {
+          cacheHits++;
+          // 回填 L1 缓存, 避免同 dispatch 内再次查 L2
+          toolResultCache.set(cacheKey, sessionCached);
+          return {
+            tool_call_id: request.id,
+            name: request.name,
+            output: sessionCached + '\n[CACHED: 此结果由会话级缓存复用,无需再次请求]',
+          };
+        }
+      }
+
       // 缓存未命中: 执行工具
       const result = opts.onToolCall
         ? await opts.onToolCall(request)
         : await executeToolCall(request);
 
-      // 写入缓存 (仅缓存成功的结果,错误结果不缓存)
+      // 写入 L1 缓存 (仅缓存成功的结果,错误结果不缓存)
       if (!result.output.startsWith('Error:') && !result.output.startsWith('Tool error:')) {
         toolResultCache.set(cacheKey, result.output);
+        // P2: 同时写入 L2 会话级缓存 (跨 dispatch 复用)
+        if (opts.chatId && isCacheableToolResult(request.name, result.output)) {
+          sessionToolCache.store(opts.chatId, request.name, request.arguments, result.output);
+        }
       }
 
       return result;

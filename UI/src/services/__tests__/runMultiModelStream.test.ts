@@ -9,7 +9,7 @@
  *   - error 透传
  */
 import { describe, it, expect } from 'vitest';
-import { runMultiModelStream, pickStreamMode } from '../../../server';
+import { runMultiModelStream, pickStreamMode } from '../multiModelStream';
 
 describe('pickStreamMode — prompt → single/multi 启发式', () => {
   it('极短 prompt → single', () => {

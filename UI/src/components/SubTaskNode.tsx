@@ -1,13 +1,19 @@
 /**
  * SubTaskNode — 单个子任务节点
  * 显示模型分配、进度百分比、步骤折叠（source=llm 走 StepRecordItem，source=browser-use 走 ReactStepBubble）
+ *
+ * 2026-07-10 性能优化:
+ *   - React.memo: 仅在 subTask prop 引用变化时重渲染
+ *   - useTextBuffer + useDeferredValue: 高频 text_chunk 延迟渲染, 不阻塞主线程
+ *   - 文本缓冲 UI: 展示流式 LLM 输出 (之前缺失)
  */
-import React, { useState } from 'react';
+import React, { useState, useDeferredValue, memo } from 'react';
 import { ChevronDown, Bot, Globe, Wrench, Zap, Loader2, CheckCircle2, AlertCircle, Clock } from '../utils/icons';
 import { MountTransition } from './MountTransition';
 import type { SubTask, SubTaskSource } from '../types/streaming';
 import { StepRecordItem } from './StepRecordItem';
 import { ModelDelegationTag } from './ModelDelegationTag';
+import { useTextBuffer } from '../state/streamingStore';
 
 interface SubTaskNodeProps {
   subTask: SubTask;
@@ -29,12 +35,18 @@ const SOURCE_LABELS: Record<SubTaskSource, string> = {
   'skill': '技能',
 };
 
-export function SubTaskNode({ subTask, mainModel, defaultOpen = true }: SubTaskNodeProps) {
+function SubTaskNodeImpl({ subTask, mainModel, defaultOpen = true }: SubTaskNodeProps) {
   const [open, setOpen] = useState(defaultOpen);
   const isDone = subTask.status === 'done';
   const isRunning = subTask.status === 'running';
   const isError = subTask.status === 'error';
   const isPending = subTask.status === 'pending';
+
+  // 解耦文本缓冲: 从独立 store slice 订阅, 不触发 RootTask 重渲染
+  // useDeferredValue: 高频 text_chunk 延迟到下一帧渲染, 自动合并
+  const rawTextBuffer = useTextBuffer(subTask.id);
+  const textBuffer = useDeferredValue(rawTextBuffer);
+  const isTextStale = rawTextBuffer !== textBuffer;
 
   const statusIcon = isDone
     ? <CheckCircle2 className="w-3.5 h-3.5 text-green-400 shrink-0" />
@@ -87,7 +99,7 @@ export function SubTaskNode({ subTask, mainModel, defaultOpen = true }: SubTaskN
         </div>
       )}
 
-      {/* 展开：步骤列表 */}
+      {/* 展开：步骤列表 + 流式文本 */}
       <MountTransition show={open} variant="height" duration={200}>
         <div>
             <div className="px-3 pb-2 border-t border-outline/5">
@@ -106,6 +118,18 @@ export function SubTaskNode({ subTask, mainModel, defaultOpen = true }: SubTaskN
               )}
             </div>
 
+            {/* 流式文本缓冲区 — LLM 逐字输出展示 */}
+            {textBuffer && (
+              <div className={`px-3 pb-2 border-t border-outline/5 transition-opacity duration-150 ${isTextStale ? 'opacity-60' : 'opacity-100'}`}>
+                <div className="pt-2 text-[11px] text-on-surface/70 leading-relaxed whitespace-pre-wrap break-words font-mono">
+                  {textBuffer}
+                  {isRunning && !isDone && (
+                    <span className="inline-block w-1.5 h-3 bg-blue-400 animate-pulse ml-0.5 align-middle" />
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* browser-use 特有：URL 信息 */}
             {subTask.source === 'browser-use' && subTask.browserUrl && (
               <div className="px-3 pb-2">
@@ -117,3 +141,7 @@ export function SubTaskNode({ subTask, mainModel, defaultOpen = true }: SubTaskN
     </div>
   );
 }
+
+// React.memo: 仅在 subTask/mainModel/defaultOpen prop 变化时重渲染
+// text_chunk 事件不再触发此组件重渲染 (通过 useTextBuffer 独立订阅)
+export const SubTaskNode = memo(SubTaskNodeImpl);

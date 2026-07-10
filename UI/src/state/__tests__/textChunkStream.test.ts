@@ -4,10 +4,10 @@
  * 覆盖 R-fix: 单模型直跑时, 后端只发 text 事件 (没有 phase 事件)
  * 流送区应能通过 text_chunk 事件正确显示文本累积
  *
- * 链路:
+ * 链路 (2026-07-10 解耦缓冲优化):
  *   pushStreamEvent('text_chunk', { content, subTaskId })
  *   → applyEvent → EVENT_HANDLERS.text_chunk
- *   → updateTask → subTask.textBuffer += content
+ *   → textBuffers[subTaskId] += content (解耦于 RootTask, 不触发全树重渲染)
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useStreamingStore } from '../streamingStore';
@@ -17,7 +17,7 @@ beforeEach(() => {
 });
 
 describe('R-fix: text_chunk 事件处理', () => {
-  it('text_chunk 应累积到对应 subTask.textBuffer', () => {
+  it('text_chunk 应累积到对应 textBuffers[subTaskId]', () => {
     const chatId = 'c1';
     useStreamingStore.getState().createTask(chatId, '翻译这句话', 'normal');
     const task = useStreamingStore.getState().tasks[chatId];
@@ -45,7 +45,7 @@ describe('R-fix: text_chunk 事件处理', () => {
       subTaskId: subId, content: '你好', ts: Date.now(), status: 'running',
     });
     let st = useStreamingStore.getState().tasks[chatId].subTasks[0];
-    expect(st.textBuffer).toBe('你好');
+    expect(useStreamingStore.getState().textBuffers[subId]).toBe('你好');
     expect(st.status).toBe('running');
 
     // 4) 推 text_chunk 2
@@ -54,7 +54,7 @@ describe('R-fix: text_chunk 事件处理', () => {
       subTaskId: subId, content: '，世界', ts: Date.now(), status: 'running',
     });
     st = useStreamingStore.getState().tasks[chatId].subTasks[0];
-    expect(st.textBuffer).toBe('你好，世界');
+    expect(useStreamingStore.getState().textBuffers[subId]).toBe('你好，世界');
 
     // 5) 推 text_chunk 3
     useStreamingStore.getState().applyEvent({
@@ -62,7 +62,7 @@ describe('R-fix: text_chunk 事件处理', () => {
       subTaskId: subId, content: '！', ts: Date.now(), status: 'running',
     });
     st = useStreamingStore.getState().tasks[chatId].subTasks[0];
-    expect(st.textBuffer).toBe('你好，世界！');
+    expect(useStreamingStore.getState().textBuffers[subId]).toBe('你好，世界！');
   });
 
   it('text_chunk 没指定 subTaskId 时, 写入最后一个 subTask', () => {
@@ -83,10 +83,10 @@ describe('R-fix: text_chunk 事件处理', () => {
     });
     const st = useStreamingStore.getState().tasks[chatId].subTasks[0];
     expect(st.id).toBe(subId);
-    expect(st.textBuffer).toBe('fallback');
+    expect(useStreamingStore.getState().textBuffers[subId]).toBe('fallback');
   });
 
-  it('text_chunk content 为空时, 不变更 textBuffer', () => {
+  it('text_chunk content 为空时, 不变更 textBuffers', () => {
     const chatId = 'c1';
     useStreamingStore.getState().createTask(chatId, 'q', 'normal');
     const task = useStreamingStore.getState().tasks[chatId];
@@ -107,7 +107,7 @@ describe('R-fix: text_chunk 事件处理', () => {
       subTaskId: subId, content: '', ts: Date.now(), status: 'running',
     });
     const st = useStreamingStore.getState().tasks[chatId].subTasks[0];
-    expect(st.textBuffer).toBe('Hello');
+    expect(useStreamingStore.getState().textBuffers[subId]).toBe('Hello');
   });
 
   it('完整流程: SINGLE_MODEL → text_chunk × N → subtask_done → delivery → DONE', () => {
@@ -134,7 +134,7 @@ describe('R-fix: text_chunk 事件处理', () => {
         subTaskId: subId, content: txt, ts: Date.now(), status: 'running',
       });
     }
-    expect(useStreamingStore.getState().tasks[chatId].subTasks[0].textBuffer).toBe('I am AI');
+    expect(useStreamingStore.getState().textBuffers[subId]).toBe('I am AI');
 
     // 结束: subtask_done
     useStreamingStore.getState().applyEvent({
@@ -155,7 +155,7 @@ describe('R-fix: text_chunk 事件处理', () => {
     const final = useStreamingStore.getState().tasks[chatId];
     expect(final.phase).toBe('DONE');
     expect(final.subTasks[0].status).toBe('done');
-    expect(final.subTasks[0].textBuffer).toBe('I am AI');
+    expect(useStreamingStore.getState().textBuffers[subId]).toBe('I am AI');
     expect(final.deliverResult).toBe('I am AI');
   });
 });

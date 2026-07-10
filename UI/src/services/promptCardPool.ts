@@ -4,6 +4,7 @@
  * 支持 cooldown 去重、模式适配（ultimate 全自动跳过）
  *
  * 2026-07-03: 从 state/ 移到 services/，因其实质是单例服务而非 zustand store
+ * 2026-07-10: 添加 useSyncExternalStore 订阅机制, 替代 StreamPanel 中的手动轮询
  */
 import type {
   PromptCardSpec,
@@ -16,16 +17,48 @@ class PromptCardPool {
   private instances = new Map<string, PromptCardInstance>();
   private cooldownTimers = new Map<string, number>(); // groupKey -> expiresAt
 
+  // useSyncExternalStore 订阅机制
+  private listeners = new Set<() => void>();
+  // 按 chatId 缓存快照, 保证 getSnapshot 返回稳定引用
+  private chatSnapshots = new Map<string, PromptCardInstance[]>();
+  private version = 0;
+
+  /** useSyncExternalStore: 订阅变更 */
+  subscribe = (callback: () => void): (() => void) => {
+    this.listeners.add(callback);
+    return () => this.listeners.delete(callback);
+  };
+
+  /** useSyncExternalStore: 获取指定 chatId 的活跃卡片快照 (引用稳定) */
+  getSnapshotForChat = (chatId: string): PromptCardInstance[] => {
+    const cached = this.chatSnapshots.get(chatId);
+    if (cached) return cached;
+
+    const snapshot = [...this.instances.values()]
+      .filter(i => i.spec.context?.chatId === chatId && i.status === 'active')
+      .sort((a, b) => b.createdAt - a.createdAt);
+
+    this.chatSnapshots.set(chatId, snapshot);
+    return snapshot;
+  };
+
+  /** 通知所有订阅者变更, 清除快照缓存 */
+  private notify(): void {
+    this.chatSnapshots.clear();
+    this.version++;
+    this.listeners.forEach(l => l());
+  }
+
   /** 创建/更新实例，根据 mode 决定是否自动处理 */
   upsert(spec: PromptCardSpec, mode: PermissionMode): void {
     // 全自动模式：不弹卡片，直接自动执行推荐动作
     if (mode === 'ultimate' && spec.priority !== 'custom') {
       this.autoResolve(spec);
+      this.notify();
       return;
     }
 
     // cooldown 去重: 同 groupKey 且冷却期内不重复弹 (含已展示的卡)
-    // 注意: 必须放在 existing 检查之前, 否则同 group 但 spec.id 不同的卡仍会创建
     if (spec.cooldown && spec.groupKey) {
       const cooldownUntil = this.cooldownTimers.get(spec.groupKey);
       if (cooldownUntil && Date.now() < cooldownUntil) {
@@ -45,14 +78,15 @@ class PromptCardPool {
       });
     }
 
-    // 卡片被展示时, 立即开启 cooldown 计时 (R1.1)
-    // 防止后端重复发同 groupKey 卡片刷屏
+    // 卡片被展示时, 立即开启 cooldown 计时
     if (spec.cooldown && spec.groupKey) {
       this.cooldownTimers.set(
         spec.groupKey,
         Date.now() + spec.cooldown * 1000,
       );
     }
+
+    this.notify();
   }
 
   /** 全自动模式：直接标记为自动处理 */
@@ -84,6 +118,8 @@ class PromptCardPool {
         Date.now() + inst.spec.cooldown * 1000,
       );
     }
+
+    this.notify();
   }
 
   /** 超时 → 标记过期，执行默认动作 */
@@ -100,19 +136,20 @@ class PromptCardPool {
         Date.now() + (inst.spec.cooldown ?? 0) * 1000,
       );
     }
+
+    this.notify();
   }
 
   /** 关闭卡片 */
   dismiss(id: string): void {
     const inst = this.instances.get(id);
     if (inst) inst.status = 'dismissed';
+    this.notify();
   }
 
-  /** 按 chatId 过滤活跃实例 */
+  /** 按 chatId 过滤活跃实例 (兼容旧接口, 内部使用) */
   getActive(chatId: string): PromptCardInstance[] {
-    return [...this.instances.values()]
-      .filter(i => i.spec.context?.chatId === chatId && i.status === 'active')
-      .sort((a, b) => b.createdAt - a.createdAt);
+    return this.getSnapshotForChat(chatId);
   }
 
   /** 获取所有实例（含已解决的） */
@@ -124,11 +161,14 @@ class PromptCardPool {
 
   /** 对话切换时清理 */
   clearChat(chatId: string): void {
+    let changed = false;
     for (const [id, inst] of this.instances) {
       if (inst.spec.context?.chatId === chatId) {
         this.instances.delete(id);
+        changed = true;
       }
     }
+    if (changed) this.notify();
   }
 
   /** 获取单实例 */
@@ -140,6 +180,7 @@ class PromptCardPool {
   __reset(): void {
     this.instances.clear();
     this.cooldownTimers.clear();
+    this.notify();
   }
 }
 

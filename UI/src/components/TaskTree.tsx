@@ -2,7 +2,7 @@
  * TaskTree — 任务树容器
  * 展示根任务、子任务列表、审查区、进度条
  */
-import React from 'react';
+import React, { memo } from 'react';
 import { Layers, ChevronDown } from '../utils/icons';
 import type { RootTask, PermissionMode } from '../types/streaming';
 import type { ArbitrationResult } from '../types/streaming';
@@ -24,12 +24,13 @@ const PHASE_LABELS: Record<string, string> = {
   DISPATCHING: '分配任务',
   EXECUTING: '执行中',
   REVIEWING: '审查中',
+  AUDITING: '审计中',
   DELIVERING: '交付结果',
   DONE: '完成',
   ERROR: '错误',
 };
 
-export function TaskTree({ task, mainModel, modelCount, mode, arbitrationResult }: TaskTreeProps) {
+export const TaskTree = memo(function TaskTree({ task, mainModel, modelCount, mode, arbitrationResult }: TaskTreeProps) {
   const isDone = task.phase === 'DONE';
   const isError = task.phase === 'ERROR';
 
@@ -98,4 +99,4 @@ export function TaskTree({ task, mainModel, modelCount, mode, arbitrationResult 
       )}
     </div>
   );
-}
+});
