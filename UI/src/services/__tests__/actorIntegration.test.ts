@@ -170,12 +170,6 @@ describe('dispatchStreamEvent 双写', () => {
       status: 'error',
     }));
 
-    // streamingStore 标记 ERROR (通过 EVENT_HANDLERS)
-    // 注意: error 事件在 streamingStore 中可能不直接改 phase,
-    // 但 eventBuffer 会记录它
-    const buf = useStreamingStore.getState().eventBuffer['c1'];
-    expect(buf.some(e => e.kind === 'error')).toBe(true);
-
     // uiMessageStore 有 error part
     const lastMsg = uiMessageStore.getLastAssistantMessage('c1')!;
     const errorParts = lastMsg.parts.filter(p => p.type === 'error');

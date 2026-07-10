@@ -220,30 +220,6 @@ describe('流送区端到端: 旧版 phase 兼容', () => {
   });
 });
 
-describe('流送区端到端: eventBuffer 累积', () => {
-  it('所有推送的 StreamEvent 都会入 eventBuffer[chatId]', () => {
-    const chatId = 'c1';
-    useStreamingStore.getState().createTask(chatId, 'q', 'normal');
-    const recv = makeReceiver(chatId);
-
-    mapPhaseToStreamEvents({
-      phase: 'phase0_subtask', subtasks: [{ workerIdx: 0, modelName: 'A' }],
-    }, { activeChatId: chatId, ...recv });
-    mapPhaseToStreamEvents({ phase: 'phase1_worker_start', workerIdx: 0 }, { activeChatId: chatId, ...recv });
-    mapPhaseToStreamEvents({ phase: 'phase1_worker_done', workerIdx: 0, content: 'x' }, { activeChatId: chatId, ...recv });
-    mapPhaseToStreamEvents({ phase: 'phase3_deliver_done' }, { activeChatId: chatId, ...recv });
-
-    const buf = useStreamingStore.getState().eventBuffer[chatId];
-    expect(buf.length).toBeGreaterThan(0);
-    // 包含 phase_change (DECOMPOSING + DISPATCHING + DONE) + subtask_created + subtask_progress + subtask_done
-    const kinds = buf.map(e => e.kind);
-    expect(kinds).toContain('phase_change');
-    expect(kinds).toContain('subtask_created');
-    expect(kinds).toContain('subtask_progress');
-    expect(kinds).toContain('subtask_done');
-  });
-});
-
 describe('流送区端到端: R2.2 连发任务归档', () => {
   it('新任务进来时, 未完成的旧任务被归档到 taskHistory', () => {
     const chatId = 'c1';
@@ -299,15 +275,12 @@ describe('流送区端到端: 边界', () => {
     useStreamingStore.getState().createTask(chatId, 'q', 'normal');
     const recv = makeReceiver(chatId);
 
-    const bufBefore = useStreamingStore.getState().eventBuffer[chatId]?.length ?? 0;
     mapPhaseToStreamEvents({ phase: 'reply' }, { activeChatId: chatId, ...recv });
     mapPhaseToStreamEvents({ phase: 'audit_stream' }, { activeChatId: chatId, ...recv });
     mapPhaseToStreamEvents({ phase: 'score' }, { activeChatId: chatId, ...recv });
     mapPhaseToStreamEvents({ phase: 'tool_call' }, { activeChatId: chatId, ...recv });
     mapPhaseToStreamEvents({ phase: 'warn' }, { activeChatId: chatId, ...recv });
 
-    const bufAfter = useStreamingStore.getState().eventBuffer[chatId]?.length ?? 0;
-    expect(bufAfter).toBe(bufBefore); // 一个都没进 buffer
-    expect(useStreamingStore.getState().tasks[chatId].phase).toBe('CLARIFY'); // 初始 phase
+    expect(useStreamingStore.getState().tasks[chatId].phase).toBe('CLARIFY'); // 初始 phase, 未被任何事件推进
   });
 });

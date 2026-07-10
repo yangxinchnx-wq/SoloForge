@@ -18,8 +18,6 @@ import { getSettingsSummary } from '../types/chat';
 //   6 个 stream 子视图 → streamViews.tsx
 import { CollapsibleCodeBlock, FormatChatMessage } from './chatMessage';
 import { SuggestEnableView } from './streamViews';
-// StreamPanel 选择器: 获取事件缓冲 (通知用)
-import { useEventBufferForChat } from '../state/streamingStore';
 // 2026-07-03 阶段3.1.E: 12 个 state + 9 个 handler 收敛到 useChatStore
 import { useChatStore, fallbackActiveSettings } from '../state/useChatStore';
 import { NormalIcon, PerformanceIcon, ExpertIcon, UltimateIcon } from './permissionModeIcons';
@@ -262,9 +260,6 @@ export default function ChatPanel({
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [activeMessages]);
-
-  // StreamPanel 事件缓冲 (按 chatId 隔离, 仅用于事件到达通知)
-  const eventBuffer = useEventBufferForChat(activeChatId);
 
   // 2026-07-03 阶段3.1.E: 发送时把 inputRef 传给 store action, 让 store 也能 focus 输入框
   const handleSend = () => handleSendFromStore(inputRef);
@@ -536,7 +531,6 @@ export default function ChatPanel({
                 mainModel={mainModel}
                 modelCount={1 + (secModels?.length || 0)}
                 permissionMode={permissionMode}
-                events={eventBuffer ?? []}
               />
             </div>
           )}

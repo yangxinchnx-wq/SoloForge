@@ -1,7 +1,7 @@
 /**
- * C + D fix 专项测试
+ * C fix 专项测试
  * C: streamTaskMeta[chatId] 隔离 (替代组件级 streamTaskRef)
- * D: eventBuffer[chatId] 累积流送事件 (StreamPanel.events 数据源)
+ * (D fix eventBuffer 已随死代码清理移除)
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useStreamingStore } from '../streamingStore';
@@ -96,97 +96,8 @@ describe('C fix: streamTaskMeta — 多 chat 隔离', () => {
   });
 });
 
-describe('D fix: eventBuffer — StreamPanel.events 数据源', () => {
-  it('createTask 时清空旧 eventBuffer[chatId]', () => {
-    // 第 1 轮: 推一些事件
-    useStreamingStore.getState().createTask('c1', 'round 1', 'normal');
-    useStreamingStore.getState().applyEvent(makeEvt({ chatId: 'c1', kind: 'phase_change', content: 'EXECUTING' }));
-    useStreamingStore.getState().applyEvent(makeEvt({ chatId: 'c1', kind: 'phase_change', content: 'DONE' }));
-    expect(useStreamingStore.getState().eventBuffer['c1']).toHaveLength(2);
-
-    // 第 2 轮: createTask 应清空旧缓冲
-    useStreamingStore.getState().createTask('c1', 'round 2', 'normal');
-    expect(useStreamingStore.getState().eventBuffer['c1']).toEqual([]);
-  });
-
-  it('applyEvent 推入 eventBuffer[chatId], 顺序按 ts', () => {
-    useStreamingStore.getState().createTask('c1', 'task', 'normal');
-    useStreamingStore.getState().applyEvent(makeEvt({ chatId: 'c1', kind: 'phase_change', content: 'EXECUTING' }));
-    useStreamingStore.getState().applyEvent(makeEvt({ chatId: 'c1', kind: 'phase_change', content: 'REVIEWING' }));
-    useStreamingStore.getState().applyEvent(makeEvt({ chatId: 'c1', kind: 'phase_change', content: 'DONE' }));
-    const buf = useStreamingStore.getState().eventBuffer['c1'];
-    expect(buf).toHaveLength(3);
-    expect(buf.map(e => e.content)).toEqual(['EXECUTING', 'REVIEWING', 'DONE']);
-  });
-
-  it('eventBuffer 不同 chatId 互不干扰', () => {
-    useStreamingStore.getState().createTask('chatA', 'A', 'normal');
-    useStreamingStore.getState().createTask('chatB', 'B', 'normal');
-    useStreamingStore.getState().applyEvent(makeEvt({ chatId: 'chatA', kind: 'phase_change', content: 'EXECUTING' }));
-    useStreamingStore.getState().applyEvent(makeEvt({ chatId: 'chatB', kind: 'phase_change', content: 'DONE' }));
-    expect(useStreamingStore.getState().eventBuffer['chatA']).toHaveLength(1);
-    expect(useStreamingStore.getState().eventBuffer['chatB']).toHaveLength(1);
-  });
-
-  it('eventBuffer 超过 500 时丢弃最早 (容量上限)', () => {
-    useStreamingStore.getState().createTask('c1', 'task', 'normal');
-    // 推 600 条
-    for (let i = 0; i < 600; i++) {
-      useStreamingStore.getState().applyEvent(makeEvt({
-        chatId: 'c1', kind: 'phase_change', content: `EVT-${i}`, ts: i,
-      }));
-    }
-    const buf = useStreamingStore.getState().eventBuffer['c1'];
-    expect(buf.length).toBeLessThanOrEqual(500);
-    // 应该是后 500 条 (100~599)
-    expect(buf[0].content).toBe('EVT-100');
-    expect(buf[buf.length - 1].content).toBe('EVT-599');
-  });
-
-  it('applyEvent 即使没有 task 也入缓冲 (后端可能先发 phase0_skip)', () => {
-    // 没有 createTask, 直接 applyEvent
-    useStreamingStore.getState().applyEvent(makeEvt({
-      chatId: 'c1', kind: 'phase_change', content: 'EXECUTING',
-    }));
-    expect(useStreamingStore.getState().eventBuffer['c1']).toHaveLength(1);
-    // task 不存在, 不抛错
-    expect(useStreamingStore.getState().tasks['c1']).toBeUndefined();
-  });
-
-  it('drainEventBuffer 原子取出并清空', () => {
-    useStreamingStore.getState().createTask('c1', 'task', 'normal');
-    useStreamingStore.getState().applyEvent(makeEvt({ chatId: 'c1', kind: 'phase_change', content: 'EXECUTING' }));
-    useStreamingStore.getState().applyEvent(makeEvt({ chatId: 'c1', kind: 'phase_change', content: 'DONE' }));
-
-    const drained = useStreamingStore.getState().drainEventBuffer('c1');
-    expect(drained).toHaveLength(2);
-    // 取走后缓冲应清空
-    expect(useStreamingStore.getState().eventBuffer['c1']).toBeUndefined();
-
-    // 二次 drain 应返回空
-    const drained2 = useStreamingStore.getState().drainEventBuffer('c1');
-    expect(drained2).toEqual([]);
-  });
-
-  it('clearEventBuffer 只清缓冲, 不动 task 树', () => {
-    useStreamingStore.getState().createTask('c1', 'task', 'normal');
-    useStreamingStore.getState().applyEvent(makeEvt({ chatId: 'c1', kind: 'phase_change', content: 'EXECUTING' }));
-    useStreamingStore.getState().clearEventBuffer('c1');
-    expect(useStreamingStore.getState().eventBuffer['c1']).toBeUndefined();
-    // task 还在
-    expect(useStreamingStore.getState().tasks['c1']).toBeDefined();
-  });
-
-  it('clearChat 同时清理 eventBuffer[chatId]', () => {
-    useStreamingStore.getState().createTask('c1', 'task', 'normal');
-    useStreamingStore.getState().applyEvent(makeEvt({ chatId: 'c1', kind: 'phase_change', content: 'EXECUTING' }));
-    useStreamingStore.getState().clearChat('c1');
-    expect(useStreamingStore.getState().eventBuffer['c1']).toBeUndefined();
-  });
-});
-
-describe('C + D 联调: 双 chat 并发场景', () => {
-  it('chatA 和 chatB 同时跑, eventBuffer 和 streamTaskMeta 都互不干扰', () => {
+describe('C 联调: 双 chat 并发场景', () => {
+  it('chatA 和 chatB 同时跑, streamTaskMeta 互不干扰', () => {
     useStreamingStore.getState().createTask('chatA', 'A', 'normal');
     useStreamingStore.getState().createTask('chatB', 'B', 'normal');
 
@@ -215,10 +126,6 @@ describe('C + D 联调: 双 chat 并发场景', () => {
     const subB = useStreamingStore.getState().tasks.chatB.subTasks[0];
     expect(subA.progress).toBe(50);
     expect(subB.progress).toBe(30);
-
-    // eventBuffer 各自独立
-    expect(useStreamingStore.getState().eventBuffer.chatA).toHaveLength(2);  // 1 created + 1 progress
-    expect(useStreamingStore.getState().eventBuffer.chatB).toHaveLength(2);
 
     // streamTaskMeta 互不干扰
     expect(useStreamingStore.getState().streamTaskMeta.chatA.rootTaskId).not.toBe(

@@ -70,7 +70,7 @@ if (typeof window !== 'undefined') {
   useChatStore.getState().loadConversationsFromBackend();
 
   // 2026-07-10: 初始化 Actor 系统 + 持久化恢复 (P3 集成)
-  //   - 从 IndexedDB/localStorage 恢复热状态 (tasks, textBuffers, actors)
+  //   - 从 IndexedDB/localStorage 恢复热状态 (tasks, actors, messages)
   //   - 注册监督策略错误回调
   //   - 失败不阻塞 UI, 降级为纯 streamingStore 模式
   initActorSystem().catch((e) => {

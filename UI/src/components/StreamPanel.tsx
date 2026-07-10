@@ -13,7 +13,7 @@
  */
 import React, { useEffect, useState } from 'react';
 import { ChevronDown } from '../utils/icons';
-import type { StreamEvent, PermissionMode } from '../types/streaming';
+import type { PermissionMode } from '../types/streaming';
 import { useStreamingStore } from '../state/streamingStore';
 import { promptCardPool } from '../services/promptCardPool';
 import { usePromptCards } from '../hooks/usePromptCards';
@@ -34,10 +34,9 @@ interface StreamPanelProps {
   mainModel: string;
   modelCount: number;
   permissionMode: PermissionMode;
-  events?: StreamEvent[];
 }
 
-export default function StreamPanel({ chatId, mainModel, modelCount, permissionMode, events = [] }: StreamPanelProps) {
+export default function StreamPanel({ chatId, mainModel, modelCount, permissionMode }: StreamPanelProps) {
   // P0: hasTask 从 uiMessageStore 派生 (替代 streamingStore.tasks[chatId])
   // useStreamSummary 只返回派生摘要, 不订阅完整 task 对象
   const summary = useStreamSummary(chatId);
@@ -64,11 +63,6 @@ export default function StreamPanel({ chatId, mainModel, modelCount, permissionM
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [chatId]);
-
-  // 事件到达通知 (留作未来扩展: 滚动/声音通知等)
-  useEffect(() => {
-    if (events.length === 0) return;
-  }, [events]);
 
   // 无任务且无卡片时不显示
   if (!hasTask && blockingCards.length === 0 && nonBlockingCards.length === 0) return null;

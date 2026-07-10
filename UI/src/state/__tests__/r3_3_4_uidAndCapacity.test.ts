@@ -1,28 +1,14 @@
 /**
  * R3.3 + R3.4 测试
  * R3.3: uid 改用 crypto.randomUUID()
- * R3.4: eventBuffer 容量可配置 + dev 出口
+ * R3.4: dev 出口 (eventBuffer 容量配置已随死代码清理移除)
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useStreamingStore } from '../streamingStore';
-import { setBufferCapacity, getBufferCapacity, DEFAULT_BUFFER_CAPACITY } from '../streamingStore';
 import { installStreamDevHooks } from '../streamingStore';
-
-function makeEvt(content: string) {
-  return {
-    id: `e-${Math.random()}`,
-    chatId: 'c1',
-    rootTaskId: 't',
-    kind: 'phase_change' as const,
-    content,
-    ts: Date.now(),
-    status: 'running' as const,
-  };
-}
 
 beforeEach(() => {
   useStreamingStore.getState().__reset();
-  setBufferCapacity(DEFAULT_BUFFER_CAPACITY);
 });
 
 describe('R3.3: uid 唯一性', () => {
@@ -70,69 +56,6 @@ describe('R3.3: uid 唯一性', () => {
   });
 });
 
-describe('R3.4: eventBuffer 容量可配置', () => {
-  it('默认容量 = 500', () => {
-    expect(getBufferCapacity()).toBe(500);
-    expect(DEFAULT_BUFFER_CAPACITY).toBe(500);
-  });
-
-  it('setBufferCapacity 动态调整', () => {
-    setBufferCapacity(100);
-    expect(getBufferCapacity()).toBe(100);
-    setBufferCapacity(1000);
-    expect(getBufferCapacity()).toBe(1000);
-  });
-
-  it('setBufferCapacity < 10 时兜底为 10', () => {
-    setBufferCapacity(1);
-    expect(getBufferCapacity()).toBe(10);
-    setBufferCapacity(-5);
-    expect(getBufferCapacity()).toBe(10);
-  });
-
-  it('容量生效: 100 时超 100 自动丢弃最早的', () => {
-    setBufferCapacity(100);
-    useStreamingStore.getState().createTask('c1', 'x', 'normal');
-    for (let i = 0; i < 150; i++) {
-      useStreamingStore.getState().applyEvent(makeEvt(`EVT-${i}`));
-    }
-    const buf = useStreamingStore.getState().eventBuffer.c1;
-    expect(buf.length).toBe(100);
-    expect(buf[0].content).toBe('EVT-50');
-    expect(buf[99].content).toBe('EVT-149');
-  });
-
-  it('容量调小: 已存在 buffer 不会被自动截断, 但后续 append 仍按新容量', () => {
-    setBufferCapacity(500);
-    useStreamingStore.getState().createTask('c1', 'x', 'normal');
-    for (let i = 0; i < 200; i++) {
-      useStreamingStore.getState().applyEvent(makeEvt(`A-${i}`));
-    }
-    expect(useStreamingStore.getState().eventBuffer.c1).toHaveLength(200);
-
-    // 调小到 50
-    setBufferCapacity(50);
-    for (let i = 0; i < 30; i++) {
-      useStreamingStore.getState().applyEvent(makeEvt(`B-${i}`));
-    }
-    // 总数应 <= 50 (从末尾保留)
-    const buf = useStreamingStore.getState().eventBuffer.c1;
-    expect(buf.length).toBe(50);
-    expect(buf[49].content).toBe('B-29');
-  });
-});
-
-describe('R3.4: dev 出口 (window.__streamStore)', () => {
-  it('在 jsdom/node 环境跳过, 仅在浏览器跑', () => {
-    // 浏览器环境才验证 window.__streamStore
-    // node 环境跳过 (无 window 对象)
-    if (typeof window === 'undefined') return;
-    (window as any).__streamStore = useStreamingStore;
-    expect((window as any).__streamStore).toBe(useStreamingStore);
-    expect((window as any).__streamStore.getState().tasks).toBeDefined();
-  });
-});
-
 describe('R3.4: installStreamDevHooks 挂载到 window', () => {
   beforeEach(() => {
     if (typeof window !== 'undefined') {
@@ -148,8 +71,6 @@ describe('R3.4: installStreamDevHooks 挂载到 window', () => {
     expect(typeof hook.getState).toBe('function');
     expect(typeof hook.createTask).toBe('function');
     expect(typeof hook.__reset).toBe('function');
-    expect(typeof hook.setBufferCapacity).toBe('function');
-    expect(typeof hook.getBufferCapacity).toBe('function');
     expect(typeof hook.getTask).toBe('function');
   });
 
@@ -177,15 +98,6 @@ describe('R3.4: installStreamDevHooks 挂载到 window', () => {
     expect(Object.keys(useStreamingStore.getState().tasks)).toContain('c-x');
     hook.__reset();
     expect(Object.keys(useStreamingStore.getState().tasks)).toEqual([]);
-  });
-
-  it('hook.setBufferCapacity / getBufferCapacity 与顶层导出同步', () => {
-    if (typeof window === 'undefined') return;
-    installStreamDevHooks();
-    const hook = (window as any).__soloForgeStream;
-    hook.setBufferCapacity(42);
-    expect(hook.getBufferCapacity()).toBe(42);
-    expect(getBufferCapacity()).toBe(42);
   });
 
   it('多次调用 installStreamDevHooks 安全 (幂等)', () => {

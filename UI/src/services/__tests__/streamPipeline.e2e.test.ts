@@ -369,7 +369,7 @@ describe('E2E: 双路径一致性 (streamingStore ↔ uiMessageStore)', () => {
     expect(msg.parts.filter(p => p.type === 'subtask-created')).toHaveLength(5);
   });
 
-  it('text_chunk 累积: streamingStore.textBuffers vs uiMessageStore text parts', () => {
+  it('text_chunk 累积: uiMessageStore text parts', () => {
     const task = createTaskWithActor('c1', 'test', 'normal');
     dispatchStreamEvent(makeEvent('c1', task.id, 'phase_change', { content: 'DECOMPOSING' }));
 
@@ -390,8 +390,6 @@ describe('E2E: 双路径一致性 (streamingStore ↔ uiMessageStore)', () => {
       }));
     }
 
-    // streamingStore: textBuffers 累积
-    expect(useStreamingStore.getState().textBuffers[subId]).toBe('Hello World!');
     // uiMessageStore: text part 累积
     const msg = uiMessageStore.getLastAssistantMessage('c1')!;
     const textParts = msg.parts.filter(p => p.type === 'text');
@@ -430,10 +428,6 @@ describe('E2E: 双路径一致性 (streamingStore ↔ uiMessageStore)', () => {
       detail: 'Connection refused',
       status: 'error',
     }));
-
-    // streamingStore: eventBuffer 记录
-    const buf = useStreamingStore.getState().eventBuffer['c1'];
-    expect(buf.some(e => e.kind === 'error')).toBe(true);
 
     // uiMessageStore: error part
     const msg = uiMessageStore.getLastAssistantMessage('c1')!;

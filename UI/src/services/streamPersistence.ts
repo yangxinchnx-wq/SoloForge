@@ -29,7 +29,6 @@ import type { ActorStateSnapshot } from './taskActor';
 const STORAGE_PREFIX = 'soloforge:stream:';
 const KEYS = {
   tasks: `${STORAGE_PREFIX}tasks`,
-  textBuffers: `${STORAGE_PREFIX}textBuffers`,
   agents: `${STORAGE_PREFIX}agents`,
   actorSnapshots: `${STORAGE_PREFIX}actorSnapshots`,
   messages: `${STORAGE_PREFIX}messages`,
@@ -42,7 +41,6 @@ const KEYS = {
 
 interface PersistedState {
   tasks: Record<string, RootTask>;
-  textBuffers: Record<string, string>;
   agents: Record<string, SubAgent[]>;
   actorSnapshots: ActorStateSnapshot[];
   /** P0: uiMessageStore 的 messages (替代 tasks + textBuffers) */
@@ -330,7 +328,6 @@ class StreamPersistenceManager {
 
     const state: PersistedState = {
       tasks: this.pendingFlush.tasks ?? this.ls.read<Record<string, RootTask>>(KEYS.tasks) ?? {},
-      textBuffers: this.pendingFlush.textBuffers ?? this.ls.read<Record<string, string>>(KEYS.textBuffers) ?? {},
       agents: this.pendingFlush.agents ?? this.ls.read<Record<string, SubAgent[]>>(KEYS.agents) ?? {},
       actorSnapshots: this.pendingFlush.actorSnapshots ?? this.ls.read<ActorStateSnapshot[]>(KEYS.actorSnapshots) ?? [],
       messages: this.pendingFlush.messages ?? this.ls.read<Record<string, UIMessage[]>>(KEYS.messages) ?? {},
@@ -339,7 +336,6 @@ class StreamPersistenceManager {
     };
 
     this.ls.write(KEYS.tasks, state.tasks);
-    this.ls.write(KEYS.textBuffers, state.textBuffers);
     this.ls.write(KEYS.agents, state.agents);
     this.ls.write(KEYS.actorSnapshots, state.actorSnapshots);
     if (state.messages) this.ls.write(KEYS.messages, state.messages);
@@ -361,7 +357,6 @@ class StreamPersistenceManager {
 
     return {
       tasks: tasks ?? {},
-      textBuffers: this.ls.read<Record<string, string>>(KEYS.textBuffers) ?? {},
       agents: this.ls.read<Record<string, SubAgent[]>>(KEYS.agents) ?? {},
       actorSnapshots: this.ls.read<ActorStateSnapshot[]>(KEYS.actorSnapshots) ?? [],
       messages: messages ?? undefined,
@@ -407,7 +402,6 @@ class StreamPersistenceManager {
   /** 清除所有持久化数据 */
   async clearAll(): void {
     this.ls.remove(KEYS.tasks);
-    this.ls.remove(KEYS.textBuffers);
     this.ls.remove(KEYS.agents);
     this.ls.remove(KEYS.actorSnapshots);
     await this.idb.clearAll();

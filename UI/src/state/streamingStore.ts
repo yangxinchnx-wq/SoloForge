@@ -32,19 +32,6 @@ interface StreamingState {
   taskHistory: Record<string, RootTask[]>; // chatId -> completed tasks
   mode: PermissionMode;
 
-  // 解耦文本缓冲: subTaskId -> 累积文本
-  // 高频 text_chunk 事件只更新此 record, 不触发 RootTask 重渲染
-  // SubTaskNode 通过 useTextBuffer(subTaskId) 独立订阅
-  // @deprecated for display — text 内容已迁移到 uiMessageStore 的 text parts
-  //   旧路径: streamingStore.textBuffers[subTaskId]
-  //   新路径: uiMessageStore.getLastAssistantMessage(chatId).parts.filter(p => p.type === 'text')
-  //   保留用于: SubTaskNode 旧组件兼容 + Actor 系统控制流
-  textBuffers: Record<string, string>;
-
-  // 流送区事件缓冲 (按 chatId 隔离, StreamPanel.events 真正从这里取)
-  // 容量上限 500, 超出后丢弃最早的
-  eventBuffer: Record<string, StreamEvent[]>;
-
   // 流送任务元数据 (按 chatId 隔离, 替代组件级 streamTaskRef)
   // 存储 workerIdx -> subTaskId 的映射, 多 chat 并发时不会串台
   streamTaskMeta: Record<string, { rootTaskId: string; subTaskIds: Map<number, string> }>;
@@ -68,10 +55,6 @@ interface StreamingState {
   getSubTaskId: (chatId: string, workerIdx: number) => string | undefined;
   getStreamTaskMeta: (chatId: string) => { rootTaskId: string; subTaskIds: Map<number, string> } | undefined;
 
-  // 事件缓冲管理 (D fix: StreamPanel.events 的数据源)
-  drainEventBuffer: (chatId: string) => StreamEvent[];
-  clearEventBuffer: (chatId: string) => void;
-
   // R1.1: 子 Agent 池管理
   addAgent: (chatId: string, agent: SubAgent) => void;
   removeAgent: (chatId: string, agentId: string) => void;
@@ -82,17 +65,6 @@ interface StreamingState {
 
   // R1.4: 测试用 — 一键重置整个 store 到初始空状态
   __reset: () => void;
-}
-
-// R3.4 fix: 容量可配置 — 默认 500, 通过 setBufferCapacity 动态调整
-let eventBufferCapacity = 500;
-export const DEFAULT_BUFFER_CAPACITY = 500;
-export function setBufferCapacity(cap: number) {
-  if (cap < 10) cap = 10;
-  eventBufferCapacity = cap;
-}
-export function getBufferCapacity(): number {
-  return eventBufferCapacity;
 }
 
 // R3.3: 用 crypto.randomUUID() 替代模块级计数器
@@ -575,30 +547,18 @@ const EVENT_HANDLERS: Record<StreamEventKind, EventHandler> = {
     if (task.subTasks.length === 0) return;
     const targetId = event.subTaskId ?? task.subTasks[task.subTasks.length - 1].id;
 
-    // 解耦策略: 只更新 textBuffers record, 不触发 RootTask 重渲染
-    // 仅当 subtask 状态从 pending → running 时才更新 RootTask (一次性)
+    // 文本累积已迁移到 uiMessageStore text parts, 这里仅处理 subtask 状态 pending → running 一次性更新
+    const target = task.subTasks.find(st => st.id === targetId);
+    if (!target || target.status !== 'pending') return;
+
     set(s => {
-      const prev = s.textBuffers[targetId] ?? '';
-      const target = task.subTasks.find(st => st.id === targetId);
-      const needStatusUpdate = target && target.status === 'pending';
-
-      if (needStatusUpdate) {
-        const newSubTasks = task.subTasks.map(st => {
-          if (st.id !== targetId) return st;
-          return { ...st, status: 'running' as const, updatedAt: event.ts };
-        });
-        const updated = { ...task, subTasks: newSubTasks, updatedAt: event.ts };
-        updated.progress = calcRootProgress(updated);
-        return {
-          textBuffers: { ...s.textBuffers, [targetId]: prev + event.content },
-          tasks: { ...s.tasks, [event.chatId]: updated },
-        };
-      }
-
-      // 高频路径: 只更新 textBuffers, 不动 RootTask
-      return {
-        textBuffers: { ...s.textBuffers, [targetId]: prev + event.content },
-      };
+      const newSubTasks = task.subTasks.map(st => {
+        if (st.id !== targetId) return st;
+        return { ...st, status: 'running' as const, updatedAt: event.ts };
+      });
+      const updated = { ...task, subTasks: newSubTasks, updatedAt: event.ts };
+      updated.progress = calcRootProgress(updated);
+      return { tasks: { ...s.tasks, [event.chatId]: updated } };
     });
   },
 
@@ -613,8 +573,6 @@ export const useStreamingStore = create<StreamingState>((set, get) => ({
   tasks: {},
   taskHistory: {},
   mode: 'normal',
-  textBuffers: {},
-  eventBuffer: {},
   streamTaskMeta: {},
   agentsMap: {},
 
@@ -644,8 +602,6 @@ export const useStreamingStore = create<StreamingState>((set, get) => ({
           ...s.streamTaskMeta,
           [chatId]: { rootTaskId: task.id, subTaskIds: new Map() },
         },
-        // D fix: 新一轮任务清空旧事件缓冲
-        eventBuffer: { ...s.eventBuffer, [chatId]: [] },
       };
       if (shouldArchive && existing) {
         const existingHistory = s.taskHistory[chatId] ?? [];
@@ -659,37 +615,27 @@ export const useStreamingStore = create<StreamingState>((set, get) => ({
   applyEvent: (event: StreamEvent) => {
     const state = get();
     const task = state.tasks[event.chatId];
+    if (!task) return;
 
     // R1.2 fix: 字典派发 + 穷尽性类型检查
     // 加新 StreamEventKind 时, Record<StreamEventKind, Handler> 会编译报错, 强制补 handler
     //
-    // 2026-07-02 性能优化:把 eventBuffer 入队 (D fix) 与 task dispatch 合并为 1 次 set(),
-    // 之前每次事件触发 2 次 set() → 2 次全订阅组件 render。
-    // 现在 1 次 set() 完成 (eventBuffer 入队 + 任务 dispatch),组件 render 次数减半。
+    // 注意: tasks[chatId] 的 phase/progress/subTasks 字段 UI 已不订阅 (从 uiMessageStore.parts 派生)
+    // 这里更新仅维持控制流方法 (getLastSubTaskId 等) 所需的影子状态
+    //
+    // handler 有两种 set 模式:
+    //   1. ctx.set (大多数 handler) — 变更捕获到 taskPatch, 外层 set 返回 taskPatch
+    //   2. get().transitionTaskPhase() 等 (phase_change/error/audit_finding) — 直接改 store, 外层 set 返回 {} 不覆盖
     const handler = EVENT_HANDLERS[event.kind];
     set(s => {
-      // 1) eventBuffer 入队 (D fix)
-      const cur = s.eventBuffer[event.chatId] ?? [];
-      const cap = getBufferCapacity();
-      const next = cur.length >= cap
-        ? [...cur.slice(cur.length - cap + 1), event]
-        : [...cur, event];
-      const nextEventBuffer = { ...s.eventBuffer, [event.chatId]: next };
-
-      // 2) task dispatch — 复制 handler 的副作用逻辑 (用同样 handler)
-      if (!task) {
-        return { eventBuffer: nextEventBuffer };
-      }
-      // 用临时 set 让 handler 内嵌套 set 与外部 set 互不干扰
-      // 关键点:handler 内部会读 task (旧值) 并 set(),所以先在 closure 中取出,而不是
-      // 让 handler 二次进入 set()
       let taskPatch: Partial<StreamingState> | null = null;
       handler(event, {
         get: () => ({ ...(s as StreamingState), task }),
         set: (fn) => { taskPatch = fn(s); },
         task,
       });
-      return taskPatch ? { ...taskPatch, eventBuffer: nextEventBuffer } : { eventBuffer: nextEventBuffer };
+      // 返回 {} 而非 s: 若 handler 通过 get().xxx() 已直接改 store, 返回 s 会回滚
+      return taskPatch ?? {};
     });
   },
 
@@ -800,23 +746,16 @@ export const useStreamingStore = create<StreamingState>((set, get) => ({
   clearChat: (chatId: string) => {
     set(s => {
       const removed = s.tasks[chatId];
-      if (!removed && !s.eventBuffer[chatId] && !s.streamTaskMeta[chatId] && !s.agentsMap[chatId]) return s;
+      if (!removed && !s.streamTaskMeta[chatId] && !s.agentsMap[chatId]) return s;
       const { [chatId]: _removed, ...restTasks } = s.tasks;
-      const { [chatId]: _buf, ...restBuf } = s.eventBuffer;
       const { [chatId]: _meta, ...restMeta } = s.streamTaskMeta;
       const { [chatId]: _agents, ...restAgents } = s.agentsMap;
       const existingHistory = s.taskHistory[chatId] ?? [];
       // 同步清掉 promptCardPool 里同 chatId 的所有卡片
       promptCardPool.clearChat(chatId);
-      // 清理该 chatId 下所有 subtask 的 textBuffer
-      const subTaskIds = removed?.subTasks.map(st => st.id) ?? [];
-      const restTextBuffers = { ...s.textBuffers };
-      for (const sid of subTaskIds) delete restTextBuffers[sid];
       return {
         tasks: restTasks,
         taskHistory: removed ? { ...s.taskHistory, [chatId]: [...existingHistory, removed] } : s.taskHistory,
-        textBuffers: restTextBuffers,
-        eventBuffer: restBuf,
         streamTaskMeta: restMeta,
         agentsMap: restAgents,
       };
@@ -855,28 +794,6 @@ export const useStreamingStore = create<StreamingState>((set, get) => ({
 
   getStreamTaskMeta: (chatId: string) => {
     return get().streamTaskMeta[chatId];
-  },
-
-  // ============== 事件缓冲管理 (D fix) ==============
-
-  drainEventBuffer: (chatId: string) => {
-    // 原子取出并清空 (供测试 / 一次性消费)
-    let drained: StreamEvent[] = [];
-    set(s => {
-      drained = s.eventBuffer[chatId] ?? [];
-      if (drained.length === 0) return s;
-      const { [chatId]: _drained, ...rest } = s.eventBuffer;
-      return { eventBuffer: rest };
-    });
-    return drained;
-  },
-
-  clearEventBuffer: (chatId: string) => {
-    set(s => {
-      if (!s.eventBuffer[chatId]) return s;
-      const { [chatId]: _buf, ...rest } = s.eventBuffer;
-      return { eventBuffer: rest };
-    });
   },
 
   // ============== R1.1: 子 Agent 池管理 ==============
@@ -922,8 +839,6 @@ export const useStreamingStore = create<StreamingState>((set, get) => ({
       tasks: {},
       taskHistory: {},
       mode: 'normal',
-      textBuffers: {},
-      eventBuffer: {},
       streamTaskMeta: {},
       agentsMap: {},
     }));
@@ -942,8 +857,6 @@ export function installStreamDevHooks(): void {
       useStreamingStore.getState().createTask(chatId, input, mode),
     applyEvent: (event: StreamEvent) => useStreamingStore.getState().applyEvent(event),
     __reset: () => useStreamingStore.getState().__reset(),
-    setBufferCapacity,
-    getBufferCapacity,
   };
 }
 
@@ -958,10 +871,6 @@ export function installStreamDevHooks(): void {
 //   - useModelActionLog → useModelActionLogFromParts
 //   - useTextBuffer → useTextFromParts
 //   - useAgentsByChatId → 保留 (控制流字段, 仍从 streamingStore 读)
-
-/** 保留: 事件缓冲订阅 (ChatPanel 用于事件到达通知) */
-export const useEventBufferForChat = (chatId: string | null | undefined) =>
-  useStreamingStore((s) => (chatId ? s.eventBuffer[chatId] : undefined));
 
 /** 保留: 子 Agent 池订阅 (控制流字段) */
 export const useAgentsByChatId = (chatId: string | null | undefined) =>

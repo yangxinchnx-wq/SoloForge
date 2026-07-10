@@ -226,9 +226,18 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
   };
 
   // Broadcast channel sync for tree changes
-  // Bug 修复: 消息必须携带 chatId, 否则接收方会将当前对话的文件树写入错误的工作区
+  // 仅在 tree 内容真正变化时发送 (深比较), 避免引用变化导致频繁广播 → 抖动
+  const treeRef = useRef(tree);
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    // 引用相同 → 跳过
+    if (treeRef.current === tree) return;
+    // 内容相同 → 仅更新 ref, 不广播
+    if (JSON.stringify(treeRef.current) === JSON.stringify(tree)) {
+      treeRef.current = tree;
+      return;
+    }
+    treeRef.current = tree;
     try {
       const channel = new BroadcastChannel('soloforge-editor-sync-channel');
       channel.postMessage({ type: 'TREE_UPDATE', tree, chatId });
@@ -834,12 +843,12 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
               onClick={() => toggleFolder(node.path)}
               onContextMenu={(e) => openCustomMenu(e, node.path, 'folder')}
               style={{ paddingLeft: `${depth * 10 + 6}px` }}
-              className={`flex items-center justify-between py-1 px-2.5 rounded-md cursor-grab active:cursor-grabbing group transition-all duration-300 relative ${
+              className={`flex items-center justify-between py-1 px-2.5 rounded-md cursor-grab active:cursor-grabbing group transition-colors duration-150 relative ${
                 draggedNodePath === node.path
-                  ? 'opacity-20 bg-[#151719]/10 border-dashed border-red-500/10 scale-95'
+                  ? 'opacity-20 bg-red-500/10 border-dashed border-red-500/30'
                   : dragOverNodePath === node.path
-                    ? 'bg-[#ffde82]/10 border border-[#ffde82]/40 scale-102 shadow-lg text-[#ffde82]'
-                    : isSelected ? 'bg-primary/8 text-primary font-semibold' : 'hover:bg-[#1a1c1e] text-on-surface/80'
+                    ? 'bg-primary/10 border border-primary/40 shadow-lg text-primary'
+                    : isSelected ? 'bg-primary/8 text-primary font-semibold' : 'hover:bg-surface-bright text-on-surface/80'
               }`}
             >
               <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -849,13 +858,13 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
                   <ChevronRight className="w-3.5 h-3.5 text-on-surface/40 shrink-0" />
                 )}
                 {isOpen ? (
-                  <FolderOpen className="w-4 h-4 text-primary shrink-0 text-[#ffde82]" />
+                  <FolderOpen className="w-4 h-4 text-primary shrink-0" />
                 ) : (
-                  <Folder className="w-4 h-4 text-primary/80 shrink-0 text-[#ffde82]" />
+                  <Folder className="w-4 h-4 text-primary/80 shrink-0" />
                 )}
                 <span className="text-[12px] truncate">{node.name}</span>
                 {dragOverNodePath === node.path && draggedNodePath !== node.path && (
-                  <span className="text-[9px] font-bold text-[#ffde82] bg-[#ffde82]/15 border border-[#ffde82]/30 px-1.5 py-0.2 rounded ml-1.5 select-none animate-pulse shrink-0">
+                  <span className="text-[9px] font-bold text-primary bg-primary/15 border border-primary/30 px-1.5 py-0.2 rounded ml-1.5 select-none animate-pulse shrink-0">
                     移动至此
                   </span>
                 )}
@@ -865,7 +874,7 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
               <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 mr-1 transition-opacity z-10">
                 <button 
                   onClick={(e) => { e.stopPropagation(); openCustomMenu(e, node.path, 'folder'); }}
-                  className="p-1 hover:bg-[#2b2d30] text-on-surface/40 hover:text-white rounded transition-colors"
+                  className="p-1 hover:bg-primary/15 text-on-surface/40 hover:text-primary rounded transition-colors"
                   title="操作菜单"
                 >
                   <MoreVertical className="w-3 h-3" />
@@ -896,25 +905,25 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
             onClick={() => setSelectedFile(node.path)}
             onContextMenu={(e) => openCustomMenu(e, node.path, 'file')}
             style={{ paddingLeft: `${depth * 10 + 20}px` }}
-            className={`flex items-center justify-between py-1 px-2.5 rounded-md cursor-grab active:cursor-grabbing group transition-all duration-300 relative ${
+            className={`flex items-center justify-between py-1 px-2.5 rounded-md cursor-grab active:cursor-grabbing group transition-colors duration-150 relative ${
               draggedNodePath === node.path
-                ? 'opacity-20 bg-[#151719]/10 border-dashed border-red-500/10 scale-95'
+                ? 'opacity-20 bg-red-500/10 border-dashed border-red-500/30'
                 : dragOverNodePath === node.path
-                  ? 'bg-[#ffde82]/10 border border-[#ffde82]/40 scale-102 shadow-lg text-[#ffde82]'
+                  ? 'bg-primary/10 border border-primary/40 shadow-lg text-primary'
                   : isSelected 
-                    ? 'bg-[#ffe08b]/15 text-primary font-bold border-l-2 border-primary' 
-                    : 'hover:bg-[#191b1d] text-on-surface/70 hover:text-on-surface'
+                    ? 'bg-primary/12 text-primary font-bold border-l-2 border-primary' 
+                    : 'hover:bg-surface-bright text-on-surface/70 hover:text-on-surface'
             }`}
           >
             <div className="flex items-center gap-1.5 min-w-0 flex-1">
               <FileCode className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-primary' : fileColorClass}`} />
               <span className="text-[12px] truncate">{node.name}</span>
               {dragOverNodePath === node.path && draggedNodePath !== node.path && (
-                <span className="text-[9px] font-bold text-[#ffde82] bg-[#ffde82]/15 border border-[#ffde82]/30 px-1.5 py-0.2 rounded ml-1.5 select-none animate-pulse shrink-0">
+                <span className="text-[9px] font-bold text-primary bg-primary/15 border border-primary/30 px-1.5 py-0.2 rounded ml-1.5 select-none animate-pulse shrink-0">
                   同级移动
                 </span>
               )}
-              <span className="text-[10px] text-on-surface/35 font-mono shrink-0 select-none ml-1.5 px-1 py-0.2 bg-[#17191b] rounded border border-white/5">
+              <span className="text-[10px] text-on-surface/35 font-mono shrink-0 select-none ml-1.5 px-1 py-0.2 bg-surface-bright rounded border border-outline/50">
                 {getFileSize(node.path)}
               </span>
             </div>
@@ -923,7 +932,7 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
             <div className="opacity-0 group-hover:opacity-100 flex items-center gap-1 mr-1 transition-opacity z-10">
               <button 
                 onClick={(e) => { e.stopPropagation(); openCustomMenu(e, node.path, 'file'); }}
-                className="p-1 hover:bg-[#2b2d30] text-on-surface/40 hover:text-white rounded transition-colors"
+                className="p-1 hover:bg-primary/15 text-on-surface/40 hover:text-primary rounded transition-colors"
                 title="操作菜单"
               >
                 <MoreVertical className="w-3 h-3" />
@@ -1059,13 +1068,10 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
       <div 
         ref={scrollContainerRef}
         onContextMenu={(e) => currentWorkspace && openCustomMenu(e, tree.path, 'root_blank')}
-        className="flex-1 overflow-y-auto p-1.5 space-y-0.5 scrollbar-thin scrollbar-thumb-[#2c2f33] relative min-h-[150px]"
+        className="flex-1 overflow-y-auto p-1.5 space-y-0.5 scrollbar-thin scrollbar-thumb-outline relative min-h-[150px]"
       >
         {currentWorkspace ? (
-          <div
-            key={refreshKey}
-            className="sf-anim sf-anim-slide-up"
-          >
+          <div key={refreshKey}>
             {renderNode(tree)}
           </div>
         ) : (
@@ -1098,7 +1104,7 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
             top: `${contextMenu.y}px`,
             zIndex: 99999,
           } as React.CSSProperties}
-          className="w-[190px] bg-[#141517] border border-[#2b2d30] rounded-lg shadow-2xl p-1.5 flex flex-col font-sans select-none"
+          className="w-[190px] bg-surface border border-outline rounded-lg shadow-2xl p-1.5 flex flex-col font-sans select-none"
           onClick={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
         >
@@ -1107,42 +1113,42 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
               <>
                 <button
                   onClick={() => handleAction('new_folder')}
-                  className="flex items-center gap-2 px-2 py-1.5 hover:bg-[#2563eb] hover:text-white rounded text-[11px] text-on-surface/85 transition-colors text-left cursor-pointer"
+                  className="flex items-center gap-2 px-2 py-1.5 hover:bg-primary/15 hover:text-primary rounded text-[11px] text-on-surface/80 transition-colors text-left cursor-pointer"
                 >
                   <FolderPlus className="w-3.5 h-3.5 shrink-0" />
                   <span>新建文件夹</span>
                 </button>
                 <button
                   onClick={() => handleAction('new_file')}
-                  className="flex items-center gap-2 px-2 py-1.5 hover:bg-[#2563eb] hover:text-white rounded text-[11px] text-on-surface/85 transition-colors text-left cursor-pointer"
+                  className="flex items-center gap-2 px-2 py-1.5 hover:bg-primary/15 hover:text-primary rounded text-[11px] text-on-surface/80 transition-colors text-left cursor-pointer"
                 >
                   <FilePlus className="w-3.5 h-3.5 shrink-0" />
                   <span>新建文件</span>
                 </button>
-                <div className="h-[1px] bg-[#222426] my-1" />
+                <div className="h-[1px] bg-outline/50 my-1" />
               </>
             )}
 
             <button
               onClick={() => handleAction('reveal')}
-              className="flex items-center gap-2 px-2 py-1.5 hover:bg-[#2563eb] hover:text-white rounded text-[11px] text-on-surface/85 transition-colors text-left cursor-pointer"
+              className="flex items-center gap-2 px-2 py-1.5 hover:bg-primary/15 hover:text-primary rounded text-[11px] text-on-surface/80 transition-colors text-left cursor-pointer"
             >
               <ExternalLink className="w-3.5 h-3.5 shrink-0" />
               <span>在资源管理器中显示</span>
             </button>
 
-            <div className="h-[1px] bg-[#222426] my-1" />
+            <div className="h-[1px] bg-outline/50 my-1" />
 
             <button
               onClick={() => handleAction('copy')}
-              className="flex items-center gap-2 px-2 py-1.5 hover:bg-[#2563eb] hover:text-white rounded text-[11px] text-on-surface/85 transition-colors text-left cursor-pointer"
+              className="flex items-center gap-2 px-2 py-1.5 hover:bg-primary/15 hover:text-primary rounded text-[11px] text-on-surface/80 transition-colors text-left cursor-pointer"
             >
               <Copy className="w-3.5 h-3.5 shrink-0" />
               <span>复制 (Copy)</span>
             </button>
             <button
               onClick={() => handleAction('cut')}
-              className="flex items-center gap-2 px-2 py-1.5 hover:bg-[#2563eb] hover:text-white rounded text-[11px] text-on-surface/85 transition-colors text-left cursor-pointer"
+              className="flex items-center gap-2 px-2 py-1.5 hover:bg-primary/15 hover:text-primary rounded text-[11px] text-on-surface/80 transition-colors text-left cursor-pointer"
             >
               <Scissors className="w-3.5 h-3.5 shrink-0" />
               <span>剪切 (Cut)</span>
@@ -1152,7 +1158,7 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
               onClick={() => handleAction('paste')}
               className={`flex items-center gap-2 px-2 py-1.5 rounded text-[11px] transition-colors text-left ${
                 clipboard 
-                  ? 'hover:bg-[#2563eb] hover:text-white text-on-surface/85 cursor-pointer' 
+                  ? 'hover:bg-primary/15 hover:text-primary text-on-surface/80 cursor-pointer' 
                   : 'text-on-surface/30 cursor-not-allowed'
               }`}
             >
@@ -1160,35 +1166,35 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
               <span>粘贴 (Paste)</span>
             </button>
 
-            <div className="h-[1px] bg-[#222426] my-1" />
+            <div className="h-[1px] bg-outline/50 my-1" />
 
             <button
               onClick={() => handleAction('rename')}
-              className="flex items-center gap-2 px-2 py-1.5 hover:bg-[#2563eb] hover:text-white rounded text-[11px] text-on-surface/85 transition-colors text-left cursor-pointer"
+              className="flex items-center gap-2 px-2 py-1.5 hover:bg-primary/15 hover:text-primary rounded text-[11px] text-on-surface/80 transition-colors text-left cursor-pointer"
             >
               <Edit3 className="w-3.5 h-3.5 shrink-0" />
               <span>重命名 (Rename)</span>
             </button>
             <button
               onClick={() => handleAction('delete')}
-              className="flex items-center gap-2 px-2 py-1.5 hover:bg-red-600 hover:text-white rounded text-[11px] text-red-500 transition-colors text-left cursor-pointer"
+              className="flex items-center gap-2 px-2 py-1.5 hover:bg-red-500/15 hover:text-red-500 rounded text-[11px] text-red-500 transition-colors text-left cursor-pointer"
             >
               <Trash2 className="w-3.5 h-3.5 shrink-0" />
               <span>删除 (Delete)</span>
             </button>
 
-            <div className="h-[1px] bg-[#222426] my-1" />
+            <div className="h-[1px] bg-outline/50 my-1" />
 
             <button
               onClick={() => handleAction('copy_path')}
-              className="flex items-center gap-2 px-2 py-1.5 hover:bg-[#2563eb] hover:text-white rounded text-[11px] text-on-surface/85 transition-colors text-left cursor-pointer"
+              className="flex items-center gap-2 px-2 py-1.5 hover:bg-primary/15 hover:text-primary rounded text-[11px] text-on-surface/80 transition-colors text-left cursor-pointer"
             >
               <Link2 className="w-3.5 h-3.5 shrink-0" />
               <span>复制绝对路径</span>
             </button>
             <button
               onClick={() => handleAction('add_to_chat')}
-              className="flex items-center gap-2 px-2 py-1.5 hover:bg-primary/90 hover:text-black rounded text-[11px] text-primary/85 font-medium transition-colors text-left cursor-pointer"
+              className="flex items-center gap-2 px-2 py-1.5 hover:bg-primary/15 hover:text-primary rounded text-[11px] text-primary/85 font-medium transition-colors text-left cursor-pointer"
             >
               <MessageSquarePlus className="w-3.5 h-3.5 shrink-0 text-primary" />
               <span>添加到对话</span>
@@ -1200,7 +1206,7 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
       <MountTransition show={!!dialog.type} variant="fade-scale" duration={150}>
           <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
             <div
-              className="w-full max-w-sm bg-[#111214] border border-[#2c2f33] rounded-xl shadow-2xl p-4 font-sans text-white"
+              className="w-full max-w-sm bg-surface border border-outline rounded-xl shadow-2xl p-4 font-sans text-on-surface"
             >
               {dialog.type === 'show_explorer' ? (
                 // Reveal in system explorer preview window
@@ -1212,13 +1218,13 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
                   <p className="text-[11px] text-on-surface/70 leading-relaxed mb-4">
                     由于系统浏览器沙箱机制限制，无法直接调用本地文件管理器窗口。已经为您在虚拟宿主机 D 盘映射对应目录：
                   </p>
-                  <div className="bg-black/40 border border-[#222426] p-2.5 rounded text-[10px] text-amber-300 font-mono break-all mb-4">
+                  <div className="bg-surface-bright border border-outline/50 p-2.5 rounded text-[10px] text-amber-600 font-mono break-all mb-4">
                     {`${tree.path}\\${dialog.targetPath.replace(/\//g, '\\')}`}
                   </div>
                   <div className="flex justify-end">
                     <button
                       onClick={() => setDialog({ type: null, targetPath: '', inputValue: '' })}
-                      className="bg-primary hover:bg-[#ffd561] text-black text-[11px] font-bold px-4 py-1.5 rounded active:scale-95 transition-transform cursor-pointer"
+                      className="bg-primary hover:bg-primary/80 text-white text-[11px] font-bold px-4 py-1.5 rounded active:scale-95 transition-transform cursor-pointer"
                     >
                       我明白了
                     </button>
@@ -1227,7 +1233,7 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
               ) : (
                 // Input Prompt form
                 <div>
-                  <h3 className="text-xs font-bold text-white mb-2 tracking-wide">
+                  <h3 className="text-xs font-bold text-on-surface mb-2 tracking-wide">
                     {dialog.type === 'new_file' && '创建新文件'}
                     {dialog.type === 'new_folder' && '创建新文件夹'}
                     {dialog.type === 'rename' && '重命名对象'}
@@ -1243,7 +1249,7 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
                     type="text"
                     value={dialog.inputValue}
                     onChange={(e) => setDialog(prev => ({ ...prev, inputValue: e.target.value }))}
-                    className="w-full bg-[#1e2022] border border-[#2c2f33] rounded px-2.5 py-1.5 text-xs text-white outline-none focus:border-primary/50 mb-4"
+                    className="w-full bg-surface-bright border border-outline rounded px-2.5 py-1.5 text-xs text-on-surface outline-none focus:border-primary/50 mb-4"
                     autoFocus
                     placeholder={dialog.type === 'new_file' ? '例如 main.py, index.html' : '目录名称'}
                     onKeyDown={(e) => {
@@ -1254,13 +1260,13 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
                   <div className="flex items-center justify-end gap-2 text-xs font-semibold">
                     <button
                       onClick={() => setDialog({ type: null, targetPath: '', inputValue: '' })}
-                      className="px-3 py-1.5 text-on-surface/40 hover:text-white transition-colors cursor-pointer text-[11px]"
+                      className="px-3 py-1.5 text-on-surface/40 hover:text-on-surface transition-colors cursor-pointer text-[11px]"
                     >
                       取消
                     </button>
                     <button
                       onClick={confirmDialog}
-                      className="bg-blue-600 hover:bg-blue-500 text-white rounded px-4 py-1.5 active:scale-95 transition-all cursor-pointer text-[11px]"
+                      className="bg-primary hover:bg-primary/80 text-white rounded px-4 py-1.5 active:scale-95 transition-all cursor-pointer text-[11px]"
                     >
                       确认
                     </button>
@@ -1274,7 +1280,7 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
       {/* Floating system Feedback Toasts */}
       <MountTransition show={toast.show} variant="slide-up" duration={180}>
           <div
-            className="absolute bottom-4 left-1/2 bg-[#1b5e20] text-white text-[10px] md:text-[11px] px-3.5 py-1.5 rounded-full shadow-2xl border border-emerald-500/20 font-medium flex items-center gap-1.5 z-40 pointer-events-none whitespace-nowrap"
+            className="absolute bottom-4 left-1/2 bg-emerald-500/90 text-white text-[10px] md:text-[11px] px-3.5 py-1.5 rounded-full shadow-2xl border border-emerald-500/30 font-medium flex items-center gap-1.5 z-40 pointer-events-none whitespace-nowrap"
           >
             <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
             <span>{toast.message}</span>
