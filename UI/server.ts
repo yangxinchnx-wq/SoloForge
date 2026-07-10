@@ -292,14 +292,16 @@ async function startServer() {
     timeout: 0 as any,
   });
 
-  // LLM stream 专用代理 (POST, SSE 回流, 无超时)
-  // 必须放在 backendApiPrefixes 的 /api/llm filterProxy 之前
+  // LLM stream + Agent dispatch 专用代理 (POST, SSE 回流, 无超时)
+  // /api/agents/dispatch 是 SSE 流式端点, LLM 生成可能持续 60-120s
+  // 必须放在 backendApiPrefixes 的 /api/llm + /api/agents filterProxy 之前
+  // 否则会被 30s proxyTimeout 截断 → 504
   const llmStreamSseProxy = createProxyMiddleware({
     target: BACKEND_URL,
     changeOrigin: true,
     ws: false,
     pathFilter: (pathname, req) => {
-      return req.method === 'POST' && pathname === '/api/llm/stream';
+      return req.method === 'POST' && (pathname === '/api/llm/stream' || pathname === '/api/agents/dispatch');
     },
     on: {
       proxyReq: (proxyReq, req) => {
