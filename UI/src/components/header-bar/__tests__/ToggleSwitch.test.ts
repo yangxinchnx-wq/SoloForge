@@ -125,21 +125,38 @@ describe('ToggleSwitch — 结构防回归', () => {
     expect(html).toMatch(/<button[^>]*class="[^"]*ml-2 mr-3/);
   });
 
-  it('track 颜色靠 var(--color-*) 主题 token (关闭时 outline, 开启时 primary)', () => {
+  it('track 颜色: 关闭时 iOS 半透明灰, 开启时品牌主色 var(--color-primary)', () => {
+    // v6 (2026-07-10): 对标 iOS Settings Toggle
+    //   - 关闭色: rgba(120,120,128,0.32) (iOS systemGray3 半透明, 替代旧的 --color-outline)
+    //   - 开启色: var(--color-primary) (品牌主色)
     const off = render({ checked: false, onChange: () => {}, label: '关' });
     const on = render({ checked: true, onChange: () => {}, label: '开' });
-    expect(off).toContain('var(--color-outline)');
+    expect(off).toContain('rgba(120, 120, 128, 0.32)');
     expect(on).toContain('var(--color-primary)');
   });
 
-  it('按钮具备椭圆外观 (borderRadius:9999) + 固定尺寸 44x24', () => {
+  it('按钮具备椭圆外观 (borderRadius:9999) + iOS 比例尺寸 50x30', () => {
+    // v6: 尺寸从 44x24 改为 50x30 (iOS 原生 51x31 等比缩放), thumb 24x24
     const html = render({
       checked: false,
       onChange: () => {},
       label: '开关',
     });
     expect(html).toContain('border-radius:9999');
-    expect(html).toMatch(/width:44px/);
-    expect(html).toMatch(/height:24px/);
+    expect(html).toMatch(/width:50px/);
+    expect(html).toMatch(/height:30px/);
+  });
+
+  it('thumb 纯白 (#FFFFFF) + iOS 三层阴影, 不跟随主题', () => {
+    // v6: thumb 用纯白, 替代旧的 var(--color-surface)
+    const html = render({
+      checked: false,
+      onChange: () => {},
+      label: '开关',
+    });
+    expect(html).toContain('#FFFFFF');
+    // 三层阴影关键词: ambient (8px) + key (1px) + inset
+    expect(html).toMatch(/0 3px 8px/);
+    expect(html).toMatch(/inset/);
   });
 });

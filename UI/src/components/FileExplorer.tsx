@@ -25,6 +25,7 @@ import {
 import { MountTransition } from './MountTransition';
 import type { FileNode } from '../shared/types/file';
 import { useChatsStore } from '../state/chatsStore';
+import { useWorkspaceStore } from '../state/useWorkspaceStore';
 
 interface FileExplorerProps {
   selectedFile: string;
@@ -32,12 +33,6 @@ interface FileExplorerProps {
   onNewFile: () => void;
   onClose?: () => void;
   isFloatingEditorOpen?: boolean;
-}
-
-interface WorkspaceData {
-  name: string;
-  tree: FileNode;
-  openFolders: Record<string, boolean>;
 }
 
 // Deep path update helper
@@ -184,32 +179,21 @@ const getFileSize = (path: string): string => {
 };
 
 export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile, onClose, isFloatingEditorOpen }: FileExplorerProps) {
-  // ── Chat-aligned workspaces ────────────────────────────────
+  // ── Chat-aligned workspaces (全局 store, 组件卸载不丢失) ───
   const selectedChatId = useChatsStore(s => s.selectedChatId);
   const updateChat = useChatsStore(s => s.updateChat);
+
+  // workspaces 从全局 store 读取 (不再用 useState, 避免组件卸载后丢失)
+  const workspaces = useWorkspaceStore(s => s.workspaces);
+  const setWorkspaces = useWorkspaceStore(s => s.setWorkspaces);
+  const setWorkspaceTree = useWorkspaceStore(s => s.setWorkspaceTree);
+  const setOpenFoldersInStore = useWorkspaceStore(s => s.setOpenFolders);
+  const removeWorkspace = useWorkspaceStore(s => s.removeWorkspace);
 
   // Clean up legacy localStorage key
   useEffect(() => {
     try { localStorage.removeItem('soloforge_workspace_tabs'); } catch {}
   }, []);
-
-  // workspaces: chatId → workspace data
-  const [workspaces, setWorkspaces] = useState<Record<string, WorkspaceData>>(() => {
-    try {
-      const saved = localStorage.getItem('soloforge_workspaces');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        // Migrate: clear old BlogSystem data
-        for (const key of Object.keys(parsed)) {
-          if (parsed[key]?.tree?.name === 'BlogSystem') {
-            parsed[key].tree = { name: parsed[key].name || '工作区', type: 'folder', path: parsed[key].name || '工作区', children: [] };
-          }
-        }
-        return parsed;
-      }
-    } catch {}
-    return {};
-  });
 
   // Current chat's workspace (derived)
   const chatId = selectedChatId || 'default';
@@ -218,29 +202,14 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
   const openFolders: Record<string, boolean> = currentWorkspace?.openFolders ?? {};
   const workspaceName = currentWorkspace?.name ?? '';
 
-  // Persist workspaces
-  useEffect(() => {
-    try { localStorage.setItem('soloforge_workspaces', JSON.stringify(workspaces)); } catch {}
-  }, [workspaces]);
-
-  // Update active workspace's tree
+  // Update active workspace's tree (via store)
   const setTree = useCallback((updater: FileNode | ((prev: FileNode) => FileNode)) => {
-    setWorkspaces(prev => {
-      const ws = prev[chatId];
-      if (!ws) return prev;
-      const next = typeof updater === 'function' ? (updater as (p: FileNode) => FileNode)(ws.tree) : updater;
-      return { ...prev, [chatId]: { ...ws, tree: next } };
-    });
-  }, [chatId]);
+    setWorkspaceTree(chatId, updater);
+  }, [chatId, setWorkspaceTree]);
 
   const setOpenFolders = useCallback((updater: Record<string, boolean> | ((prev: Record<string, boolean>) => Record<string, boolean>)) => {
-    setWorkspaces(prev => {
-      const ws = prev[chatId];
-      if (!ws) return prev;
-      const next = typeof updater === 'function' ? (updater as (p: Record<string, boolean>) => Record<string, boolean>)(ws.openFolders) : updater;
-      return { ...prev, [chatId]: { ...ws, openFolders: next } };
-    });
-  }, [chatId]);
+    setOpenFoldersInStore(chatId, updater);
+  }, [chatId, setOpenFoldersInStore]);
 
   const [refreshKey, setRefreshKey] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -257,28 +226,32 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
   };
 
   // Broadcast channel sync for tree changes
+  // Bug 修复: 消息必须携带 chatId, 否则接收方会将当前对话的文件树写入错误的工作区
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
       const channel = new BroadcastChannel('soloforge-editor-sync-channel');
-      channel.postMessage({ type: 'TREE_UPDATE', tree });
+      channel.postMessage({ type: 'TREE_UPDATE', tree, chatId });
       channel.close();
     } catch {}
-  }, [tree]);
+  }, [tree, chatId]);
 
   // Listen to external tree changes
+  // Bug 修复: 原实现 useEffect([]) 闭包捕获了初始 setTree (绑定初始 chatId),
+  // 导致对话 B 的文件树被写入对话 A 的工作区, 造成跨对话树污染。
+  // 现在直接用 setWorkspaces + msg.chatId 精确更新, 不依赖可能过期的 setTree 闭包。
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
       const channel = new BroadcastChannel('soloforge-editor-sync-channel');
       const handleMessage = (event: MessageEvent) => {
         const msg = event.data;
-        if (msg && msg.type === 'TREE_UPDATE') {
-          setTree(prev => {
-            if (JSON.stringify(prev) !== JSON.stringify(msg.tree)) {
-              return msg.tree;
-            }
-            return prev;
+        if (msg && msg.type === 'TREE_UPDATE' && msg.chatId) {
+          setWorkspaces(prev => {
+            const ws = prev[msg.chatId];
+            if (!ws) return prev;
+            if (JSON.stringify(ws.tree) === JSON.stringify(msg.tree)) return prev;
+            return { ...prev, [msg.chatId]: { ...ws, tree: msg.tree } };
           });
         }
       };
@@ -322,21 +295,49 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
   };
 
   // Bind a loaded tree to the current chat
-  const bindTreeToChat = useCallback((folderName: string, treeData: FileNode) => {
+  // workspaceFolder 可以是完整路径 (Electron) 或仅文件夹名 (浏览器)
+  const bindTreeToChat = useCallback((workspaceFolder: string, treeData: FileNode) => {
+    // 从路径中提取文件夹名用于显示
+    const folderName = workspaceFolder.split(/[\\/]/).pop() || workspaceFolder;
     setWorkspaces(prev => ({
       ...prev,
       [chatId]: { name: folderName, tree: treeData, openFolders: { [folderName]: true } },
     }));
     if (chatId !== 'default' && updateChat) {
-      updateChat(chatId, { workspaceFolder: folderName });
+      // 保存完整路径 (而非仅名称), 便于 ensureWorkspace 后续恢复
+      updateChat(chatId, { workspaceFolder });
     }
-  }, [chatId, updateChat]);
+  }, [chatId, updateChat, setWorkspaces]);
 
   const openFolderForChat = useCallback(async () => {
     if (isLoadingFolder) return;
     setIsLoadingFolder(true);
     try {
-      // Try File System Access API first (Chromium)
+      // 0. Electron 优先: selectFolder + readDirTree (能获取完整路径, 便于后续恢复)
+      const sf = (window as any).soloforge;
+      if (sf?.selectFolder && sf?.readDirTree) {
+        try {
+          const result = await sf.selectFolder();
+          if (result?.path) {
+            const treeResult = await sf.readDirTree(result.path);
+            if (treeResult?.success && treeResult.tree) {
+              // 用完整路径作为 workspaceFolder, 便于 ensureWorkspace 后续恢复
+              bindTreeToChat(result.path, treeResult.tree as FileNode);
+              setIsLoadingFolder(false);
+              return;
+            }
+            // readDirTree 失败 → 回退到 showDirectoryPicker
+          }
+          // 用户取消 (result === null) → 直接返回
+          if (result === null) {
+            setIsLoadingFolder(false);
+            return;
+          }
+        } catch (e) {
+          console.warn('[FileExplorer] Electron selectFolder failed:', e);
+        }
+      }
+      // 1. Try File System Access API (Chromium)
       if ('showDirectoryPicker' in window) {
         try {
           const dirHandle = await (window as any).showDirectoryPicker({ mode: 'read' });
@@ -351,11 +352,11 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
           console.warn('[FileExplorer] showDirectoryPicker failed:', pickErr.message);
         }
       }
-      // Fallback: hidden <input webkitdirectory> (works in Electron + all Chromium)
+      // 2. Fallback: hidden <input webkitdirectory> (works in Electron + all Chromium)
       fileInputRef.current?.click();
     } finally {
       // Don't set false here for fallback path — handleFileInputChange does it
-      if ('showDirectoryPicker' in window) setIsLoadingFolder(false);
+      if ('showDirectoryPicker' in window || sf?.selectFolder) setIsLoadingFolder(false);
     }
   }, [chatId, isLoadingFolder, bindTreeToChat]);
 
@@ -423,7 +424,7 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
     }
     // Reset input
     e.target.value = '';
-  }, [chatId, updateChat]);
+  }, [chatId, updateChat, setWorkspaces]);
 
   // Context Menu State
   const [contextMenu, setContextMenu] = useState<{
@@ -477,6 +478,20 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
       window.removeEventListener('keydown', handleKeyDown, { capture: true });
     };
   }, [dialog.type]);
+
+  // 确保根文件夹始终展开 (当工作区树变化时)
+  // 修复: ensureWorkspace 或 localStorage 恢复的数据可能 openFolders 为空或不匹配,
+  // 导致根文件夹折叠, 用户只看到文件夹名但看不到文件
+  // 注意: 不将 openFolders 放入依赖, 避免用户折叠根文件夹后被自动重新展开
+  const openFoldersRef = useRef(openFolders);
+  openFoldersRef.current = openFolders;
+  useEffect(() => {
+    if (!currentWorkspace?.tree?.children?.length) return;
+    const rootPath = currentWorkspace.tree.path;
+    if (!openFoldersRef.current[rootPath]) {
+      setOpenFolders(prev => ({ ...prev, [rootPath]: true }));
+    }
+  }, [currentWorkspace?.tree?.path, currentWorkspace?.tree?.children?.length, setOpenFolders]);
 
   // Automatically expand parent folders of selectedFile when selectedFile changes
   useEffect(() => {
@@ -798,7 +813,10 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
     
     if (!matchCurrent) return null;
 
-    const isOpen = isSearchActive ? (openFolders[node.path] ?? true) : openFolders[node.path];
+    const isRoot = node.path === tree.path;
+    const isOpen = isSearchActive 
+      ? (openFolders[node.path] ?? true) 
+      : (openFolders[node.path] ?? (isRoot && !!(node.children && node.children.length > 0)));
     const isSelected = selectedFile === node.path;
 
     if (node.type === 'folder') {
@@ -961,7 +979,7 @@ export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile,
               type="button"
               onClick={() => {
                 if (confirm('解除当前对话的工作区绑定？')) {
-                  setWorkspaces(prev => { const next = { ...prev }; delete next[chatId]; return next; });
+                  removeWorkspace(chatId);
                 }
               }}
               className="p-1 rounded text-on-surface/30 hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"

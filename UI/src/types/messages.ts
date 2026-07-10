@@ -68,6 +68,8 @@ export interface UITextPart {
   text: string;
   /** 是否正在流式输出 */
   streaming?: boolean;
+  /** P0: 关联的 subTaskId (text_chunk 事件携带, 用于 SubTaskNode 从 parts 派生文本) */
+  subTaskId?: string;
 }
 
 export interface UITaskSummaryPart {

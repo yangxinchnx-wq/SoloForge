@@ -59,14 +59,15 @@ function createStreamBridge(chatId: string, mainModel: string, userInput: string
   const ctx: PhaseMapperContext = {
     activeChatId: chatId,
     pushStreamEvent: (kind: StreamEventKind, extra: Partial<StreamEvent> = {}) => {
-      const t = useStreamingStore.getState().tasks[chatId];
-      if (!t) return;
+      // P0: rootTaskId 从 streamTaskMeta 获取 (替代 streamingStore.tasks[chatId].id)
+      const meta = useStreamingStore.getState().getStreamTaskMeta(chatId);
+      if (!meta) return;
       // P3 集成: 用 dispatchStreamEvent 替代 applyEvent
       // dispatchStreamEvent 内部双写: streamingStore.applyEvent + actor.tell + uiMessageStore + persistence
       dispatchStreamEvent({
         id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         chatId,
-        rootTaskId: t.id,
+        rootTaskId: meta.rootTaskId,
         kind,
         ts: Date.now(),
         status: 'running',

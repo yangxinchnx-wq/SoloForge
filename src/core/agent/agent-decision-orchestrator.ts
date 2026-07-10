@@ -325,6 +325,13 @@ export class AgentDecisionOrchestrator {
    *   6. 纯问答短消息兜底 — < 80 字符且无动作意图 → 跳过
    */
   private shouldUseAgent(prompt: string, req: AgentDispatchRequest): boolean {
+    // 维度 0: 画布意图检测 (断路修复)
+    // 任何包含画布/canvas 关键词的 prompt 都走 Agent Loop (有 canvas_push_ui 工具)
+    const canvasIntentPattern = /(?:画布|canvas|画一个|画只|画个|绘制|渲染到|展示在|显示在|推送到画布|push.*ui|render.*canvas)/i;
+    if (canvasIntentPattern.test(prompt)) {
+      return true;
+    }
+
     // 维度 1: 文件引用 — 路径前缀 OR 裸文件名(扩展名白名单)
     // 裸文件名白名单避免误匹配域名(github.com)和版本号(v1.2)
     const pathPrefix = /[a-zA-Z]:\\|\.\/|\/[a-zA-Z]|\\\\/;
@@ -350,7 +357,8 @@ export class AgentDecisionOrchestrator {
     }
 
     // 维度 4: 文件/数据/系统操作意图动词 (中英文,覆盖热门行业)
-    const actionPattern = /(?:修改|创建|删除|重构|编写|修复|实现|添加|更新|迁移|优化|调试|读取|查看|分析|运行|部署|安装|提交|导入|导出|查询|清洗|校对|解读|整理|审查|对比|批改|抽取|抓取|检查|重启|监控|搜索|执行|编译|打包|发布|启动|停止|备份|恢复|扫描|诊断|测试|生成报告|fix|refactor|write|create|delete|implement|add|update|migrate|optimize|debug|build|read|view|analyze|run|deploy|install|commit|import|export|query|clean|review|audit|compare|extract|crawl|check|restart|monitor|search|execute|compile|package|publish|start|stop|backup|restore|scan|diagnose|test)/i;
+    // 断路修复: 新增"画/绘制/渲染/展示"等画布操作动词
+    const actionPattern = /(?:修改|创建|删除|重构|编写|修复|实现|添加|更新|迁移|优化|调试|读取|查看|分析|运行|部署|安装|提交|导入|导出|查询|清洗|校对|解读|整理|审查|对比|批改|抽取|抓取|检查|重启|监控|搜索|执行|编译|打包|发布|启动|停止|备份|恢复|扫描|诊断|测试|生成报告|画|绘制|渲染|展示|显示|制作|设计|fix|refactor|write|create|delete|implement|add|update|migrate|optimize|debug|build|read|view|analyze|run|deploy|install|commit|import|export|query|clean|review|audit|compare|extract|crawl|check|restart|monitor|search|execute|compile|package|publish|start|stop|backup|restore|scan|diagnose|test|draw|render|display|design)/i;
     if (actionPattern.test(prompt)) {
       return true;
     }
@@ -397,6 +405,14 @@ export class AgentDecisionOrchestrator {
 
     // 构建消息列表 (与 Agent Loop 相同的格式,但不注入 Agent 角色)
     const messages: LLMMessage[] = [];
+
+    // 断路修复: 即使在 direct LLM 路径也注入画布提示,让 LLM 知道可以返回代码块
+    messages.push({
+      role: 'system',
+      content: `## 画布预览
+前端内置本地翻译器,自动渲染回复中的 UI 代码块 (html/tsx/vue/dart/swift/kotlin/xml/xaml/qml/python/c)。
+生成 UI 时直接用 markdown 代码块返回,前端自动翻译并推送到画布。`,
+    });
 
     // P3: 智能裁剪历史 (替换固定 slice(-10))
     if (history.length > 0) {

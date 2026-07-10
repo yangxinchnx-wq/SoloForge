@@ -10,6 +10,7 @@
  */
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
+import { useWorkspaceStore } from './useWorkspaceStore';
 
 export type ChatTag = 'VUE' | 'AUTH' | 'AI' | 'DB' | 'PAY' | 'HELP' | 'NEW' | 'WINDOWS' | 'HARMONY';
 export type ChatPermission = 'normal' | 'performance' | 'ultimate' | 'expert';
@@ -162,6 +163,8 @@ export const useChatsStore = create<ChatsState>()(subscribeWithSelector((set, ge
         selectedChatId: data.selectedId,
         pendingMutations: Math.max(0, s.pendingMutations - 1),
       }));
+      // 迁移工作区数据: temp-xxx → realId (如果用户在 tempId 期间打开了文件夹)
+      useWorkspaceStore.getState().migrateWorkspace(tempId, data.chat.id);
       return data.chat;
     } catch (e) {
       console.error('[chatsStore] 创建失败，回滚:', (e as Error).message);

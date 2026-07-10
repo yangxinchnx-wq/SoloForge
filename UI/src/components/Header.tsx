@@ -344,30 +344,36 @@ draggable
           />
         </div>
 
-        {/* 副模型选择器(仅在混合任务开启时显示) */}
-        {mixedTasks && (
-          <>
-            <div
-              aria-hidden="true"
-              style={{
-                width: 1,
-                height: 22,
-                background:
-                  `linear-gradient(180deg, transparent 0%, ${rgba('--color-primary-rgb', 0.32)} 50%, transparent 100%)`,
-              }}
-            />
-            <SecondaryModelSelector
-              secModels={secModels}
-              allAvailableModelsList={allAvailableModelsList}
-              addSecModel={addSecModel}
-              removeSecModel={removeSecModel}
-              changeSecModelWeight={changeSecModelWeight}
-              setSecModelWeightDirect={setSecModelWeightDirect}
-              updateSecModelAtIndex={updateSecModelAtIndex}
-              onOpenChange={setIsSecModelSelectorOpen}
-            />
-          </>
-        )}
+        {/* 副模型选择器(仅在混合任务开启时显示) — 纯 CSS transition, 始终挂载避免卸载卡顿 */}
+        <div
+          className="sec-model-slide"
+          data-open={mixedTasks ? 'true' : 'false'}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 0,
+          }}
+        >
+          <div
+            aria-hidden="true"
+            style={{
+              width: 1,
+              height: 22,
+              background:
+                `linear-gradient(180deg, transparent 0%, ${rgba('--color-primary-rgb', 0.32)} 50%, transparent 100%)`,
+            }}
+          />
+          <SecondaryModelSelector
+            secModels={secModels}
+            allAvailableModelsList={allAvailableModelsList}
+            addSecModel={addSecModel}
+            removeSecModel={removeSecModel}
+            changeSecModelWeight={changeSecModelWeight}
+            setSecModelWeightDirect={setSecModelWeightDirect}
+            updateSecModelAtIndex={updateSecModelAtIndex}
+            onOpenChange={setIsSecModelSelectorOpen}
+          />
+        </div>
       </CentralControlPill>
 
       {/* ─── 右: 用户 + 窗口控件(主题色对齐) ────────── */}

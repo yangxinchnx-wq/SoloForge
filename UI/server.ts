@@ -102,6 +102,12 @@ async function startServer() {
   // ============================================================
   registerChatSessionRoutes(app);
 
+  // ── 临时诊断端点 ──
+  app.post('/api/debug-log', (req, res) => {
+    console.log('[FRONTEND DEBUG]', JSON.stringify(req.body));
+    res.json({ ok: true });
+  });
+
   // ============================================================
   // Conversation API (3000 本地路由, JSON 持久化)
   //   GET    /api/conversations              — 获取所有对话消息 + 配置
@@ -1359,6 +1365,7 @@ async function startServer() {
     '/api/names',     // 用户名称自定义 (双击胶囊名称 → 写入 names.txt [CUSTOM] 槽位)
     // '/api/java-agent' 已由上方专用代理处理 (120s 超时)
     '/api/feedback',   // 经验案例库反馈 (经 3001 代理到 Java Agent 8770)
+    '/api/canvas',     // 画布中转端点 (relay/push-ui, relay/register-port, relay/unregister-port)
   ];
   for (const p of backendApiPrefixes) {
     // 关键：用 pathFilter 精确过滤，且不修改 req.url（HPM 默认行为会改写为相对路径）

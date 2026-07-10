@@ -85,6 +85,7 @@
     "recharts": "^3.8.1",
     "surrealdb": "2.0.3",
     "vite": "^8.1.0",
+    "xstate": "^5.32.4",
     "zustand": "^5.0.14"
   },
   "devDependencies": {

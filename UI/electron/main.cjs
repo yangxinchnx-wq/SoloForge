@@ -98,35 +98,26 @@ function stopWatchdog(session) {
 }
 
 // ── Content-Security-Policy ──
-// dev 模式允许 unsafe-eval（Vite HMR 需要 new Function / eval）
-// prod 模式严格：禁止 unsafe-eval、unsafe-inline（除 style）、只允许同源
-function buildCspHeader(isDev) {
-  if (isDev) {
-    return [
-      "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: ws: http://localhost:* http://127.0.0.1:*",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:* http://127.0.0.1:*",
-      "style-src 'self' 'unsafe-inline' http://localhost:* http://127.0.0.1:*",
-      "img-src 'self' data: blob: http://localhost:* http://127.0.0.1:*",
-      "font-src 'self' data: http://localhost:* http://127.0.0.1:*",
-      "connect-src 'self' ws: http://localhost:* http://127.0.0.1:*",
-    ].join('; ');
-  }
+// 统一策略 (不分 dev/prod):
+//   Electron 桌面应用, 用户自行选择 LLM 服务商 (providers_db.json 含 20+ 家 + 自定义 baseUrl)
+//   全部通路开放, 仅保留 object-src / frame-ancestors 基础防护
+function buildCspHeader() {
   return [
-    "default-src 'self'",
-    "script-src 'self'",
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
-    "font-src 'self' data:",
-    "connect-src 'self' ws: wss: http://localhost:* http://127.0.0.1:* https://api.openai.com https://api.anthropic.com https://api.deepseek.com https://generativelanguage.googleapis.com https://api.siliconflow.cn https://api.moonshot.cn https://api.xiaomimimo.com",
+    "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: ws: wss: http: https:",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' http: https:",
+    "style-src 'self' 'unsafe-inline' http: https:",
+    "img-src 'self' data: blob: http: https:",
+    "font-src 'self' data: http: https:",
+    "connect-src 'self' ws: wss: http: https:",
     "object-src 'none'",
     "base-uri 'self'",
-    "form-action 'none'",
+    "form-action 'self'",
     "frame-ancestors 'none'",
   ].join('; ');
 }
 
 function applyCsp() {
-  const csp = buildCspHeader(isDev);
+  const csp = buildCspHeader();
   session.defaultSession.webRequest.onHeadersReceived((details, cb) => {
     cb({
       responseHeaders: {
@@ -280,6 +271,7 @@ public class W32 {
   [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
   [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);
   [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
@@ -296,12 +288,35 @@ public class W32 {
 //  → bug 隐藏;现在 applyNoSnapFinal 第一次用就炸了)
 // 改成保留换行,Add-Type 接受多行 C# 代码
 
-// 找指定 pid 的第一个顶层窗口
+// 找指定 pid 的窗口
 // 优化: 优先用 Get-Process (无需 Add-Type 编译, ~100ms)
 //   失败时 fallback 到 EnumWindows (需要 Add-Type, ~2-5s)
 // 注意: 不检查 IsWindowVisible — spawn 时 windowsHide:true 会让窗口首次 ShowWindow
 //   被 OS 替换为 SW_HIDE, IsWindowVisible 返回 false, 导致永远找不到窗口。
-async function findWindowByPid(pid) {
+// parentHwnd 参数: 若提供, 用 EnumChildWindows 在父窗口的子窗口中查找 (嵌入模式)
+async function findWindowByPid(pid, parentHwnd) {
+  // 嵌入模式: 窗口已是子窗口, EnumWindows 找不到 → 用 EnumChildWindows
+  if (parentHwnd) {
+    const childScript = `${PS_WIN32}
+$found = [IntPtr]::Zero
+$callback = {
+  param($hwnd, $lparam)
+  $procId = 0
+  [W32]::GetWindowThreadProcessId($hwnd, [ref]$procId) | Out-Null
+  if ($procId -eq ${pid}) {
+    $script:found = $hwnd
+    return $false
+  }
+  return $true
+}
+[W32]::EnumChildWindows([IntPtr]::new(${parentHwnd}), $callback, [IntPtr]::Zero) | Out-Null
+if ($script:found -ne [IntPtr]::Zero) { Write-Output $script:found.ToInt64() } else { Write-Output 0 }`;
+    const cr = await execPs(childScript);
+    const childHwnd = parseInt(cr.output, 10) || 0;
+    if (childHwnd !== 0) return childHwnd;
+    // EnumChildWindows 找不到时也继续尝试下面的通用路径 (窗口可能还没被 SetParent)
+  }
+
   // 快速路径: Get-Process 的 MainWindowHandle
   // 缺点: windowsHide:true 时 MainWindowHandle 可能为 0, 但 Flutter 窗口创建后通常非 0
   try {
@@ -497,15 +512,15 @@ async function startCanvas(sessionId, width, height) {
   delete childEnv.ELECTRON_RUN_AS_NODE;
   delete childEnv.ELECTRON_NO_ATTACH_CONSOLE;
 
-  // ★ 关键修复: 不传 --parent-hwnd 给 C++ runner
-  //   原因: C++ runner 收到 parent-hwnd 后立即 SetParent, 将 Flutter 窗口变为子窗口
-  //   → findWindowByPid 的 EnumWindows 只查找顶层窗口 (GetParent==Zero), 找不到子窗口
-  //   → HWND 查找超时 → killProcessTree → exit code 1
-  //   修复: 让 Flutter 窗口先作为顶层窗口创建, main.cjs 找到 HWND 后再 embedWindow
-  console.log(`[canvas:${sessionId}] spawning: ${exe} --port=${port} --canvas-width=${width} --canvas-height=${height} (cwd=${exeDir})`);
+  // ★ 嵌入模式: 传 --parent-hwnd 给 C++ runner
+  //   C++ runner 在窗口创建后立即 SetParent + WS_CHILD (在首帧 Show 之前)
+  //   → 窗口从未以顶层窗口形式可见, 彻底消除启动闪烁
+  //   findWindowByPid 用 EnumChildWindows 查找子窗口 HWND
+  console.log(`[canvas:${sessionId}] spawning (embedded): ${exe} --port=${port} --parent-hwnd=${hostHwnd} --canvas-width=${width} --canvas-height=${height} (cwd=${exeDir})`);
 
   const child = spawn(exe, [
     `--port=${port}`,
+    `--parent-hwnd=${hostHwnd}`,
     `--canvas-width=${width}`,
     `--canvas-height=${height}`,
   ], {
@@ -591,12 +606,13 @@ async function startCanvas(sessionId, width, height) {
   console.log(`[canvas:${sessionId}] port ${port} ready, finding window HWND...`);
 
   // 找窗口 HWND（总超时 15s — 避免慢速 PowerShell 导致无限等待）
+  // 嵌入模式: 窗口已是子窗口, 用 EnumChildWindows 在 hostHwnd 下查找
   let hwnd = 0;
   const pid = child.pid;
   const hwndDeadline = Date.now() + 15000;
   let hwndAttempts = 0;
   for (let i = 0; i < 60 && hwnd === 0 && Date.now() < hwndDeadline; i++) {
-    hwnd = await findWindowByPid(pid);
+    hwnd = await findWindowByPid(pid, hostHwnd);
     hwndAttempts++;
     if (hwnd === 0) await new Promise(r => setTimeout(r, 200));
   }
@@ -605,17 +621,10 @@ async function startCanvas(sessionId, width, height) {
     killProcessTree(child);
     return { ok: false, error: `canvas window HWND not found for pid ${pid} (tried ${hwndAttempts} times)` };
   }
-  console.log(`[canvas:${sessionId}] HWND found: ${hwnd} (after ${hwndAttempts} attempts)`);
+  console.log(`[canvas:${sessionId}] HWND found: ${hwnd} (after ${hwndAttempts} attempts, child of host=${hostHwnd})`);
 
-  // ★ 关键: 将 Flutter 窗口嵌入到 canvasHostWindow (SetParent + WS_CHILD)
-  //   之前缺失这一步 → Flutter 窗口作为独立顶层窗口存在, 不在 Electron 内
-  try {
-    await embedWindow(hwnd, hostHwnd, 0, 0, hostBounds.width, hostBounds.height);
-    console.log(`[canvas:${sessionId}] embedded into host hwnd=${hostHwnd}`);
-  } catch (e) {
-    console.warn(`[canvas:${sessionId}] embedWindow failed:`, e?.message);
-    // embed 失败不阻止启动, 用户至少能看到独立窗口
-  }
+  // ★ 嵌入模式: C++ runner 已完成 SetParent + WS_CHILD, 此处只需调整尺寸
+  //   之前的 embedWindow 调用已不需要 (窗口从创建就是子窗口)
 
   // 把画布窗口尺寸对齐到最新 hostBounds
   try {
@@ -824,6 +833,82 @@ let _savedBounds = null;
     const folderPath = result.filePaths[0];
     const folderName = path.basename(folderPath);
     return { path: folderPath, name: folderName };
+  });
+
+  // ── 递归读取目录树 (用于工作区文件树恢复) ──
+  // 返回与前端 FileNode 兼容的 JSON 树结构
+  ipcMain.handle('fs:read-dir-tree', async (_e, { dirPath, maxDepth }) => {
+    console.log('[fs:read-dir-tree] called with dirPath:', dirPath);
+    const SKIP_DIRS = new Set(['.git', '.svn', 'node_modules', '__pycache__', '.cache', 'dist', 'build', '.next', '.nuxt']);
+    const MAX_DEPTH = maxDepth || 12;
+
+    function readDir(dirPath, parentPath, depth) {
+      const name = path.basename(dirPath);
+      const nodePath = parentPath ? `${parentPath}/${name}` : name;
+      const children = [];
+      if (depth >= MAX_DEPTH) {
+        return { name, type: 'folder', path: nodePath, children };
+      }
+      try {
+        const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.name.startsWith('.') || SKIP_DIRS.has(entry.name)) continue;
+          const childPath = path.join(dirPath, entry.name);
+          if (entry.isDirectory()) {
+            children.push(readDir(childPath, nodePath, depth + 1));
+          } else if (entry.isFile()) {
+            children.push({ name: entry.name, type: 'file', path: `${nodePath}/${entry.name}` });
+          }
+        }
+      } catch (e) {
+        // 权限/IO 错误: 返回空子节点
+      }
+      children.sort((a, b) => {
+        if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+      return { name, type: 'folder', path: nodePath, children };
+    }
+
+    try {
+      // 如果路径直接存在,直接读取
+      if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
+        const tree = readDir(dirPath, '', 0);
+        return { success: true, tree };
+      }
+
+      // 路径不存在 → 在常见基目录下搜索同名文件夹
+      // 场景: workspaceFolder 只存了文件夹名 (如 "Dyson Sphere Program"),
+      // 不是完整路径,需要猜测实际位置
+      const folderName = path.basename(dirPath);
+      const homeDir = app.getPath('home');
+      const searchBases = [
+        path.join(homeDir, 'Desktop'),
+        path.join(homeDir, 'Documents'),
+        path.join(homeDir, 'Downloads'),
+        homeDir,
+        path.join(homeDir, 'Desktop', 'Projects'),
+        path.join(homeDir, 'Projects'),
+      ];
+      // 也尝试相对于 CWD (项目根目录)
+      searchBases.push(process.cwd());
+      // 也尝试上一级目录 (UI/ 的父目录,即 SoloForge/)
+      searchBases.push(path.dirname(process.cwd()));
+
+      console.log('[fs:read-dir-tree] searching for folderName:', folderName, 'in bases:', searchBases);
+      for (const base of searchBases) {
+        const candidate = path.join(base, folderName);
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+          console.log('[fs:read-dir-tree] found at:', candidate);
+          const tree = readDir(candidate, '', 0);
+          return { success: true, tree, resolvedPath: candidate };
+        }
+      }
+
+      return { success: false, error: 'Directory not found in common locations: ' + dirPath };
+    } catch (e) {
+      return { success: false, error: e.message || String(e) };
+    }
   });
 
 ipcMain.handle('window:minimize', () => {
@@ -1771,7 +1856,8 @@ app.whenReady().then(() => {
     const userDataDir = app.getPath('userData');
     const targets = [
       'Code Cache', 'Cache', 'GPUCache', 'DawnGraphiteCache', 'DawnWebGPUCache',
-      'Local Storage', 'Session Storage', 'IndexedDB', 'WebStorage',
+      // Local Storage 保留: soloforge_workspaces 需要持久化
+      'Session Storage', 'IndexedDB', 'WebStorage',
       'Service Worker', 'Service Worker Database', 'Shared Dictionary',
       'File System', 'blob_storage', 'Network',
       'settings-store.json',

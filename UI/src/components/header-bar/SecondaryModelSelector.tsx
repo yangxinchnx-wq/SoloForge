@@ -15,7 +15,7 @@
 
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Layers, ChevronDown, Minus, Plus, X } from '../../utils/icons';
+import { Users, ChevronDown, Minus, Plus, X } from '../../utils/icons';
 import { ModelIcon } from '../ModelIcon';
 import { SecondaryModel } from '../../types';
 
@@ -91,44 +91,54 @@ export interface SecondaryModelSelectorProps {
   onOpenChange?: (open: boolean) => void;
 }
 
-// 椭圆弹出动画 variants — macOS Big Sur+ 风格, 从按钮中心扩散
+// "柔和推出" — y 位移 + opacity 同步淡入, 无 clipPath 硬切
+// 突兀的根源: clipPath inset 是锐利裁剪边缘, opacity 又不淡入 → "突然冒出一条线"
+// 解决: 去掉 clipPath, 改用 y 大位移 + opacity 快速同步淡入 + scale 微调
+//   - y: 20px → 0 (大位移让"推"有距离感, 不是原地冒出)
+//   - opacity: 0 → 1 (同步淡入, 消除"突然出现"的硬切)
+//   - scale: 0.94 → 1 (轻微缩放, 顶部锚点, 增强"从按钮morph"感)
+//   - 三者同曲线同步, 380ms ease-out-expo: 极慢启动 + 快速到位 + 长尾缓停
+//   - 曲线 [0.16, 1, 0.3, 1] (ease-out-expo): 比 quart 更柔, 启动更慢
 const panelVariants = {
   hidden: {
-    clipPath: 'ellipse(0% 0% at 50% 0%)',
     opacity: 0,
-    scale: 0.6,
+    scale: 0.94,
+    y: 20,
     transition: {
-      duration: 0.18,
+      // 关闭: 快速收起 (140ms), 往下退 + 淡出
+      duration: 0.14,
       ease: [0.4, 0, 1, 1] as [number, number, number, number],
-      when: 'afterChildren',
     },
   },
   visible: {
-    clipPath: 'ellipse(150% 150% at 50% 0%)',
     opacity: 1,
     scale: 1,
+    y: 0,
     transition: {
-      duration: 0.32,
+      // 开启: 380ms ease-out-expo, 慢启动消除突兀, 长尾缓停丝滑
+      duration: 0.38,
       ease: [0.16, 1, 0.3, 1] as [number, number, number, number],
-      when: 'beforeChildren',
-      staggerChildren: 0.04,
-      delayChildren: 0.08,
     },
   },
 };
 
 const contentVariants = {
-  hidden: { opacity: 0, y: -4 },
+  hidden: { opacity: 0, y: 8 },
   visible: {
     opacity: 1,
     y: 0,
-    transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] },
+    // 内容与面板同方向同曲线, 延迟 80ms 让面板先成型再显内容
+    transition: {
+      duration: 0.32,
+      ease: [0.16, 1, 0.3, 1] as [number, number, number, number],
+      delay: 0.08,
+    },
   },
 };
 
 const backdropVariants = {
-  hidden: { opacity: 0, transition: { duration: 0.15 } },
-  visible: { opacity: 1, transition: { duration: 0.2 } },
+  hidden: { opacity: 0, transition: { duration: 0.18, ease: [0.4, 0, 1, 1] as [number, number, number, number] } },
+  visible: { opacity: 1, transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] } },
 };
 
 function SecondaryModelSelectorImpl({
@@ -215,7 +225,7 @@ function SecondaryModelSelectorImpl({
           transition={{ type: 'spring', stiffness: 500, damping: 30 }}
           className="flex items-center justify-center shrink-0"
         >
-          <Layers className="w-3.5 h-3.5" />
+          <Users className="w-3.5 h-3.5" />
         </motion.span>
         <span>协同副模型</span>
         <motion.span
@@ -252,7 +262,8 @@ function SecondaryModelSelectorImpl({
               animate="visible"
               exit="hidden"
               style={{
-                transformOrigin: '50% 0%', // 锚点: 按钮底边中心
+                // 锚点: 顶部中心 (clipPath 从顶部展开, scale 围绕此点生长)
+                transformOrigin: '50% 0%',
                 willChange: 'clip-path, transform, opacity',
                 transform: 'translateZ(0)',
                 backfaceVisibility: 'hidden',

@@ -26,6 +26,8 @@ import { useAutoPersist, clearChatAll } from '../services/actorIntegration';
 import { UIMessagePartsRenderer } from './UIMessagePartsRenderer';
 // H-3 迁移: 从 uiMessageStore 派生摘要状态, 替代直接订阅 streamingStore.tasks[chatId]
 import { useStreamSummary } from '../services/useStreamSummary';
+// P0 迁移: 从 parts 派生完整 RootTask, 替代 streamingStore.tasks[chatId]
+import { useRootTaskFromParts } from '../services/usePartsDerived';
 
 interface StreamPanelProps {
   chatId: string;
@@ -36,9 +38,10 @@ interface StreamPanelProps {
 }
 
 export default function StreamPanel({ chatId, mainModel, modelCount, permissionMode, events = [] }: StreamPanelProps) {
-  // Move State Down: 只订阅 hasTask (boolean), 不订阅完整 task 对象
-  // task 字段变化 (subtask progress, phase 等) 不会触发 StreamPanel 重渲染
-  const hasTask = useStreamingStore(s => !!s.tasks[chatId]);
+  // P0: hasTask 从 uiMessageStore 派生 (替代 streamingStore.tasks[chatId])
+  // useStreamSummary 只返回派生摘要, 不订阅完整 task 对象
+  const summary = useStreamSummary(chatId);
+  const hasTask = summary.hasData;
 
   // P3 集成: 自动持久化 streamingStore 状态 (每 10 次变化 + beforeunload)
   useAutoPersist(chatId);
@@ -117,13 +120,14 @@ interface TaskExecutionCardProps {
 }
 
 function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: TaskExecutionCardProps) {
-  // H-3 迁移: 高频显示状态 (phase, progress, subtask counts) 从 uiMessageStore 派生
-  // 旧路径: const task = useStreamingStore(s => s.tasks[chatId]);
-  // 新路径: useStreamSummary 从 Data Parts 派生, 只在 part 变化时更新
+  // P0: 显示状态全部从 uiMessageStore (Data Parts) 派生
+  // 旧路径: useStreamingStore(s => s.tasks[chatId]) — 高频全量更新
+  // 新路径: useRootTaskFromParts — 从 parts 聚合, 只在 part 变化时更新
   const summary = useStreamSummary(chatId);
-  // userInput 仍从 streamingStore 读取 (原始 prompt 不在 parts 中, 低频)
+  // userInput / rootTaskId 仍从 streamingStore 读取 (控制流字段, 不在 parts 中, 低频)
   const userInput = useStreamingStore(s => s.tasks[chatId]?.userInput);
-  const task = useStreamingStore(s => s.tasks[chatId]);
+  const rootTaskId = useStreamingStore(s => s.streamTaskMeta[chatId]?.rootTaskId);
+  const task = useRootTaskFromParts(chatId, userInput, rootTaskId);
   const [isExpanded, setIsExpanded] = useState(true);
 
   if (!task && !summary.hasData) return null;
@@ -191,10 +195,9 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
                   mainModel={mainModel}
                   modelCount={modelCount}
                   mode={permissionMode}
+                  chatId={chatId}
                 />
-                {/* P3: Data Parts 时间线 — 与 TaskTree 并行渲染
-                    TaskTree 消费 streamingStore (旧路径), UIMessagePartsRenderer 消费 uiMessageStore (新路径)
-                    双路径并行, 后续可逐步将 TaskTree 功能迁移到 parts 渲染器 */}
+                {/* P0: Data Parts 时间线 — TaskTree 和 UIMessagePartsRenderer 均从 uiMessageStore 派生 */}
                 <div className="border-t border-outline/15 pt-2">
                   <UIMessagePartsRenderer chatId={chatId} />
                 </div>

@@ -32,42 +32,49 @@ export interface MainModelSelectorProps {
   onOpenChange?: (open: boolean) => void;
 }
 
-// 椭圆弹出 (从按钮中心扩散) — 与 SecondaryModelSelector 视觉对齐
+// iOS 风格弹窗 — spring 驱动 scale + opacity + y, 带 overshoot (与 SecondaryModelSelector 统一)
 const panelVariants = {
   hidden: {
-    clipPath: 'ellipse(0% 0% at 50% 50%)',
     opacity: 0,
-    scale: 0.6,
+    scale: 0.85,
+    y: 8,
     transition: {
-      duration: 0.18,
+      duration: 0.12,
       ease: [0.4, 0, 1, 1] as [number, number, number, number],
     },
   },
   visible: {
-    clipPath: 'ellipse(150% 150% at 50% 50%)',
     opacity: 1,
     scale: 1,
+    y: 0,
     transition: {
-      duration: 0.32,
-      ease: [0.16, 1, 0.3, 1] as [number, number, number, number],
-      staggerChildren: 0.025,
-      delayChildren: 0.06,
+      type: 'spring' as const,
+      stiffness: 320,
+      damping: 26,
+      mass: 0.8,
+      staggerChildren: 0.03,
+      delayChildren: 0.05,
     },
   },
 };
 
 const itemVariants = {
-  hidden: { opacity: 0, y: -4 },
+  hidden: { opacity: 0, y: -6 },
   visible: {
     opacity: 1,
     y: 0,
-    transition: { duration: 0.18, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] },
+    transition: {
+      type: 'spring' as const,
+      stiffness: 400,
+      damping: 30,
+      mass: 0.6,
+    },
   },
 };
 
 const backdropVariants = {
-  hidden: { opacity: 0, transition: { duration: 0.15 } },
-  visible: { opacity: 1, transition: { duration: 0.2 } },
+  hidden: { opacity: 0, transition: { duration: 0.18, ease: [0.4, 0, 1, 1] as [number, number, number, number] } },
+  visible: { opacity: 1, transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] } },
 };
 
 function MainModelSelectorImpl({
@@ -229,8 +236,8 @@ function MainModelSelectorImpl({
               className="absolute left-0 mt-3.5 w-64 p-1 flex flex-col gap-0.5"
               style={{
                 // ── 弹出面板(实色不透明, 主题色对齐) ──────────────────
-                transformOrigin: '50% 50%',
-                willChange: 'clip-path, transform, opacity',
+                transformOrigin: '50% 0%',
+                willChange: 'transform, opacity',
                 transform: 'translateZ(0)',
                 backfaceVisibility: 'hidden',
                 WebkitBackfaceVisibility: 'hidden',

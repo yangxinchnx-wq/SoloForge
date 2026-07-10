@@ -63,14 +63,18 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   HWND flutterHwnd = window.GetHandle();
 
   if (parentHwnd && flutterHwnd) {
+    // Embedded mode: SetParent + WS_CHILD immediately, but do NOT ShowWindow.
+    // Window visibility is controlled by FlutterWindow::OnCreate's SetNextFrameCallback,
+    // which calls Show() after the first frame is rendered.
+    // This prevents both blank-window flicker and top-level window flash.
     LONG old_style = GetWindowLong(flutterHwnd, GWL_STYLE);
     LONG new_style = old_style & ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU);
-    new_style |= WS_CHILD | WS_VISIBLE;
+    new_style |= WS_CHILD;  // No WS_VISIBLE; wait for first-frame callback to Show
     SetWindowLong(flutterHwnd, GWL_STYLE, new_style);
     SetParent(flutterHwnd, parentHwnd);
     SetWindowPos(flutterHwnd, nullptr, 0, 0, canvasWidth, canvasHeight,
                  SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-    ShowWindow(flutterHwnd, SW_SHOW);
+    // No ShowWindow here - SetNextFrameCallback -> Show() handles it after first frame
   } else if (flutterHwnd) {
     LONG old_style = GetWindowLong(flutterHwnd, GWL_STYLE);
     LONG new_style = old_style & ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU);

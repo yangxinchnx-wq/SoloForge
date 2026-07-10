@@ -268,11 +268,41 @@ export const AGENT_TOOLS: ToolSchema[] = [
       },
     },
   },
+  // ── canvas_push_ui: 直接推送 UI AST 到画布 (核心断路修复) ──
+  // 让 LLM/Agent 能通过 tool_call 直接推送 Universal AST 到 Flutter 画布,
+  // 不再依赖前端 tryLocalTranslateAndPush 从文本提取代码块。
+  // 链路: Agent tool_call → executeToolCall → POST /api/canvas/relay/push-ui → Flutter /render
+  {
+    type: 'function',
+    function: {
+      name: 'canvas_push_ui',
+      description: 'Push a Universal AST UI tree directly to the Flutter canvas for immediate rendering. Use this tool when the user asks to draw/render/display UI on the canvas. The dsl is a UniversalNode tree (JSON object with type, children, props). The sessionId identifies which canvas to push to.',
+      parameters: {
+        type: 'object',
+        properties: {
+          sessionId: {
+            type: 'string',
+            description: 'Canvas session ID (the chat session ID). The relay will look up the registered Flutter port for this session.',
+          },
+          dsl: {
+            type: 'object',
+            description: 'Universal AST node tree. Root node has {type, children, props}. Example: {"type":"column","children":[{"type":"text","props":{"data":"Hello World"}}]}',
+          },
+          language: {
+            type: 'string',
+            description: 'Source language of the UI code (e.g. html, dart, typescript). Optional, defaults to typescript.',
+          },
+        },
+        required: ['sessionId', 'dsl'],
+      },
+    },
+  },
 ];
 
 /** 核心工具名称集合 (始终可用, 不受 activeTools 过滤影响) */
 const CORE_TOOL_NAMES = new Set([
   'read_file', 'write_file', 'execute_cmd', 'search_code', 'list_files',
+  'canvas_push_ui', // 断路修复: 画布推送工具始终可用
 ]);
 
 /**
@@ -1042,6 +1072,46 @@ export async function executeToolCall(request: ToolCallRequest): Promise<ToolCal
           .slice(0, 100)
           .map(e => `${e.isDirectory() ? '📁' : '📄'} ${e.name}`)
           .join('\n');
+        break;
+      }
+
+      // ─── canvas_push_ui: 直接推送 UI AST 到 Flutter 画布 ──
+      // 断路修复: 让 Agent 能通过 tool_call 直接推送 Universal AST,
+      // 无需依赖前端 tryLocalTranslateAndPush 从文本提取代码块。
+      // 链路: executeToolCall → POST /api/canvas/relay/push-ui → Flutter /render
+      case 'canvas_push_ui': {
+        const sessionId = String(request.arguments.sessionId || '');
+        const dsl = request.arguments.dsl;
+        const language = String(request.arguments.language || 'typescript');
+        if (!sessionId) {
+          output = 'Error: canvas_push_ui requires "sessionId" argument';
+          break;
+        }
+        if (!dsl || typeof dsl !== 'object') {
+          output = 'Error: canvas_push_ui requires "dsl" argument (Universal AST object)';
+          break;
+        }
+        try {
+          const relayUrl = `${UI_BASE_URL}/api/canvas/relay/push-ui`;
+          const relayRes = await fetch(relayUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId, dsl, language }),
+          });
+          const relayData = await relayRes.json().catch(() => ({})) as {
+            success?: boolean;
+            error?: string;
+            port?: number;
+            dslBytes?: number;
+          };
+          if (!relayRes.ok || relayData.success !== true) {
+            output = `Error: canvas relay push-ui failed: ${relayData.error || `HTTP ${relayRes.status}`}`;
+          } else {
+            output = `Successfully pushed UI to canvas (sessionId=${sessionId}, port=${relayData.port}, dslBytes=${relayData.dslBytes}). The UI has been rendered on the Flutter canvas.`;
+          }
+        } catch (err) {
+          output = `Error: failed to reach canvas relay (${UI_BASE_URL}): ${err instanceof Error ? err.message : String(err)}`;
+        }
         break;
       }
 

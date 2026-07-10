@@ -22,6 +22,48 @@ import type { StreamEvent, TaskPhase } from '../types/streaming';
 import type { UIMessage, UIPart, UITextPart } from '../types/messages';
 import { streamEventToUIPart } from './eventToUIPart';
 
+// ==================== Op Log (Checkpointer, P2.5) ====================
+//
+// 记录 uiMessageStore 的每个写操作, 用于时间旅行回放 (replay)。
+// 设计参考: Erlang/OTP event log + Redux DevTools time-travel。
+//
+// 注意: op log 只记录可重建状态的最小信息:
+//   - appendPart/appendParts: 记录完整 part(s)
+//   - appendTextChunk: 记录 text + streaming (回放时复用累积逻辑)
+//   - updateLastPart: 记录更新后的完整 part (updater 函数不可序列化)
+//   - createMessage: 记录 role + rootTaskId + initialParts
+//   - completeMessage: 记录 status
+//   - clearChat: 标记清空
+
+export type OpLogOp =
+  | 'createMessage'
+  | 'appendPart'
+  | 'appendParts'
+  | 'appendTextChunk'
+  | 'updateLastPart'
+  | 'completeMessage'
+  | 'clearChat';
+
+export interface OpLogEntry {
+  op: OpLogOp;
+  chatId: string;
+  messageId?: string;
+  timestamp: number;
+  /** 全局递增的 part 序号 (调试/排序用) */
+  partIndex: number;
+  // 操作参数 (按 op 不同, 只填相关字段)
+  part?: UIPart;
+  parts?: UIPart[];
+  text?: string;
+  streaming?: boolean;
+  role?: UIMessage['role'];
+  rootTaskId?: string;
+  initialParts?: UIPart[];
+  status?: UIMessage['status'];
+}
+
+const DEFAULT_MAX_OP_LOG_SIZE = 2000;
+
 // ==================== Store 核心 ====================
 
 class UIMessageStore {
@@ -32,6 +74,12 @@ class UIMessageStore {
   /** chatId → 快照缓存 (引用稳定, 避免不必要的重渲染) */
   private snapshots = new Map<string, UIMessage[]>();
   private version = 0;
+
+  // P2.5: op log (按 chatId 隔离)
+  private opLogs = new Map<string, OpLogEntry[]>();
+  private maxOpLogSize = DEFAULT_MAX_OP_LOG_SIZE;
+  /** 全局 part 计数器 (跨 chat, 用于 op log 排序) */
+  private globalPartCounter = 0;
 
   // ============== 订阅 ==============
 
@@ -58,6 +106,39 @@ class UIMessageStore {
     this.snapshots.clear();
     this.version++;
     this.listeners.forEach(l => l());
+  }
+
+  // ============== Op Log (P2.5) ==============
+
+  /** 记录一条 op log (内部调用) */
+  private recordOp(entry: Omit<OpLogEntry, 'partIndex' | 'timestamp'> & { timestamp?: number }): void {
+    const log = this.opLogs.get(entry.chatId) ?? [];
+    const full: OpLogEntry = {
+      ...entry,
+      partIndex: ++this.globalPartCounter,
+      timestamp: entry.timestamp ?? Date.now(),
+    } as OpLogEntry;
+    log.push(full);
+    // 容量限制: 超出丢弃最早
+    if (log.length > this.maxOpLogSize) {
+      log.splice(0, log.length - this.maxOpLogSize);
+    }
+    this.opLogs.set(entry.chatId, log);
+  }
+
+  /** 获取指定 chatId 的 op log (回放/调试用) */
+  getOpLog(chatId: string): OpLogEntry[] {
+    return this.opLogs.get(chatId) ?? [];
+  }
+
+  /** 设置 op log 最大容量 (测试用) */
+  setMaxOpLogSize(size: number): void {
+    this.maxOpLogSize = Math.max(10, size);
+  }
+
+  /** 清除指定 chatId 的 op log */
+  clearOpLog(chatId: string): void {
+    this.opLogs.delete(chatId);
   }
 
   // ============== 消息管理 ==============
@@ -93,6 +174,7 @@ class UIMessageStore {
       status: role === 'assistant' ? 'streaming' : 'done',
     };
     msgs.push(msg);
+    this.recordOp({ op: 'createMessage', chatId, messageId: msg.id, role, rootTaskId, initialParts });
     this.notify();
     return msg;
   }
@@ -107,6 +189,23 @@ class UIMessageStore {
     if (!msg) return;
     msg.parts.push(part);
     msg.updatedAt = Date.now();
+    this.recordOp({ op: 'appendPart', chatId, messageId, part });
+    this.notify();
+  }
+
+  /**
+   * 批量追加 parts (单次 notify, 减少高频场景的重渲染次数)
+   * P1低风险: 一次性写入多个 part 时用此入口替代多次 appendPart
+   */
+  appendParts(chatId: string, messageId: string, parts: UIPart[]): void {
+    if (parts.length === 0) return;
+    const msgs = this.messages.get(chatId);
+    if (!msgs) return;
+    const msg = msgs.find(m => m.id === messageId);
+    if (!msg) return;
+    for (const p of parts) msg.parts.push(p);
+    msg.updatedAt = Date.now();
+    this.recordOp({ op: 'appendParts', chatId, messageId, parts });
     this.notify();
   }
 
@@ -125,6 +224,8 @@ class UIMessageStore {
       if (msg.parts[i].type === partType) {
         msg.parts[i] = updater(msg.parts[i]);
         msg.updatedAt = Date.now();
+        // P2.5: 记录更新后的完整 part (updater 函数不可序列化, 记录结果)
+        this.recordOp({ op: 'updateLastPart', chatId, messageId, part: msg.parts[i] });
         this.notify();
         return;
       }
@@ -150,6 +251,8 @@ class UIMessageStore {
       msg.parts.push({ type: 'text', text, streaming } as UITextPart);
     }
     msg.updatedAt = Date.now();
+    // P2.5: 记录 text + streaming (回放时复用 appendTextChunk 累积逻辑)
+    this.recordOp({ op: 'appendTextChunk', chatId, messageId, text, streaming });
     this.notify();
   }
 
@@ -170,6 +273,7 @@ class UIMessageStore {
       }
     }
     msg.updatedAt = Date.now();
+    this.recordOp({ op: 'completeMessage', chatId, messageId, status });
     this.notify();
   }
 
@@ -209,6 +313,7 @@ class UIMessageStore {
   clearChat(chatId: string): void {
     if (!this.messages.has(chatId)) return;
     this.messages.delete(chatId);
+    this.recordOp({ op: 'clearChat', chatId });
     this.notify();
   }
 
@@ -234,10 +339,117 @@ class UIMessageStore {
     }
   }
 
+  // ============== 时间旅行回放 (P2.5) ==============
+
+  /**
+   * 从 op log 重建指定 chatId 在 untilTimestamp 时刻的消息状态
+   *
+   * 不修改当前 store 状态, 返回一个独立的 UIMessage[] 副本。
+   * 用于: 调试 (查看历史某时刻的 UI)、崩溃恢复、状态对比。
+   *
+   * @param chatId 目标对话
+   * @param untilTimestamp 回放到此时间戳为止 (含), 不传则回放全部 op log
+   * @returns 重建的 UIMessage[] (独立副本, 不影响 store)
+   */
+  replay(chatId: string, untilTimestamp?: number): UIMessage[] {
+    const log = this.opLogs.get(chatId);
+    if (!log || log.length === 0) return [];
+
+    // 过滤到指定时间戳
+    const entries = untilTimestamp !== undefined
+      ? log.filter(e => e.timestamp <= untilTimestamp)
+      : log;
+
+    // 在独立的临时状态上 apply op log
+    const rebuilt: UIMessage[] = [];
+
+    for (const entry of entries) {
+      switch (entry.op) {
+        case 'createMessage': {
+          const msg: UIMessage = {
+            id: entry.messageId!,
+            role: entry.role!,
+            parts: entry.initialParts ? [...entry.initialParts] : [],
+            createdAt: entry.timestamp,
+            updatedAt: entry.timestamp,
+            chatId: entry.chatId,
+            rootTaskId: entry.rootTaskId,
+            status: entry.role === 'assistant' ? 'streaming' : 'done',
+          };
+          rebuilt.push(msg);
+          break;
+        }
+        case 'appendPart': {
+          const msg = rebuilt.find(m => m.id === entry.messageId);
+          if (msg && entry.part) {
+            msg.parts.push(entry.part);
+            msg.updatedAt = entry.timestamp;
+          }
+          break;
+        }
+        case 'appendParts': {
+          const msg = rebuilt.find(m => m.id === entry.messageId);
+          if (msg && entry.parts) {
+            for (const p of entry.parts) msg.parts.push(p);
+            msg.updatedAt = entry.timestamp;
+          }
+          break;
+        }
+        case 'appendTextChunk': {
+          const msg = rebuilt.find(m => m.id === entry.messageId);
+          if (!msg || entry.text === undefined) break;
+          const lastPart = msg.parts[msg.parts.length - 1];
+          if (lastPart && lastPart.type === 'text' && (lastPart as UITextPart).streaming) {
+            (lastPart as UITextPart).text += entry.text;
+            (lastPart as UITextPart).streaming = entry.streaming ?? false;
+          } else {
+            msg.parts.push({ type: 'text', text: entry.text, streaming: entry.streaming } as UITextPart);
+          }
+          msg.updatedAt = entry.timestamp;
+          break;
+        }
+        case 'updateLastPart': {
+          const msg = rebuilt.find(m => m.id === entry.messageId);
+          if (!msg || !entry.part) break;
+          for (let i = msg.parts.length - 1; i >= 0; i--) {
+            if (msg.parts[i].type === entry.part.type) {
+              msg.parts[i] = entry.part;
+              msg.updatedAt = entry.timestamp;
+              break;
+            }
+          }
+          break;
+        }
+        case 'completeMessage': {
+          const msg = rebuilt.find(m => m.id === entry.messageId);
+          if (!msg) break;
+          msg.status = entry.status ?? 'done';
+          for (const part of msg.parts) {
+            if (part.type === 'text' && (part as UITextPart).streaming) {
+              (part as UITextPart).streaming = false;
+            }
+          }
+          msg.updatedAt = entry.timestamp;
+          break;
+        }
+        case 'clearChat': {
+          // clearChat 后 rebuilt 清空 (后续 op log 若有则继续重建)
+          rebuilt.length = 0;
+          break;
+        }
+      }
+    }
+
+    // 深拷贝, 确保返回独立副本
+    return JSON.parse(JSON.stringify(rebuilt));
+  }
+
   /** 测试用: 重置所有状态 */
   __reset(): void {
     this.messages.clear();
     this.snapshots.clear();
+    this.opLogs.clear();
+    this.globalPartCounter = 0;
     this.notify();
   }
 }

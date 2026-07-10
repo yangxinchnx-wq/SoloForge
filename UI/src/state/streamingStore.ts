@@ -947,56 +947,22 @@ export function installStreamDevHooks(): void {
   };
 }
 
-// ==================== R3.5: 选择器 hooks (2026-07-02 性能优化) ====================
-// 之前:组件常常 `const tasks = useStreamingStore(s => s.tasks)` 一把选,任何 chat 的任务更新
-// 都会让该组件重建。下面这套 hooks 用 chatId 锚定选择器,让 StreamPanel / SubTaskNode
-// 等高频组件只在自己关心的 chatId 任务发生变化时才 re-render。
-//
-// 注意:RootTask 选择函数返回的是 *引用*,如果对象地址不变,Zustand 默认会跳过
-// (applyEvent 已保证每次 dispatch 后 tasks[chatId] 是新对象)。
+// ==================== P0: 选择器 hooks 清理 ====================
+// 以下 hooks 已迁移到 usePartsDerived.ts (从 uiMessageStore.parts 派生):
+//   - useTaskByChatId → useRootTaskFromParts
+//   - useSubTasksByChatId → useSubTasksFromParts
+//   - useAuditTaskByChatId → useAuditTaskFromParts
+//   - useTaskPhase / useTaskProgress → useStreamSummary
+//   - useDeliverResult → useDeliverResultFromParts
+//   - useDelegationLog → useDelegationLogFromParts
+//   - useModelActionLog → useModelActionLogFromParts
+//   - useTextBuffer → useTextFromParts
+//   - useAgentsByChatId → 保留 (控制流字段, 仍从 streamingStore 读)
 
-export const useTaskByChatId = (chatId: string | null | undefined) =>
-  useStreamingStore((s) => (chatId ? s.tasks[chatId] : undefined));
-
-export const useSubTasksByChatId = (chatId: string | null | undefined) =>
-  useStreamingStore(useShallow((s) => {
-    if (!chatId) return [] as SubTask[];
-    return s.tasks[chatId]?.subTasks ?? [];
-  }));
-
+/** 保留: 事件缓冲订阅 (ChatPanel 用于事件到达通知) */
 export const useEventBufferForChat = (chatId: string | null | undefined) =>
   useStreamingStore((s) => (chatId ? s.eventBuffer[chatId] : undefined));
 
-export const useAuditTaskByChatId = (chatId: string | null | undefined) =>
-  useStreamingStore((s) => (chatId ? s.tasks[chatId]?.auditTask : undefined));
-
+/** 保留: 子 Agent 池订阅 (控制流字段) */
 export const useAgentsByChatId = (chatId: string | null | undefined) =>
   useStreamingStore(useShallow((s) => (chatId ? s.agentsMap[chatId] ?? [] : [])));
-
-// ==================== 解耦缓冲选择器 (2026-07-10 性能优化) ====================
-// text_chunk 高频事件只更新 textBuffers record, 不触发 RootTask 重渲染。
-// SubTaskNode 通过 useTextBuffer 独立订阅自己的文本流, 互不干扰。
-
-/** 订阅指定 subTask 的流式文本缓冲 (解耦于 RootTask) */
-export const useTextBuffer = (subTaskId: string | null | undefined) =>
-  useStreamingStore((s) => (subTaskId ? s.textBuffers[subTaskId] : undefined));
-
-/** 订阅指定 chatId 的任务阶段 (只在 phase 变化时触发重渲染) */
-export const useTaskPhase = (chatId: string | null | undefined) =>
-  useStreamingStore((s) => (chatId ? s.tasks[chatId]?.phase : undefined));
-
-/** 订阅指定 chatId 的任务进度 (只在 progress 变化时触发重渲染) */
-export const useTaskProgress = (chatId: string | null | undefined) =>
-  useStreamingStore((s) => (chatId ? s.tasks[chatId]?.progress : undefined));
-
-/** 订阅指定 chatId 的交付结果 */
-export const useDeliverResult = (chatId: string | null | undefined) =>
-  useStreamingStore((s) => (chatId ? s.tasks[chatId]?.deliverResult : undefined));
-
-/** 订阅指定 chatId 的模型委派日志 */
-export const useDelegationLog = (chatId: string | null | undefined) =>
-  useStreamingStore(useShallow((s) => (chatId ? s.tasks[chatId]?.delegationLog ?? [] : [])));
-
-/** 订阅指定 chatId 的模型动作日志 */
-export const useModelActionLog = (chatId: string | null | undefined) =>
-  useStreamingStore(useShallow((s) => (chatId ? s.tasks[chatId]?.modelActionLog ?? [] : [])));

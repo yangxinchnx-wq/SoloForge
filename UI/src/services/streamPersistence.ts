@@ -32,6 +32,7 @@ const KEYS = {
   textBuffers: `${STORAGE_PREFIX}textBuffers`,
   agents: `${STORAGE_PREFIX}agents`,
   actorSnapshots: `${STORAGE_PREFIX}actorSnapshots`,
+  messages: `${STORAGE_PREFIX}messages`,
   // IndexedDB store names
   dbMessages: 'messages',
   dbEventLog: 'eventLog',
@@ -44,6 +45,8 @@ interface PersistedState {
   textBuffers: Record<string, string>;
   agents: Record<string, SubAgent[]>;
   actorSnapshots: ActorStateSnapshot[];
+  /** P0: uiMessageStore 的 messages (替代 tasks + textBuffers) */
+  messages?: Record<string, UIMessage[]>;
   /** 持久化时间戳 */
   savedAt: number;
   /** schema 版本 (未来迁移用) */
@@ -330,6 +333,7 @@ class StreamPersistenceManager {
       textBuffers: this.pendingFlush.textBuffers ?? this.ls.read<Record<string, string>>(KEYS.textBuffers) ?? {},
       agents: this.pendingFlush.agents ?? this.ls.read<Record<string, SubAgent[]>>(KEYS.agents) ?? {},
       actorSnapshots: this.pendingFlush.actorSnapshots ?? this.ls.read<ActorStateSnapshot[]>(KEYS.actorSnapshots) ?? [],
+      messages: this.pendingFlush.messages ?? this.ls.read<Record<string, UIMessage[]>>(KEYS.messages) ?? {},
       savedAt: Date.now(),
       version: 1,
     };
@@ -338,6 +342,7 @@ class StreamPersistenceManager {
     this.ls.write(KEYS.textBuffers, state.textBuffers);
     this.ls.write(KEYS.agents, state.agents);
     this.ls.write(KEYS.actorSnapshots, state.actorSnapshots);
+    if (state.messages) this.ls.write(KEYS.messages, state.messages);
 
     this.pendingFlush = {};
   }
@@ -349,14 +354,17 @@ class StreamPersistenceManager {
   restoreHotState(): Partial<PersistedState> | null {
     if (!this.config.enabled) return null;
 
+    // P0: 优先恢复 messages (新路径), 回退到 tasks (旧路径)
+    const messages = this.ls.read<Record<string, UIMessage[]>>(KEYS.messages);
     const tasks = this.ls.read<Record<string, RootTask>>(KEYS.tasks);
-    if (!tasks || Object.keys(tasks).length === 0) return null;
+    if (!messages && (!tasks || Object.keys(tasks).length === 0)) return null;
 
     return {
-      tasks,
+      tasks: tasks ?? {},
       textBuffers: this.ls.read<Record<string, string>>(KEYS.textBuffers) ?? {},
       agents: this.ls.read<Record<string, SubAgent[]>>(KEYS.agents) ?? {},
       actorSnapshots: this.ls.read<ActorStateSnapshot[]>(KEYS.actorSnapshots) ?? [],
+      messages: messages ?? undefined,
     };
   }
 

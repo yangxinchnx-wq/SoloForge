@@ -50,6 +50,7 @@ export function streamEventToUIPart(event: StreamEvent, prevPhase?: TaskPhase): 
         type: 'text',
         text: event.content,
         streaming: event.status === 'running',
+        subTaskId: event.subTaskId,
       };
       return part;
     }

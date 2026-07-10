@@ -350,7 +350,9 @@ requesterChatSessionId: ${chatId}
   parts.push(`## 画布预览
 前端内置本地翻译器,自动渲染回复中的 UI 代码块 (html/tsx/vue/dart/swift/kotlin/xml/xaml/qml/python/c)。
 - 生成 UI 时直接用 markdown 代码块返回,无需调工具或加标记
-- canvas_push_ui 仅限非代码场景 (svg/流程图) 或用户明确要求 AST 推送`);
+- canvas_push_ui 工具用于直接推送 Universal AST 到画布 (sessionId 参数填 ${chatId ?? '当前对话ID'})
+  - 适用场景: svg/流程图/图标等代码块无法表达的 UI, 或用户明确要求实时推送
+  - dsl 参数格式: {"type":"column","children":[{"type":"text","props":{"data":"Hello"}}]}`);
 
   return parts.join('\n\n');
 }

@@ -9,8 +9,22 @@ import { useBroadcastSync } from './hooks/useBroadcastSync';
 import { useFileOperations } from './hooks/useFileOperations';
 import { useAppStore } from './state/appStore';
 import { useChatsStore } from './state/chatsStore';
+import { useWorkspaceStore } from './state/useWorkspaceStore';
 
 export default function App() {
+  // ── 启动诊断 ──
+  useEffect(() => {
+    const sf = (window as any).soloforge;
+    const diag = {
+      hasSoloforge: !!sf,
+      soloforgeKeys: sf ? Object.keys(sf) : [],
+      hasReadDirTree: !!sf?.readDirTree,
+      hasSelectFolder: !!sf?.selectFolder,
+    };
+    console.log('[App] mount diagnostic:', diag);
+    try { fetch('/api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: 'App mount', ...diag }) }); } catch {}
+  }, []);
+
   const {
     mainModel, setMainModel,
     secModels, setSecModels,
@@ -29,11 +43,34 @@ export default function App() {
 
   // ── chatsStore → appStore 单向同步 ──────────────────────────
   const chatsStoreSelectedId = useChatsStore((s) => s.selectedChatId);
+  const chatsCount = useChatsStore((s) => s.chats.length);
   useEffect(() => {
+    // 诊断: 每次选中对话变化时发日志
+    const chat = useChatsStore.getState().chats.find(c => c.id === chatsStoreSelectedId);
+    try { fetch('/api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: 'chatSelect', chatsCount, selectedId: chatsStoreSelectedId, selectedTitle: chat?.title, workspaceFolder: chat?.workspaceFolder }) }); } catch {}
     if (chatsStoreSelectedId && chatsStoreSelectedId !== selectedChatId) {
       setSelectedChatId(chatsStoreSelectedId);
     }
-  }, [chatsStoreSelectedId, selectedChatId, setSelectedChatId]);
+  }, [chatsStoreSelectedId, selectedChatId, setSelectedChatId, chatsCount]);
+
+  // ── 切换对话时自动切到"资源管理器"选项卡 + 恢复工作区 ──────
+  // 如果选中的对话绑定了 workspaceFolder, 说明该对话有文件工作区,
+  // 应自动切换 activeTab 到 'explorer' 让 FileExplorer 显示出来。
+  // 同时调用 ensureWorkspace 确保工作区数据存在 (处理孤立数据/服务端恢复)。
+  const selectedChat = useChatsStore(
+    (s) => s.chats.find((c) => c.id === s.selectedChatId),
+  );
+  const selectedChatHasWorkspace = !!selectedChat?.workspaceFolder;
+  useEffect(() => {
+    if (selectedChatHasWorkspace && selectedChat?.workspaceFolder) {
+      setActiveTab('explorer');
+      // 确保工作区数据存在 (按名称匹配孤立数据 → 服务端恢复)
+      useWorkspaceStore.getState().ensureWorkspace(
+        chatsStoreSelectedId || 'default',
+        selectedChat.workspaceFolder,
+      );
+    }
+  }, [chatsStoreSelectedId, selectedChatHasWorkspace, selectedChat?.workspaceFolder, setActiveTab]);
 
   // ── modelProviderMap: 从 cherry_providers_v2 构建, 传给 ChatPanel ──
   const [modelProviderMap, setModelProviderMap] = useState<Record<string, {

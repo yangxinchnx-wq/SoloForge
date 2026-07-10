@@ -25,6 +25,8 @@ import { Code, Key, Brain, Database, CreditCard, HelpCircle } from '../utils/ico
 import { AndroidIcon, WindowsIcon, HarmonyOSIcon } from './brandIcons';
 import { useChatsStore, type ChatItem, type ChatTag } from '../state/chatsStore';
 import { useChatStore, emptyStreamState } from '../state/useChatStore';
+import { useWorkspaceStore } from '../state/useWorkspaceStore';
+import type { FileNode } from '../shared/types/file';
 
 // 兼容性 re-export
 export { AndroidIcon, WindowsIcon, HarmonyOSIcon, DefaultChatIcon } from './brandIcons';
@@ -257,6 +259,7 @@ export default function HistoryAndEditorPanel({
     let userCanceled = false;
 
     const sf = (window as any).soloforge;
+    console.log('[handleCreateFolderChat] sf keys:', sf ? Object.keys(sf) : 'undefined');
 
     // 1. 尝试 Electron IPC (需要重启 Electron 生效)
     if (sf?.selectFolder) {
@@ -275,11 +278,12 @@ export default function HistoryAndEditorPanel({
     }
 
     // 2. 如果 IPC 不可用或出错, 尝试浏览器 showDirectoryPicker
+    let browserDirHandle: any = null;
     if (!folderName && !userCanceled && typeof window !== 'undefined' && (window as any).showDirectoryPicker) {
       try {
-        const handle = await (window as any).showDirectoryPicker();
-        folderPath = handle.name;
-        folderName = handle.name;
+        browserDirHandle = await (window as any).showDirectoryPicker();
+        folderPath = browserDirHandle.name;
+        folderName = browserDirHandle.name;
       } catch {
         userCanceled = true; // showDirectoryPicker 取消时会 throw
       }
@@ -293,8 +297,70 @@ export default function HistoryAndEditorPanel({
 
     if (!folderName) return; // 用户取消了选择
 
+    // ── 读取目录树并存入 workspace store ──
+    // 问题根因: createChat 只保存了 workspaceFolder 元数据,
+    // 但文件树数据从未加载, 导致 FileExplorer 显示 "未绑定工作区"。
+    // 修复: 在创建对话前先读取目录树, 创建后立即存入 workspaces[chatId]。
+    let treeData: FileNode | null = null;
+
+    if (sf?.readDirTree && folderPath) {
+      // Electron: 通过 IPC 读取任意路径
+      try {
+        const result = await sf.readDirTree(folderPath);
+        if (result?.success && result.tree) {
+          treeData = result.tree as FileNode;
+        }
+      } catch (e) {
+        console.warn('[HistoryAndEditorPanel] readDirTree IPC 失败:', e);
+      }
+    } else if (browserDirHandle) {
+      // Browser: 用 FileSystemDirectoryHandle 递归读取
+      try {
+        const readDirRecursive = async (
+          dirHandle: any,
+          dirName: string,
+          parentPath: string,
+          depth: number = 0,
+        ): Promise<FileNode> => {
+          const children: FileNode[] = [];
+          if (depth < 12) {
+            try {
+              for await (const entry of dirHandle.values()) {
+                if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === '__pycache__') continue;
+                const entryPath = `${parentPath}/${entry.name}`;
+                if (entry.kind === 'file') {
+                  children.push({ name: entry.name, type: 'file', path: entryPath });
+                } else if (entry.kind === 'directory') {
+                  children.push(await readDirRecursive(entry, entry.name, entryPath, depth + 1));
+                }
+              }
+            } catch {}
+          }
+          children.sort((a, b) => {
+            if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+            return a.name.localeCompare(b.name);
+          });
+          return { name: dirName, type: 'folder', path: parentPath, children };
+        };
+        treeData = await readDirRecursive(browserDirHandle, folderName, folderName);
+      } catch (e) {
+        console.warn('[HistoryAndEditorPanel] browser dir read failed:', e);
+      }
+    }
+
     const newChat = await useChatsStore.getState().createChat(folderName, 'normal', folderPath ?? undefined);
     if (newChat) {
+      // 将文件树存入 workspace store (用 realId, createChat 返回后 ID 已确定)
+      if (treeData) {
+        useWorkspaceStore.getState().setWorkspaces((prev) => ({
+          ...prev,
+          [newChat.id]: {
+            name: folderName,
+            tree: treeData,
+            openFolders: { [folderName]: true },
+          },
+        }));
+      }
       setSelectedChatId(newChat.id);
     }
   }, [setSelectedChatId]);
@@ -311,8 +377,32 @@ export default function HistoryAndEditorPanel({
     setShowManualFolderInput(false);
     setManualPathValue('');
 
+    // 尝试通过 Electron IPC 读取目录树
+    let treeData: FileNode | null = null;
+    const sf = (window as any).soloforge;
+    if (sf?.readDirTree) {
+      try {
+        const result = await sf.readDirTree(trimmed);
+        if (result?.success && result.tree) {
+          treeData = result.tree as FileNode;
+        }
+      } catch (e) {
+        console.warn('[HistoryAndEditorPanel] manual path readDirTree failed:', e);
+      }
+    }
+
     const newChat = await useChatsStore.getState().createChat(folderName, 'normal', trimmed);
     if (newChat) {
+      if (treeData) {
+        useWorkspaceStore.getState().setWorkspaces((prev) => ({
+          ...prev,
+          [newChat.id]: {
+            name: folderName,
+            tree: treeData,
+            openFolders: { [folderName]: true },
+          },
+        }));
+      }
       setSelectedChatId(newChat.id);
     }
   }, [manualPathValue, setSelectedChatId]);

@@ -14,6 +14,7 @@ interface TaskTreeProps {
   mainModel: string;
   modelCount: number;
   mode: PermissionMode;
+  chatId: string;
   arbitrationResult?: ArbitrationResult;
 }
 
@@ -30,7 +31,7 @@ const PHASE_LABELS: Record<string, string> = {
   ERROR: '错误',
 };
 
-export const TaskTree = memo(function TaskTree({ task, mainModel, modelCount, mode, arbitrationResult }: TaskTreeProps) {
+export const TaskTree = memo(function TaskTree({ task, mainModel, modelCount, mode, chatId, arbitrationResult }: TaskTreeProps) {
   const isDone = task.phase === 'DONE';
   const isError = task.phase === 'ERROR';
 
@@ -72,6 +73,7 @@ export const TaskTree = memo(function TaskTree({ task, mainModel, modelCount, mo
               key={st.id}
               subTask={st}
               mainModel={mainModel}
+              chatId={chatId}
               defaultOpen={st.status === 'running'}
             />
           ))}

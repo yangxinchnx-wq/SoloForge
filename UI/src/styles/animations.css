@@ -478,3 +478,52 @@
     filter: none !important;
   }
 }
+
+/* =============================================================================
+   .sec-model-slide — 协同副模型按钮的推出/收回动画 (纯 CSS, 始终挂载)
+   ----------------------------------------------------------------------------
+   设计: 苹果风格 — opacity + translateX, 不动 width/scale, 零 reflow 零子树缩放
+   元素始终挂载 (不卸载 SecondaryModelSelector), 避免 framer-motion 卸载卡顿
+   - data-open="true":  opacity 1, x 0
+   - data-open="false": opacity 0, x -12px, pointer-events:none, 不可见后 collapse
+   - transition: 200ms ease-out-quart, 进入退出同曲线 (CSS transition 天然无停顿)
+   ============================================================================= */
+.sec-model-slide {
+  opacity: 0;
+  transform: translate3d(-12px, 0, 0);
+  max-width: 0;
+  overflow: hidden;
+  transition:
+    opacity 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    max-width 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0s linear 200ms;
+  visibility: hidden;
+  pointer-events: none;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.sec-model-slide[data-open="true"] {
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+  max-width: 400px;
+  visibility: visible;
+  pointer-events: auto;
+  /* 打开态: overflow visible — 否则会裁掉 SecondaryModelSelector 向下弹出的面板 */
+  overflow: visible;
+  /* 弹出: max-width 先撑开空间 (0→220ms), opacity/transform 滞后 80ms 再淡入
+     这样内容是"先就位再显现", 不是"撑开的同时突然冒出" */
+  transition:
+    opacity 180ms cubic-bezier(0.22, 1, 0.36, 1) 80ms,
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1) 80ms,
+    max-width 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    overflow 0s linear 220ms,
+    visibility 0s linear 0s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sec-model-slide {
+    transition: none !important;
+  }
+}

@@ -13,11 +13,13 @@ import { MountTransition } from './MountTransition';
 import type { SubTask, SubTaskSource } from '../types/streaming';
 import { StepRecordItem } from './StepRecordItem';
 import { ModelDelegationTag } from './ModelDelegationTag';
-import { useTextBuffer } from '../state/streamingStore';
+// P0: 从 parts 派生文本, 替代 streamingStore.textBuffers
+import { useTextFromParts } from '../services/usePartsDerived';
 
 interface SubTaskNodeProps {
   subTask: SubTask;
   mainModel: string;
+  chatId: string;
   defaultOpen?: boolean;
 }
 
@@ -35,16 +37,16 @@ const SOURCE_LABELS: Record<SubTaskSource, string> = {
   'skill': '技能',
 };
 
-function SubTaskNodeImpl({ subTask, mainModel, defaultOpen = true }: SubTaskNodeProps) {
+function SubTaskNodeImpl({ subTask, mainModel, chatId, defaultOpen = true }: SubTaskNodeProps) {
   const [open, setOpen] = useState(defaultOpen);
   const isDone = subTask.status === 'done';
   const isRunning = subTask.status === 'running';
   const isError = subTask.status === 'error';
   const isPending = subTask.status === 'pending';
 
-  // 解耦文本缓冲: 从独立 store slice 订阅, 不触发 RootTask 重渲染
+  // P0: 从 parts 派生文本 (替代 streamingStore.textBuffers)
   // useDeferredValue: 高频 text_chunk 延迟到下一帧渲染, 自动合并
-  const rawTextBuffer = useTextBuffer(subTask.id);
+  const rawTextBuffer = useTextFromParts(chatId, subTask.id);
   const textBuffer = useDeferredValue(rawTextBuffer);
   const isTextStale = rawTextBuffer !== textBuffer;
 
