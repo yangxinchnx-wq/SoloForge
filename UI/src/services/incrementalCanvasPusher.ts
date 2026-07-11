@@ -27,6 +27,23 @@ import { translateCodeAsync } from '../translate/translatorWorker';
 import { usePreviewStreamStore } from '../state/previewStreamStore';
 import type { UniversalNode } from './canvas/UniversalAST';
 
+// ── chatId → canvasSessionId 映射 ──
+// PreviewPanel 启动画布时注册, IncrementalCanvasPusher 推送时读取
+// 解决 canvas_1 (bridge) vs canvas-1 (fallback) 的 sessionId 不匹配问题
+const canvasSessionIdMap = new Map<string, string>();
+
+export function setCanvasSessionId(chatId: string, canvasSessionId: string): void {
+  canvasSessionIdMap.set(chatId, canvasSessionId);
+}
+
+export function getCanvasSessionId(chatId: string): string {
+  return canvasSessionIdMap.get(chatId) || `canvas-${chatId}`;
+}
+
+export function clearCanvasSessionId(chatId: string): void {
+  canvasSessionIdMap.delete(chatId);
+}
+
 // ── 语言标识映射 ──
 const BLOCK_LANG_TO_TRANSLATOR: Record<string, string> = {
   html: 'html', htm: 'html',
@@ -136,7 +153,7 @@ class LineTracker {
   private translateLang: string;
   private chatSessionId: string;
   private lastPushTime: number = 0;
-  private throttleMs: number = 150; // 逐行节流: 150ms
+  private throttleMs: number = 50; // 逐行节流: 50ms (原 150ms 太慢, 用户看不到逐笔渲染)
   private translating: boolean = false;
   private _pushed: boolean = false;
 
@@ -196,27 +213,36 @@ class LineTracker {
   }
 
   /**
-   * 获取当前已完整的代码行 (最后一行可能不完整, 截掉)
+   * 获取当前已完整的代码行
+   * 2026-07-11 修复: 如果没有换行符, 返回全部 code (单行代码也要翻译)
+   *   之前: lastNewline === -1 → return '' → 第一行永远不被翻译
+   *   现在: lastNewline === -1 → return this.code (至少翻译一次)
    */
   private getCompleteLines(): string {
     const lastNewline = this.code.lastIndexOf('\n');
-    if (lastNewline === -1) return '';
+    if (lastNewline === -1) return this.code; // 单行代码也要翻译
     return this.code.slice(0, lastNewline + 1);
   }
 
   /**
    * 推送到画布 + previewStreamStore
+   * 2026-07-11: previewStreamStore 只更新状态 (language/bytes/streaming),
+   *   不再触发 PreviewPanel 的 useEffect 二次推送 — 避免双推冲突
    */
   private pushToCanvas(ast: UniversalNode, code: string, isFinal: boolean): void {
-    const canvasSessionId = `canvas-${this.chatSessionId}`;
+    const canvasSessionId = getCanvasSessionId(this.chatSessionId);
     const dsl = { ...ast, platform: 'material' };
 
-    // Electron IPC 推画布
+    // ★ Electron IPC 推画布 — 这是唯一的推画布通道
     if (typeof window !== 'undefined' && window.soloforge?.canvas?.push) {
-      window.soloforge.canvas.push(canvasSessionId, dsl).catch(() => {});
+      window.soloforge.canvas.push(canvasSessionId, dsl).catch((err: any) => {
+        console.warn('[LineTracker] canvas.push failed:', err?.message || err);
+      });
+    } else {
+      console.warn('[LineTracker] window.soloforge.canvas.push 不可用, 跳过画布推送');
     }
 
-    // 同步 previewStreamStore
+    // 同步 previewStreamStore (仅状态, 不触发二次推送)
     const previewStore = usePreviewStreamStore.getState();
     previewStore.initEntry(this.chatSessionId, {
       language: this.translateLang,
@@ -243,15 +269,16 @@ class LineTracker {
     }
 
     if (isFinal) {
-      console.log('[LineTracker] ✅ 最终一致性翻译完成', {
+      console.log('[LineTracker] 最终一致性翻译完成', {
         lang: this.translateLang,
         lines: code.split('\n').length,
         codeLen: code.length,
       });
     } else {
-      console.log('[LineTracker] 🎨 增量翻译推送', {
+      console.log('[LineTracker] 增量翻译推送', {
         lang: this.translateLang,
         lines: code.split('\n').length,
+        codeLen: code.length,
       });
     }
   }

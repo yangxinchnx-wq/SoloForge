@@ -49,6 +49,8 @@ public class SqliteConfig {
             autoInitDatabase(path);
         } else {
             log.info("Connecting to AI Society SQLite: {}", path.toAbsolutePath());
+            // 旧库兼容: 表已存在但可能缺少后来新增的列, 补全 schema
+            ensureColumns(path);
         }
 
         HikariConfig config = new HikariConfig();
@@ -127,6 +129,50 @@ public class SqliteConfig {
         // 3. 默认配置值
         log.info("Using default SQLite URL from config: {}", configuredUrl);
         return configuredUrl;
+    }
+
+    /**
+     * 旧库兼容: 检查 agent_identity 表是否缺少后来新增的列, 缺则 ALTER TABLE 补上
+     *
+     * 场景: 数据库由旧版代码创建 (无 avatar/domain/capabilities 等列),
+     *       新代码 SELECT * 会导致 "no such column: 'avatar'" 错误。
+     *       CREATE TABLE IF NOT EXISTS 不会修改已有表, 所以需要手动 ALTER。
+     */
+    private void ensureColumns(Path dbPath) {
+        String[][] requiredColumns = {
+            {"avatar", "TEXT"},
+            {"domain", "TEXT"},
+            {"capabilities", "TEXT DEFAULT '[]'"},
+            {"strategy", "TEXT DEFAULT 'direct'"},
+            {"level", "TEXT DEFAULT 'senior'"},
+            {"temperature", "REAL DEFAULT 0.3"},
+            {"max_rounds", "INTEGER DEFAULT 8"},
+        };
+
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toAbsolutePath())) {
+            // 获取 agent_identity 表现有的列名
+            var rs = conn.createStatement().executeQuery("PRAGMA table_info(agent_identity)");
+            java.util.Set<String> existingCols = new java.util.HashSet<>();
+            while (rs.next()) {
+                existingCols.add(rs.getString("name"));
+            }
+
+            // 补全缺失的列
+            boolean altered = false;
+            for (String[] col : requiredColumns) {
+                if (!existingCols.contains(col[0])) {
+                    conn.createStatement().execute(
+                        "ALTER TABLE agent_identity ADD COLUMN " + col[0] + " " + col[1]);
+                    log.info("Schema migration: added column '{}' to agent_identity", col[0]);
+                    altered = true;
+                }
+            }
+            if (altered) {
+                log.info("Schema migration completed for agent_identity");
+            }
+        } catch (Exception e) {
+            log.warn("Could not ensure columns for agent_identity: {}", e.getMessage());
+        }
     }
 
     /**

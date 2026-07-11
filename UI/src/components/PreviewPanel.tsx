@@ -243,7 +243,12 @@ export default function PreviewPanel({
     } else {
       sessionIdRef.current = fallbackId;
     }
-  }, [canvasId, canvasReady, fallbackId]);
+    // ★ 2026-07-11: 注册 canvas sessionId 到全局映射,
+    //   让 IncrementalCanvasPusher 能推送到正确的画布
+    if (selectedChatId && sessionIdRef.current) {
+      setCanvasSessionId(selectedChatId, sessionIdRef.current);
+    }
+  }, [canvasId, canvasReady, fallbackId, selectedChatId]);
 
   // ─────────────────────────────────────────
   // P0: 画布修改通知 (owner 轮询拉取 + 气泡队列)
@@ -304,6 +309,9 @@ export default function PreviewPanel({
       if (isElectron() && canvasState === 'running') {
         window.soloforge!.canvas.stop(sessionIdRef.current).catch(() => {});
       }
+      if (selectedChatId) {
+        clearCanvasSessionId(selectedChatId);
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -331,34 +339,8 @@ export default function PreviewPanel({
     await window.soloforge!.canvas.push(sessionIdRef.current, dsl).catch(() => {});
   }, [canvasState, canvasInfo]);
 
-  // 2026-07-09: 自动推送 AST 预览到 Flutter 画布
-  //   - previewPayload 确认后 → 推送完整 DSL (最终渲染)
-  //   - previewAst 流式更新中 → 节流推送部分 AST (实时构建效果)
-  const lastStreamPushRef = useRef(0);
-
-  // 1) 完整 payload → 一次性推送最终结果
-  useEffect(() => {
-    if (!isElectron() || canvasState !== 'running') return;
-    const root = previewPayload?.preview?.root;
-    if (!root) return;
-    const dsl = {
-      ...root,
-      platform: previewPayload?.framework || previewPayload?.language || 'material',
-    };
-    window.soloforge!.canvas.push(sessionIdRef.current, dsl).catch(() => {});
-  }, [previewPayload, canvasState]);
-
-  // 2) 流式 AST → 节流推送 (100ms), 让画布实时看到 UI 构建过程
-  useEffect(() => {
-    if (!isElectron() || canvasState !== 'running') return;
-    if (!previewAst) return;
-    // 如果已有确认的 payload, 不再推流式 AST (避免覆盖最终结果)
-    if (previewPayload?.preview?.root) return;
-    const now = Date.now();
-    if (now - lastStreamPushRef.current < 100) return;
-    lastStreamPushRef.current = now;
-    window.soloforge!.canvas.push(sessionIdRef.current, previewAst).catch(() => {});
-  }, [previewAst, canvasState, previewPayload]);
+  // 2026-07-11: IncrementalCanvasPusher 已经在 useChatStore 中直接推画布,
+  //   PreviewPanel 不再重复推送 — 避免双推冲突 + WebAstPreview 覆盖 Flutter 画布
 
   // 计算画布实际宽高（w=0 表示填满 PreviewPanel 宽度）
   const computeFrame = useCallback((preset: typeof activePreset) => {
@@ -481,7 +463,20 @@ export default function PreviewPanel({
 
   // 占位渲染
   const renderPlaceholder = () => {
-    // 2026-07-06 阶段3: 如果有 AST 预览流数据, 优先用 Web AST 预览
+    // 2026-07-11 关键修复: canvas running 时 Flutter 嵌入窗口在底层渲染,
+    //   绝不能用 WebAstPreview 覆盖 — 否则用户看不到 Flutter 画布
+    //   WebAstPreview 仅作为非 Electron / canvas 未启动时的降级方案
+    if (canvasState === 'running') {
+      // Flutter 画布在底层渲染, 这里只放透明占位
+      // 流式状态信息已由 top bar 的 previewIsStreaming / previewLanguage 显示
+      return (
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{ background: 'transparent' }}
+        />
+      );
+    }
+    // 非 running 状态: 如果有 AST 预览流数据, 用 Web AST 预览 (降级方案)
     if (previewAst || previewPayload) {
       const root = previewPayload?.preview?.root || previewAst;
       if (root) {
