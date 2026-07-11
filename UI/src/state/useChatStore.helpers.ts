@@ -13,29 +13,54 @@
  * LLM/网络错误分类: 把后端原始错误文本转成用户可读的友好提示
  *
  * 覆盖场景:
- *   - HTTP 429 / rate limit → 速率限制
- *   - HTTP 401 / Unauthorized / API key → 认证失败
- *   - HTTP 404 → 模型/端点不存在
- *   - HTTP 500 / LLM_EXECUTION_FAILED → 后端服务异常
- *   - fetch / NetworkError → 网络连接失败
+ *   - HTTP 429 / rate limit / 429 Too Many → 速率限制
+ *   - HTTP 401 / Unauthorized / 401 Unauthorized / API key → 认证失败
+ *   - HTTP 404 / 404 Not Found → 模型/端点不存在
+ *   - HTTP 500 / LLM_EXECUTION_FAILED / 500 Internal → 后端服务异常
+ *   - fetch / NetworkError / ECONNREFUSED → 网络连接失败
+ *   - Java Agent 不可达 → Java 服务未启动
  *   - 其他 → 原始错误 + 通用提示
+ *
+ * 错误来源格式兼容:
+ *   - Node.js aiBackend: "HTTP 404 ..." (executeJavaPath 非 200 响应)
+ *   - Spring WebClient: "404 Not Found from POST ..." (Java SSE error 事件)
+ *   - Node.js RACER: "LLM HTTP 404: ..." (function-calling-client.ts)
+ *   - Node.js LLM Proxy: "openaiStreamClient: HTTP 404 ..." (openaiStreamClient.ts)
  */
 export function classifyStreamError(rawErr: string): string {
   if (!rawErr) return '未知错误。请检查后端 /api/agents/dispatch 是否在运行。';
 
-  if (rawErr.includes('HTTP 429') || rawErr.includes('rate limit')) {
+  // ── Java Agent 服务不可达 (502/503) ──
+  if (rawErr.includes('HTTP 502') || rawErr.includes('Java Agent service not started')
+      || rawErr.includes('Java Agent 不可达') || rawErr.includes('Java Agent 服务不可达')) {
+    return 'Java Agent 服务 (8770) 未启动。请在「设置」中确认 Java 后端已启动，或检查日志中的启动错误。';
+  }
+
+  // ── 429 速率限制 ──
+  // 匹配: "HTTP 429", "429 Too Many", "rate limit", "LLM HTTP 429"
+  if (rawErr.includes('HTTP 429') || rawErr.includes('429 Too Many') || rawErr.includes('rate limit')) {
     return 'LLM 服务商返回 **429 速率限制**：免费额度已用尽或请求过于频繁。请稍后重试，或在「设置 → 模型」中更换/升级服务商。';
   }
 
-  if (rawErr.includes('HTTP 401') || rawErr.includes('Unauthorized') || rawErr.includes('API key')) {
+  // ── 401 认证失败 ──
+  // 匹配: "HTTP 401", "401 Unauthorized", "Unauthorized", "API key"
+  if (rawErr.includes('HTTP 401') || rawErr.includes('401 Unauthorized')
+      || rawErr.includes('Unauthorized') || rawErr.includes('API key')) {
     return 'LLM 服务商返回 **401 认证失败**：API Key 无效或已过期。请在「设置 → 模型」中重新输入正确的 API Key。';
   }
 
-  if (rawErr.includes('HTTP 404')) {
-    return 'LLM 服务商返回 **404 未找到**：请求的模型不存在或端点错误。请检查「设置 → 模型」中的模型 ID 和 Base URL。';
+  // ── 404 未找到 ──
+  // 匹配: "HTTP 404", "404 Not Found", "LLM HTTP 404"
+  if (rawErr.includes('HTTP 404') || rawErr.includes('404 Not Found')) {
+    // 提取错误详情中的 URL 信息，帮助用户诊断
+    const urlMatch = rawErr.match(/from POST\s+(\S+)/);
+    const urlHint = urlMatch ? `\n\n请求的端点: ${urlMatch[1]}` : '';
+    return `LLM 服务商返回 **404 未找到**：请求的模型不存在或端点错误。请检查「设置 → 模型」中的模型 ID 和 Base URL。\n常见原因:\n1. 模型 ID 拼写错误 (如 gpt-4 应为 gpt-4o)\n2. Base URL 缺少 /v1 后缀 (如 https://api.openai.com 应为 https://api.openai.com/v1)\n3. 该服务商不支持 OpenAI 兼容的 /chat/completions 端点${urlHint}`;
   }
 
-  if (rawErr.includes('HTTP 500') || rawErr.includes('LLM_EXECUTION_FAILED')) {
+  // ── 500 后端服务异常 ──
+  if (rawErr.includes('HTTP 500') || rawErr.includes('500 Internal')
+      || rawErr.includes('LLM_EXECUTION_FAILED') || rawErr.includes('LLM HTTP 5')) {
     // LLM_EXECUTION_FAILED 但内部是 429 等 → 已被上面的条件捕获
     // 真正的后端 500 → 后端服务异常
     if (rawErr.includes('LLM HTTP')) {
@@ -46,7 +71,9 @@ export function classifyStreamError(rawErr: string): string {
     return '后端服务异常，请检查 /api/agents/dispatch 是否在运行。';
   }
 
-  if (rawErr.includes('fetch') || rawErr.includes('NetworkError') || rawErr.includes('Failed to fetch')) {
+  // ── 网络连接失败 ──
+  if (rawErr.includes('fetch') || rawErr.includes('NetworkError')
+      || rawErr.includes('Failed to fetch') || rawErr.includes('ECONNREFUSED')) {
     return '网络连接失败：无法连接到后端服务。请确认后端服务已启动且端口未被占用。';
   }
 

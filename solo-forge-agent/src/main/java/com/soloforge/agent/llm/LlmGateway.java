@@ -9,6 +9,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.core.publisher.Flux;
 
 import java.time.Duration;
@@ -87,7 +88,7 @@ public class LlmGateway {
                     .build();
                 return chatCompletion(systemPrompt, userMessage, history, fallback, tools);
             }
-            throw new RuntimeException("LLM 调用失败: " + e.getMessage(), e);
+            throw new RuntimeException("LLM 调用失败: " + formatLlmError(e, resolved), e);
         }
     }
 
@@ -178,6 +179,9 @@ public class LlmGateway {
                 return Flux.empty();
             }))
             .doOnError(e -> log.error("LLM stream error: {}", e.getMessage()))
+            .onErrorMap(e -> e instanceof WebClientResponseException
+                ? new RuntimeException(formatLlmError(e, resolved), e)
+                : e)
             .timeout(TIMEOUT);
     }
 
@@ -316,5 +320,32 @@ public class LlmGateway {
             throw new RuntimeException("LLM Provider model 为空: 请在前端「设置 → 模型」中配置模型名称");
         }
         return provider;
+    }
+
+    /**
+     * 格式化 LLM 错误: 将 Spring WebClient 异常转为包含 "HTTP {status}" 前缀的标准格式
+     * 这样前端 classifyStreamError 可以正确匹配错误类型
+     *
+     * 输出格式: "HTTP {status} {statusText} — {bodyPreview} (baseUrl={baseUrl} model={model})"
+     * 示例: "HTTP 404 Not Found — {\"error\":{\"message\":\"Model not found\"}} (baseUrl=https://api.openai.com/v1 model=gpt-4o)"
+     */
+    private String formatLlmError(Throwable e, ChatRequest.LlmProvider provider) {
+        String baseUrl = provider.getBaseUrl();
+        String model = provider.getModel();
+
+        if (e instanceof WebClientResponseException wcre) {
+            int status = wcre.getStatusCode().value();
+            String statusText = wcre.getStatusText();
+            String bodyPreview = "";
+            try {
+                String body = new String(wcre.getResponseBodyAsByteArray());
+                bodyPreview = body.length() > 200 ? body.substring(0, 200) : body;
+            } catch (Exception ignored) {}
+            return String.format("HTTP %d %s — %s (baseUrl=%s model=%s)",
+                status, statusText, bodyPreview, baseUrl, model);
+        }
+
+        // 非 HTTP 错误 (超时、连接拒绝等)
+        return String.format("HTTP 500 %s (baseUrl=%s model=%s)", e.getMessage(), baseUrl, model);
     }
 }

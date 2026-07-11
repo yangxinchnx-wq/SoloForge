@@ -453,7 +453,7 @@ function createCanvasManager(deps) {
       `--models-dir=${modelsDir}`,
     ], {
       cwd: exeDir,
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '' },
+      env: (() => { const e = { ...process.env }; delete e.ELECTRON_RUN_AS_NODE; delete e.ELECTRON_NO_ATTACH_CONSOLE; return e; })(),
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });

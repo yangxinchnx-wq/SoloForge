@@ -83,6 +83,7 @@ import {
   handleUiStatic,
   handleTestNav,
   handleJavaAgentProxy,
+  handleJavaAgentSSE,
   handleAnalyticsHealth,
   handleAnalyticsQueries,
   handleAnalyticsRun,
@@ -399,6 +400,15 @@ export class SoloForgeApiServer {
         }
       }
 
+      // Java Agent SSE 流式请求：直接 pipe Java 的 SSE 流到客户端
+      if (reqPath === '/api/java-agent/api/chat/stream' && method === 'POST') {
+        const acceptHeader = String(req.headers['accept'] || '');
+        if (acceptHeader.includes('text/event-stream')) {
+          await handleJavaAgentSSE(req, res, apiReq.body);
+          return;
+        }
+      }
+
       // --- Route dispatch ---
       const apiRes = await this.route(apiReq);
 
@@ -492,7 +502,9 @@ export class SoloForgeApiServer {
     };
 
     // Java agent proxy
-    if (reqPath.startsWith('/api/java-agent/')) return handleJavaAgentProxy(reqPath, method, req.body);
+    if (reqPath.startsWith('/api/java-agent/')) {
+      return handleJavaAgentProxy(reqPath, method, (req as any).body);
+    }
 
     // ── 画布中转端点 (2026-07-09 新增) ──
     // Java Agent / 外部进程不能直接访问 Flutter canvas (端口由 Electron 动态分配)

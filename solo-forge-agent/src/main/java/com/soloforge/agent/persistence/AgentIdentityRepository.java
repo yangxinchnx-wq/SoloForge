@@ -150,6 +150,24 @@ public class AgentIdentityRepository {
     }
 
     /**
+     * 启用/禁用 Agent
+     */
+    public void toggleEnabled(String agentId, int enabled) {
+        jdbcTemplate.update(
+            "UPDATE agent_identity SET enabled = ?, updated_at = ? WHERE id = ?",
+            enabled, LocalDateTime.now().toString(), agentId);
+        log.info("Agent {} enabled={}", agentId, enabled);
+    }
+
+    /**
+     * 删除 Agent
+     */
+    public void deleteById(String agentId) {
+        jdbcTemplate.update("DELETE FROM agent_identity WHERE id = ?", agentId);
+        log.info("Agent {} deleted", agentId);
+    }
+
+    /**
      * 解析 capabilities JSON 字符串为 List
      */
     public List<String> parseCapabilities(AgentIdentityEntity entity) {

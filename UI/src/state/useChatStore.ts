@@ -32,6 +32,8 @@ import { translateCode, isLanguageSupported, detectLanguage } from '../translate
 import { usePreviewStreamStore } from './previewStreamStore';
 // P2-7: handleSend 拆分出的纯逻辑 (错误分类 / 越界检测 / 预览触发判定)
 import { classifyStreamError, mentionsOutsideWorkspace, detectPreviewTrigger } from './useChatStore.helpers';
+// 2026-07-11: 实时增量代码翻译 — LLM 每输出一行代码, 立即翻译推送到画布
+import { IncrementalCanvasPusher } from '../services/incrementalCanvasPusher';
 
 // ==========================================
 // StreamPanel 桥接 — 把 aiBackend 事件喂给 streamingStore
@@ -895,6 +897,8 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     //   - 现在: LLM 在回复末尾加 <<<PREVIEW_NEEDED:语言>>> 标记,前端解析后才触发
     //   - 简单任务(如"你好")无标记 → 无预览调用
     let accumulatedText = '';
+    // 2026-07-11: 实时增量画布推送器 — LLM 每输出一行代码, 立即翻译推画布
+    let canvasPusher: IncrementalCanvasPusher | null = null;
 
     // StreamPanel 桥接: 创建 streamingStore 任务, 后续事件同步推送
     const streamBridge = createStreamBridge(activeChatId, mainModel, finalContent, permissionMode);
@@ -935,19 +939,30 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
       async (evt: ChatStreamEvent) => {
         switch (evt.kind) {
           case 'text': {
-            streamBridge.onText(evt.text);
             // 累积完整文本,用于 done 事件中解析预览标记
             accumulatedText += evt.text;
-            // 流式增量文本 → 追加到当前 assistant 消息
-            // 合并为单个 set 调用, 避免两次独立重渲染之间的空帧
-            // 2026-07-08: 真实流式 — 保持 isGenerating: true, 由 done/error 事件重置
+
+            // 2026-07-11: 实时增量翻译 — 每行代码即时推画布
+            //   - feedChunk 检测代码块, 节流翻译, 推送画布
+            //   - 返回 displayText (代码块替换为占位符) 用于聊天区显示
+            if (!canvasPusher) {
+              canvasPusher = new IncrementalCanvasPusher(activeChatId);
+            }
+            const { displayText, inCodeBlock } = canvasPusher.feedChunk(evt.text);
+
+            // 流送区: 不在代码块内时才推送 text delta (过滤掉代码/JSON)
+            if (!inCodeBlock) {
+              streamBridge.onText(evt.text);
+            }
+
+            // 聊天区: 用 displayText (代码块→占位符) 替代原始追加
             set((s) => {
               const currentList = s.conversations[activeChatId] || [];
               if (currentList.length === 0) return {};
               const newList = [...currentList];
               const lastMsg = { ...newList[newList.length - 1] };
               if (lastMsg.sender === 'assistant') {
-                lastMsg.content += evt.text;
+                lastMsg.content = displayText;
                 newList[newList.length - 1] = lastMsg;
               }
               return {
@@ -1011,38 +1026,44 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
               });
             }
 
-            // 2026-07-09: 双层预览触发 — LLM 自标记 (优先) + 代码块强制检测 (兜底)
-            //   1. LLM 在 system prompt 指示下加 <<<PREVIEW_NEEDED:语言>>> → 用 LLM 指定的语言
-            //   2. LLM 忘了标记, 但回复里有 UI 代码块 → 前端强制检测, 自动触发
-            //
-            // 2026-07-09 新增: 本地翻译优先路径 (支持所有 11 款翻译器)
-            //   - 如果回复包含 UI 代码块 (任意语言), 直接用本地翻译器转成 AST 推到画布
-            //   - 零 LLM 调用, 零 token 消耗
-            //   - 失败时回退到原来的 LLM 预览流
-            //
-            // P2-7: 预览触发判定抽到 detectPreviewTrigger (纯函数, 可独立单测)
-            //       本地翻译 (tryLocalTranslateAndPush) 仍在此处调用, 因为它依赖画布运行时
-            const localPushed = await tryLocalTranslateAndPush(accumulatedText, activeChatId);
-            console.log('[useChatStore] tryLocalTranslateAndPush 结果:', localPushed);
-            const previewResult = detectPreviewTrigger(accumulatedText, localPushed, detectPreviewFromResponse);
-            const { shouldPreview, previewLang, cleanText } = previewResult;
-            console.log('[useChatStore] detectPreviewTrigger 结果:', { shouldPreview, previewLang, localHandled: previewResult.localHandled });
-            const hasMarker = accumulatedText !== cleanText;
-
-            // 文本被清理过 (有 LLM 标记或本地翻译成功) → 更新最后一条 assistant 消息
-            if (hasMarker) {
-              set((s) => {
-                const currentList = s.conversations[activeChatId] || [];
-                if (currentList.length === 0) return {};
-                const newList = [...currentList];
-                const lastMsg = { ...newList[newList.length - 1] };
-                if (lastMsg.sender === 'assistant') {
-                  lastMsg.content = cleanText;
-                  newList[newList.length - 1] = lastMsg;
-                }
-                return { conversations: { ...s.conversations, [activeChatId]: newList } };
-              });
+            // 2026-07-11: 实时增量翻译已在 text 事件中处理, 这里做最终一致性检查
+            //   - await canvasPusher.flush() 用完整代码重新翻译, 保证一致性
+            //   - 多代码块并行翻译 (Worker 多线程)
+            //   - 如果 pusher 已处理, 跳过 tryLocalTranslateAndPush (避免重复翻译)
+            //   - 如果 pusher 未处理 (无代码块或全部翻译失败), 回退到原逻辑
+            if (canvasPusher) {
+              await canvasPusher.flush();
             }
+            const pusherHandled = canvasPusher?.wasHandled() ?? false;
+            console.log('[useChatStore] canvasPusher wasHandled:', pusherHandled);
+
+            let localPushed = pusherHandled;
+            if (!pusherHandled) {
+              // 回退: 无增量推送器或未检测到代码块 → 走原逻辑
+              localPushed = await tryLocalTranslateAndPush(accumulatedText, activeChatId);
+              console.log('[useChatStore] tryLocalTranslateAndPush 结果:', localPushed);
+            }
+
+            const previewResult = detectPreviewTrigger(accumulatedText, localPushed, detectPreviewFromResponse);
+            const { shouldPreview, previewLang } = previewResult;
+            console.log('[useChatStore] detectPreviewTrigger 结果:', { shouldPreview, previewLang, localHandled: previewResult.localHandled });
+
+            // 2026-07-11: 用 pusher 的 displayText 作为最终聊天文本 (代码块→占位符)
+            const finalDisplayText = canvasPusher?.getDisplayText() ?? previewResult.cleanText;
+            // 清理 PREVIEW_NEEDED 标记
+            const cleanDisplay = finalDisplayText.replace(/\n*<<<PREVIEW_NEEDED:\w+>>>\s*$/, '');
+
+            set((s) => {
+              const currentList = s.conversations[activeChatId] || [];
+              if (currentList.length === 0) return {};
+              const newList = [...currentList];
+              const lastMsg = { ...newList[newList.length - 1] };
+              if (lastMsg.sender === 'assistant') {
+                lastMsg.content = cleanDisplay;
+                newList[newList.length - 1] = lastMsg;
+              }
+              return { conversations: { ...s.conversations, [activeChatId]: newList } };
+            });
 
             if (shouldPreview && typeof window !== 'undefined') {
               // 触发预览流 (LLM 标记 或 强制检测 均走此路径)
@@ -1088,6 +1109,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
 
     // StreamPanel 桥接: 重新创建任务
     const streamBridge = createStreamBridge(activeChatId, options.mainModel || '', '', lastReqBody.mode);
+    let canvasPusher2: IncrementalCanvasPusher | null = null;
 
     // 2026-07-03 阶段5.B: 调用形式对齐 aiBackend.startChat(req, onEvent) 单回调签名
     startChat(
@@ -1120,11 +1142,32 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
             break;
           case 'done':
             streamBridge.onDone();
+            if (canvasPusher2) {
+              canvasPusher2.flush().catch(() => {});
+            }
             set({ isGenerating: false });
             break;
-          case 'text':
-            streamBridge.onText(evt.text);
+          case 'text': {
+            if (!canvasPusher2) {
+              canvasPusher2 = new IncrementalCanvasPusher(activeChatId);
+            }
+            const { displayText, inCodeBlock } = canvasPusher2.feedChunk(evt.text);
+            if (!inCodeBlock) {
+              streamBridge.onText(evt.text);
+            }
+            set((s) => {
+              const currentList = s.conversations[activeChatId] || [];
+              if (currentList.length === 0) return {};
+              const newList = [...currentList];
+              const lastMsg = { ...newList[newList.length - 1] };
+              if (lastMsg.sender === 'assistant') {
+                lastMsg.content = displayText;
+                newList[newList.length - 1] = lastMsg;
+              }
+              return { conversations: { ...s.conversations, [activeChatId]: newList } };
+            });
             break;
+          }
         }
       }
     );

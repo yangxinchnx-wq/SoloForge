@@ -1,5 +1,5 @@
 import React from 'react';
-import { SlidersHorizontal, Trash2, Eraser, Folder } from '../utils/icons';
+import { Trash2, Eraser, Folder } from '../utils/icons';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { ChatHistoryItem } from '../types';
@@ -29,17 +29,10 @@ interface HistoryItemCardProps {
   onRename: (id: string, title: string) => void;
   onClearSession?: (id: string) => void;
   isFloatingEditorOpen?: boolean;
-  /** When true, this card is rendered inside <DragOverlay>。
-   *  使用 .sf-overlay-card 类（不透明背景 + lifted 阴影），
-   *  而非 .is-lifted（后者背景 !important 6% 透明）。 */
   isOverlayClone?: boolean;
-  /** When true, this card is the current dnd-kit `over` target. */
   isOverTarget?: boolean;
-  /** When true, play the post-drop pulse highlight. */
   isPulsing?: boolean;
-  /** When true, play the post-drop radial ripple. */
   isRippling?: boolean;
-  /** When true, play the soft enter animation (fade + slide + scale). */
   isNew?: boolean;
 }
 
@@ -104,132 +97,83 @@ const HistoryItemCard = React.memo(function HistoryItemCard({
       className={wrapperClassName}
     >
       <div className={cardClassName}>
-        {/* Title Row */}
-        <div className="flex items-center justify-between gap-1.5">
-          <div className="flex items-center gap-2 min-w-0 flex-1">
-            {chat.workspaceFolder && (
-              <div className="text-amber-500/80 shrink-0" title={`工作区: ${chat.workspaceFolder}`}>
-                <Folder className="w-3 h-3" />
-              </div>
-            )}
-            {chat.icon && (
-              <div className="text-primary shrink-0 opacity-80 group-hover:opacity-100 transition-opacity">
-                {React.createElement(chat.icon, { className: "w-3.5 h-3.5" })}
-              </div>
-            )}
-            {isEditingTitle ? (
-              <input
-                ref={inputRef}
-                type="text"
-                value={editTitle}
-                onChange={(e) => setEditTitle(e.target.value)}
-                onBlur={saveRename}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') saveRename();
-                  if (e.key === 'Escape') {
-                    setEditTitle(chat.title);
-                    setIsEditingTitle(false);
-                  }
-                }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-                }}
-                onMouseDown={(e) => {
-                  e.stopPropagation();
-                }}
-                className="text-[12px] font-bold bg-black/40 border border-primary/40 rounded px-1.5 py-0.5 outline-none w-full text-on-surface"
-                autoFocus
-              />
-            ) : (
-              <div
-                onDoubleClick={(e) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-                  setIsEditingTitle(true);
-                }}
-                className="text-[12px] font-bold truncate leading-tight select-none cursor-text flex-1"
-                title="双击重命名项目名称"
-              >
-                {chat.title}
-              </div>
-            )}
-          </div>
-          <div className="flex flex-col items-end gap-0.5 shrink-0">
-            <div className="flex items-center gap-1">
-              {isFloatingEditorOpen && (
-                <button
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    onOpenSettings(chat.id, chat.title);
-                  }}
-                  className="p-1 rounded hover:bg-primary/20 text-on-surface/75 hover:text-primary transition-all duration-150 cursor-pointer"
-                  title="定制智能体角色"
-                >
-                  <SlidersHorizontal className="w-3.5 h-3.5" />
-                </button>
-              )}
-              <button
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onDelete(chat.id, chat.title);
-                }}
-                className="p-1 rounded hover:bg-red-500/25 text-on-surface/40 hover:text-red-400 transition-all duration-150 cursor-pointer"
-                title="删除会话"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
+        {/* Row 1: icon + title + delete button */}
+        <div className="flex items-center gap-2 w-full">
+          {chat.workspaceFolder && (
+            <div className="text-amber-500/80 shrink-0" title={`工作区: ${chat.workspaceFolder}`}>
+              <Folder className="w-3 h-3" />
             </div>
-            {onClearSession && (
-              <button
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onClearSession(chat.id);
-                }}
-                className="p-1 rounded hover:bg-amber-500/20 text-on-surface/30 hover:text-amber-400 transition-all duration-150 cursor-pointer"
-                title="清除当前会话 (保留对话, 清除上下文/流送/画布/终端)"
-              >
-                <Eraser className="w-3 h-3" />
-              </button>
-            )}
-          </div>
+          )}
+          {chat.icon && (
+            <div className="text-primary shrink-0 opacity-80 group-hover:opacity-100 transition-opacity">
+              {React.createElement(chat.icon, { className: "w-3.5 h-3.5" })}
+            </div>
+          )}
+          {isEditingTitle ? (
+            <input
+              ref={inputRef}
+              type="text"
+              value={editTitle}
+              onChange={(e) => setEditTitle(e.target.value)}
+              onBlur={saveRename}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') saveRename();
+                if (e.key === 'Escape') {
+                  setEditTitle(chat.title);
+                  setIsEditingTitle(false);
+                }
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+              }}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+              }}
+              className="text-[12px] font-bold bg-black/40 border border-primary/40 rounded px-1.5 py-0.5 outline-none flex-1 min-w-0 text-on-surface"
+              autoFocus
+            />
+          ) : (
+            <div
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                setIsEditingTitle(true);
+              }}
+              className="text-[12px] font-bold truncate leading-tight select-none cursor-text flex-1 min-w-0"
+              title="双击重命名项目名称"
+            >
+              {chat.title}
+            </div>
+          )}
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onDelete(chat.id, chat.title);
+            }}
+            className="p-1 rounded hover:bg-red-500/25 text-on-surface/40 hover:text-red-400 transition-all duration-150 cursor-pointer shrink-0"
+            title="删除会话"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
         </div>
 
-        {/* Tile Bottom details / Meta indicators */}
-        <div className="flex items-center justify-between text-[10px] mt-0.5">
+        {/* Row 2: time + clear session button */}
+        <div className="flex items-center justify-between text-[10px]">
           <span className="text-on-surface/40 font-mono tracking-wide">{chat.time}</span>
-          {isFloatingEditorOpen && (
-            <div className="flex items-center gap-1.5">
-              <span
-                className="inline-flex items-center px-1.5 py-0.5 rounded border text-[8px] font-bold font-mono shadow-sm"
-                style={{
-                  color:
-                    (chat.permission || 'normal') === 'normal' ? '#34d399' :
-                    (chat.permission || 'normal') === 'performance' ? '#60a5fa' :
-                    (chat.permission || 'normal') === 'expert' ? '#c084fc' : '#f59e0b',
-                  borderColor:
-                    (chat.permission || 'normal') === 'normal' ? 'rgba(52, 211, 153, 0.2)' :
-                    (chat.permission || 'normal') === 'performance' ? 'rgba(96, 165, 250, 0.2)' :
-                    (chat.permission || 'normal') === 'expert' ? 'rgba(192, 132, 252, 0.2)' : 'rgba(245, 158, 11, 0.2)',
-                  backgroundColor:
-                    (chat.permission || 'normal') === 'normal' ? 'rgba(52, 211, 153, 0.08)' :
-                    (chat.permission || 'normal') === 'performance' ? 'rgba(96, 165, 250, 0.08)' :
-                    (chat.permission || 'normal') === 'expert' ? 'rgba(192, 132, 252, 0.08)' : 'rgba(245, 158, 11, 0.08)',
-                }}
-              >
-                <span>{
-                  (chat.permission || 'normal') === 'normal' ? '安全' :
-                  (chat.permission || 'normal') === 'performance' ? '半自动' : '全自动'
-                }</span>
-              </span>
-
-              <span className={`px-1.5 py-0.5 rounded border text-[8.5px] font-bold font-mono ${chat.tagBg} ${chat.tagText}`}>
-                {chat.tag}
-              </span>
-            </div>
+          {onClearSession && (
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onClearSession(chat.id);
+              }}
+              className="p-1 rounded hover:bg-amber-500/20 text-on-surface/30 hover:text-amber-400 transition-all duration-150 cursor-pointer"
+              title="清除当前会话 (保留对话, 清除上下文/流送/画布/终端)"
+            >
+              <Eraser className="w-3 h-3" />
+            </button>
           )}
         </div>
       </div>

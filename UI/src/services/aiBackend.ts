@@ -198,6 +198,9 @@ function buildJavaRequestBody(req: ChatRequest): any {
 /**
  * 执行 Java Agent 路径 (SSE 流式)
  * 用于 USE_RACER=false 时的主路径，以及 RACER 失败时的 fallback
+ *
+ * 当 Java 后端不可用 (502/503) 时抛出 JavaUnavailableError,
+ * 调用方可捕获后 fallback 到 Node.js LLM 代理路径
  */
 async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: string, onEvent: (e: ChatStreamEvent) => void): Promise<void> {
   const res = await fetch('/api/java-agent/api/chat/stream', {
@@ -212,6 +215,10 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
+    // 502/503 = Java 后端不可用, 抛出特殊错误让调用方 fallback
+    if (res.status === 502 || res.status === 503) {
+      throw new JavaUnavailableError(`HTTP ${res.status} ${errText}`);
+    }
     onEvent({ kind: 'error', error: `HTTP ${res.status} ${errText}`, taskId });
     return;
   }
@@ -368,12 +375,104 @@ async function parseRacerSSE(
 }
 
 /**
+ * Java 后端不可用错误 (502/503)
+ * 用于触发 fallback 到 Node.js LLM 代理路径
+ */
+class JavaUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'JavaUnavailableError';
+  }
+}
+
+/**
+ * 执行 Node.js LLM 代理路径 (/api/llm/stream)
+ * 当 Java 后端不可用时的 fallback
+ *
+ * 直接用前端配置的 provider (baseUrl/apiKey/model) 调用 LLM 代理,
+ * 不经过 Java Agent 编排 (无 Function Calling/Agent 循环),
+ * 但保证基本的 LLM 对话能力可用
+ */
+async function executeLLMProxyPath(req: ChatRequest, signal: AbortSignal, taskId: string, onEvent: (e: ChatStreamEvent) => void): Promise<void> {
+  if (!req.mainProvider) {
+    onEvent({ kind: 'error', error: 'Java Agent 不可达且未配置 mainProvider, 无法 fallback 到 LLM 代理。请启动 Java 后端 (8770) 或配置模型。', taskId });
+    return;
+  }
+
+  console.log('[aiBackend] Falling back to Node.js LLM proxy (/api/llm/stream)');
+
+  const llmReqBody: Record<string, any> = {
+    userGoal: req.prompt,
+    baseUrl: req.mainProvider.baseUrl,
+    apiKey: req.mainProvider.apiKey,
+    model: req.mainProvider.model,
+  };
+
+  if (req.activeSettings?.personality) {
+    llmReqBody.systemPrompt = `你是 SoloForge AI 助手。性格: ${req.activeSettings.personality}。请用中文回答用户问题。`;
+  }
+
+  const res = await fetch('/api/llm/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(llmReqBody),
+    signal,
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    onEvent({ kind: 'error', error: `HTTP ${res.status} ${errText}`, taskId });
+    return;
+  }
+
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let doneSent = false;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const data = trimmed.slice(5).trim();
+      if (!data) continue;
+      try {
+        const chunk = JSON.parse(data);
+        if (chunk.error) {
+          onEvent({ kind: 'error', error: chunk.error, taskId });
+          return;
+        }
+        if (chunk.done) {
+          doneSent = true;
+          onEvent({ kind: 'done', taskId });
+          return;
+        }
+        if (chunk.delta) {
+          onEvent({ kind: 'text', text: chunk.delta, taskId });
+        }
+      } catch { /* ignore parse errors */ }
+    }
+  }
+
+  if (!doneSent && !signal.aborted) {
+    onEvent({ kind: 'done', taskId });
+  }
+}
+
+/**
  * dev (fetch SSE 流式) 实现
  * 流程:
  *   1) USE_RACER=true 时优先走 Node.js RACER Agent (/api/agents/dispatch)
  *   2) RACER 非超时失败时自动 fallback 到 Java Agent (/api/java-agent/api/chat/stream)
  *   3) RACER 超时 (AbortError) 不 fallback — 说明后端整体不可用
  *   4) USE_RACER=false 时直接走 Java Agent
+ *   5) Java Agent 不可用 (502/503) 时 fallback 到 Node.js LLM 代理 (/api/llm/stream)
  */
 async function startChatViaFetch(req: ChatRequest, onEvent: (e: ChatStreamEvent) => void): Promise<ChatHandle> {
   const backend = _useRacer ? 'racer' : 'java';
@@ -439,13 +538,40 @@ async function startChatViaFetch(req: ChatRequest, onEvent: (e: ChatStreamEvent)
             await executeJavaPath(req, signal, taskId, onEvent);
           } catch (javaErr: any) {
             if (javaErr?.name === 'AbortError') return;
-            onEvent({ kind: 'error', error: `RACER failed (${reason}), Java fallback also failed: ${javaErr?.message || javaErr}`, taskId });
+            if (javaErr instanceof JavaUnavailableError) {
+              // Java 也不可用 → fallback 到 LLM 代理
+              console.log(`[aiBackend] Java Agent also unavailable, falling back to LLM proxy`);
+              try {
+                await executeLLMProxyPath(req, signal, taskId, onEvent);
+              } catch (llmErr: any) {
+                if (llmErr?.name === 'AbortError') return;
+                onEvent({ kind: 'error', error: `RACER failed (${reason}), Java unavailable, LLM proxy also failed: ${llmErr?.message || llmErr}`, taskId });
+              }
+            } else {
+              onEvent({ kind: 'error', error: `RACER failed (${reason}), Java fallback also failed: ${javaErr?.message || javaErr}`, taskId });
+            }
           }
         }
 
       } else {
         // ── Java path: legacy Spring AI Agent ──
-        await executeJavaPath(req, signal, taskId, onEvent);
+        try {
+          await executeJavaPath(req, signal, taskId, onEvent);
+        } catch (javaErr: any) {
+          if (javaErr?.name === 'AbortError') return;
+          // Java 不可用 → fallback 到 Node.js LLM 代理
+          if (javaErr instanceof JavaUnavailableError) {
+            console.log(`[aiBackend] Java Agent unavailable (${javaErr.message}), falling back to LLM proxy`);
+            try {
+              await executeLLMProxyPath(req, signal, taskId, onEvent);
+            } catch (llmErr: any) {
+              if (llmErr?.name === 'AbortError') return;
+              onEvent({ kind: 'error', error: `Java Agent 不可达, LLM 代理也失败: ${llmErr?.message || llmErr}`, taskId });
+            }
+          } else {
+            throw javaErr;
+          }
+        }
       }
     } catch (err: any) {
       if (err?.name === 'AbortError') return;

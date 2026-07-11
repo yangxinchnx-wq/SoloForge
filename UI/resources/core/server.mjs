@@ -51153,7 +51153,9 @@ async function handleJavaAgentProxy(reqPath, method, body) {
   const javaUrl = `http://127.0.0.1:8770${javaPath}`;
   try {
     const fetchOptions = { method, headers: { "Content-Type": "application/json" } };
-    if (method === "POST" && body) fetchOptions.body = typeof body === "string" ? body : JSON.stringify(body);
+    if (body && ["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+      fetchOptions.body = typeof body === "string" ? body : JSON.stringify(body);
+    }
     const javaRes = await fetch(javaUrl, fetchOptions);
     const javaBody = await javaRes.text();
     return { status: javaRes.status, headers: { "Content-Type": "application/json" }, body: javaBody };

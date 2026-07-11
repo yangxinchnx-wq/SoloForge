@@ -24,6 +24,32 @@ contextBridge.exposeInMainWorld('soloforge', {
     status: (sessionId) => ipcRenderer.invoke('canvas:status', { sessionId }),
     reportBounds: (bounds) => ipcRenderer.invoke('canvas:report-bounds', bounds),
     hostInfo: () => ipcRenderer.invoke('canvas:host-info'),
+    // ★ 新增: 确保画布宿主窗口存在
+    ensureHost: () => ipcRenderer.invoke('canvas:ensure-host'),
+    // ★ 新增: pushUI — 推送 UI DSL (带 deviceId 关联)
+    pushUI: (sessionId, dsl, deviceId) =>
+      ipcRenderer.invoke('canvas:push-ui', { sessionId, dsl, deviceId }),
+    // ★ 新增: transformDevice — 拖拽/旋转/缩放 3D 设备
+    transformDevice: (sessionId, deviceId, transform) =>
+      ipcRenderer.invoke('canvas:transform-device', { sessionId, deviceId, transform }),
+    // ★ 新增: clearDevices — 清除画布上所有 3D 设备
+    clearDevices: (sessionId) =>
+      ipcRenderer.invoke('canvas:clear-devices', { sessionId }),
+    // ★ 新增: setBackground — 设置画布背景色
+    setBackground: (sessionId, color) =>
+      ipcRenderer.invoke('canvas:set-background', { sessionId, color }),
+    // ★ 新增: screenshot — 截图画布
+    screenshot: (sessionId) =>
+      ipcRenderer.invoke('canvas:screenshot', { sessionId }),
+    // ★ 新增: getDeviceConfig — 获取设备配置
+    getDeviceConfig: () =>
+      ipcRenderer.invoke('canvas:get-device-config'),
+    // ★ 新增: listModels — 列出所有可用模型
+    listModels: () =>
+      ipcRenderer.invoke('canvas:list-models'),
+    // ★ 新增: embedStatus — 查询画布嵌入状态
+    embedStatus: (sessionId) =>
+      ipcRenderer.invoke('canvas:embed-status', { sessionId }),
     // ★ 画布进程退出事件 (崩溃 / 正常退出), 由 main.cjs 的 child.on('exit') 推送
     //   回调参数: { sessionId, exitCode, signal, isCrash, stderr, message }
     //   返回取消订阅函数

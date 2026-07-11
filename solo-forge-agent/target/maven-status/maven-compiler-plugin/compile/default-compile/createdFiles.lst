@@ -1,5 +1,6 @@
 com\soloforge\agent\training\TrainingController.class
 com\soloforge\agent\training\TrainingTask.class
+com\soloforge\agent\orchestrator\AgentSelector.class
 com\soloforge\agent\persistence\AgentTrainingHistoryRepository.class
 com\soloforge\agent\tools\WriteFileTool.class
 com\soloforge\agent\training\TrainingTaskLoader$1.class
@@ -12,6 +13,7 @@ com\soloforge\agent\orchestrator\AgentOrchestrator.class
 com\soloforge\agent\aisociety\MarlTrainingClient.class
 com\soloforge\agent\dto\ChatSettings$ChatSettingsBuilder.class
 com\soloforge\agent\llm\LlmGateway.class
+com\soloforge\agent\orchestrator\SubModelWorker.class
 com\soloforge\agent\aisociety\InstitutionClient.class
 com\soloforge\agent\training\TrainingTaskLoader.class
 com\soloforge\agent\dto\ChatRequest$LlmProvider.class
@@ -20,7 +22,6 @@ com\soloforge\agent\executor\AgentExecutor.class
 com\soloforge\agent\orchestrator\TaskComplexityEvaluator$EvaluationResult.class
 com\soloforge\agent\tools\ExecuteCmdTool.class
 com\soloforge\agent\persistence\ExperienceCaseRepository.class
-com\soloforge\agent\orchestrator\AgentOrchestrator$CollaborationMode.class
 com\soloforge\agent\persistence\AgentIdentityRepository$1.class
 com\soloforge\agent\orchestrator\TaskComplexityEvaluator.class
 com\soloforge\agent\aisociety\GovernanceClient.class

@@ -143,7 +143,7 @@ export async function runMiddleware(
 
   // --- Body parsing ---
   let body: any = null;
-  if (method === 'POST' || method === 'PUT' || method === 'DELETE') {
+  if (method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE') {
     const ct = String(req.headers['content-type'] || '').toLowerCase();
     if (ct.length > 0 && !ct.includes('application/json')) {
       return { done: true, response: { status: 415, headers: { 'Content-Type': 'application/json' }, body: { error: 'Unsupported Media Type' } } };

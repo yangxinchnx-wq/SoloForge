@@ -11,7 +11,7 @@
       {
         "id": "mimo-v2.5",
         "name": "mimo-v2.5",
-        "enabled": false,
+        "enabled": true,
         "metadata": {
           "contextWindow": 32768,
           "maxOutput": 4096,
@@ -53,7 +53,7 @@
       {
         "id": "mimo-v2.5-pro",
         "name": "mimo-v2.5-pro",
-        "enabled": true,
+        "enabled": false,
         "metadata": {
           "contextWindow": 32768,
           "maxOutput": 4096,

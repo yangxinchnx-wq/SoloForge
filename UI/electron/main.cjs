@@ -597,6 +597,51 @@ function resolveCanvasDataDir() {
 }
 
 // ────────────────────────────────────────────
+// 工具：解析 3D 模型目录路径
+// ────────────────────────────────────────────
+function resolveModelsDir() {
+  if (process.resourcesPath && fs.existsSync(path.join(process.resourcesPath, 'canvas', 'models'))) {
+    return path.join(process.resourcesPath, 'canvas', 'models');
+  }
+  const uiRoot = path.resolve(__dirname, '..');
+  return path.join(uiRoot, 'resources', 'canvas', 'models');
+}
+
+// ────────────────────────────────────────────
+// 工具：读取设备配置 (device-config.json)
+// ────────────────────────────────────────────
+function readDeviceConfig() {
+  const configPath = path.join(resolveModelsDir(), 'device-config.json');
+  try {
+    const raw = fs.readFileSync(configPath, 'utf-8');
+    return JSON.parse(raw);
+  } catch (e) {
+    console.warn('[canvas] readDeviceConfig failed:', e?.message);
+    return { models: {} };
+  }
+}
+
+// ────────────────────────────────────────────
+// 工具：列出可用模型 (扫描 models/ 目录)
+// ────────────────────────────────────────────
+function listAvailableModels() {
+const config = readDeviceConfig();
+  const result = [];
+  if (config?.models) {
+    for (const [key, info] of Object.entries(config.models)) {
+      result.push({
+        key,
+        label: info.label || key,
+        group: info.group || 'desktop',
+        type: info.type || '2d',
+        nativeSize: info.nativeSize || { w: 0, h: 0 },
+      });
+    }
+  }
+  return result;
+}
+
+// ────────────────────────────────────────────
 // 工具：等待 WS 端口起来
 // ────────────────────────────────────────────
 function waitForPort(port, timeoutMs = 8000) {
@@ -697,14 +742,16 @@ async function startCanvas(sessionId, width, height) {
   // ★ 嵌入模式: 传 --parent-hwnd 给 C++ runner
   //   C++ runner 在窗口创建后立即 SetParent + WS_CHILD (在首帧 Show 之前)
   //   → 窗口从未以顶层窗口形式可见, 彻底消除启动闪烁
-  //   findWindowByPid 用 EnumChildWindows 查找子窗口 HWND
-  console.log(`[canvas:${sessionId}] spawning (embedded): ${exe} --port=${port} --parent-hwnd=${hostHwnd} --canvas-width=${width} --canvas-height=${height} (cwd=${exeDir})`);
+  // findWindowByPid 用 EnumChildWindows 查找子窗口 HWND
+  const modelsDir = resolveModelsDir();
+  console.log(`[canvas:${sessionId}] spawning (embedded): ${exe} --port=${port} --parent-hwnd=${hostHwnd} --canvas-width=${width} --canvas-height=${height} --models-dir=${modelsDir} (cwd=${exeDir})`);
 
   const child = spawn(exe, [
     `--port=${port}`,
     `--parent-hwnd=${hostHwnd}`,
     `--canvas-width=${width}`,
     `--canvas-height=${height}`,
+    `--models-dir=${modelsDir}`,
   ], {
     cwd: exeDir,
     env: childEnv,
@@ -952,6 +999,103 @@ async function pushCanvasDSL(sessionId, dsl) {
 }
 
 // ────────────────────────────────────────────
+// 通用 HTTP POST 到 canvas (供 pushUI / transform / clear / setBg 等复用)
+// ────────────────────────────────────────────
+function sendToCanvasRaw(port, canvasPath, body, timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    const data = body ? (typeof body === 'string' ? body : JSON.stringify(body)) : '';
+    const req = http.request({
+      host: '127.0.0.1',
+      port,
+      path: canvasPath,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+      timeout: timeoutMs,
+    }, (res) => {
+      let buf = '';
+      res.on('data', (c) => (buf += c));
+      res.on('end', () => resolve({ status: res.statusCode, body: buf }));
+    });
+    req.on('error', (e) => resolve({ status: 0, body: '', error: e.message }));
+    req.on('timeout', () => { req.destroy(); resolve({ status: 0, body: '', error: 'timeout' }); });
+    if (data) req.write(data);
+    req.end();
+  });
+}
+
+// ────────────────────────────────────────────
+// 画布操作: pushUI / transform / clear / setBg / screenshot
+// ────────────────────────────────────────────
+
+async function pushUIToCanvas(sessionId, dsl, deviceId) {
+  const s = canvasSessions.get(sessionId);
+  if (!s) return { ok: false, error: 'session not found' };
+  const payload = JSON.stringify({
+    action: 'pushUI', sessionId, dsl, deviceId: deviceId || null,
+  });
+  const r = await sendToCanvasRaw(s.port, '/push-ui', payload, 5000);
+  if (r.status === 200) {
+    try { return { ok: true, ...JSON.parse(r.body) }; }
+    catch { return { ok: true }; }
+  }
+  return { ok: false, error: r.error || `http ${r.status}` };
+}
+
+async function transformDevice(sessionId, deviceId, transform) {
+  const s = canvasSessions.get(sessionId);
+  if (!s) return { ok: false, error: 'session not found' };
+  const payload = JSON.stringify({
+    action: 'transformDevice', sessionId, deviceId, transform,
+  });
+  const r = await sendToCanvasRaw(s.port, '/transform', payload, 2000);
+  if (r.status === 200) return { ok: true };
+  return { ok: false, error: r.error || `http ${r.status}` };
+}
+
+async function clearCanvasDevices(sessionId) {
+  const s = canvasSessions.get(sessionId);
+  if (!s) return { ok: false, error: 'session not found' };
+  const payload = JSON.stringify({ action: 'clearDevices', sessionId });
+  const r = await sendToCanvasRaw(s.port, '/clear-devices', payload, 3000);
+  if (r.status === 200) return { ok: true };
+  return { ok: false, error: r.error || `http ${r.status}` };
+}
+
+async function setCanvasBackground(sessionId, color) {
+  const s = canvasSessions.get(sessionId);
+  if (!s) return { ok: false, error: 'session not found' };
+  const payload = JSON.stringify({ action: 'setBackground', sessionId, color });
+  const r = await sendToCanvasRaw(s.port, '/set-background', payload, 3000);
+  if (r.status === 200) return { ok: true };
+  return { ok: false, error: r.error || `http ${r.status}` };
+}
+
+async function screenshotCanvas(sessionId) {
+  const s = canvasSessions.get(sessionId);
+  if (!s) return { ok: false, error: 'session not found' };
+  try {
+    const r = await sendToCanvasRaw(s.port, '/screenshot', null, 5000);
+    if (r.status !== 200) {
+      return { ok: false, error: `screenshot failed: HTTP ${r.status} body=${r.body?.slice(0, 200)}` };
+    }
+    const parsed = JSON.parse(r.body);
+    if (!parsed.ok || !parsed.png) {
+      return { ok: false, error: parsed.error || 'no png in response' };
+    }
+    return {
+      ok: true,
+      dataUrl: `data:image/png;base64,${parsed.png}`,
+      width: parsed.width,
+      height: parsed.height,
+      byteLength: parsed.byteLength,
+      timestamp: parsed.timestamp,
+    };
+  } catch (e) {
+    return { ok: false, error: e?.message || String(e) };
+  }
+}
+
+// ────────────────────────────────────────────
 // IPC handlers
 // ────────────────────────────────────────────
 function registerIpc() {
@@ -988,7 +1132,75 @@ function registerIpc() {
     }
   });
   // 查询画布宿主窗口是否已就绪（renderer 用来判断能否启动）
-  ipcMain.handle('canvas:host-info', async () => ({ ok: true, bounds: hostBounds }));
+  ipcMain.handle('canvas:host-info', async () => ({
+    ok: true,
+    created: !!(canvasHostWindow && !canvasHostWindow.isDestroyed()),
+    bounds: { ...hostBounds },
+  }));
+
+  // ★ 新增: 确保画布宿主窗口存在 (懒创建)
+  ipcMain.handle('canvas:ensure-host', async () => {
+    try {
+      const host = ensureCanvasHost();
+      const hwnd = host.getNativeWindowHandle().readInt32LE(0);
+      return { ok: true, created: true, hwnd, bounds: { ...hostBounds } };
+    } catch (e) {
+      return { ok: false, error: e?.message || String(e) };
+    }
+  });
+
+  // ★ 新增: pushUI — 推送 UI DSL 到画布 (带 deviceId 关联)
+  ipcMain.handle('canvas:push-ui', async (_e, { sessionId, dsl, deviceId }) => {
+    return pushUIToCanvas(sessionId, dsl, deviceId);
+  });
+
+  // ★ 新增: transformDevice — 拖拽/旋转/缩放 3D 设备
+  ipcMain.handle('canvas:transform-device', async (_e, { sessionId, deviceId, transform }) => {
+    return transformDevice(sessionId, deviceId, transform);
+  });
+
+  // ★ 新增: clearDevices — 清除画布上所有 3D 设备
+  ipcMain.handle('canvas:clear-devices', async (_e, { sessionId }) => {
+    return clearCanvasDevices(sessionId);
+  });
+
+  // ★ 新增: setBackground — 设置画布背景色
+  ipcMain.handle('canvas:set-background', async (_e, { sessionId, color }) => {
+    return setCanvasBackground(sessionId, color);
+  });
+
+  // ★ 新增: screenshot — 截图画布
+  ipcMain.handle('canvas:screenshot', async (_e, { sessionId }) => {
+    return screenshotCanvas(sessionId);
+  });
+
+  // ★ 新增: get-device-config — 获取设备配置 (device-config.json)
+  ipcMain.handle('canvas:get-device-config', async () => {
+    const config = readDeviceConfig();
+    return { ok: true, config, modelsDir: resolveModelsDir() };
+  });
+
+  // ★ 新增: list-models — 列出所有可用模型
+  ipcMain.handle('canvas:list-models', async () => {
+    return { ok: true, models: listAvailableModels() };
+  });
+
+  // ★ 新增: embed-status — 查询画布嵌入状态
+  ipcMain.handle('canvas:embed-status', async (_e, payload) => {
+    const sid = payload?.sessionId;
+    if (!sid) return { ok: false, error: 'sessionId required' };
+    const s = canvasSessions.get(sid);
+    if (!s) return { ok: false, error: 'session not found', sessionId: sid };
+    return {
+      ok: true,
+      sessionId: sid,
+      embedded: true,
+      hwnd: s.hwnd,
+      pid: s.pid,
+      width: s.width,
+      height: s.height,
+    };
+  });
 
 // ── 2026-07-05 自定义窗口控制按钮 ──
 // 由 UI/src/components/WindowControls.tsx 调用

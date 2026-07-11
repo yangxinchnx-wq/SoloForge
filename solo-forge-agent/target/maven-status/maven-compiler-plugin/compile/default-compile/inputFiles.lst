@@ -16,7 +16,9 @@ c:\Users\yangx\Desktop\SoloForge\solo-forge-agent\src\main\java\com\soloforge\ag
 c:\Users\yangx\Desktop\SoloForge\solo-forge-agent\src\main\java\com\soloforge\agent\executor\AgentExecutor.java
 c:\Users\yangx\Desktop\SoloForge\solo-forge-agent\src\main\java\com\soloforge\agent\llm\LlmGateway.java
 c:\Users\yangx\Desktop\SoloForge\solo-forge-agent\src\main\java\com\soloforge\agent\orchestrator\AgentOrchestrator.java
+c:\Users\yangx\Desktop\SoloForge\solo-forge-agent\src\main\java\com\soloforge\agent\orchestrator\AgentSelector.java
 c:\Users\yangx\Desktop\SoloForge\solo-forge-agent\src\main\java\com\soloforge\agent\orchestrator\MultiAgentCoordinator.java
+c:\Users\yangx\Desktop\SoloForge\solo-forge-agent\src\main\java\com\soloforge\agent\orchestrator\SubModelWorker.java
 c:\Users\yangx\Desktop\SoloForge\solo-forge-agent\src\main\java\com\soloforge\agent\orchestrator\TaskComplexityEvaluator.java
 c:\Users\yangx\Desktop\SoloForge\solo-forge-agent\src\main\java\com\soloforge\agent\persistence\AgentIdentityEntity.java
 c:\Users\yangx\Desktop\SoloForge\solo-forge-agent\src\main\java\com\soloforge\agent\persistence\AgentIdentityRepository.java

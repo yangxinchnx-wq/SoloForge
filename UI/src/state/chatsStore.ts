@@ -83,6 +83,18 @@ interface ChatsState {
 
 const API_BASE = '';
 
+/**
+ * 待处理补丁缓冲区 (tempId → 累积的 patch)
+ *
+ * 场景: createChat 先在前端插入 temp-xxx 乐观项, POST /api/chats 异步完成期间,
+ * 组件可能触发 updateChat(tempId, {...}) (如权限同步 / 工作区绑定).
+ * 此时后端还没有这个 chat, PATCH /api/chats/temp-xxx 会返回 404.
+ *
+ * 修复: updateChat 遇到 temp- ID 时, 只做本地乐观更新 + 缓冲 patch,
+ * createChat 成功拿到 realId 后, 合并本地状态 + 发送累积 patch 到后端.
+ */
+const pendingPatches = new Map<string, Partial<Pick<ChatItem, 'title' | 'tag' | 'permission' | 'lastMessagePreview' | 'workspaceFolder'>>>();
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(`${API_BASE}${path}`, {
     headers: { 'Content-Type': 'application/json' },
@@ -158,16 +170,33 @@ export const useChatsStore = create<ChatsState>()(subscribeWithSelector((set, ge
         '/api/chats',
         { method: 'POST', body: JSON.stringify({ title: optimistic.title, permission, workspaceFolder }) }
       );
+      // ★ 合并待处理补丁: createChat 期间用户可能修改了 temp chat 的权限/标题等
+      //   需要把这些本地修改保留, 并同步到后端
+      const buffered = pendingPatches.get(tempId);
+      pendingPatches.delete(tempId);
+      let finalChat = data.chat;
+      if (buffered) {
+        // 合并本地修改到后端返回的 chat 上
+        finalChat = { ...data.chat, ...buffered, updatedAt: Date.now() };
+        // 异步发送累积补丁到后端 (不阻塞 createChat 返回)
+        apiFetch(`/api/chats/${encodeURIComponent(data.chat.id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify(buffered),
+        }).catch((e) => {
+          console.warn('[chatsStore] flush pending patch failed:', (e as Error).message);
+        });
+      }
       set((s) => ({
-        chats: s.chats.map((c) => (c.id === tempId ? data.chat : c)),
+        chats: s.chats.map((c) => (c.id === tempId ? finalChat : c)),
         selectedChatId: data.selectedId,
         pendingMutations: Math.max(0, s.pendingMutations - 1),
       }));
       // 迁移工作区数据: temp-xxx → realId (如果用户在 tempId 期间打开了文件夹)
       useWorkspaceStore.getState().migrateWorkspace(tempId, data.chat.id);
-      return data.chat;
+      return finalChat;
     } catch (e) {
       console.error('[chatsStore] 创建失败，回滚:', (e as Error).message);
+      pendingPatches.delete(tempId);
       set((s) => ({
         chats: s.chats.filter((c) => c.id !== tempId),
         selectedChatId: s.chats.find((c) => c.id !== tempId)?.id ?? null,
@@ -194,6 +223,14 @@ export const useChatsStore = create<ChatsState>()(subscribeWithSelector((set, ge
       chats: s.chats.map((c) => (c.id === id ? after : c)),
       pendingMutations: s.pendingMutations + 1,
     }));
+    // ★ temp- ID: 后端还没有这个 chat, PATCH 会 404.
+    //   只做本地乐观更新 + 缓冲 patch, 等 createChat 完成后统一 flush.
+    if (id.startsWith('temp-')) {
+      const existing = pendingPatches.get(id) || {};
+      pendingPatches.set(id, { ...existing, ...patch });
+      set((s) => ({ pendingMutations: Math.max(0, s.pendingMutations - 1) }));
+      return;
+    }
     try {
       await apiFetch(`/api/chats/${encodeURIComponent(id)}`, {
         method: 'PATCH',
@@ -224,6 +261,13 @@ export const useChatsStore = create<ChatsState>()(subscribeWithSelector((set, ge
       liveStates: Object.fromEntries(Object.entries(get().liveStates).filter(([k]) => k !== id)),
       pendingMutations: get().pendingMutations + 1,
     });
+    // ★ temp- ID: 后端还没有这个 chat, DELETE 会 404.
+    //   只做本地删除即可, 不发请求.
+    if (id.startsWith('temp-')) {
+      pendingPatches.delete(id);
+      set((s) => ({ pendingMutations: Math.max(0, s.pendingMutations - 1) }));
+      return;
+    }
     try {
       const data = await apiFetch<{ success: boolean; selectedId: string | null }>(
         `/api/chats/${encodeURIComponent(id)}`,
@@ -275,6 +319,12 @@ export const useChatsStore = create<ChatsState>()(subscribeWithSelector((set, ge
   selectChat: async (id) => {
     const before = get().selectedChatId;
     set({ selectedChatId: id });
+    // ★ temp- ID: 后端还没有这个 chat, select 会 404.
+    //   本地选中态已生效, 跳过后端上报.
+    if (id && id.startsWith('temp-')) {
+      void before;
+      return;
+    }
     try {
       await apiFetch('/api/chats/select', {
         method: 'POST',

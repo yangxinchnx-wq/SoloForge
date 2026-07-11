@@ -51,7 +51,16 @@ declare global {
         push: (sessionId: string, dsl: any) => Promise<{ ok: boolean; status?: number; body?: string; error?: string }>;
         status: (sessionId: string) => Promise<{ ok: boolean; active: boolean; info?: any }>;
         reportBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: boolean; error?: string }>;
-        hostInfo: () => Promise<{ ok: boolean; bounds: { x: number; y: number; width: number; height: number } }>;
+        hostInfo: () => Promise<{ ok: boolean; created?: boolean; bounds: { x: number; y: number; width: number; height: number } }>;
+        ensureHost: () => Promise<{ ok: boolean; created?: boolean; hwnd?: number; bounds?: any; error?: string }>;
+        pushUI: (sessionId: string, dsl: any, deviceId?: string | null) => Promise<{ ok: boolean; error?: string }>;
+        transformDevice: (sessionId: string, deviceId: string, transform: any) => Promise<{ ok: boolean; error?: string }>;
+        clearDevices: (sessionId: string) => Promise<{ ok: boolean; error?: string }>;
+        setBackground: (sessionId: string, color: string) => Promise<{ ok: boolean; error?: string }>;
+        screenshot: (sessionId: string) => Promise<{ ok: boolean; dataUrl?: string; width?: number; height?: number; error?: string }>;
+        getDeviceConfig: () => Promise<{ ok: boolean; config?: any; modelsDir?: string }>;
+        listModels: () => Promise<{ ok: boolean; models?: any[] }>;
+        embedStatus: (sessionId: string) => Promise<{ ok: boolean; sessionId?: string; embedded?: boolean; hwnd?: number; pid?: number; width?: number; height?: number; error?: string }>;
         onExited: (callback: (info: CanvasExitedInfo) => void) => () => void;
       };
     };
@@ -307,7 +316,7 @@ export default function PreviewPanel({
         type: 'container',
         props: { padding: 16, backgroundColor: color, layout: 'column', spacing: 8 },
         children: [
-          { type: 'text', props: { content: '🎨 画布已就绪', fontSize: 18, fontWeight: 700, color: pickFg(color) } },
+          { type: 'text', props: { content: '画布已就绪', fontSize: 18, fontWeight: 700, color: pickFg(color) } },
           { type: 'text', props: { content: `当前底色: ${color}`, fontSize: 12, color: pickFg(color), opacity: 0.75 } },
           { type: 'text', props: { content: `Session: ${sessionIdRef.current}`, fontSize: 11, color: pickFg(color), opacity: 0.6 } },
           { type: 'text', props: { content: `Port: ${canvasInfo?.port ?? '-'}  PID: ${canvasInfo?.pid ?? '-'}`, fontSize: 11, color: pickFg(color), opacity: 0.6 } },

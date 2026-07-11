@@ -62,10 +62,11 @@ spring:
           min-idle: 2
 
   # SQLite (AI Society 共享数据库) - AgentConfig + 业务表
-  # [已替代] Node.js RACER 的 src/data/surreal_persistence.ts 已覆盖数据持久化
-  # [保留] 训练历史仍写入此 SQLite，作为离线分析数据源
+  # 路径解析优先级:
+  #   1. 环境变量 SOLOFORGE_SQLITE_URL (如 jdbc:sqlite:/path/to/ai_society.db)
+  #   2. 默认: 相对于 jar 所在目录的 ../python/data/ai_society/ai_society.db
   datasource:
-    url: jdbc:sqlite:../python/data/ai_society/ai_society.db
+    url: ${SOLOFORGE_SQLITE_URL:jdbc:sqlite:../python/data/ai_society/ai_society.db}
     driver-class-name: org.sqlite.JDBC
     hikari:
       maximum-pool-size: 5

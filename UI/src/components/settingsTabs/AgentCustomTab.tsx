@@ -11,17 +11,18 @@
  *         GET /api/java-agent/api/agents/{id} (→ 8770/api/agents/{id})
  */
 import React, { useState, useEffect, useCallback } from 'react';
-import { Bot, RefreshCw, Cpu, Activity, Zap, Workflow, ShieldCheck, X, Database, ThumbsUp, ThumbsDown, Send, Link2, Upload, FileCode, Code, Globe, ChevronDown } from '../../utils/icons';
+import { Bot, RefreshCw, Cpu, Activity, Zap, Workflow, ShieldCheck, X, Database, ThumbsUp, ThumbsDown, Send, Link2, Upload, FileCode, Code, Globe, ChevronDown, Plus, Pencil, Trash2, Save } from '../../utils/icons';
 
 interface AgentSummary {
   id: string;
   name: string;
+  avatar?: string;
   role: string;
   domain: string;
-  /** level 是字符串 ("senior"/"master"/"expert") 而非数字 */
   level: string;
   strategy: string;
   taskCount: number;
+  enabled?: boolean;
 }
 
 interface AgentDetail extends AgentSummary {
@@ -87,6 +88,9 @@ export default function AgentCustomTab() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [serviceAlive, setServiceAlive] = useState<boolean | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editingAgent, setEditingAgent] = useState<AgentDetail | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const fetchAgents = useCallback(async () => {
     setLoading(true);
@@ -130,6 +134,50 @@ export default function AgentCustomTab() {
     else setDetail(null);
   }, [selectedId, fetchDetail]);
 
+  const handleToggleEnabled = useCallback(async (agentId: string, enabled: boolean) => {
+    try {
+      await fetch(`/api/java-agent/api/agents/${encodeURIComponent(agentId)}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+      fetchAgents();
+      if (selectedId === agentId) fetchDetail(agentId);
+    } catch { /* ignore */ }
+  }, [fetchAgents, selectedId, fetchDetail]);
+
+  const handleDelete = useCallback(async (agentId: string) => {
+    try {
+      const res = await fetch(`/api/java-agent/api/agents/${encodeURIComponent(agentId)}`, { method: 'DELETE' });
+      if (res.ok) {
+        setConfirmDelete(null);
+        if (selectedId === agentId) { setSelectedId(null); setDetail(null); }
+        fetchAgents();
+      }
+    } catch { /* ignore */ }
+  }, [fetchAgents, selectedId]);
+
+  const handleOpenCreate = useCallback(() => {
+    setEditingAgent(null);
+    setEditorOpen(true);
+  }, []);
+
+  const handleOpenEdit = useCallback(() => {
+    if (detail) { setEditingAgent(detail); setEditorOpen(true); }
+  }, [detail]);
+
+  const handleSaveAgent = useCallback(async (data: Record<string, any>) => {
+    const isCreate = !editingAgent;
+    const url = isCreate ? '/api/java-agent/api/agents' : `/api/java-agent/api/agents/${encodeURIComponent(editingAgent!.id)}`;
+    const method = isCreate ? 'POST' : 'PUT';
+    const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+    if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || `HTTP ${res.status}`); }
+    const saved = await res.json();
+    setEditorOpen(false);
+    fetchAgents();
+    if (saved.id) { setSelectedId(saved.id); fetchDetail(saved.id); }
+  }, [editingAgent, fetchAgents, fetchDetail]);
+
   return (
     <div className="space-y-4 animate-fadeIn">
       {/* Header */}
@@ -140,6 +188,14 @@ export default function AgentCustomTab() {
           </div>
           <div className="flex items-center gap-2">
             <ServiceStatusBadge alive={serviceAlive} loading={loading} />
+            <button
+              onClick={handleOpenCreate}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-primary/30 bg-primary/10 text-primary text-[10px] font-bold hover:bg-primary/20 transition-colors"
+              title="新建 Agent"
+            >
+              <Plus className="w-3 h-3" />
+              新建
+            </button>
             <button
               onClick={fetchAgents}
               className="p-1.5 rounded-lg border border-[var(--color-outline)]/30 hover:bg-[var(--color-surface-bright)]/40 text-on-surface/70 hover:text-[var(--color-on-surface)] transition-colors"
@@ -185,41 +241,65 @@ export default function AgentCustomTab() {
                 const isSelected = selectedId === agent.id;
                 const RoleIcon = meta.icon;
                 return (
-                  <button
+                  <div
                     key={agent.id}
-                    onClick={() => setSelectedId(agent.id)}
-                    className={`w-full flex items-start gap-2.5 p-2.5 rounded-xl border text-left transition-all ${
+                    className={`flex items-start gap-2.5 p-2.5 rounded-xl border text-left transition-all ${
                       isSelected
                         ? 'border-primary/40 bg-primary/10 shadow-sm'
                         : 'border-outline/25 bg-[var(--color-surface)] hover:bg-[var(--color-surface-bright)]/40'
                     }`}
                   >
-                    <div className={`p-1.5 rounded-lg border shrink-0 ${meta.color}`}>
-                      <RoleIcon className="w-3.5 h-3.5" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className={`text-xs font-bold truncate ${isSelected ? 'text-primary' : 'text-on-surface'}`}>
-                          {agent.name}
-                        </span>
-                        <span className="text-[9px] font-mono opacity-50 shrink-0 uppercase">{agent.level}</span>
+                    <button
+                      onClick={() => setSelectedId(agent.id)}
+                      className="flex items-start gap-2.5 flex-1 min-w-0 cursor-pointer"
+                      style={{ background: 'none', border: 'none', padding: 0, textAlign: 'left' }}
+                    >
+                      <div className={`p-1.5 rounded-lg border shrink-0 ${meta.color}`}>
+                        {agent.avatar ? (
+                          <span className="text-sm">{agent.avatar}</span>
+                        ) : (
+                          <RoleIcon className="w-3.5 h-3.5" />
+                        )}
                       </div>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-on-surface/5 text-on-surface/60 shrink-0">
-                          {agent.id}
-                        </span>
-                        <span className="text-[9px] opacity-50 truncate">{getStrategyLabel(agent.strategy)}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className={`text-xs font-bold truncate ${isSelected ? 'text-primary' : 'text-on-surface'}`}>
+                            {agent.name}
+                          </span>
+                          <span className="text-[9px] font-mono opacity-50 shrink-0 uppercase">{agent.level}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-on-surface/5 text-on-surface/60 shrink-0">
+                            {agent.id}
+                          </span>
+                          <span className="text-[9px] opacity-50 truncate">{getStrategyLabel(agent.strategy)}</span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1 text-[9px] opacity-50">
+                          <span className="flex items-center gap-0.5">
+                            <Activity className="w-2.5 h-2.5" />
+                            {agent.taskCount} 任务
+                          </span>
+                          <span>·</span>
+                          <span>{meta.label}</span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2 mt-1 text-[9px] opacity-50">
-                        <span className="flex items-center gap-0.5">
-                          <Activity className="w-2.5 h-2.5" />
-                          {agent.taskCount} 任务
-                        </span>
-                        <span>·</span>
-                        <span>{meta.label}</span>
-                      </div>
-                    </div>
-                  </button>
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleToggleEnabled(agent.id, agent.enabled === false); }}
+                      className={`p-1 rounded shrink-0 transition-colors cursor-pointer ${
+                        agent.enabled === false
+                          ? 'text-on-surface/30 hover:text-emerald-400'
+                          : 'text-emerald-400 hover:text-on-surface/30'
+                      }`}
+                      title={agent.enabled === false ? '启用' : '禁用'}
+                    >
+                      {agent.enabled === false ? (
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg>
+                      ) : (
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                      )}
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -239,7 +319,9 @@ export default function AgentCustomTab() {
             <div className="h-64 rounded-xl bg-[var(--color-surface-bright)]/30 animate-pulse" />
           ) : detail ? (
             <>
-              <AgentDetailPanel detail={detail} onClose={() => setSelectedId(null)} />
+              <AgentDetailPanel detail={detail} onClose={() => setSelectedId(null)}
+                onEdit={handleOpenEdit} onDelete={handleDelete} onToggle={handleToggleEnabled}
+                confirmDelete={confirmDelete} onConfirmDelete={setConfirmDelete} />
               <FeedTrainingPanel agentId={detail.id} agentName={detail.name} />
             </>
           ) : (
@@ -249,6 +331,14 @@ export default function AgentCustomTab() {
           )}
         </div>
       </div>
+
+      {editorOpen && (
+        <AgentEditorModal
+          agent={editingAgent}
+          onClose={() => setEditorOpen(false)}
+          onSave={handleSaveAgent}
+        />
+      )}
     </div>
   );
 }
@@ -277,7 +367,10 @@ function ServiceStatusBadge({ alive, loading }: { alive: boolean | null; loading
   );
 }
 
-function AgentDetailPanel({ detail, onClose }: { detail: AgentDetail; onClose: () => void }) {
+function AgentDetailPanel({ detail, onClose, onEdit, onDelete, onToggle, confirmDelete, onConfirmDelete }: {
+  detail: AgentDetail; onClose: () => void; onEdit: () => void; onDelete: (id: string) => void;
+  onToggle: (id: string, enabled: boolean) => void; confirmDelete: string | null; onConfirmDelete: (id: string | null) => void;
+}) {
   const meta = getRoleMeta(detail.role);
   const RoleIcon = meta.icon;
   const promptPreview = (detail.systemPrompt || '').slice(0, 500);
@@ -288,7 +381,7 @@ function AgentDetailPanel({ detail, onClose }: { detail: AgentDetail; onClose: (
       {/* Header */}
       <div className="flex items-center gap-3 p-3 border-b border-[var(--color-outline)]/20 bg-[var(--color-bg)]">
         <div className={`p-2 rounded-lg border ${meta.color}`}>
-          <RoleIcon className="w-4 h-4" />
+          {detail.avatar ? <span className="text-lg">{detail.avatar}</span> : <RoleIcon className="w-4 h-4" />}
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
@@ -296,17 +389,62 @@ function AgentDetailPanel({ detail, onClose }: { detail: AgentDetail; onClose: (
             <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
               {detail.id}
             </span>
+            {detail.enabled === false && (
+              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20">已禁用</span>
+            )}
           </div>
           <div className="text-[10px] text-on-surface/50 mt-0.5">
             {meta.label} · {getStrategyLabel(detail.strategy)} · <span className="uppercase">{detail.level}</span>
           </div>
         </div>
-        <button
-          onClick={onClose}
-          className="p-1 hover:bg-[var(--color-surface-bright)]/40 rounded text-on-surface/40 hover:text-[var(--color-on-surface)]"
-        >
-          <X className="w-3.5 h-3.5" />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={onEdit}
+            className="p-1.5 hover:bg-primary/10 rounded text-on-surface/40 hover:text-primary transition-colors cursor-pointer"
+            title="编辑 Agent"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => onToggle(detail.id, detail.enabled === false)}
+            className={`p-1.5 rounded transition-colors cursor-pointer ${
+              detail.enabled === false ? 'text-on-surface/30 hover:text-emerald-400' : 'text-emerald-400 hover:text-on-surface/30'
+            }`}
+            title={detail.enabled === false ? '启用' : '禁用'}
+          >
+            {detail.enabled === false ? (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg>
+            ) : (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            )}
+          </button>
+          {confirmDelete === detail.id ? (
+            <div className="flex items-center gap-1 ml-1">
+              <button onClick={() => onDelete(detail.id)}
+                className="px-2 py-1 rounded text-[9px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:bg-rose-500/30 cursor-pointer">
+                确认删除
+              </button>
+              <button onClick={() => onConfirmDelete(null)}
+                className="px-2 py-1 rounded text-[9px] font-bold bg-on-surface/5 text-on-surface/50 hover:bg-on-surface/10 cursor-pointer">
+                取消
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => onConfirmDelete(detail.id)}
+              className="p-1.5 hover:bg-rose-500/10 rounded text-on-surface/30 hover:text-rose-400 transition-colors cursor-pointer"
+              title="删除 Agent"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="p-1 hover:bg-[var(--color-surface-bright)]/40 rounded text-on-surface/40 hover:text-[var(--color-on-surface)]"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* Body */}
@@ -976,6 +1114,205 @@ function FeedTrainingPanel({ agentId, agentName }: { agentId: string; agentName:
           「仅入库」将案例写入经验库，Agent 下次执行时自动检索作为 few-shot 参考。
           「入库并触发优化」使用所选模型分析当前 prompt 弱点并尝试改进。
         </p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Agent 编辑器弹窗 (新建/编辑) ───────────────────────────
+const ROLE_OPTIONS = [
+  { value: 'EXECUTOR', label: '执行者 (EXECUTOR)' },
+  { value: 'PLANNER', label: '规划者 (PLANNER)' },
+  { value: 'REVIEWER', label: '审查者 (REVIEWER)' },
+];
+
+const LEVEL_OPTIONS = [
+  { value: 'junior', label: '初级 (Junior)' },
+  { value: 'senior', label: '高级 (Senior)' },
+  { value: 'expert', label: '专家 (Expert)' },
+  { value: 'master', label: '大师 (Master)' },
+];
+
+const STRATEGY_OPTIONS = [
+  { value: 'direct', label: '直接执行' },
+  { value: 'chain_of_thought', label: '思维链' },
+];
+
+const DOMAIN_OPTIONS = [
+  { value: 'code-dev', label: '代码开发' },
+  { value: 'planning', label: '任务规划' },
+  { value: 'debugging', label: '调试排查' },
+  { value: 'documentation', label: '文档撰写' },
+  { value: 'general', label: '通用' },
+];
+
+const AVATAR_OPTIONS = ['💻', '📋', '🔍', '📝', '🎨', '🧪', '🛡️', '🚀', '🤖', '🧠', '📊', '🔧', '🌐', '📦', '🎯', '💡'];
+
+function AgentEditorModal({ agent, onClose, onSave }: {
+  agent: AgentDetail | null; onClose: () => void; onSave: (data: Record<string, any>) => Promise<void>;
+}) {
+  const isCreate = !agent;
+  const [form, setForm] = useState({
+    id: agent?.id || '',
+    name: agent?.name || '',
+    avatar: agent?.avatar || '🤖',
+    role: agent?.role || 'EXECUTOR',
+    domain: agent?.domain || 'general',
+    level: agent?.level || 'senior',
+    strategy: agent?.strategy || 'direct',
+    modelBinding: agent?.modelBinding || 'gpt-4o',
+    temperature: agent?.temperature ?? 0.3,
+    maxRounds: agent?.maxRounds ?? 8,
+    systemPrompt: agent?.systemPrompt || '',
+    capabilities: agent?.capabilities?.join(', ') || 'read, write, search, analyze',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const update = (key: string, value: any) => setForm(f => ({ ...f, [key]: value }));
+
+  const handleSubmit = async () => {
+    if (!form.name.trim()) { setError('名称不能为空'); return; }
+    if (isCreate && !form.id.trim()) { setError('ID 不能为空'); return; }
+    setSaving(true);
+    setError(null);
+    try {
+      const caps = form.capabilities.split(',').map(s => s.trim()).filter(Boolean);
+      await onSave({
+        ...form,
+        capabilities: JSON.stringify(caps),
+        temperature: Number(form.temperature),
+        maxRounds: Number(form.maxRounds),
+      });
+    } catch (err: any) {
+      setError(err?.message || '保存失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-2xl border border-[var(--color-outline)]/25 bg-[var(--color-surface)] shadow-2xl [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-[var(--color-outline)]/20">
+          <h3 className="text-sm font-bold text-[var(--color-on-surface)]">{isCreate ? '新建 Agent' : `编辑 ${agent?.name}`}</h3>
+          <button onClick={onClose} className="p-1 hover:bg-[var(--color-surface-bright)]/40 rounded text-on-surface/40 hover:text-[var(--color-on-surface)]">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-4 text-xs">
+          {error && (
+            <div className="p-2 rounded-lg border border-rose-500/30 bg-rose-500/10 text-rose-400 text-[10px]">{error}</div>
+          )}
+
+          {/* ID + Name */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">Agent ID</label>
+              <input value={form.id} onChange={e => update('id', e.target.value)} disabled={!isCreate}
+                placeholder="code_agent"
+                className={`w-full px-3 py-1.5 text-[11px] rounded-lg bg-[var(--color-bg)] border border-[var(--color-outline)]/20 text-on-surface placeholder:text-on-surface/25 focus:outline-none focus:border-primary/40 ${!isCreate ? 'opacity-50' : ''}`} />
+            </div>
+            <div>
+              <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">名称</label>
+              <input value={form.name} onChange={e => update('name', e.target.value)}
+                placeholder="代码工程师"
+                className="w-full px-3 py-1.5 text-[11px] rounded-lg bg-[var(--color-bg)] border border-[var(--color-outline)]/20 text-on-surface placeholder:text-on-surface/25 focus:outline-none focus:border-primary/40" />
+            </div>
+          </div>
+
+          {/* Avatar */}
+          <div>
+            <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">头像</label>
+            <div className="flex flex-wrap gap-1.5">
+              {AVATAR_OPTIONS.map(a => (
+                <button key={a} onClick={() => update('avatar', a)}
+                  className={`w-8 h-8 rounded-lg border text-base flex items-center justify-center transition-colors cursor-pointer ${
+                    form.avatar === a ? 'border-primary/50 bg-primary/15' : 'border-[var(--color-outline)]/20 hover:bg-[var(--color-surface-bright)]/40'
+                  }`}>{a}</button>
+              ))}
+            </div>
+          </div>
+
+          {/* Role + Level + Strategy */}
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">角色</label>
+              <CustomSelect value={form.role} onChange={v => update('role', v)} options={ROLE_OPTIONS} />
+            </div>
+            <div>
+              <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">等级</label>
+              <CustomSelect value={form.level} onChange={v => update('level', v)} options={LEVEL_OPTIONS} />
+            </div>
+            <div>
+              <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">策略</label>
+              <CustomSelect value={form.strategy} onChange={v => update('strategy', v)} options={STRATEGY_OPTIONS} />
+            </div>
+          </div>
+
+          {/* Domain + Model */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">领域</label>
+              <CustomSelect value={form.domain} onChange={v => update('domain', v)} options={DOMAIN_OPTIONS} />
+            </div>
+            <div>
+              <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">模型绑定</label>
+              <input value={form.modelBinding} onChange={e => update('modelBinding', e.target.value)}
+                className="w-full px-3 py-1.5 text-[11px] rounded-lg bg-[var(--color-bg)] border border-[var(--color-outline)]/20 text-on-surface placeholder:text-on-surface/25 focus:outline-none focus:border-primary/40" />
+            </div>
+          </div>
+
+          {/* Temperature + MaxRounds */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">温度 (0-1)</label>
+              <input type="number" min="0" max="1" step="0.1" value={form.temperature}
+                onChange={e => update('temperature', e.target.value)}
+                className="w-full px-3 py-1.5 text-[11px] rounded-lg bg-[var(--color-bg)] border border-[var(--color-outline)]/20 text-on-surface focus:outline-none focus:border-primary/40" />
+            </div>
+            <div>
+              <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">最大轮次</label>
+              <input type="number" min="1" max="50" value={form.maxRounds}
+                onChange={e => update('maxRounds', e.target.value)}
+                className="w-full px-3 py-1.5 text-[11px] rounded-lg bg-[var(--color-bg)] border border-[var(--color-outline)]/20 text-on-surface focus:outline-none focus:border-primary/40" />
+            </div>
+          </div>
+
+          {/* Capabilities */}
+          <div>
+            <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">能力 (逗号分隔)</label>
+            <input value={form.capabilities} onChange={e => update('capabilities', e.target.value)}
+              placeholder="read, write, search, execute, analyze"
+              className="w-full px-3 py-1.5 text-[11px] rounded-lg bg-[var(--color-bg)] border border-[var(--color-outline)]/20 text-on-surface placeholder:text-on-surface/25 focus:outline-none focus:border-primary/40 font-mono" />
+          </div>
+
+          {/* System Prompt */}
+          <div>
+            <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">System Prompt</label>
+            <textarea value={form.systemPrompt} onChange={e => update('systemPrompt', e.target.value)}
+              placeholder="你是 SoloForge 的 AI Agent。..."
+              className="w-full h-28 px-3 py-2 text-[11px] rounded-lg bg-[var(--color-bg)] border border-[var(--color-outline)]/20 text-on-surface placeholder:text-on-surface/25 resize-none focus:outline-none focus:border-primary/40" />
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 p-4 border-t border-[var(--color-outline)]/20">
+          <button onClick={onClose}
+            className="px-4 py-2 rounded-lg text-[11px] font-bold border border-[var(--color-outline)]/20 text-on-surface/60 hover:bg-[var(--color-surface-bright)]/40 cursor-pointer transition-colors">
+            取消
+          </button>
+          <button onClick={handleSubmit} disabled={saving}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-[11px] font-bold border transition-colors ${
+              saving ? 'border-primary/15 text-primary/40 cursor-not-allowed' : 'border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 cursor-pointer'
+            }`}>
+            <Save className="w-3 h-3" />
+            {saving ? '保存中...' : (isCreate ? '创建' : '保存')}
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -175,29 +175,53 @@ async function startServer() {
   // ============================================================
   // ★ Java Agent SSE 流式直连: /api/java-agent/api/chat/stream → 8770
   //   绕过 3001 Core, 直连 8770 Java Agent, 避免中间层缓冲 SSE 流
-  //   必须在通用 /api/java-agent 代理之前注册 (Express 按注册顺序匹配)
+  //
+  //   ⚠️ 2026-07-11 关键修复:
+  //   旧代码用 app.use("/api/java-agent/api/chat/stream", createProxyMiddleware({...}))
+  //   Express app.use(path, middleware) 会剥离 path 前缀 → req.url 变成 "/"
+  //   → pathRewrite {"^/api/java-agent": ""} 匹配不到 "/" → 不生效
+  //   → 代理发送 POST http://localhost:8770/ (而非 /api/chat/stream) → Java 返回 404
+  //
+  //   修复: 改用 pathFilter (不在 app.use 中传 path, Express 不剥离前缀)
+  //   + v4 on:{...} 语法 (旧 onProxyReq/onProxyRes 在 v4 中已废弃)
+  //   + 添加 on.error 返回 502, 让前端 executeJavaPath 能检测 Java 不可用并 fallback
   // ============================================================
-  app.use("/api/java-agent/api/chat/stream", createProxyMiddleware({
+  app.use(createProxyMiddleware({
     target: JAVA_AGENT_URL,
     changeOrigin: true,
     selfHandleResponse: false,
+    pathFilter: (pathname, req) => req.method === 'POST' && pathname === '/api/java-agent/api/chat/stream',
     pathRewrite: { "^/api/java-agent": "" },
-    onProxyReq: (proxyReq, req) => {
-      proxyReq.setHeader("Connection", "close");
-      proxyReq.setHeader("Accept", "text/event-stream");
-      if (req.body && req.body instanceof Object) {
-        fixRequestBody(proxyReq, req as any);
-      }
-    },
-    onProxyRes: (proxyRes) => {
-      proxyRes.headers["cache-control"] = "no-cache";
-      proxyRes.headers["x-accel-buffering"] = "no";
-      proxyRes.headers["connection"] = "keep-alive";
+    on: {
+      proxyReq: (proxyReq, req) => {
+        proxyReq.setHeader("Connection", "close");
+        proxyReq.setHeader("Accept", "text/event-stream");
+        if ((req as any).body && (req as any).body instanceof Object) {
+          fixRequestBody(proxyReq, req as any);
+        }
+      },
+      proxyRes: (proxyRes) => {
+        proxyRes.headers["cache-control"] = "no-cache";
+        proxyRes.headers["x-accel-buffering"] = "no";
+        proxyRes.headers["connection"] = "keep-alive";
+      },
+      error: (err, _req, res) => {
+        console.error('[proxy→8770 SSE] error:', err.message);
+        if (res && 'writeHead' in res) {
+          try {
+            (res as any).writeHead(502, { 'Content-Type': 'application/json' });
+            (res as any).end(JSON.stringify({
+              success: false,
+              error: `Java Agent (8770) 不可达: ${err.message}`,
+            }));
+          } catch { /* response already sent */ }
+        }
+      },
     },
     proxyTimeout: 0 as any,
     timeout: 0 as any,
   }));
-  console.log(`[proxy] Java Agent SSE /api/java-agent/api/chat/stream → ${JAVA_AGENT_URL}/api/chat/stream (直连, 无超时)`);
+  console.log(`[proxy] Java Agent SSE /api/java-agent/api/chat/stream → ${JAVA_AGENT_URL}/api/chat/stream (pathFilter, 无超时)`);
 
   // ============================================================
   // ★ Java Agent 专用转发: /api/java-agent/* → 3001 → 8770

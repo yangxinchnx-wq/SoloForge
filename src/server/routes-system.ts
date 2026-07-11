@@ -42,6 +42,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import http from 'http';
 import { spawnSync, spawn, execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import type { RuntimeKernel } from '../kernel/runtime-kernel';
@@ -708,12 +709,91 @@ export async function handleJavaAgentProxy(reqPath: string, method: string, body
   const javaUrl = `http://127.0.0.1:8770${javaPath}`;
   try {
     const fetchOptions: any = { method, headers: { 'Content-Type': 'application/json' } };
-    if (method === 'POST' && body) fetchOptions.body = typeof body === 'string' ? body : JSON.stringify(body);
+    if (body && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+      fetchOptions.body = typeof body === 'string' ? body : JSON.stringify(body);
+    }
     const javaRes = await fetch(javaUrl, fetchOptions);
     const javaBody = await javaRes.text();
     return { status: javaRes.status, headers: { 'Content-Type': 'application/json' }, body: javaBody };
   } catch (err: any) {
     return { status: 502, headers: { 'Content-Type': 'application/json' }, body: { success: false, error: `Java Agent service not started: ${err.message}` } };
+  }
+}
+
+/**
+ * Java Agent SSE 流式代理
+ * 直接 pipe Java 的 SSE 流到客户端，不缓冲
+ */
+export async function handleJavaAgentSSE(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  body: any,
+): Promise<void> {
+  const javaUrl = 'http://127.0.0.1:8770/api/chat/stream';
+  try {
+    const javaRes = await fetch(javaUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+      body: typeof body === 'string' ? body : JSON.stringify(body),
+    });
+
+    if (!javaRes.ok) {
+      const errText = await javaRes.text();
+      res.writeHead(javaRes.status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: errText }));
+      return;
+    }
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+
+    const reader = javaRes.body?.getReader();
+    if (!reader) {
+      res.write('event: error\ndata: {"error":"No response body from Java Agent"}\n\n');
+      res.end();
+      return;
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    req.on('close', () => {
+      try { reader.cancel(); } catch { /* ignore */ }
+    });
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('event:') || line.startsWith('data:') || line === '') {
+          res.write(line + '\n');
+        }
+      }
+      if (buffer === '' || buffer === '\n') {
+        res.write('\n');
+      }
+    }
+
+    if (buffer.trim()) {
+      res.write(buffer + '\n\n');
+    }
+
+    res.end();
+  } catch (err: any) {
+    try {
+      res.writeHead(502, { 'Content-Type': 'text/event-stream; charset=utf-8' });
+      res.write(`event: error\ndata: ${JSON.stringify({ error: `Java Agent service not started: ${err.message}` })}\n\n`);
+      res.end();
+    } catch { /* client disconnected */ }
   }
 }
 

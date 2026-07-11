@@ -246,6 +246,140 @@ public class ChatController {
         }
     }
 
+    /**
+     * 新建 Agent
+     */
+    @PostMapping("/api/agents")
+    public ResponseEntity<Map<String, Object>> createAgent(@RequestBody Map<String, Object> body) {
+        String id = (String) body.get("id");
+        String name = (String) body.get("name");
+        if (id == null || id.isBlank()) return badRequest("id 不能为空");
+        if (name == null || name.isBlank()) return badRequest("name 不能为空");
+
+        String finalId = id.trim().toLowerCase().replaceAll("[^a-z0-9_\\-]", "_");
+
+        if (agentRepo.findById(finalId).isPresent()) {
+            return badRequest("Agent ID '" + finalId + "' 已存在");
+        }
+
+        try {
+            AgentIdentityEntity entity = new AgentIdentityEntity();
+            entity.setId(finalId);
+            entity.setName(name);
+            entity.setAvatar(getString(body, "avatar", "🤖"));
+            entity.setRole(getString(body, "role", "EXECUTOR"));
+            entity.setDomain(getString(body, "domain", "general"));
+            entity.setModelBinding(getString(body, "modelBinding", "gpt-4o"));
+            entity.setSystemPrompt(getString(body, "systemPrompt", "你是 SoloForge 的 AI Agent。"));
+            entity.setCapabilities(getString(body, "capabilities", "[\"read\",\"write\",\"search\",\"analyze\"]"));
+            entity.setStrategy(getString(body, "strategy", "direct"));
+            entity.setLevel(getString(body, "level", "senior"));
+            entity.setTemperature(getDouble(body, "temperature", 0.3));
+            entity.setMaxRounds(getInt(body, "maxRounds", 8));
+            entity.setEnabled(1);
+            entity.setStatus("active");
+            entity.setTaskCount(0);
+            entity.setSystemPromptVersion(0);
+            entity.setCheckpointVersion(0);
+
+            agentRepo.save(entity);
+            log.info("Created new agent: {} ({})", name, finalId);
+
+            AgentIdentityEntity saved = agentRepo.findById(finalId).orElse(entity);
+            return ResponseEntity.ok(toAgentDetail(saved));
+        } catch (Exception e) {
+            log.error("Failed to create agent: {}", e.getMessage(), e);
+            return ResponseEntity.internalServerError().body(Map.of("success", false, "error", e.getMessage()));
+        }
+    }
+
+    /**
+     * 更新 Agent 完整配置
+     */
+    @PutMapping("/api/agents/{id}")
+    public ResponseEntity<Map<String, Object>> updateAgent(
+            @PathVariable String id,
+            @RequestBody Map<String, Object> body) {
+        return agentRepo.findById(id).map(existing -> {
+            try {
+                if (body.containsKey("name")) existing.setName((String) body.get("name"));
+                if (body.containsKey("avatar")) existing.setAvatar((String) body.get("avatar"));
+                if (body.containsKey("role")) existing.setRole((String) body.get("role"));
+                if (body.containsKey("domain")) existing.setDomain((String) body.get("domain"));
+                if (body.containsKey("modelBinding")) existing.setModelBinding((String) body.get("modelBinding"));
+                if (body.containsKey("systemPrompt")) existing.setSystemPrompt((String) body.get("systemPrompt"));
+                if (body.containsKey("capabilities")) {
+                    Object caps = body.get("capabilities");
+                    existing.setCapabilities(caps instanceof List ? new ObjectMapper().writeValueAsString(caps) : (String) caps);
+                }
+                if (body.containsKey("strategy")) existing.setStrategy((String) body.get("strategy"));
+                if (body.containsKey("level")) existing.setLevel((String) body.get("level"));
+                if (body.containsKey("temperature")) existing.setTemperature(getDouble(body, "temperature", existing.getTemperature()));
+                if (body.containsKey("maxRounds")) existing.setMaxRounds(getInt(body, "maxRounds", existing.getMaxRounds()));
+
+                agentRepo.save(existing);
+                log.info("Updated agent: {}", id);
+                return ResponseEntity.ok(toAgentDetail(existing));
+            } catch (Exception e) {
+                log.error("Failed to update agent: {}", e.getMessage(), e);
+                return ResponseEntity.internalServerError().<Map<String, Object>>body(Map.of("success", false, "error", e.getMessage()));
+            }
+        }).orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
+     * 启用/禁用 Agent
+     */
+    @PatchMapping("/api/agents/{id}/status")
+    public ResponseEntity<Map<String, Object>> toggleAgentStatus(
+            @PathVariable String id,
+            @RequestBody Map<String, Object> body) {
+        return agentRepo.findById(id).<ResponseEntity<Map<String, Object>>>map(agent -> {
+            Boolean enabled = (Boolean) body.get("enabled");
+            if (enabled == null) return badRequest("enabled 不能为空");
+
+            agentRepo.toggleEnabled(id, enabled ? 1 : 0);
+            log.info("Agent {} {}", id, enabled ? "enabled" : "disabled");
+            return ResponseEntity.ok(Map.of("success", true, "agentId", id, "enabled", enabled));
+        }).orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
+     * 删除 Agent
+     */
+    @DeleteMapping("/api/agents/{id}")
+    public ResponseEntity<Map<String, Object>> deleteAgent(@PathVariable String id) {
+        return agentRepo.findById(id).<ResponseEntity<Map<String, Object>>>map(agent -> {
+            try {
+                agentRepo.deleteById(id);
+                log.info("Deleted agent: {}", id);
+                return ResponseEntity.ok(Map.of("success", true, "agentId", id));
+            } catch (Exception e) {
+                log.error("Failed to delete agent: {}", e.getMessage(), e);
+                return ResponseEntity.internalServerError().body(Map.<String, Object>of("success", false, "error", e.getMessage()));
+            }
+        }).orElse(ResponseEntity.notFound().build());
+    }
+
+    private String getString(Map<String, Object> body, String key, String defaultVal) {
+        Object v = body.get(key);
+        return v instanceof String s && !s.isBlank() ? s : defaultVal;
+    }
+
+    private Double getDouble(Map<String, Object> body, String key, Double defaultVal) {
+        Object v = body.get(key);
+        if (v instanceof Number n) return n.doubleValue();
+        if (v instanceof String s) try { return Double.parseDouble(s); } catch (Exception e) { return defaultVal; }
+        return defaultVal;
+    }
+
+    private Integer getInt(Map<String, Object> body, String key, Integer defaultVal) {
+        Object v = body.get(key);
+        if (v instanceof Number n) return n.intValue();
+        if (v instanceof String s) try { return Integer.parseInt(s); } catch (Exception e) { return defaultVal; }
+        return defaultVal;
+    }
+
     private ResponseEntity<Map<String, Object>> badRequest(String message) {
         Map<String, Object> error = new HashMap<>();
         error.put("success", false);
