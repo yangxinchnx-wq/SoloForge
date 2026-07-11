@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SoloForge 流送区 — 实际源码渲染效果</title>
+<style>
+/* ===== 以下全部来自原项目 Tailwind 类名映射 ===== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg-primary: #0f1117;
+  --bg-surface: #1a1d27;
+  --text-primary: #e8eaed;
+  --text-secondary: #a0a4b8;
+  --text-muted: #6b7088;
+  --border-subtle: rgba(255,255,255,0.06);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.04), 0 0 0 1px rgba(255,255,255,0.06);
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  /* Phase 颜色 — 与 UIMessagePartsRenderer.tsx phaseColors 一致 */
+  --ph-clarify: #fb923c;     --ph-planning: #a78bfa;
+  --ph-decomposing: #60a5fa; --ph-dispatching: #22d3ee;
+  --ph-executing: #818cf8;   --ph-reviewing: #fbbf24;
+  --ph-auditing: #c084fc;    --ph-delivering: #2dd4bf;
+  --ph-done: #4ade80;        --ph-error: #f87171;
+  --ph-single: #60a5fa;
+}
+
+body { font-family: var(--font-sans); background: var(--bg-primary); color: var(--text-primary); min-height: 100vh; padding: 24px; line-height: 1.5; }
+
+/* StreamPanel.tsx 容器 */
+.stream-panel { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+
+/* PhaseChangePartView — UIMessagePartsRenderer.tsx 第 177-214 行 */
+.phase-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+  padding: 3px 10px; border-radius: 999px;
+}
+.phase-arrow { color: var(--text-muted); font-size: 10px; }
+.phase-detail { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* TaskTree.tsx + SubTaskNode.tsx */
+.task-tree { display: flex; flex-direction: column; gap: 8px; }
+.user-input-label { font-size: 13px; color: var(--text-secondary); padding: 8px 0 4px; border-bottom: 1px solid var(--border-subtle); margin-bottom: 8px; }
+
+.subtask-node { border-radius: 10px; overflow: hidden; }
+.subtask-header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; cursor: pointer; transition: background .15s; }
+.subtask-header:hover { background: #22263a; }
+.model-avatar { width: 28px; height: 28px; border-radius: 8px; background: rgba(255,255,255,.05); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.subtask-info { flex: 1; min-width: 0; }
+.subtask-model-name { font-size: 11px; font-weight: 700; }
+.subtask-desc { font-size: 10px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subtask-status-tag { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 999px; flex-shrink: 0; }
+.status-running { color: #818cf8; background: rgba(129,140,248,.10); }
+.status-done    { color: #4ade80; background: rgba(74,222,128,.10); }
+.expand-icon { width: 14px; height: 14px; color: var(--text-muted); transition: transform .2s; flex-shrink: 0; }
+.expanded .expand-icon { transform: rotate(90deg); }
+.subtask-body { padding: 0 14px 12px 50px; display: none; }
+.expanded > .subtask-body { display: block; }
+
+/* StepRecordItem — SubTaskNode.tsx */
+.step-list { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+.step-item { display: flex; align-items: center; gap: 6px; padding-left: 8px; font-family: var(--font-mono); font-size: 10px; color: var(--text-secondary); }
+.step-icon { width: 12px; height: 12px; flex-shrink: 0; }
+.step-running .step-icon { color: #818cf8; animation: spin 1s linear infinite; }
+.step-done .step-icon    { color: #4ade80; }
+.step-error .step-icon   { color: #f87171; }
+.step-idle .step-icon    { color: var(--text-muted); }
+.step-detail { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* SubTaskProgressPartView — 第 237-256 行 */
+.progress-bar { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.progress-track { flex: 1; height: 4px; border-radius: 999px; background: rgba(255,255,255,.10); overflow: hidden; }
+.progress-fill { height: 100%; border-radius: 999px; background: #3b82f6; box-shadow: 0 0 4px rgba(59,130,246,.4); }
+.progress-pct { font-family: var(--font-mono); font-size: 10px; font-weight: 700; color: var(--text-muted); width: 32px; text-align: right; }
+
+/* 文本缓冲区 — SubTaskNode.tsx */
+.text-buffer { font-family: var(--font-mono); font-size: 11px; line-height: 1.7; color: var(--text-secondary); white-space: pre-wrap; word-break: break-word; padding: 8px 0; border-top: 1px dashed var(--border-subtle); margin-top: 6px; }
+.cursor-blink { display: inline-block; width: 6px; height: 15px; background: #818cf8; margin-left: 2px; vertical-align: middle; border-radius: 1px; animation: blink 1s step-end infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* SubTaskCreatedPartView — 第 218-233 行 */
+.st-created-card {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  border-radius: 12px; background: var(--bg-surface); box-shadow: var(--shadow-sm);
+}
+
+/* SubTaskDonePartView — 第 314-338 行 */
+.st-done-card {
+  display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+  border-radius: 12px; background: var(--bg-surface); box-shadow: var(--shadow-sm);
+}
+.done-text { font-size: 10px; font-weight: 600; }
+.done-success { color: #4ade80; }
+.done-fail    { color: #f87171; }
+.done-result  { font-size: 10px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+
+/* ModelDelegationPartView — 第 340-362 行 */
+.delegation-chain { display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 10px; color: rgba(160,164,184,.5); padding: 4px 8px; }
+.deleg-from { color: rgba(160,164,184,.4); }
+.deleg-agent-avatar { font-size: 11px; width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; }
+.deleg-name { color: #818cf8; font-weight: 700; }
+.deleg-detail { color: var(--text-secondary); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
+
+/* ModelActionPartView — 第 366-376 行 (v3.2 新增) */
+.model-action-row { display: flex; align-items: center; gap: 6px; padding: 4px 8px; font-family: var(--font-mono); font-size: 10px; color: rgba(160,164,184,.5); }
+.ma-tag { color: rgba(107,112,136,.5); }
+.ma-action { color: rgba(160,164,184,.7); }
+.ma-detail { color: rgba(107,112,136,.35); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px; }
+
+/* TextPartView — 第 149-167 行 */
+.text-part { font-size: 12px; line-height: 1.7; color: rgba(232,234,237,.9); white-space: pre-wrap; word-break: break-word; }
+
+/* AuditStartPartView — 第 380-399 行 */
+.audit-start-card {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  border-radius: 12px; background: rgba(192,132,252,.05);
+  box-shadow: 0 0 0 1px rgba(168,85,247,.12);
+}
+.audit-label { font-size: 10px; font-weight: 700; color: #c084fc; }
+.audit-type { font-size: 10px; color: var(--text-muted); }
+
+/* AuditFindingPartView — 第 403-462 行 */
+.audit-finding-card { border-radius: 12px; background: var(--bg-surface); box-shadow: var(--shadow-sm); overflow: hidden; }
+.finding-header { display: flex; align-items: flex-start; gap: 8px; padding: 8px 12px; width: 100%; background: none; border: none; color: inherit; cursor: pointer; text-align: left; font: inherit; min-height: 40px; touch-action: manipulation; }
+.finding-sev { font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 4px; flex-shrink: 0; margin-top: 2px; }
+.sev-error   { color: #f87171; background: rgba(248,113,113,.10); }
+.sev-warning { color: #fbbf24; background: rgba(251,191,36,.10); }
+.sev-info    { color: #60a5fa; background: rgba(96,165,250,.10); }
+.finding-target { font-size: 10px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.finding-chevron { width: 12px; height: 12px; color: var(--text-muted); transition: transform .2s; flex-shrink: 0; margin-top: 4px; }
+.finding-expanded .finding-chevron { transform: rotate(180deg); }
+.finding-body { max-height: 0; overflow: hidden; transition: max-height .2s ease-out, opacity .2s; opacity: 0; }
+.finding-expanded > .finding-body { max-height: 200px; opacity: 1; }
+.finding-suggestion { padding: 6px 12px 10px 34px; font-size: 10px; color: var(--text-muted); line-height: 1.6; }
+
+/* AuditDonePartView — 第 464-478 行 */
+.audit-done-row { display: flex; align-items: center; gap: 6px; padding: 4px 12px; font-size: 10px; color: var(--text-muted); }
+
+/* DeliveryPartView — 第 482-497 行 */
+.delivery-card { padding: 12px 16px; border-radius: 16px; background: rgba(74,222,128,.05); box-shadow: 0 0 0 1px rgba(34,197,94,.12); }
+.delivery-title { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.delivery-label { font-size: 10px; font-weight: 700; color: #4ade80; }
+.delivery-content { font-size: 12px; line-height: 1.7; color: rgba(232,234,237,.8); white-space: pre-wrap; word-break: break-word; }
+
+/* ClarifyPartView — 第 499-515 行 */
+.clarify-card { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border-radius: 12px; background: rgba(251,146,60,.05); box-shadow: 0 0 0 1px rgba(249,115,22,.12); }
+.clarify-label { font-size: 10px; font-weight: 700; color: #fb923c; }
+.clarify-question { font-size: 11px; color: var(--text-secondary); }
+.clarify-response { font-size: 10px; color: var(--text-muted); }
+
+/* ErrorPartView — 第 517-533 行 */
+.error-card { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border-radius: 12px; background: rgba(248,113,113,.05); box-shadow: 0 0 0 1px rgba(239,68,68,.12); }
+.error-label { font-size: 10px; font-weight: 700; color: #f87171; }
+.error-message { font-size: 11px; color: var(--text-secondary); }
+.error-detail { font-size: 10px; color: var(--text-muted); }
+
+/* BrowserStepPartView — 第 535-546 行 */
+.browser-step-row { display: flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: 10px; }
+.browser-step-num { font-family: var(--font-mono); color: var(--text-muted); }
+.browser-step-detail { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-step-pct { font-family: var(--font-mono); color: var(--text-muted); margin-left: auto; }
+
+/* BrowserScreenshotPartView — 第 548-559 行 */
+.browser-screenshot-img { border-radius: 12px; overflow: hidden; max-width: 280px; outline: 1px solid var(--border-subtle); }
+.browser-screenshot-img img { width: 100%; height: auto; display: block; }
+
+/* PromptCard — PromptCard.tsx */
+.prompt-card { border-radius: 14px; padding: 14px 16px; }
+.pc-blocking { background: linear-gradient(135deg, rgba(251,146,60,.08), rgba(251,146,60,.03)); border: 1px solid rgba(251,146,60,.15); }
+.pc-non-blocking { background: var(--bg-surface); box-shadow: var(--shadow-sm); }
+.pc-title { font-size: 11px; font-weight: 700; margin-bottom: 4px; }
+.pc-message { font-size: 12px; color: var(--text-secondary); margin-bottom: 10px; line-height: 1.6; }
+.pc-options { display: flex; flex-direction: column; gap: 6px; }
+.pc-option { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 6px; background: rgba(255,255,255,.03); border: 1px solid var(--border-subtle); cursor: pointer; font-size: 12px; color: var(--text-secondary); }
+.pc-option:hover { background: rgba(255,255,255,.06); }
+.pc-countdown { font-size: 10px; color: var(--text-muted); margin-top: 6px; }
+
+.section-divider { height: 1px; background: var(--border-subtle); margin: 20px 0 16px; position: relative; }
+.section-divider::after { content: attr(data-label); position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: var(--bg-primary); padding: 0 12px; font-size: 10px; color: var(--text-muted); letter-spacing: .5px; }
+
+.part-item { animation: fadeSlideIn .3s cubic-bezier(.2,0,0,1) both; }
+@keyframes fadeSlideIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+.icon { width: 14px; height: 14px; flex-shrink: 0; }
+.icon-sm { width: 12px; height: 12px; flex-shrink: 0; }
+.icon-md { width: 16px; height: 16px; flex-shrink: 0; }
+
+.footer-note { max-width: 720px; margin: 40px auto 0; padding: 16px 20px; border-radius: 10px; background: var(--bg-surface); border: 1px solid var(--border-subtle); font-size: 11px; color: var(--text-muted); line-height: 1.7; }
+.footer-note h3 { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+.footer-note code { font-family: var(--font-mono); font-size: 10px; background: rgba(255,255,255,.05); padding: 1px 5px; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div style="max-width:720px;margin:0 auto 32px;text-align:center">
+  <h1 style="font-size:20px;font-weight:700">SoloForge 流送区 (StreamPanel)</h1>
+  <p style="font-size:12px;color:#6b7088">以下内容完全基于实际源码 <code>UIMessagePartsRenderer.tsx</code> + <code>StreamPanel.tsx</code> + <code>TaskTree.tsx</code> 渲染</p>
+</div>
+
+<div class="stream-panel">
+
+  <!-- ════════════════════════════════════════
+       以下每个区块对应一个 UIPart 类型
+       样式类名与源码一一对应
+       图标均来自 icons.ts (Lucide→Heroicons)
+       ════════════════════════════════════════ -->
+
+  <!-- === Part 1: phase-change (CLARIFYING) === -->
+  <!-- 源码: UIMessagePartsRenderer.tsx 第 177-214 行 -->
+  <div class="part-item">
+    <div class="phase-badge" style="color:#fb923c;background:rgba(251,146,60,.10)">
+      CLARIFYING
+      <span class="phase-detail">正在澄清需求...</span>
+    </div>
+  </div>
+
+  <!-- === Part 2: prompt-card (blocking, type=clarify_request) === -->
+  <!-- 源码: PromptCard.tsx → StreamPanel.tsx 第 79-97 行 -->
+  <div class="part-item">
+    <div class="prompt-card pc-blocking">
+      <div class="pc-title" style="color:#fb923c">追问 — 需要确认</div>
+      <div class="pc-message">你想关注前端流送区的哪个方面？请选择一个方向：</div>
+      <div class="pc-options">
+        <div class="pc-option">数据存储机制（数据放在哪）</div>
+        <div class="pc-option">显示触发条件（如何让流送区出现）</div>
+        <div class="pc-option">性能优化与渲染策略</div>
+      </div>
+      <div class="pc-countdown">自动选择倒计时: 28s</div>
+    </div>
+  </div>
+
+  <!-- === Part 3: phase-change (PLANNING) === -->
+  <div class="part-item">
+    <div class="phase-badge" style="color:#a78bfa;background:rgba(167,139,250,.10)">
+      <span class="phase-arrow">CLARIFYING →</span>
+      PLANNING
+      <span class="phase-detail">正在制定计划...</span>
+    </div>
+  </div>
+
+  <!-- === Part 4: phase-change (DECOMPOSING) === -->
+  <div class="part-item">
+    <div class="phase-badge" style="color:#60a5fa;background:rgba(96,165,250,.10)">
+      <span class="phase-arrow">PLANNING →</span>
+      DECOMPOSING
+      <span class="phase-detail">正在分解任务为子任务...</span>
+    </div>
+  </div>
+
+  <!-- === Part 5: phase-change (DISPATCHING) === -->
+  <div class="part-item">
+    <div class="phase-badge" style="color:#22d3ee;background:rgba(34,211,238,.10)">
+      <span class="phase-arrow">DECOMPOSING →</span>
+      DISPATCHING
+      <span class="phase-detail">正在分派子任务给 Agent 池...</span>
+    </div>
+  </div>
+
+  <!-- === TaskTree 区域 (StreamPanel.tsx → TaskExecutionCard → TaskTree) === -->
+  <!-- 源码: StreamPanel.tsx 第 119-155 行 / TaskTree.tsx 全文 / SubTaskNode.tsx 全文 -->
+  <div class="task-tree">
+
+    <div class="user-input-label">帮我分析 SoloForge 项目的前端流送区架构</div>
+
+    <!-- SubTaskNode (展开状态) — 对应 subtask-created + progress + step + text_chunk -->
+    <div class="subtask-node expanded" style="--color-accent:#818cf8">
+      <div class="subtask-header" onclick="this.parentElement.classList.toggle('expanded')">
+        <!-- ChevronRight — icons.ts 第 142 行 -->
+        <svg class="expand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+        <!-- ModelIcon — SubTaskCreatedPartView 第 224-225 行用 ModelIcon 组件 -->
+        <div class="model-avatar" style="background:rgba(129,140,248,.05)">
+          <!-- ModelIcon 内部根据 modelName 渲染，这里展示其输出效果 -->
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#818cf8" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M9 9h6M9 13h6"/></svg>
+        </div>
+        <div class="subtask-info">
+          <div class="subtask-model-name" style="color:#818cf8">Claude Sonnet 4</div>
+          <div class="subtask-desc">分析前端流送区架构 (源码级)</div>
+        </div>
+        <div class="subtask-status-tag status-running">执行中</div>
+      </div>
+      <div class="subtask-body">
+
+        <!-- SubTaskStepPartView × N — 第 260-310 行 -->
+        <div class="step-list">
+          <!-- ChevronRight — icons.ts 第 142 行, 第 263 行 className="w-2.5 h-2.5 text-on-surface/20" -->
+          <div class="step-item step-done">
+            <svg class="step-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg>
+            <span>READ_TASK</span>
+          </div>
+          <div class="step-item step-done">
+            <!-- CheckCircle2 — icons.ts 第 155 行, 第 275 行 className="w-3 h-3 text-green-400" -->
+            <svg class="step-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+            <span>UNDERSTAND</span>
+            <span class="step-detail">识别出 6 层分层架构</span>
+          </div>
+          <div class="step-item step-done">
+            <svg class="step-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+            <span>DECIDE</span>
+            <span class="step-detail">决定从类型层开始逐层分析</span>
+          </div>
+          <div class="step-item step-running">
+            <!-- Loader2 = ArrowPathIcon — icons.ts 第 195 行, 第 299 行 className="w-3 h-3 text-blue-400 animate-spin" -->
+            <svg class="step-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
+            <span>EXECUTE</span>
+          </div>
+          <div class="step-item step-idle">
+            <svg class="step-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+            <span>COMPLETE</span>
+          </div>
+          <div class="step-item step-idle">
+            <svg class="step-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+            <span>SUBMIT_TO_JUDGE</span>
+          </div>
+        </div>
+
+        <!-- SubTaskProgressPartView — 第 237-256 行 -->
+        <div class="progress-bar">
+          <div class="progress-track"><div class="progress-fill" style="width:67%"></div></div>
+          <div class="progress-pct">67%</div>
+        </div>
+
+        <!-- ModelActionPartView × N — 第 366-376 行 (v3.2 新增) -->
+        <div style="display:flex;flex-direction:column;gap:2px;margin:6px 0">
+          <div class="model-action-row"><span class="ma-tag">[动作]</span><span class="ma-action">思考中</span><span class="ma-detail">正在读取 streaming.ts 类型定义文件...</span></div>
+          <div class="model-action-row"><span class="ma-tag">[动作]</span><span class="ma-action">调用 readFile</span><span class="ma-detail">UI/src/types/streaming.ts</span></div>
+          <div class="model-action-row"><span class="ma-tag">[动作]</span><span class="ma-action">工具调用 grep</span><span class="ma-detail">pattern="StreamEventKind|TaskPhase"</span></div>
+          <div class="model-action-row"><span class="ma-tag">[动作]</span><span class="ma-action">调用 readFile</span><span class="ma-detail">UI/src/services/sseBackend.ts</span></div>
+          <div class="model-action-row"><span class="ma-tag">[动作]</span><span class="ma-action">思考中</span><span class="ma-detail">发现 PHASE_EVENTS 白名单缺少 model_action...</span></div>
+        </div>
+
+        <!-- 文本缓冲区 — SubTaskNode.tsx useTextFromParts + useDeferredValue -->
+        <div class="text-buffer">
+SoloForge 的前端流送区采用 6 层分层架构设计：
+
+第 1 层是类型定义层（types/streaming.ts），定义了 306 行完整类型体系，
+包括 TaskPhase 状态机（11 种状态）、StreamEventKind（30+ 种事件类型）、
+以及 RootTask/SubTask/AuditTask/PromptCard 等核心数据结构。
+
+第 2 层是 SSE 传输层，由 sseBackend.ts 和 sseStream.ts 组成。
+sseBackend 采用单例 EventSource 模式，通过 rAF 16ms 批处理优化来
+避免 LLM 高频流事件导致的 React 长任务问题。<span class="cursor-blink"></span>
+        </div>
+
+      </div>
+    </div><!-- /SubTaskNode -->
+
+    <!-- SubTaskNode (折叠状态 - 等待中) -->
+    <div class="subtask-node" style="--color-accent:#22d3ee">
+      <div class="subtask-header" onclick="this.parentElement.classList.toggle('expanded')">
+        <svg class="expand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+        <div class="model-avatar" style="background:rgba(34,211,238,.05)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M9 9h6M9 13h6"/></svg>
+        </div>
+        <div class="subtask-info">
+          <div class="subtask-model-name" style="color:#22d3ee">GPT-4o</div>
+          <div class="subtask-desc">审查分析结果的准确性与完整性</div>
+        </div>
+        <div class="subtask-status-tag" style="color:#6b7088;background:rgba(255,255,255,.04)">等待中</div>
+      </div>
+    </div>
+
+    <!-- SubTaskNode (折叠状态 - 已完成) -->
+    <div class="subtask-node" style="--color-accent:#4ade80">
+      <div class="subtask-header" onclick="this.parentElement.classList.toggle('expanded')">
+        <svg class="expand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+        <div class="model-avatar" style="background:rgba(74,222,128,.05)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M9 9h6M9 13h6"/></svg>
+        </div>
+        <div class="subtask-info">
+          <div class="subtask-model-name" style="color:#4ade80">DeepSeek-V3</div>
+          <div class="subtask-desc">收集浏览器操作相关的事件流数据</div>
+        </div>
+        <div class="subtask-status-tag status-done">已完成</div>
+      </div>
+    </div>
+
+  </div><!-- /TaskTree -->
+
+  <!-- === Part 6: model-delegation === -->
+  <!-- 源码: ModelDelegationPartView 第 340-362 行 -->
+  <div class="part-item">
+    <div class="delegation-chain">
+      <span class="deleg-from">Claude Sonnet 4</span>
+      <!-- ArrowRight — icons.ts 第 139 行, 第 349 行 className="w-3 h-3 text-on-surface/30" -->
+      <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+      <!-- agentAvatar — 第 351-353 行: 根据 agentAvatar.startsWith 判断 img 或 span -->
+      <span class="deleg-agent-avatar" style="background:rgba(129,140,248,.15);color:#818cf8;font-size:9px;">CA</span>
+      <!-- agentName — 第 355-357 行: className="text-primary font-bold" -->
+      <span class="deleg-name">CodeAgent</span>
+      <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+      <span class="deleg-detail">分析前端流送区架构</span>
+    </div>
+  </div>
+
+  <!-- === Part 7: phase-change (EXECUTING) === -->
+  <div class="part-item">
+    <div class="phase-badge" style="color:#818cf8;background:rgba(129,140,248,.10)">
+      EXECUTING
+      <span class="phase-detail">正在执行子任务...</span>
+    </div>
+  </div>
+
+  <!-- === Part 8: browser-step × N === -->
+  <!-- 源码: BrowserStepPartView 第 535-546 行, Globe=icons.ts 第 147 行 -->
+  <div class="part-item">
+    <div class="browser-step-row">
+      <svg class="icon-sm" style="color:#818cf8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10A15.3 15.3 0 0112 2z"/></svg>
+      <span class="browser-step-num">#1</span>
+      <span class="browser-step-detail">navigate → https://localhost:3000/chat</span>
+      <span class="browser-step-pct">100%</span>
+    </div>
+  </div>
+  <div class="part-item">
+    <div class="browser-step-row">
+      <svg class="icon-sm" style="color:#818cf8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10A15.3 15.3 0 0112 2z"/></svg>
+      <span class="browser-step-num">#2</span>
+      <span class="browser-step-detail">click → 发送按钮</span>
+      <span class="browser-step-pct">100%</span>
+    </div>
+  </div>
+  <div class="part-item">
+    <div class="browser-step-row">
+      <svg class="icon-sm" style="color:#818cf8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10A15.3 15.3 0 0112 2z"/></svg>
+      <span class="browser-step-num">#3</span>
+      <span class="browser-step-detail">screenshot → 捕获流送区渲染结果</span>
+      <span class="browser-step-pct">45%</span>
+    </div>
+  </div>
+
+  <!-- === Part 9: browser-screenshot === -->
+  <!-- 源码: BrowserScreenshotPartView 第 548-559 行 -->
+  <div class="part-item">
+    <div class="browser-screenshot-img">
+      <div style="width:280px;height:157px;background:linear-gradient(135deg,#1a1d27,#22263a);display:flex;align-items:center;justify-content:center;font-size:10px;color:#6b7088;border-radius:12px;">
+        [浏览器截图 base64 数据]
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════
+       审查与交付阶段
+       ════════════════════════════════════════ -->
+  <div class="section-divider" data-label="审查与交付阶段"></div>
+
+  <!-- === Part 10: phase-change (REVIEWING) === -->
+  <div class="part-item">
+    <div class="phase-badge" style="color:#fbbf24;background:rgba(251,191,36,.10)">
+      <span class="phase-arrow">EXECUTING →</span>
+      REVIEWING
+      <span class="phase-detail">Judge 正在评审各子任务结果...</span>
+    </div>
+  </div>
+
+  <!-- === Part 11: subtask-done === -->
+  <!-- 源码: SubTaskDonePartView 第 314-338 行, CheckCircle2=icons.ts 第 155 行 -->
+  <div class="part-item">
+    <div class="st-done-card">
+      <svg class="icon-md" style="color:#4ade80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+      <span class="done-text done-success">已完成</span>
+      <span class="done-result">发现 6 层架构 + 2 个 bug (PHASE_EVENTS 白名单 + PartRenderer 缺失)</span>
+    </div>
+  </div>
+
+  <!-- === Part 12: phase-change (AUDITING) === -->
+  <div class="part-item">
+    <div class="phase-badge" style="color:#c084fc;background:rgba(192,132,252,.10)">
+      <span class="phase-arrow">REVIEWING →</span>
+      AUDITING
+      <span class="phase-detail">Auditor 正在审计代码质量...</span>
+    </div>
+  </div>
+
+  <!-- === Part 13: audit-start === -->
+  <!-- 源码: AuditStartPartView 第 380-399 行, Shield=icons.ts 第 198 行 -->
+  <div class="part-item">
+    <div class="audit-start-card">
+      <svg class="icon-md" style="color:#c084fc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      <span class="audit-label">审计启动</span>
+      <span class="audit-type">子 Agent 审查</span>
+    </div>
+  </div>
+
+  <!-- === Part 14: audit-finding (可折叠) === -->
+  <!-- 源码: AuditFindingPartView 第 403-462 行, AlertTriangle=icons.ts 第 193 行, ChevronDown=icons.ts 第 142 行 -->
+  <div class="part-item">
+    <div class="audit-finding-card finding-expanded" id="finding1">
+      <button class="finding-header" onclick="document.getElementById('finding1').classList.toggle('finding-expanded')">
+        <svg class="icon" style="color:#fbbf24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <div style="flex:1;display:flex;align-items:center;gap:8px">
+          <span class="finding-sev sev-warning">警告</span>
+          <span class="finding-target">UI/src/services/sseBackend.ts</span>
+        </div>
+        <svg class="finding-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <div class="finding-body">
+        <div class="finding-suggestion">
+          PHASE_EVENTS 白名单遗漏了 model_action 事件名。建议在第 44 行后添加 'model_action'，
+          使 LLM/Agent 思考过程事件能穿透 dispatchEvent 过滤层到达 subscriber handler。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- audit-finding (error 级别, 折叠态) -->
+  <div class="part-item">
+    <div class="audit-finding-card" id="finding2">
+      <button class="finding-header" onclick="document.getElementById('finding2').classList.toggle('finding-expanded')">
+        <svg class="icon" style="color:#f87171" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <div style="flex:1;display:flex;align-items:center;gap:8px">
+          <span class="finding-sev sev-error">严重</span>
+          <span class="finding-target">UI/src/components/UIMessagePartsRenderer.tsx</span>
+        </div>
+        <svg class="finding-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <div class="finding-body">
+        <div class="finding-suggestion">
+          PartRenderer switch 语句缺少 case 'model-action' 分支。即使数据写入 uiMessageStore.parts[],
+          落入 default: return null 后也不会渲染任何 UI。建议添加 ModelActionPartView 组件。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- === Part 15: audit-done === -->
+  <!-- 源码: AuditDonePartView 第 464-478 行, CheckCircle2=icons.ts 第 155 行 -->
+  <div class="part-item">
+    <div class="audit-done-row">
+      <svg class="icon-sm" style="color:#c084fc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+      <span>审计完成</span>
+    </div>
+  </div>
+
+  <!-- === Part 16: phase-change (DELIVERING → DONE) === -->
+  <div class="part-item">
+    <div class="phase-badge" style="color:#2dd4bf;background:rgba(45,212,191,.10)">
+      <span class="phase-arrow">AUDITING →</span>
+      DELIVERING
+      <span class="phase-detail">正在组装最终回答...</span>
+    </div>
+  </div>
+  <div class="part-item">
+    <div class="phase-badge" style="color:#4ade80;background:rgba(74,222,128,.10)">
+      <span class="phase-arrow">DELIVERING →</span>
+      DONE
+    </div>
+  </div>
+
+  <!-- === Part 17: delivery === -->
+  <!-- 源码: DeliveryPartView 第 482-497 行, Box=CubeIcon=icons.ts 第 309 行 -->
+  <div class="part-item">
+    <div class="delivery-card">
+      <div class="delivery-title">
+        <svg class="icon" style="color:#4ade80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+        <span class="delivery-label">交付结果</span>
+      </div>
+      <div class="delivery-content">SoloForge 前端流送区采用 6 层分层架构：
+
+1️⃣ 类型层 types/streaming.ts (306行)
+   定义 TaskPhase(11态)、StreamEventKind(30+事件)、RootTask/SubTask/PromptCard
+
+2️⃣ 传输层 sseBackend.ts + sseStream.ts
+   单例 EventSource、rAF 16ms 批处理、指数退避自动重连
+
+3️⃣ 状态层 streamingStore.ts + previewStreamStore.ts
+   Zustand 管理：任务元数据 + Agent池 + Preview AST 流
+
+4️⃣ UI 层 StreamPanel.tsx → TaskExecutionCard
+   TaskTree + Parts时间线 + PromptCard
+
+5️⃣ 子视图层 streamViews.tsx
+   AI 社会 6 组件：WorkerOutputs/Scores/Judge/Audit/FinalReply
+
+6️⃣ 管线层 sendMessagePipeline.ts
+   5步纯函数发送流程
+
+发现并修复了 2 个 bug：
+• PHASE_EVENTS 白名单遗漏 model_action (P0)
+• PartRenderer 缺少 model-action 渲染分支 (P1)</div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════
+       其他 Part 类型补充
+       ════════════════════════════════════════ -->
+  <div class="section-divider" data-label="其他 Part 类型"></div>
+
+  <!-- === Part 18: text (独立文本块) === -->
+  <!-- 源码: TextPartView 第 149-167 行 -->
+  <div class="part-item">
+    <div class="text-part">
+这是独立的 text part 内容，通常出现在非子任务上下文中，
+比如 SINGLE_MODEL 模式下的直接 LLM 输出。
+支持多段落、长文本自动换行。
+    </div>
+  </div>
+
+  <!-- === Part 19: clarify (追问+已回复) === -->
+  <!-- 源码: ClarifyPartView 第 499-515 行, Zap=BoltIcon=icons.ts 第 304 行 -->
+  <div class="part-item">
+    <div class="clarify-card">
+      <svg class="icon" style="color:#fb923c;margin-top:2px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      <div>
+        <div class="clarify-label">追问</div>
+        <div class="clarify-question">用户是否需要查看浏览器操作的详细截图？</div>
+        <div class="clarify-response">→ 是的，请包含截图</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- === Part 20: error === -->
+  <!-- 源码: ErrorPartView 第 517-533 行, AlertCircle=ExclamationCircleIcon=icons.ts 第 192 行 -->
+  <div class="part-item">
+    <div class="error-card">
+      <svg class="icon" style="color:#f87171;margin-top:2px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <div>
+        <div class="error-label">错误</div>
+        <div class="error-message">SSE 连接断开：网络不稳定导致 EventSource 重连失败</div>
+        <div class="error-detail">将在 4s 后尝试第 3 次重连 (指数退避: 1→2→4→8s)</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- === Part 21: prompt-card (non-blocking, type=tool_suggestion) === -->
+  <div class="part-item">
+    <div class="prompt-card pc-non-blocking">
+      <div class="pc-title" style="color:#a0a4b8">建议 — 可用工具</div>
+      <div class="pc-message">检测到当前任务可能需要以下工具辅助：</div>
+      <div class="pc-options">
+        <div class="pc-option">启用 CodeSearch 技能 — 快速搜索代码定义</div>
+        <div class="pc-option">启用 BrowserUse 技能 — 在浏览器中验证 UI 效果</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════
+       SINGLE_MODEL 模式对比
+       ════════════════════════════════════════ -->
+  <div class="section-divider" data-label="SINGLE_MODEL 模式"></div>
+
+  <div class="part-item">
+    <div class="phase-badge" style="color:#60a5fa;background:rgba(96,165,250,.10)">SINGLE_MODEL</div>
+  </div>
+
+  <div class="task-tree">
+    <div class="user-input-label">解释什么是 Server-Sent Events</div>
+    <div class="subtask-node expanded" style="--color-accent:#60a5fa">
+      <div class="subtask-header" onclick="this.parentElement.classList.toggle('expanded')">
+        <svg class="expand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+        <div class="model-avatar" style="background:rgba(96,165,250,.05)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M9 9h6M9 13h6"/></svg>
+        </div>
+        <div class="subtask-info">
+          <div class="subtask-model-name" style="color:#60a5fa">主模型</div>
+          <div class="subtask-desc">直接回答用户问题</div>
+        </div>
+        <div class="subtask-status-tag status-running">生成中</div>
+      </div>
+      <div class="subtask-body">
+        <div class="text-buffer">
+Server-Sent Events (SSE) 是一种基于 HTTP 的服务器推送技术，
+允许服务器向客户端单向发送事件流。
+
+核心特点：
+• 基于 HTTP 协议，无需 WebSocket
+• 文本格式 (text/event-stream)
+• 内置自动重连机制
+• 单向通信：服务端 → 客户端
+
+典型应用场景：
+- LLM 流式输出 (ChatGPT/Claude 等 AI 产品)
+- 实时股票行情推送
+- 系统日志实时监控<span class="cursor-blink"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="part-item">
+    <div class="delivery-card">
+      <div class="delivery-title">
+        <svg class="icon" style="color:#4ade80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+        <span class="delivery-label">交付结果</span>
+      </div>
+      <div class="delivery-content">SSE 是一种轻量级的实时通信方案，特别适合 AI 对话场景中的流式 token 输出。</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- 图标来源索引 -->
+<div class="footer-note">
+  <h3>图标来源索引 (icons.ts Lucide→Heroicons 映射)</h3>
+  <p>
+    本页面使用的图标全部来自 <code>UI/src/utils/icons.ts</code>，每个图标标注了源码行号：<br><br>
+    <code>ChevronRight</code> → 步骤前缀箭头 · <code>ChevronDown</code> → 审计折叠<br>
+    <code>CheckCircle2</code> → 完成/步骤完成/审计完成 · <code>AlertCircle</code> → 错误<br>
+    <code>AlertTriangle</code> → 审计发现警告/严重 · <code>Loader2</code> → 步骤执行中旋转<br>
+    <code>ArrowRight</code> → 阶段过渡/委派链 · <code>Zap/BoltIcon</code> → 追问卡片<br>
+    <code>Shield/ShieldCheckIcon</code> → 审计启动 · <code>Box/CubeIcon</code> → 交付结果<br>
+    <code>Globe/GlobeAltIcon</code> → 浏览器操作步骤 · <code>ModelIcon</code> → 子任务模型头像<br><br>
+    无任何额外装饰符号或非项目内置元素。<br>
+    每个 Part 区块上方注释标注了对应的源码文件和行号范围。
+  </p>
+</div>
+
+</body>
+</html>

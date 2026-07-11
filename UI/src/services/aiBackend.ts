@@ -32,7 +32,15 @@ export interface ChatRequest {
   secModels?: any[];
   mixedTasks?: boolean;
   activeSettings?: any;
-  /** 前端配置的 LLM provider (apiKey + baseUrl + model), 传递给后端 */
+  /**
+   * 前端配置的 LLM provider (baseUrl + model), 传递给后端。
+   *
+   * ⚠️ 安全注意: apiKey 字段在此接口中以明文形式存在。
+   *   JavaScript 运行时可通过 DevTools 提取。
+   *   后续改进方向:
+   *     1. 前端只传 provider ID，后端从安全配置服务获取密钥
+   *     2. 或使用短期 session token 替代持久 apiKey
+   */
   mainProvider?: { baseUrl: string; apiKey: string; model: string };
   /** 工作区文件夹路径 (用于 AI 作用域限制) */
   workspaceFolder?: string;
@@ -160,6 +168,13 @@ function buildRacerRequestBody(req: ChatRequest): any {
 
 function buildJavaRequestBody(req: ChatRequest): any {
   const settings = req.activeSettings || {};
+
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[aiBackend] buildJavaRequestBody: mainProvider=' +
+      (req.mainProvider?.model || 'none') +
+      ', subProviders=' + (req.subProviders?.length || 0));
+  }
+
   return {
     message: buildPromptWithCanvasForce(req.prompt),
     sessionId: req.chatId ?? null,
@@ -245,6 +260,7 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
   let currentEvent = '';
   let currentData = '';
   let doneSent = false;
+  let sseDebugLineCount = 0;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -254,6 +270,11 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
     buffer = lines.pop() || '';
 
     for (const line of lines) {
+      // [DEBUG SSE] 打印前 30 行原始数据, 看 Java 后端实际返回了什么
+      if (sseDebugLineCount < 30 && line.trim()) {
+        console.log(`[SSE DEBUG] line#${sseDebugLineCount}: ${line.slice(0, 200)}`);
+        sseDebugLineCount++;
+      }
       if (line.startsWith('event:')) {
         currentEvent = line.substring(6).trim();
       } else if (line.startsWith('data:')) {
@@ -264,6 +285,8 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
             const data = JSON.parse(currentData);
             if (currentEvent === 'text' && data.content) {
               onEvent({ kind: 'text', text: data.content, taskId });
+            } else if (currentEvent === 'phase') {
+              onEvent({ kind: 'phase', phase: data.phase, taskId, ...data });
             } else if (currentEvent === 'agent') {
               onEvent({ kind: 'agent', agentId: data.agentId, name: data.name, avatar: data.avatar, role: data.role, domain: data.domain, modelBinding: data.modelBinding, mainModel: data.mainModel, subModels: data.subModels, subModel: data.subModel, taskId });
             } else if (currentEvent === 'error') {
@@ -272,7 +295,10 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
               doneSent = true;
               onEvent({ kind: 'done', taskId, agentId: data.agentId });
             }
-          } catch {}
+          } catch (e) {
+            // [DEBUG SSE] 不再静默吞错, 打印解析失败的信息
+            console.warn(`[SSE DEBUG] JSON.parse failed: event=${currentEvent}, data=${currentData.slice(0, 200)}, error=${e}`);
+          }
         }
         currentEvent = '';
         currentData = '';
@@ -285,6 +311,8 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
       const data = JSON.parse(currentData);
       if (currentEvent === 'text' && data.content) {
         onEvent({ kind: 'text', text: data.content, taskId });
+      } else if (currentEvent === 'phase') {
+        onEvent({ kind: 'phase', phase: data.phase, taskId, ...data });
       } else if (currentEvent === 'agent') {
         onEvent({ kind: 'agent', agentId: data.agentId, name: data.name, avatar: data.avatar, role: data.role, domain: data.domain, modelBinding: data.modelBinding, mainModel: data.mainModel, subModels: data.subModels, subModel: data.subModel, taskId });
       } else if (currentEvent === 'done') {
@@ -649,4 +677,10 @@ export function startChat(req: ChatRequest, onEvent: (e: ChatStreamEvent) => voi
     return startChatViaIpc(req, onEvent);
   }
   return startChatViaFetch(req, onEvent);
+}
+
+export function maskApiKey(key: string | null | undefined): string {
+  if (!key) return key === '' ? '(empty)' : '(none)';
+  if (key.length <= 10) return '****';
+  return key.slice(0, 5) + '****' + key.slice(-4);
 }

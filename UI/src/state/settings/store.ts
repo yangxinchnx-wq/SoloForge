@@ -376,10 +376,20 @@ export function createSettingsStore(config: StoreConfig): SettingsStore {
             // modelProviderMap。修复 "localStorage 初次为空 → sync.getAll() 异步填入 → useEffect
             // 已经跑过读到空 → ChatPanel 永远拿不到 provider" 的竞态死锁。
             // 兼容旧订阅者: 'storage' event 在同 tab 内不会自动 fire, 这里手动派发一次。
+            //
+            // [2026-07-12] 时序修复: sync.getAll() 可能在 React 组件挂载之前就 resolve
+            //   (token 已缓存时只需 1 次 fetch 往返), 此时 providers_updated 事件被派发
+            //   但 Header/App 的 useEffect 还没注册 listener → 事件丢失 → 模型永远 "未选择"。
+            //   解法: 立即派发一次 + 延迟派发一次 (确保 React mount 后能收到)
             try {
               if (typeof window !== 'undefined') {
                 window.dispatchEvent(new Event('storage'));
                 window.dispatchEvent(new CustomEvent('providers_updated'));
+                // 延迟再派发一次, 确保 React useEffect 已注册 listener
+                setTimeout(() => {
+                  window.dispatchEvent(new Event('storage'));
+                  window.dispatchEvent(new CustomEvent('providers_updated'));
+                }, 50);
               }
             } catch { /* SSR/Node 环境跳过 */ }
           })
@@ -452,6 +462,15 @@ export function getDefaultStore(options: DefaultStoreOptions = {}): SettingsStor
     sync,
     ssrInit: options.ssrInit,
   });
+
+  // ★ 必须调用 init() 才会:
+  //   1) 从 localStorage 读取所有 key 到内存 cache
+  //   2) 注册 storage 事件监听 (多 tab 同步)
+  //   3) 启动 sync.getAll() 从服务端拉取设置并合并到 cache + localStorage
+  //   4) 派发 'providers_updated' 事件让 App.tsx 重建 modelProviderMap
+  //   不调用 init() → cache 永远为空 → get() 全返回 undefined →
+  //   cherry_providers_v2 永远不会被同步 → "主模型未配置" 错误
+  _defaultStore.init();
 
   // dev 模式: 暴露 store 引用 + cache 给 CDP 测试诊断
   if (typeof window !== 'undefined' && import.meta.env?.DEV) {

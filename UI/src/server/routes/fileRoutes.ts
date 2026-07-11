@@ -21,6 +21,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { FileNode } from '../../shared/types/file';
+import { authenticateToken } from '../middleware/auth';
 
 // ── 项目根目录 (server.ts 的上两级 = SoloForge/) ──────────────────
 // ESM 兼容: __dirname 在 ESM scope 下未定义, 用 fileURLToPath 手动构造
@@ -41,27 +42,45 @@ const MAX_READ_SIZE = 10 * 1024 * 1024; // 10MB
  */
 function safeResolve(userPath: string): string | null {
   if (!userPath || typeof userPath !== 'string') return null;
+  if (userPath.length > 4096) return null;
+  if (userPath.includes('\0')) return null;
 
   let resolved: string;
-  if (path.isAbsolute(userPath)) {
-    resolved = path.normalize(userPath);
-  } else {
-    resolved = path.normalize(path.join(REPO_ROOT, userPath));
+  try {
+    if (path.isAbsolute(userPath)) {
+      resolved = path.normalize(userPath);
+    } else {
+      resolved = path.normalize(path.join(REPO_ROOT, userPath));
+    }
+  } catch {
+    return null;
   }
 
-  // 防止 path traversal: 解析后的路径必须在项目根目录内
   if (!resolved.startsWith(REPO_ROOT + path.sep) && resolved !== REPO_ROOT) {
     return null;
   }
 
-  // 检查是否在黑名单目录内
-  const rel = path.relative(REPO_ROOT, resolved);
+  if (/^\\\\/.test(resolved)) {
+    return null;
+  }
+
+  let realResolved: string;
+  try {
+    realResolved = fs.realpathSync(resolved);
+    if (!realResolved.startsWith(REPO_ROOT + path.sep) && realResolved !== REPO_ROOT) {
+      return null;
+    }
+  } catch {
+    realResolved = resolved;
+  }
+
+  const rel = path.relative(REPO_ROOT, realResolved);
   const topSegment = rel.split(path.sep)[0];
   if (BLOCKED_DIRS.has(topSegment)) {
     return null;
   }
 
-  return resolved;
+  return realResolved;
 }
 
 /**
@@ -306,11 +325,11 @@ function handleStats(_req: Request, res: Response): void {
  * 路由注册
  */
 export function registerFileRoutes(app: import('express').Express): void {
-  app.get('/api/files/read', handleRead);
-  app.post('/api/files/save', handleSave);
-  app.get('/api/files/list', handleList);
-  app.post('/api/files/create', handleCreate);
-  app.delete('/api/files/delete', handleDelete);
-  app.post('/api/files/rename', handleRename);
-  app.get('/api/files/stats', handleStats);
+  app.get('/api/files/read', authenticateToken, handleRead);
+  app.post('/api/files/save', authenticateToken, handleSave);
+  app.get('/api/files/list', authenticateToken, handleList);
+  app.post('/api/files/create', authenticateToken, handleCreate);
+  app.delete('/api/files/delete', authenticateToken, handleDelete);
+  app.post('/api/files/rename', authenticateToken, handleRename);
+  app.get('/api/files/stats', authenticateToken, handleStats);
 }

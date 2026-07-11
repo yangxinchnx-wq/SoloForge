@@ -77,7 +77,7 @@ export function FormatChatMessage({ content }: FormatChatMessageProps) {
                     return codeParts.map((cp, cIdx) => {
                       if (cp.startsWith('`') && cp.endsWith('`')) {
                         return (
-                          <code key={cIdx} className="px-1.5 py-0.5 rounded bg-black/60 border border-white/5 font-mono text-[11px] text-emerald-400 font-bold mx-0.5">
+                          <code key={cIdx} className="px-1 py-0.5 font-mono text-[11px] text-emerald-500 font-bold mx-0.5">
                             {cp.slice(1, -1)}
                           </code>
                         );

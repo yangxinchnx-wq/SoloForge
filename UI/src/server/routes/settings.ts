@@ -21,6 +21,7 @@
 import type { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
+import { authenticateToken } from '../middleware/auth';
 
 // [2026-06-28 修复路径飘移]
 //   之前固定用 process.cwd(), 用户从不同目录启动时镜像写到不同位置, 造成
@@ -277,11 +278,11 @@ export function handleDelete(req: Request, res: Response): Response {
  * 路由注册
  */
 export function registerSettingsRoutes(app: import('express').Express): void {
-  app.get('/api/settings', handleGetAll);
-  app.get('/api/settings/:key', handleGet);
-  app.put('/api/settings/:key', handlePut);
-  app.patch('/api/settings', handlePatch);
-  app.delete('/api/settings/:key', handleDelete);
+  app.get('/api/settings', authenticateToken, handleGetAll);
+  app.get('/api/settings/:key', authenticateToken, handleGet);
+  app.put('/api/settings/:key', authenticateToken, handlePut);
+  app.patch('/api/settings', authenticateToken, handlePatch);
+  app.delete('/api/settings/:key', authenticateToken, handleDelete);
 }
 
 // 测试/管理:重置内存缓存(用于开发模式 HMR 时刷新)

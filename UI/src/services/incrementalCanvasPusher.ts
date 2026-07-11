@@ -31,12 +31,82 @@ export function setCanvasSessionId(chatId: string, canvasSessionId: string): voi
   canvasSessionIdMap.set(chatId, canvasSessionId);
 }
 
+// ★ FIX 2026-07-12: 添加 fallback 警告日志, 方便排查 Session ID 不匹配问题
 export function getCanvasSessionId(chatId: string): string {
-  return canvasSessionIdMap.get(chatId) || `canvas-${chatId}`;
+  const id = canvasSessionIdMap.get(chatId);
+  if (!id) {
+    console.warn(
+      `[IncrementalCanvasPusher] ⚠️ getCanvasSessionId("${chatId}") 返回回退值 — ` +
+      `映射表中无此 chatId。这通常意味着 PreviewPanel 还未注册真实 canvas session ID。` +
+      `\n  回退使用: canvas-${chatId}` +
+      `\n  当前已注册的 keys: ${[...canvasSessionIdMap.keys()].join(', ') || '(空)'}`
+    );
+    return `canvas-${chatId}`;
+  }
+  return id;
 }
 
 export function clearCanvasSessionId(chatId: string): void {
   canvasSessionIdMap.delete(chatId);
+}
+
+// ── 画布 session 自动启动 + push 重试 ──
+// 当 canvas.push 返回 "session not found" 时, 自动 start session 并重试一次
+const _startedSessions = new Set<string>();
+
+export async function ensureCanvasAndPush(
+  sessionId: string,
+  dsl: any,
+  chatSessionId?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (typeof window === 'undefined' || !window.soloforge?.canvas) {
+    return { ok: false, error: 'no electron canvas' };
+  }
+  const canvas = window.soloforge.canvas;
+
+  // 第一次尝试 push
+  try {
+    const r = await canvas.push(sessionId, dsl);
+    if (r?.ok) return { ok: true };
+
+    // 如果是 session not found, 尝试启动 session
+    if (r?.error && String(r.error).includes('not found')) {
+      console.warn(`[ensureCanvasAndPush] session "${sessionId}" not found, auto-starting...`);
+
+      // 启动画布 (如果尚未启动过)
+      if (!_startedSessions.has(sessionId)) {
+        _startedSessions.add(sessionId);
+        try {
+          const startR = await canvas.start(sessionId, 0, 640);
+          if (!startR?.ok) {
+            console.warn(`[ensureCanvasAndPush] canvas.start failed:`, startR?.error);
+            return { ok: false, error: `start failed: ${startR?.error || 'unknown'}` };
+          }
+          console.log(`[ensureCanvasAndPush] canvas.start ok, port=${startR.session?.port}, retrying push...`);
+        } catch (startErr: any) {
+          console.warn(`[ensureCanvasAndPush] canvas.start exception:`, startErr?.message || startErr);
+          return { ok: false, error: `start exception: ${startErr?.message || 'unknown'}` };
+        }
+      }
+
+      // 重试 push
+      try {
+        const r2 = await canvas.push(sessionId, dsl);
+        if (r2?.ok) {
+          console.log(`[ensureCanvasAndPush] retry push ok after auto-start`);
+          return { ok: true };
+        }
+        console.warn(`[ensureCanvasAndPush] retry push still failed:`, r2?.error);
+        return { ok: false, error: r2?.error || 'retry failed' };
+      } catch (retryErr: any) {
+        return { ok: false, error: `retry exception: ${retryErr?.message || 'unknown'}` };
+      }
+    }
+
+    return { ok: false, error: r?.error || 'push failed' };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'exception' };
+  }
 }
 
 // ── 语言标识映射 ──
@@ -295,15 +365,15 @@ class LineTracker {
     const canvasSessionId = getCanvasSessionId(this.chatSessionId);
     const flutterDsl = { ui: dsl, platform: 'material' };
 
-    if (typeof window !== 'undefined' && window.soloforge?.canvas?.push) {
-      window.soloforge.canvas.push(canvasSessionId, flutterDsl).then((r: any) => {
-        if (!r?.ok) {
-          console.warn('[LineTracker] canvas.push (raw) failed:', r?.error || 'unknown', 'sessionId:', canvasSessionId);
+    if (typeof window !== 'undefined' && window.soloforge?.canvas) {
+      ensureCanvasAndPush(canvasSessionId, flutterDsl, this.chatSessionId).then((r) => {
+        if (!r.ok) {
+          console.warn('[LineTracker] ensureCanvasAndPush (raw) failed:', r.error, 'sessionId:', canvasSessionId);
           usePreviewStreamStore.getState().recordPushError(this.chatSessionId,
-            `canvas.push: ${r?.error || 'failed'}`);
+            `canvas.push: ${r.error || 'failed'}`);
         }
       }).catch((err: any) => {
-        console.warn('[LineTracker] canvas.push (raw) exception:', err?.message || err, 'sessionId:', canvasSessionId);
+        console.warn('[LineTracker] ensureCanvasAndPush (raw) exception:', err?.message || err, 'sessionId:', canvasSessionId);
         usePreviewStreamStore.getState().recordPushError(this.chatSessionId,
           `canvas.push: ${err?.message || 'exception'}`);
       });
@@ -351,16 +421,16 @@ class LineTracker {
     const flutterRoot = universalNodeToFlutterDSL(ast);
     const dsl = { ui: flutterRoot, platform: 'material' };
 
-    // ★ Electron IPC 推画布 — 记录推送结果到 previewStreamStore
-    if (typeof window !== 'undefined' && window.soloforge?.canvas?.push) {
-      window.soloforge.canvas.push(canvasSessionId, dsl).then((r: any) => {
-        if (!r?.ok) {
-          console.warn('[LineTracker] canvas.push failed:', r?.error || 'unknown', 'sessionId:', canvasSessionId);
+    // ★ Electron IPC 推画布 — 使用 ensureCanvasAndPush 自动启动+重试
+    if (typeof window !== 'undefined' && window.soloforge?.canvas) {
+      ensureCanvasAndPush(canvasSessionId, dsl, this.chatSessionId).then((r) => {
+        if (!r.ok) {
+          console.warn('[LineTracker] ensureCanvasAndPush failed:', r.error, 'sessionId:', canvasSessionId);
           usePreviewStreamStore.getState().recordPushError(this.chatSessionId,
-            `canvas.push: ${r?.error || 'failed'}`);
+            `canvas.push: ${r.error || 'failed'}`);
         }
       }).catch((err: any) => {
-        console.warn('[LineTracker] canvas.push exception:', err?.message || err, 'sessionId:', canvasSessionId);
+        console.warn('[LineTracker] ensureCanvasAndPush exception:', err?.message || err, 'sessionId:', canvasSessionId);
         usePreviewStreamStore.getState().recordPushError(this.chatSessionId,
           `canvas.push: ${err?.message || 'exception'}`);
       });

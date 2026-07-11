@@ -33,17 +33,117 @@ import { usePreviewStreamStore } from './previewStreamStore';
 // P2-7: handleSend 拆分出的纯逻辑 (错误分类 / 越界检测 / 预览触发判定)
 import { classifyStreamError, mentionsOutsideWorkspace, detectPreviewTrigger } from './useChatStore.helpers';
 // 2026-07-11: 实时增量代码翻译 — LLM 每输出一行代码, 立即翻译推送到画布
-import { IncrementalCanvasPusher } from '../services/incrementalCanvasPusher';
+import { IncrementalCanvasPusher, setCanvasSessionId, getCanvasSessionId, ensureCanvasAndPush } from '../services/incrementalCanvasPusher';
+
+// ════════════════════════════════════════════════════════════
+// [CANVAS PROBE — 临时诊断探针, 验证后删除]
+// 在 done 事件时注入一个带标记的 HTML 代码块, 追踪它经过:
+//   1. extractCodeBlock (代码块提取)
+//   2. translateCode (翻译器)
+//   3. previewStreamStore (状态存储)
+//   4. WebAstPreview / canvas.push (渲染)
+// 每一步打 [CANVAS_PROBE] 日志, 如果画布看不到东西就能定位断点
+// ════════════════════════════════════════════════════════════
+const CANVAS_PROBE_MARKER = '__CANVAS_PROBE_7F3A__';
+const CANVAS_PROBE_HTML = `<div style="padding:24px;background:#6366f1;border-radius:12px">
+<h1 style="color:white;font-size:24px">${CANVAS_PROBE_MARKER}</h1>
+<p style="color:white;opacity:0.8">如果你在画布上看到这个紫色卡片, 说明管线畅通</p>
+</div>`;
+
+async function runCanvasProbe(chatSessionId: string): Promise<void> {
+  const tag = '[CANVAS_PROBE]';
+  console.log(`${tag} ═══════ 开始管线探针 ═══════`);
+  console.log(`${tag} chatSessionId=${chatSessionId}`);
+
+  // ── Stage 1: 代码块提取 ──
+  const fakeText = '```html\n' + CANVAS_PROBE_HTML + '\n```';
+  const block = extractCodeBlock(fakeText);
+  if (!block) {
+    console.error(`${tag} ❌ Stage 1 FAIL: extractCodeBlock 未提取到代码块`);
+    return;
+  }
+  console.log(`${tag} ✅ Stage 1 PASS: extractCodeBlock → lang=${block.lang}, codeLen=${block.code.length}`);
+
+  // ── Stage 2: 翻译 ──
+  let ast;
+  try {
+    ast = translateCode(block.code, block.lang);
+    if (!ast) {
+      console.error(`${tag} ❌ Stage 2 FAIL: translateCode 返回 null`);
+      return;
+    }
+    console.log(`${tag} ✅ Stage 2 PASS: translateCode → type=${(ast as any).type}, children=${(ast as any).children?.length || 0}`);
+  } catch (err) {
+    console.error(`${tag} ❌ Stage 2 FAIL: translateCode 抛异常:`, err);
+    return;
+  }
+
+  // ── Stage 3: previewStreamStore 写入 ──
+  const canvasSessionId = getCanvasSessionId(chatSessionId);
+  const previewStore = usePreviewStreamStore.getState();
+  previewStore.initEntry(chatSessionId, { language: 'html', sessionId: canvasSessionId });
+  previewStore.updateStream(chatSessionId, {
+    raw: block.code,
+    payload: { language: 'html', framework: 'html', source_code: block.code, preview: { root: ast } } as any,
+    errors: [],
+    done: true,
+  });
+  previewStore.confirmPayload(chatSessionId, { language: 'html', framework: 'html', source_code: block.code, preview: { root: ast } } as any);
+  const entry = previewStore.getEntry(chatSessionId);
+  if (!entry?.payload) {
+    console.error(`${tag} ❌ Stage 3 FAIL: previewStreamStore 写入后 getEntry 返回空 payload`);
+    return;
+  }
+  console.log(`${tag} ✅ Stage 3 PASS: previewStreamStore payload confirmed, ast.type=${(entry.payload.preview?.root as any)?.type}`);
+
+  // ── Stage 4: Electron IPC / fetch relay ──
+  const dsl = { ...ast, platform: 'material' };
+  if (typeof window !== 'undefined' && (window as any).soloforge?.canvas) {
+    try {
+      const result = await ensureCanvasAndPush(canvasSessionId, dsl, chatSessionId);
+      if (result.ok) {
+        console.log(`${tag} ✅ Stage 4 PASS: ensureCanvasAndPush ok, sessionId=${canvasSessionId}`);
+      } else {
+        console.warn(`${tag} ⚠️ Stage 4 WARN: ensureCanvasAndPush failed:`, result.error, 'sessionId:', canvasSessionId);
+      }
+    } catch (err) {
+      console.warn(`${tag} ⚠️ Stage 4 WARN: ensureCanvasAndPush exception:`, err);
+    }
+  } else {
+    console.log(`${tag} ℹ️ Stage 4 SKIP: 非 Electron 环境, 跳过 IPC (WebAstPreview 降级渲染)`);
+    // 尝试 fetch relay
+    try {
+      const resp = await fetch('/api/canvas/relay/push-ui', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: chatSessionId, dsl: ast, language: 'html' }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        console.log(`${tag} ✅ Stage 4 PASS: fetch relay push-ui ok, success=${data.success}`);
+      } else {
+        console.warn(`${tag} ⚠️ Stage 4 WARN: fetch relay push-ui HTTP ${resp.status}`);
+      }
+    } catch (err) {
+      console.warn(`${tag} ⚠️ Stage 4 WARN: fetch relay push-ui 异常:`, err);
+    }
+  }
+
+  // ── Stage 5: 验证 PreviewPanel 能读到数据 ──
+  const finalEntry = usePreviewStreamStore.getState().getEntry(chatSessionId);
+  const finalAst = finalEntry?.payload?.preview?.root || finalEntry?.ast;
+  if (finalAst) {
+    console.log(`${tag} ✅ Stage 5 PASS: previewStreamStore 最终状态有 AST, type=${(finalAst as any).type}`);
+    console.log(`${tag} ═══════ 探针完成: 管线畅通, PreviewPanel 应显示紫色卡片 ═══════`);
+  } else {
+    console.error(`${tag} ❌ Stage 5 FAIL: previewStreamStore 最终状态无 AST — PreviewPanel 读不到数据`);
+  }
+}
+// ════════════════════════════════════════════════════════════
 
 // ==========================================
 // StreamPanel 桥接 — 把 aiBackend 事件喂给 streamingStore
 // ==========================================
-// 设计:
-//   - handleSend / handleAcceptEnable 调用 createStreamBridge()
-//   - bridge 把 text / phase / done / error 事件翻译为 StreamEvent
-//   - 推入 useStreamingStore.applyEvent → 驱动 StreamPanel 渲染
-//   - 不影响现有 streamState (handlePhase 仍正常运行, 保持向后兼容)
-
 interface StreamBridge {
   onText: (text: string) => void;
   onPhase: (evt: any) => void;
@@ -53,28 +153,21 @@ interface StreamBridge {
 }
 
 function createStreamBridge(chatId: string, mainModel: string, userInput: string, mode: PermissionMode): StreamBridge {
-  // P3 集成: 用 createTaskWithActor 替代 createTask
-  // createTaskWithActor 内部调用 createTask + 创建 Actor + 创建 UIMessage + 持久化
   createTaskWithActor(chatId, userInput, mode);
 
   let isFirstText = true;
   let hasPhaseEvents = false;
   let textAccumulated = '';
-  // Java 链路传来的真实 agent 信息 (替代 'main-model' 硬编码)
   let javaAgentId: string | null = null;
   let javaAgentName: string | null = null;
   let javaAgentAvatar: string | undefined = undefined;
-  // Java 链路传来的副模型信息 (流送区显示 "副模型 → agent → 任务")
   let javaSubModel: string | null = null;
 
   const ctx: PhaseMapperContext = {
     activeChatId: chatId,
     pushStreamEvent: (kind: StreamEventKind, extra: Partial<StreamEvent> = {}) => {
-      // P0: rootTaskId 从 streamTaskMeta 获取 (替代 streamingStore.tasks[chatId].id)
       const meta = useStreamingStore.getState().getStreamTaskMeta(chatId);
       if (!meta) return;
-      // P3 集成: 用 dispatchStreamEvent 替代 applyEvent
-      // dispatchStreamEvent 内部双写: streamingStore.applyEvent + actor.tell + uiMessageStore + persistence
       dispatchStreamEvent({
         id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         chatId,
@@ -91,125 +184,58 @@ function createStreamBridge(chatId: string, mainModel: string, userInput: string
     newSubTaskId: () => `sub-${crypto.randomUUID()}`,
   };
 
-  // 单模型模式下, 首次 text 时创建的 subTaskId (本地保存, 后续 step/text_chunk/done 复用)
   let singleModelSubId: string | null = null;
+  let hasError = false;
 
   return {
     onText(text: string) {
       if (!text) return;
       textAccumulated += text;
-      // 单模型模式: 首次 text 到达时创建 SINGLE_MODEL + subtask
       if (isFirstText && !hasPhaseEvents) {
         isFirstText = false;
         singleModelSubId = ctx.newSubTaskId();
         const phaseLabel = javaAgentId ? 'AGENT_EXEC' : 'SINGLE_MODEL';
         const phaseDetail = javaAgentName ? `${javaAgentName} 执行` : '单模型直接生成';
-        ctx.pushStreamEvent('phase_change', {
-          content: phaseLabel,
-          detail: phaseDetail,
-          status: 'running',
-        });
-        // 流送区新格式: "副模型 → agent → 任务"
-        // content = 副模型名 (映射到 SubTask.assigneeModel, ModelDelegationTag.fromModel)
-        // detail = 任务描述 (映射到 SubTask.description, ModelDelegationTag.task)
-        // agent 名/头像通过 useAgentName/useAgentAvatar 实时查询, 不放在事件里
+        ctx.pushStreamEvent('phase_change', { content: phaseLabel, detail: phaseDetail, status: 'running' });
         const effectiveSubModel = javaSubModel ?? mainModel;
         const taskDesc = userInput.length > 60 ? userInput.slice(0, 60) + '...' : userInput;
         ctx.pushStreamEvent('subtask_created', {
-          agentId: javaAgentId ?? 'main-model',
-          avatar: javaAgentAvatar,
-          content: effectiveSubModel,
-          detail: taskDesc,
-          status: 'pending',
-          subTaskId: singleModelSubId,
+          agentId: javaAgentId ?? 'main-model', avatar: javaAgentAvatar,
+          content: effectiveSubModel, detail: taskDesc, status: 'pending', subTaskId: singleModelSubId,
         });
-        ctx.pushStreamEvent('subtask_step', {
-          subTaskId: singleModelSubId,
-          content: 'EXECUTE',
-          status: 'running',
-        });
+        ctx.pushStreamEvent('subtask_step', { subTaskId: singleModelSubId, content: 'EXECUTE', status: 'running' });
       }
-      // text_chunk 只在单模型模式下推送 (多模型模式下 text 是最终交付)
       if (!hasPhaseEvents && singleModelSubId) {
-        ctx.pushStreamEvent('text_chunk', {
-          subTaskId: singleModelSubId,
-          content: text,
-          status: 'running',
-        });
+        ctx.pushStreamEvent('text_chunk', { subTaskId: singleModelSubId, content: text, status: 'running' });
       }
     },
-    onPhase(evt: any) {
-      hasPhaseEvents = true;
-      mapPhaseToStreamEvents(evt, ctx);
-    },
+    onPhase(evt: any) { hasPhaseEvents = true; mapPhaseToStreamEvents(evt, ctx); },
     onAgent(agentId: string, name: string, avatar: string | undefined, _mainM?: string, _subMs?: string[], _role?: string, _domain?: string, subM?: string) {
-      // Java 链路 SubModelWorker 发来的 agent 事件 (副模型选定的 agent)
-      javaAgentId = agentId;
-      javaAgentName = name;
-      javaAgentAvatar = avatar;
-      javaSubModel = subM ?? null;
+      javaAgentId = agentId; javaAgentName = name; javaAgentAvatar = avatar; javaSubModel = subM ?? null;
     },
     onDone(_agentId?: string) {
-      // 单模型模式: 完成子任务
+      // ★ FIX: 如果已经发生了 error, 不要用 DONE 覆盖 ERROR 相位
+      if (hasError) return;
       if (!hasPhaseEvents && !isFirstText && singleModelSubId) {
-        ctx.pushStreamEvent('subtask_done', {
-          subTaskId: singleModelSubId,
-          content: textAccumulated,
-          progress: 100,
-          status: 'success',
-        });
+        ctx.pushStreamEvent('subtask_done', { subTaskId: singleModelSubId, content: textAccumulated, progress: 100, status: 'success' });
       }
-      // 交付 + 完成
-      if (textAccumulated) {
-        ctx.pushStreamEvent('delivery', { content: textAccumulated });
-      }
-      ctx.pushStreamEvent('phase_change', {
-        content: 'DONE',
-        detail: '生成完成',
-        status: 'success',
-      });
+      if (textAccumulated) ctx.pushStreamEvent('delivery', { content: textAccumulated });
+      ctx.pushStreamEvent('phase_change', { content: 'DONE', detail: '生成完成', status: 'success' });
     },
-    onError(error: string) {
-      ctx.pushStreamEvent('phase_change', {
-        content: 'ERROR',
-        detail: error,
-        status: 'error',
-      });
-    },
+    onError(error: string) { hasError = true; ctx.pushStreamEvent('phase_change', { content: 'ERROR', detail: error, status: 'error' }); },
   };
 }
 
-// ==========================================
-// 强制预览检测 — 不依赖 LLM 自标记, 前端自动扫描代码块
-// ==========================================
-
-/**
- * 从 LLM 回复中强制检测是否包含 UI 代码, 返回预览语言或 null
- *
- * 检测策略 (任一命中即触发):
- *   1. fenced 代码块语言 (```html / ```tsx / ```jsx / ```vue / ```dart / ...)
- *   2. UI 关键词 (界面/页面/组件/按钮/表单/布局/dashboard/...)
- *   3. HTML 标签特征 (<div / <button / <input / <form / ...)
- *   4. Flutter/Dart widget 特征 (Widget / MaterialApp / Scaffold / ...)
- */
 function detectPreviewFromResponse(text: string): string | null {
   if (!text || text.length < 10) return null;
 
-  // ── 1. fenced 代码块语言检测 ──
   const codeBlockRe = /```(\w+)/g;
   const langMap: Record<string, string> = {
-    html: 'html', htm: 'html',
-    jsx: 'typescript', tsx: 'typescript',
-    javascript: 'typescript', js: 'typescript',
-    typescript: 'typescript', ts: 'typescript',
-    vue: 'typescript', svelte: 'typescript',
-    dart: 'dart',
-    python: 'python', py: 'python',
-    go: 'go',
-    rust: 'rust', rs: 'rust',
-    java: 'java',
-    c: 'c', cpp: 'c', 'c++': 'c',
-    kotlin: 'java', swift: 'dart',
+    html: 'html', htm: 'html', jsx: 'typescript', tsx: 'typescript',
+    javascript: 'typescript', js: 'typescript', typescript: 'typescript', ts: 'typescript',
+    vue: 'typescript', svelte: 'typescript', dart: 'dart',
+    python: 'python', py: 'python', go: 'go', rust: 'rust', rs: 'rust',
+    java: 'java', c: 'c', cpp: 'c', 'c++': 'c', kotlin: 'java', swift: 'dart',
     css: 'html', scss: 'html',
   };
   let match: RegExpExecArray | null;
@@ -218,454 +244,182 @@ function detectPreviewFromResponse(text: string): string | null {
     if (langMap[lang]) return langMap[lang];
   }
 
-  // ── 2. UI 关键词检测 (中英文) ──
   const uiKeywords = [
-    '界面', '页面', '组件', '按钮', '表单', '布局', '导航', '菜单',
-    '卡片', '对话框', '弹窗', '侧边栏', '工具栏', '标签页', '轮播',
-    'dashboard', 'login', 'signup', 'register', 'form', 'button',
-    'navbar', 'sidebar', 'modal', 'dialog', 'card', 'table', 'chart',
-    '仪表盘', '登录页', '注册页', '设置页', '列表页', '详情页',
+    '界面','页面','组件','按钮','表单','布局','导航','菜单',
+    '卡片','对话框','弹窗','侧边栏','工具栏','标签页','轮播',
+    'dashboard','login','signup','register','form','button',
+    'navbar','sidebar','modal','dialog','card','table','chart',
+    '仪表盘','登录页','注册页','设置页','列表页','详情页',
   ];
   const lowerText = text.toLowerCase();
   for (const kw of uiKeywords) {
     if (lowerText.includes(kw.toLowerCase())) {
-      // 有关键词但没代码块语言 → 默认 typescript
-      // (大多数 UI 代码是 React/TS)
-      // 但先检查有没有特定语言特征
       if (/\bflutter\b|\bwidget\b|MaterialApp|Scaffold|StatelessWidget/i.test(text)) return 'dart';
       if (/\bstreamlit\b|\bdash\b|\bgradio\b|import pandas/i.test(text)) return 'python';
       if (/\bgo\b.*\bhtml\b|html\/template|gin\.Default/i.test(text)) return 'go';
       return 'typescript';
     }
   }
-
-  // ── 3. HTML 标签特征 ──
-  if (/<(?:div|button|input|form|nav|header|footer|section|article|span|ul|li|table|img)\b/i.test(text)) {
-    return 'html';
-  }
-
-  // ── 4. Flutter/Dart widget 特征 ──
-  if (/(?:StatelessWidget|StatefulWidget|MaterialApp|Scaffold|AppBar|Container\(|Column\(|Row\(|Padding\()/i.test(text)) {
-    return 'dart';
-  }
-
+  if (/<(?:div|button|input|form|nav|header|footer|section|article|span|ul|li|table|img)\b/i.test(text)) return 'html';
+  if (/(?:StatelessWidget|StatefulWidget|MaterialApp|Scaffold|AppBar|Container\(|Column\(|Row\(|Padding\()/i.test(text)) return 'dart';
   return null;
 }
 
-/**
- * 代码块语言标识 (markdown fenced) → 翻译器 language 标识 映射
- *
- * LLM 在 markdown 代码块里用的语言标识 (如 ```jsx / ```dart) 映射到
- * 翻译器的 language 字段 (如 'react' / 'flutter')。
- * 这样 LLM 返回任意语言的 UI 代码都能被对应的本地翻译器处理。
- */
 const BLOCK_LANG_TO_TRANSLATOR: Record<string, string> = {
-  html: 'html', htm: 'html',
-  jsx: 'react', tsx: 'react',
-  javascript: 'react', js: 'react',
-  typescript: 'react', ts: 'react',
-  vue: 'vue',
-  dart: 'flutter',
-  swift: 'swiftui',
-  kotlin: 'compose',
-  xml: 'android',     // Android XML 更常见; XAML 通常会明确标 ```xaml
-  xaml: 'xaml',
-  qml: 'qml',
-  python: 'python', py: 'python',
+  html: 'html', htm: 'html', jsx: 'react', tsx: 'react',
+  javascript: 'react', js: 'react', typescript: 'react', ts: 'react',
+  vue: 'vue', dart: 'flutter', swift: 'swiftui', kotlin: 'compose',
+  xml: 'android', xaml: 'xaml', qml: 'qml', python: 'python', py: 'python',
   c: 'c', cpp: 'c', 'c++': 'c', h: 'c',
 };
 
-/**
- * 从 LLM 回复中提取 UI 代码块 (支持所有 11 款翻译器语言)
- *
- * 提取策略 (按优先级):
- *   1. fenced 代码块 ```lang ... ``` — 用 BLOCK_LANG_TO_TRANSLATOR 映射语言
- *   2. 映射表没匹配 → 用 detectLanguage 自动检测代码归属
- *   3. 整段是 HTML (以 < 开头) → 当作 HTML 处理
- *
- * @returns { code, lang } 或 null (无 UI 代码)
- */
 function extractCodeBlock(text: string): { code: string; lang: string } | null {
   if (!text) return null;
-
-  // 1. 扫描所有 fenced 代码块, 收集 UI 相关的候选
   const fencedRe = /```(\w+)\s*\n([\s\S]*?)```/g;
   let match: RegExpExecArray | null;
   while ((match = fencedRe.exec(text)) !== null) {
     const blockLang = match[1].toLowerCase();
     const code = match[2].trim();
     if (!code) continue;
-
-    // 1a. 映射表直接命中
     const translatorLang = BLOCK_LANG_TO_TRANSLATOR[blockLang];
-    if (translatorLang && isLanguageSupported(translatorLang)) {
-      return { code, lang: translatorLang };
-    }
-
-    // 1b. 映射表没命中 → 用 detectLanguage 自动检测这段代码
+    if (translatorLang && isLanguageSupported(translatorLang)) return { code, lang: translatorLang };
     const detected = detectLanguage(code);
-    if (detected) {
-      return { code, lang: detected.language };
-    }
+    if (detected) return { code, lang: detected.language };
   }
-
-  // 2. 整段是 HTML (以 < 开头, 且不是 JSX <Component />)
   const trimmed = text.trim();
-  if (/^<(?:!doctype\s+html|html|div|section|article|body|p|span|button|input|form|ul|ol|li|h[1-6]|nav|header|footer|main)\b/i.test(trimmed)) {
-    return { code: trimmed, lang: 'html' };
-  }
-
+  if (/^<(?:!doctype\s+html|html|div|section|article|body|p|span|button|input|form|ul|ol|li|h[1-6]|nav|header|footer|main)\b/i.test(trimmed)) return { code: trimmed, lang: 'html' };
   return null;
 }
 
-/**
- * 本地翻译代码块为 Universal AST 并推到画布 (支持所有 11 款翻译器)
- *
- * 当 LLM 回复包含 UI 代码块 (任意语言) 时:
- *   1. 用对应的本地翻译器解析成 UniversalNode (不调 LLM, 零 token 消耗)
- *   2. POST 到 Node.js relay /api/canvas/relay/push-ui
- *   3. Node.js 转发到 Flutter /render
- *
- * @returns true 表示已本地翻译并推送, false 表示不适用 (需回退到 LLM 预览流)
- */
-async function tryLocalTranslateAndPush(
-  text: string,
-  chatSessionId: string
-): Promise<boolean> {
+async function tryLocalTranslateAndPush(text: string, chatSessionId: string): Promise<boolean> {
   console.log('[tryLocalTranslateAndPush] 开始检查, text长度=', text.length, 'chatId=', chatSessionId);
   const block = extractCodeBlock(text);
-  if (!block) {
-    console.log('[tryLocalTranslateAndPush] 未检测到 UI 代码块, 跳过');
-    return false;
-  }
-
+  if (!block) { console.log('[tryLocalTranslateAndPush] 未检测到 UI 代码块, 跳过'); return false; }
   const { code, lang } = block;
   console.log('[tryLocalTranslateAndPush] 检测到代码块, lang=', lang, 'code长度=', code.length);
-  if (!isLanguageSupported(lang)) {
-    console.log('[tryLocalTranslateAndPush] 语言不支持:', lang);
-    return false;
-  }
+  if (!isLanguageSupported(lang)) { console.log('[tryLocalTranslateAndPush] 语言不支持:', lang); return false; }
 
   try {
     const ast = translateCode(code, lang);
-
-    // ★ 2026-07-11: 优先使用 Electron IPC 直推画布 (不经过 HTTP relay)
-    //   之前走 HTTP /api/canvas/relay/push-ui 有两个问题:
-    //   1. relay 注册的 sessionId 是 canvas-${chatId}, 但这里传的是 chatId → 不匹配
-    //   2. 后端 3001 可能未启动 → 502
-    //   Electron IPC 直推: window.soloforge.canvas.push(sessionId, dsl) → main.cjs → Flutter
-    if (typeof window !== 'undefined' && window.soloforge?.canvas?.push) {
-      // PreviewPanel 用的 sessionId 格式: canvas-${chatId} (fallback) 或 canvas_N (bridge)
-      // 这里用 fallback 格式, 与 PreviewPanel 的 fallbackId 一致
-      const canvasSessionId = `canvas-${chatSessionId}`;
-      const dsl = {
-        ...ast,
-        platform: 'material',
-      };
-      const result = await window.soloforge.canvas.push(canvasSessionId, dsl);
+    if (typeof window !== 'undefined' && window.soloforge?.canvas) {
+      const canvasSessionId = getCanvasSessionId(chatSessionId);
+      const dsl = { ...ast, platform: 'material' };
+      const result = await ensureCanvasAndPush(canvasSessionId, dsl, chatSessionId);
       if (result.ok) {
-        console.log('[tryLocalTranslateAndPush] ✓ Electron IPC 推送成功', {
-          canvasSessionId, language: lang,
-        });
-        // ★ 同步写入 previewStreamStore, 让 PreviewPanel 的 WebAstPreview 也能显示
+        console.log('[tryLocalTranslateAndPush] ✓ Electron IPC 推送成功', { canvasSessionId, language: lang });
         const previewStore = usePreviewStreamStore.getState();
         previewStore.initEntry(chatSessionId, { language: lang, sessionId: canvasSessionId });
-        previewStore.updateStream(chatSessionId, {
-          raw: code,
-          payload: { language: lang, framework: lang, source_code: code, preview: { root: ast } } as any,
-          errors: [],
-          done: true,
-        });
+        previewStore.updateStream(chatSessionId, { raw: code, payload: { language: lang, framework: lang, source_code: code, preview: { root: ast } } as any, errors: [], done: true });
         previewStore.confirmPayload(chatSessionId, { language: lang, framework: lang, source_code: code, preview: { root: ast } } as any);
         return true;
-      } else {
-        console.warn('[tryLocalTranslateAndPush] Electron IPC 推送失败:', result.error);
-        // 继续尝试 HTTP relay 作为 fallback
       }
+      console.warn('[tryLocalTranslateAndPush] Electron IPC 推送失败:', result.error);
     }
-
-    // HTTP relay fallback (非 Electron 环境 或 IPC 失败)
-    const resp = await fetch('/api/canvas/relay/push-ui', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sessionId: chatSessionId,
-        dsl: ast,
-        language: lang,
-      }),
-    });
-
-    if (!resp.ok) {
-      console.warn('[tryLocalTranslateAndPush] relay push-ui 失败:', resp.status);
-      return false;
-    }
-
-    const data = await resp.json();
-    console.log('[tryLocalTranslateAndPush] 已推送到画布 (HTTP relay)', {
-      sessionId: chatSessionId,
-      language: lang,
-      success: data.success,
-    });
-    return data.success === true;
-  } catch (err) {
-    console.warn('[tryLocalTranslateAndPush] 翻译或推送失败, 将回退到 LLM 预览流:', err);
-    return false;
-  }
+    const resp = await fetch('/api/canvas/relay/push-ui', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: chatSessionId, dsl: ast, language: lang }) });
+    if (!resp.ok) { console.warn('[tryLocalTranslateAndPush] relay push-ui 失败:', resp.status); return false; }
+    const data = await resp.json(); return data.success === true;
+  } catch (err) { console.warn('[tryLocalTranslateAndPush] 翻译或推送失败:', err); return false; }
 }
 
-// ==========================================
-// 模块级常量 - 占位数据已清除
-// ==========================================
-
 const defaultChatDetails: Record<string, { title: string; icon: any }> = {};
-
 const defaultConversations: Record<string, ChatMessage[]> = {};
-
 const defaultConfigs: Record<string, ChatSettingsItem> = {};
-
-const fallbackActiveSettings: ChatSettingsItem = {
-  enabledSkills: ['code_review'],
-  contextSize: 32000,
-  personality: 'professional',
-  tone: 'detailed',
-  emojiEnabled: true,
-  emojiType: 'mixed',
-  agentId: 'code_agent'
-};
-
-export const emptyStreamState: StreamState = {
-  workerOutputs: [],
-  reply: '',
-  scores: [],
-  judgeChosen: [],
-  judgeReasoning: '',
-  auditFindings: [],
-  deliver: '',
-  suggestEnables: [],
-  toolCalls: [],
-};
-
-// ==========================================
-// 类型
-// ==========================================
+const fallbackActiveSettings: ChatSettingsItem = { enabledSkills: ['code_review'], contextSize: 32000, personality: 'professional', tone: 'detailed', emojiEnabled: true, emojiType: 'mixed', agentId: 'code_agent' };
+export const emptyStreamState: StreamState = { workerOutputs: [], reply: '', scores: [], judgeChosen: [], judgeReasoning: '', auditFindings: [], deliver: '', suggestEnables: [], toolCalls: [] };
 
 export interface StreamState {
   workerOutputs: Array<{ workerIdx: number; modelName: string; content: string; status: 'pending' | 'streaming' | 'done' | 'error' }>;
-  reply: string;
-  scores: Array<{ workerIdx: number; score: number; reason: string; modelName?: string }>;
-  judgeChosen: number[];
-  judgeReasoning: string;
+  reply: string; scores: Array<{ workerIdx: number; score: number; reason: string; modelName?: string }>;
+  judgeChosen: number[]; judgeReasoning: string;
   auditFindings: Array<{ severity: string; target: string; suggestion: string }>;
   deliver: string;
   suggestEnables: Array<{ candidateName: string; expectedGain: number; reason: string }>;
   toolCalls: ToolCall[];
 }
 
-/** 从 ChatPanel props 同步过来的运行时上下文 (action 内部用 get().options 读取) */
 export interface ChatRuntimeOptions {
   permissionMode?: 'normal' | 'performance' | 'ultimate' | 'expert';
-  selectedChatId?: string;
-  mainModel?: string;
-  secModels?: any[];
-  selectedFile?: string;
-  editorContent?: string;
-  modelProviderMap?: Record<string, {
-    baseUrl: string;
-    apiKey: string;
-    model: string;
-    providerName: string;
-    enabledInSettings: boolean;
-  }>;
+  selectedChatId?: string; mainModel?: string; secModels?: any[];
+  selectedFile?: string; editorContent?: string;
+  modelProviderMap?: Record<string, { baseUrl: string; apiKey: string; model: string; providerName: string; enabledInSettings: boolean }>;
 }
 
 interface ChatStoreState {
-  // ── 状态 ──────────────────────────────────────────
-  conversations: Record<string, ChatMessage[]>;
-  configs: Record<string, ChatSettingsItem>;
-  showSettingsPopup: boolean;
-  chatsList: any[];
-  pendingAttachment: { fileName: string; text: string } | null;
-  isPendingAttachmentExpanded: boolean;
-  isGenerating: boolean;
-  lastReqBody: any;
-  hashlineAgentEnabled: boolean;
-  streamState: StreamState;
-  inputValue: string;
-  showModeDropdown: boolean;
-  /** 工作区越界审批对话框 */
+  conversations: Record<string, ChatMessage[]>; configs: Record<string, ChatSettingsItem>;
+  showSettingsPopup: boolean; chatsList: any[];
+  pendingAttachment: { fileName: string; text: string } | null; isPendingAttachmentExpanded: boolean;
+  isGenerating: boolean; lastReqBody: any; hashlineAgentEnabled: boolean;
+  streamState: StreamState; inputValue: string; showModeDropdown: boolean;
   workspaceApproval: { chatId: string; message: string } | null;
-
-  /** props 注入字段 - 由组件挂载时 syncRuntimeOptions 同步,action 内部用 get().options 读取 */
   options: ChatRuntimeOptions;
-
-  // ── setters ──────────────────────────────────────
   setConversations: (updater: Record<string, ChatMessage[]> | ((prev: Record<string, ChatMessage[]>) => Record<string, ChatMessage[]>)) => void;
   setConfigs: (updater: Record<string, ChatSettingsItem> | ((prev: Record<string, ChatSettingsItem>) => Record<string, ChatSettingsItem>)) => void;
-  setShowSettingsPopup: (v: boolean) => void;
-  setChatsList: (v: any[]) => void;
+  setShowSettingsPopup: (v: boolean) => void; setChatsList: (v: any[]) => void;
   setPendingAttachment: (v: { fileName: string; text: string } | null) => void;
-  setIsPendingAttachmentExpanded: (v: boolean) => void;
-  setIsGenerating: (v: boolean) => void;
-  setLastReqBody: (v: any) => void;
-  setHashlineAgentEnabled: (v: boolean) => void;
+  setIsPendingAttachmentExpanded: (v: boolean) => void; setIsGenerating: (v: boolean) => void;
+  setLastReqBody: (v: any) => void; setHashlineAgentEnabled: (v: boolean) => void;
   setStreamState: (updater: StreamState | ((prev: StreamState) => StreamState)) => void;
-  setInputValue: (updater: string | ((prev: string) => string)) => void;
-  setShowModeDropdown: (v: boolean) => void;
+  setInputValue: (updater: string | ((prev: string) => string)) => void; setShowModeDropdown: (v: boolean) => void;
   setWorkspaceApproval: (v: { chatId: string; message: string } | null) => void;
   resolveWorkspaceApproval: (chatId: string, decision: 'allow' | 'deny' | 'always') => void;
   syncRuntimeOptions: (opts: Partial<ChatRuntimeOptions>) => void;
-
-  // ── 复合 actions ─────────────────────────────────
-  /** 从后端加载会话列表 */
-  loadChatsList: () => void;
-  /** 从后端加载会话配置 */
-  loadChatConfigs: () => void;
-  /** 从后端一次性加载所有对话消息 + 配置 (启动时调用) */
-  loadConversationsFromBackend: () => Promise<void>;
-  /** 更新当前激活会话的设置 (merge) */
+  loadChatsList: () => void; loadChatConfigs: () => void; loadConversationsFromBackend: () => Promise<void>;
   handleUpdateActiveSettings: (updates: Partial<ChatSettingsItem>) => void;
-  /** 根据会话 tag 返回对应 React 图标组件 */
   getActiveChatIcon: (localChatInfo: any, activeChatId: string) => any;
-  /** 根据会话 tag 返回兜底消息数组 */
   getFallbackMessages: (localChatInfo: any) => ChatMessage[];
-  /** 核心发送逻辑:构造 reqBody + startChat 调用 + SSE 回调 */
   handleSend: (inputRef?: React.RefObject<HTMLTextAreaElement | null>) => void;
-  /** 阶段 0 建议启用 - 用户点"启用并重发"后回调 */
   handleAcceptEnable: (candidateName: string) => void;
-  /** 处理单个 SSE 事件,更新 streamState + 提交 assistant 消息 */
   handlePhase: (evt: any, currentChatMsgs: ChatMessage[]) => void;
 }
-
-// ==========================================
-// 模块级持久化 — 后端 API (替代旧 localStorage)
-// ==========================================
 
 let persistIdleHandle: any = null;
 let lastPersistedConversations: Record<string, ChatMessage[]> | null = null;
 let lastPersistedConfigs: Record<string, ChatSettingsItem> | null = null;
 
-/**
- * 防抖全量同步 conversations + configs 到后端
- * 用 requestIdleCallback (或 setTimeout fallback) 防止流式 token 高频写入打满网络
- */
 function schedulePersistToBackend(conversations: Record<string, ChatMessage[]>, configs: Record<string, ChatSettingsItem>) {
   if (typeof window === 'undefined') return;
   if (persistIdleHandle) {
-    if (typeof persistIdleHandle === 'object' && typeof (persistIdleHandle as any).cancel === 'function') {
-      (persistIdleHandle as any).cancel();
-    } else if (typeof persistIdleHandle === 'number') {
-      clearTimeout(persistIdleHandle);
-    }
+    if (typeof persistIdleHandle === 'object' && typeof (persistIdleHandle as any).cancel === 'function') (persistIdleHandle as any).cancel();
+    else if (typeof persistIdleHandle === 'number') clearTimeout(persistIdleHandle);
     persistIdleHandle = null;
   }
   const w = window as any;
-  const doFlush = () => {
-    try {
-      fetch('/api/conversations', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ conversations, configs }),
-      }).catch(() => {});
-    } catch {}
-  };
-  if (w.requestIdleCallback && w.cancelIdleCallback) {
-    const handle = w.requestIdleCallback(doFlush, { timeout: 2000 });
-    persistIdleHandle = { cancel: () => w.cancelIdleCallback(handle) };
-  } else {
-    persistIdleHandle = setTimeout(doFlush, 800);
-  }
+  const doFlush = () => { try { fetch('/api/conversations', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversations, configs }) }).catch(() => {}); } catch {} };
+  if (w.requestIdleCallback && w.cancelIdleCallback) { const handle = w.requestIdleCallback(doFlush, { timeout: 2000 }); persistIdleHandle = { cancel: () => w.cancelIdleCallback(handle) }; }
+  else { persistIdleHandle = setTimeout(doFlush, 800); }
 }
-
-// ==========================================
-// store 创建
-// ==========================================
-// 2026-07-06: initialConversations / initialConfigs 不再从 localStorage 读取
-// 启动时由 main.tsx 调 loadConversationsFromBackend() 从后端异步加载
 
 const initialConversations: Record<string, ChatMessage[]> = {};
 const initialConfigs: Record<string, ChatSettingsItem> = {};
 
 export const useChatStore = create<ChatStoreState>((set, get) => ({
-  // ── 初始状态 ──────────────────────────────────────
-  conversations: initialConversations,
-  configs: initialConfigs,
-  showSettingsPopup: false,
-  chatsList: [],
-  pendingAttachment: null,
-  isPendingAttachmentExpanded: false,
-  isGenerating: false,
-  lastReqBody: null,
-  hashlineAgentEnabled: false,
-  streamState: emptyStreamState,
-  inputValue: '',
-  showModeDropdown: false,
-  workspaceApproval: null,
-  options: {},
-
-  // ── setters ──────────────────────────────────────
-  setConversations: (updater) => set((state) => ({
-    conversations: typeof updater === 'function' ? (updater as any)(state.conversations) : updater
-  })),
-  setConfigs: (updater) => set((state) => ({
-    configs: typeof updater === 'function' ? (updater as any)(state.configs) : updater
-  })),
-  setShowSettingsPopup: (v) => set({ showSettingsPopup: v }),
-  setChatsList: (v) => set({ chatsList: v }),
-  setPendingAttachment: (v) => set({ pendingAttachment: v }),
-  setIsPendingAttachmentExpanded: (v) => set({ isPendingAttachmentExpanded: v }),
-  setIsGenerating: (v) => set({ isGenerating: v }),
-  setLastReqBody: (v) => set({ lastReqBody: v }),
+  conversations: initialConversations, configs: initialConfigs,
+  showSettingsPopup: false, chatsList: [], pendingAttachment: null, isPendingAttachmentExpanded: false,
+  isGenerating: false, lastReqBody: null, hashlineAgentEnabled: false, streamState: emptyStreamState,
+  inputValue: '', showModeDropdown: false, workspaceApproval: null, options: {},
+  setConversations: (updater) => set((state) => ({ conversations: typeof updater === 'function' ? (updater as any)(state.conversations) : updater })),
+  setConfigs: (updater) => set((state) => ({ configs: typeof updater === 'function' ? (updater as any)(state.configs) : updater })),
+  setShowSettingsPopup: (v) => set({ showSettingsPopup: v }), setChatsList: (v) => set({ chatsList: v }),
+  setPendingAttachment: (v) => set({ pendingAttachment: v }), setIsPendingAttachmentExpanded: (v) => set({ isPendingAttachmentExpanded: v }),
+  setIsGenerating: (v) => set({ isGenerating: v }), setLastReqBody: (v) => set({ lastReqBody: v }),
   setHashlineAgentEnabled: (v) => set({ hashlineAgentEnabled: v }),
-  setStreamState: (updater) => set((state) => ({
-    streamState: typeof updater === 'function' ? (updater as any)(state.streamState) : updater
-  })),
-  setInputValue: (updater) => set((state) => ({
-    inputValue: typeof updater === 'function' ? (updater as any)(state.inputValue) : updater
-  })),
+  setStreamState: (updater) => set((state) => ({ streamState: typeof updater === 'function' ? (updater as any)(state.streamState) : updater })),
+  setInputValue: (updater) => set((state) => ({ inputValue: typeof updater === 'function' ? (updater as any)(state.inputValue) : updater })),
   setShowModeDropdown: (v) => set({ showModeDropdown: v }),
-
   setWorkspaceApproval: (v) => set({ workspaceApproval: v }),
-
   resolveWorkspaceApproval: (chatId, decision) => {
-    // 存储决策到 localStorage
-    if (decision === 'always') {
-      localStorage.setItem(`soloforge_workspace_always_allow_${chatId}`, '1');
-    }
+    if (decision === 'always') localStorage.setItem(`soloforge_workspace_always_allow_${chatId}`, '1');
     set({ workspaceApproval: null });
-    // 通知等待中的 handleSend
-    window.dispatchEvent(new CustomEvent('soloforge-workspace-approval-resolved', {
-      detail: { chatId, decision }
-    }));
+    window.dispatchEvent(new CustomEvent('soloforge-workspace-approval-resolved', { detail: { chatId, decision } }));
   },
   syncRuntimeOptions: (opts) => set((state) => ({ options: { ...state.options, ...opts } })),
 
-  // ── 复合 actions ─────────────────────────────────
   loadChatsList: () => {
     if (typeof window === 'undefined') return;
-    // 从后端权威的 chatsStore 拉取 (替代旧 localStorage 读取)
-    // chatsStore 由 main.tsx 启动时 loadFromBackend 填充, 此处只是镜像同步
-    try {
-      const chats = useChatsStore.getState().chats;
-      const mapped = chats.map((c: any) => ({
-        id: c.id,
-        title: c.title,
-        time: c.time || '',
-        tag: c.tag,
-        tagBg: c.tagBg,
-        tagText: c.tagText,
-        icon: undefined, // icon 由 getActiveChatIcon 根据 tag 动态映射, 不需预存
-        permission: c.permission,
-      }));
-      set({ chatsList: mapped });
-    } catch {
-      // chatsStore 尚未初始化, 留空即可
-    }
+    try { const chats = useChatsStore.getState().chats; const mapped = chats.map((c: any) => ({ id: c.id, title: c.title, time: c.time || '', tag: c.tag, tagBg: c.tagBg, tagText: c.tagText, icon: undefined, permission: c.permission })); set({ chatsList: mapped }); } catch {}
   },
 
-  loadChatConfigs: () => {
-    if (typeof window === 'undefined') return;
-    // configs 已随 loadConversationsFromBackend 一起加载, 这里只做 noop
-  },
+  loadChatConfigs: () => {},
 
   loadConversationsFromBackend: async () => {
     if (typeof window === 'undefined') return;
@@ -676,673 +430,184 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
       if (data.success) {
         const convos = data.conversations && typeof data.conversations === 'object' ? data.conversations : {};
         const cfgs = data.configs && typeof data.configs === 'object' ? data.configs : {};
-        // sanitizeConversations 清理旧数据: 外链 avatar + 旧格式错误消息 (❌ 开头)
         const sanitized = sanitizeConversations(convos);
-        // 更新 store, 同时更新 lastPersisted 避免触发回写循环
-        lastPersistedConversations = sanitized;
-        lastPersistedConfigs = cfgs;
+        lastPersistedConversations = sanitized; lastPersistedConfigs = cfgs;
         set({ conversations: sanitized, configs: cfgs });
-        // 如果清理后数据有变化 (删除了旧错误消息), 回写后端避免下次再加载到脏数据
-        if (JSON.stringify(sanitized) !== JSON.stringify(convos)) {
-          schedulePersistToBackend(sanitized, cfgs);
-          console.log('[useChatStore] 检测到旧格式错误消息, 已清理并回写后端');
-        }
-        console.log('[useChatStore] 从后端加载对话消息:', Object.keys(sanitized).length, '条对话');
+        if (JSON.stringify(sanitized) !== JSON.stringify(convos)) { schedulePersistToBackend(sanitized, cfgs); }
       }
-    } catch (e) {
-      console.warn('[useChatStore] 从后端加载对话消息失败:', (e as Error).message);
-    }
+    } catch (e) { console.warn('[useChatStore] 从后端加载对话消息失败:', (e as Error).message); }
   },
 
   handleUpdateActiveSettings: (updates) => {
-    const { options, configs } = get();
-    const activeChatId = options.selectedChatId || '1';
+    const { options, configs } = get(); const activeChatId = options.selectedChatId || '1';
     const activeSettings = configs[activeChatId] || fallbackActiveSettings;
-    set({
-      configs: {
-        ...configs,
-        [activeChatId]: { ...activeSettings, ...updates }
-      }
-    });
+    set({ configs: { ...configs, [activeChatId]: { ...activeSettings, ...updates } } });
   },
 
-  getActiveChatIcon: (localChatInfo, activeChatId) => {
-    if (localChatInfo?.tag === 'ANDROID') return AndroidIcon;
-    if (localChatInfo?.tag === 'WINDOWS') return WindowsIcon;
-    if (localChatInfo?.tag === 'HARMONY') return HarmonyOSIcon;
-    if (localChatInfo?.tag === 'NEW') return DefaultChatIcon;
-    if (localChatInfo?.tag === 'VUE') return Code;
-    if (localChatInfo?.tag === 'AUTH') return Key;
-    if (localChatInfo?.tag === 'AI') return Brain;
-    if (localChatInfo?.tag === 'DB') return Database;
-    if (localChatInfo?.tag === 'PAY') return CreditCard;
-    if (localChatInfo?.tag === 'HELP') return HelpCircle;
+  getActiveChatIcon: (localChatInfo, _activeChatId) => {
+    if (localChatInfo?.tag === 'ANDROID') return AndroidIcon; if (localChatInfo?.tag === 'WINDOWS') return WindowsIcon;
+    if (localChatInfo?.tag === 'HARMONY') return HarmonyOSIcon; if (localChatInfo?.tag === 'NEW') return DefaultChatIcon;
+    if (localChatInfo?.tag === 'VUE') return Code; if (localChatInfo?.tag === 'AUTH') return Key;
+    if (localChatInfo?.tag === 'AI') return Brain; if (localChatInfo?.tag === 'DB') return Database;
+    if (localChatInfo?.tag === 'PAY') return CreditCard; if (localChatInfo?.tag === 'HELP') return HelpCircle;
     return DefaultChatIcon;
   },
 
   getFallbackMessages: (localChatInfo) => {
-    if (localChatInfo?.tag === 'ANDROID') {
-      return [
-        {
-          sender: 'assistant',
-          content: '👋 你好！已为您开启 **Android 应用开发** 专属智能架构与调试辅助面板。\n\n后端系统与真实工具编译调试接口已接入就绪。您可以就以下领域发起提问：\n\n1. 📱 **Jetpack Compose 视图流**：高效的声明式 UI 最佳组件化划分姿态。\n2. 协程 & Flow 异步并发管理，避免主线程卡死现象。\n3. Gradle 构建重构、三方 SDK 统一依赖配置与 Android SDK 高版本适配规约。\n4. 真机/模拟器 ADB 调试报错堆栈智能定位。\n\n请在输入框键入您想要探讨的代码问题！',
-          time: '刚才',
-          avatar: ''
-        }
-      ];
-    }
-    if (localChatInfo?.tag === 'WINDOWS') {
-      return [
-        {
-          sender: 'assistant',
-          content: '👋 你好！已为您开启 **Windows 软件开发/桌面系统** 专属智能架构辅助面板。\n\n后端编译及运行接口环境整备完成。支持提问的技术体系：\n\n1. 🖥️ **WPF / WinForms / WinUI 3**：MVVM 架构重构及自定义精美现代皮肤制作。\n2. Win32 底层 API 调用、高性能 C++ DLL 混合调用与多线程资源释放预防内存积压。\n3. MSIX / Advanced Installer 标准静默打包、Windows 平台软件防病毒篡改签名工作流。\n4. 针对不同版本的 Windows OS 精细化桌面通知及注册表检索。\n\n欢迎直接向我提供您的需求！',
-          time: '刚才',
-          avatar: ''
-        }
-      ];
-    }
-    if (localChatInfo?.tag === 'HARMONY') {
-      return [
-        {
-          sender: 'assistant',
-          content: '👋 你好！已为您开启 **鸿蒙 (HarmonyOS / OpenHarmony)** 生态开发专属高级顾问。\n\n后端调试器与 DevEco Studio 热重载模块交互链路随时待命。核心探讨板块示范：\n\n1. 🔴 **ArkTS 极速业务逻辑编写**：理解 `@State`, `@Prop`, `@Link`, `@Provide` 极佳响应式流状态装饰器搭配运作。\n2. ArkUI 自定义精致声明式组件构建，精细控制渲染性能指标。\n3. Stage 分层架构模型规范、多个 Feature Ability (FA级) 交互安全防护与切片加载处理机制。\n4. 鸿蒙原生多设备适配分布式流转，在平板、折叠屏及智能穿戴间无缝同步。\n\n有什么问题尽管问！',
-          time: '刚才',
-          avatar: ''
-        }
-      ];
-    }
+    if (localChatInfo?.tag === 'ANDROID') return [{ sender: 'assistant', content: '\u{1F44B} 你好！已为您开启 **Android 应用开发** 专属智能架构与调试辅助面板。\n\n后端系统与真实工具编译调试接口已接入就绪。您可以就以下领域发起提问：\n\n1. \u{1F4F1} **Jetpack Compose 视图流**：高效的声明式 UI 最佳组件化划分姿态。\n2. 协程 & Flow 异步并发管理，避免主线程卡死现象。\n3. Gradle 构建重构、三方 SDK 统一依赖配置与 Android SDK 高版本适配规约。\n4. 真机/模拟器 ADB 调试报错堆栈智能定位。\n\n请在输入框键入您想要探讨的代码问题！', time: '刚才', avatar: '' }];
+    if (localChatInfo?.tag === 'WINDOWS') return [{ sender: 'assistant', content: '\u{1F44B} 你好！已为您开启 **Windows 软件开发/桌面系统** 专属智能架构辅助面板。\n\n后端编译及运行接口环境整备完成。支持提问的技术体系：\n\n1. \u{1F5A5} **WPF / WinForms / WinUI 3**：MVVM 架构重构及自定义精美现代皮肤制作。\n2. Win32 底层 API 调用、高性能 C++ DLL 混合调用与多线程资源释放预防内存积压。\n3. MSIX / Advanced Installer 标准静默打包、Windows 平台软件防病毒篡改签名工作流。\n4. 针对不同版本的 Windows OS 精细化桌面通知及注册表检索。\n\n欢迎直接向我提供您的需求！', time: '刚才', avatar: '' }];
+    if (localChatInfo?.tag === 'HARMONY') return [{ sender: 'assistant', content: '\u{1F44B} 你好！已为您开启 **鸿蒙 (HarmonyOS / OpenHarmony)** 生态开发专属高级顾问。\n\n后端调试器与 DevEco Studio 热重载模块交互链路随时待命。核心探讨板块示范：\n\n1. \u{1F534} **ArkTS 极速业务逻辑编写**：理解 @State, @Prop, @Link, @Provide 极佳响应式流状态装饰器搭配运作。\n2. ArkUI 自定义精致声明式组件构建，精细控制渲染性能指标。\n3. Stage 分层架构模型规范、多个 Feature Ability (FA级) 交互安全防护与切片加载处理机制。\n4. 鸿蒙原生多设备适配分布式流转，在平板、折叠屏及智能穿戴间无缝同步。\n\n有什么问题尽管问！', time: '刚才', avatar: '' }];
     return [];
   },
 
-  handleSend: async (inputRef) => {
+  handleSend: async (_inputRef) => {
     const state = get();
     const { inputValue, pendingAttachment, conversations, options, hashlineAgentEnabled, configs } = state;
     const { permissionMode = 'normal', mainModel = 'GPT-4o', secModels = [], selectedFile, editorContent, modelProviderMap = {}, selectedChatId = '1' } = options;
-
     if (!inputValue.trim() && !pendingAttachment) return;
-
     const finalContent = inputValue.trim() || `请帮我分析如下来自于 "${pendingAttachment?.fileName}" 的代码。`;
 
-    // ── 工作区越界检查 ──────────────────────────────────────────
-    // 如果对话绑定了工作区文件夹, 且用户消息中提到需要在文件夹外操作,
-    // 弹出审批对话框 (除非用户已选"允许并不再询问")
+    // ── 工作区越界检查 ──
     const chatInfo = useChatsStore.getState().getChat(selectedChatId);
     const workspaceFolder = chatInfo?.workspaceFolder;
     if (workspaceFolder) {
       const alwaysAllow = localStorage.getItem(`soloforge_workspace_always_allow_${selectedChatId}`) === '1';
       if (!alwaysAllow && mentionsOutsideWorkspace(finalContent)) {
-        // 弹出审批对话框
-        set({
-          workspaceApproval: {
-            chatId: selectedChatId,
-            message: `检测到您可能需要在工作区文件夹 "${workspaceFolder}" 外进行操作。是否允许？`,
-          },
-        });
-
-        // 等待用户决策
+        set({ workspaceApproval: { chatId: selectedChatId, message: `检测到您可能需要在工作区文件夹 "${workspaceFolder}" 外进行操作。是否允许？` } });
         const decision = await new Promise<'allow' | 'deny' | 'always'>((resolve) => {
-          const handler = (e: Event) => {
-            const detail = (e as CustomEvent).detail;
-            if (detail?.chatId === selectedChatId) {
-              window.removeEventListener('soloforge-workspace-approval-resolved', handler);
-              resolve(detail.decision as 'allow' | 'deny' | 'always');
-            }
-          };
+          const handler = (e: Event) => { const detail = (e as CustomEvent).detail; if (detail?.chatId === selectedChatId) { window.removeEventListener('soloforge-workspace-approval-resolved', handler); resolve(detail.decision as 'allow' | 'deny' | 'always'); } };
           window.addEventListener('soloforge-workspace-approval-resolved', handler);
         });
-
-        if (decision === 'deny') {
-          // 用户拒绝, 不发送消息, 清空输入框
-          set({ inputValue: '' });
-          return;
-        }
-        // 'allow' 或 'always' → 继续发送
+        if (decision === 'deny') { set({ inputValue: '' }); return; }
       }
     }
 
-    const userMsg: ChatMessage = {
-      sender: 'user',
-      content: finalContent,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      avatar: '',
-    };
+    const userMsg: ChatMessage = { sender: 'user', content: finalContent, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), avatar: '' };
+    if (pendingAttachment) userMsg.attachment = { fileName: pendingAttachment.fileName, text: pendingAttachment.text };
+    const activeChatId = selectedChatId || '1'; const activeMessages = conversations[activeChatId] || []; const currentChatMsgs = [...activeMessages, userMsg];
+    set({ conversations: { ...conversations, [activeChatId]: currentChatMsgs }, inputValue: '', pendingAttachment: null, isGenerating: true, streamState: { ...emptyStreamState } });
 
-    if (pendingAttachment) {
-      userMsg.attachment = {
-        fileName: pendingAttachment.fileName,
-        text: pendingAttachment.text
-      };
-    }
-
-    const activeChatId = selectedChatId || '1';
-    const activeMessages = conversations[activeChatId] || [];
-    const currentChatMsgs = [...activeMessages, userMsg];
-
-    set({
-      conversations: { ...conversations, [activeChatId]: currentChatMsgs },
-      inputValue: '',
-      pendingAttachment: null,
-      isGenerating: true,
-      streamState: { ...emptyStreamState },
-    });
-
-    // 构造请求体 (设计文档: UI/连接.md §3.1 §4.1)
     const mainEntry = modelProviderMap[mainModel];
     if (!mainEntry || !mainEntry.apiKey) {
-      const assistantMsg: ChatMessage = {
-        sender: 'assistant',
-        content: `❌ **主模型未配置**：请在「设置 → 模型」中测试通过主模型「${mainModel}」后再试。`,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        avatar: ''
-      };
-      set((s) => ({
-        conversations: { ...s.conversations, [activeChatId]: [...currentChatMsgs, assistantMsg] },
-        isGenerating: false,
-      }));
+      set((s) => ({ conversations: { ...s.conversations, [activeChatId]: [...currentChatMsgs, { sender: 'assistant', content: `\u274C **主模型未配置**：请在「设置 → 模型」中测试通过主模型「${mainModel}」后再试。`, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), avatar: '' }] }, isGenerating: false }));
       return;
     }
 
-    // 副模型:必须是 secModels 列表里 + map 里存在 + enabledInSettings=true
     const subModelIds = (secModels || []).map((s: any) => s.id || s.name);
-    const subEntries = subModelIds
-      .map((name: string) => modelProviderMap[name])
-      .filter((e: any): e is NonNullable<typeof e> => !!e && e.enabledInSettings && !!e.apiKey);
-
-    // 候选副模型:所有 enabledInSettings=true 但不在 secModels 里的
-    const candidateEntries = Object.values(modelProviderMap)
-      .filter((e: any) => e.enabledInSettings && !!e.apiKey && !subModelIds.includes(e.model));
-
-    // 读取资源管理器中选中的工具/技能/知识库 (在 reqBody 构建前读取)
+    const subEntries = subModelIds.map((name: string) => modelProviderMap[name]).filter((e: any): e is NonNullable<typeof e> => !!e && e.enabledInSettings && !!e.apiKey);
+    const candidateEntries = Object.values(modelProviderMap).filter((e: any) => e.enabledInSettings && !!e.apiKey && !subModelIds.includes(e.model));
     const rmState = useResourceManagerStore.getState();
-    const activeTools = Array.from(rmState.activeTools);
-    const activeSkills = Array.from(rmState.activeSkills);
-    const activeKnowledge = Array.from(rmState.activeKnowledge);
+    const activeTools = Array.from(rmState.activeTools); const activeSkills = Array.from(rmState.activeSkills); const activeKnowledge = Array.from(rmState.activeKnowledge);
 
-    const reqBody = {
-      mode: permissionMode,
-      query: finalContent,
-      history: activeMessages.map(m => ({ sender: m.sender, content: m.content })),
-      fileContext: selectedFile ? { name: selectedFile, content: editorContent } : undefined,
-      toolCallMode: hashlineAgentEnabled ? 'hashline' : undefined,
-      mainProvider: {
-        baseUrl: mainEntry.baseUrl,
-        apiKey: mainEntry.apiKey,
-        model: mainEntry.model
-      },
-      subProviders: subEntries.map(e => ({ baseUrl: e.baseUrl, apiKey: e.apiKey, model: e.model })),
-      candidateProviders: candidateEntries.map((e: any) => ({
-        displayName: e.model,
-        providerName: e.providerName,
-        modelName: e.model,
-        baseUrl: e.baseUrl
-      })),
-      activeTools: activeTools.length > 0 ? activeTools : undefined,
-      activeSkills: activeSkills.length > 0 ? activeSkills : undefined,
-      activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined,
-    };
+    const reqBody = { mode: permissionMode, query: finalContent, history: activeMessages.map(m => ({ sender: m.sender, content: m.content })), fileContext: selectedFile ? { name: selectedFile, content: editorContent } : undefined, toolCallMode: hashlineAgentEnabled ? 'hashline' : undefined, mainProvider: { baseUrl: mainEntry.baseUrl, apiKey: mainEntry.apiKey, model: mainEntry.model }, subProviders: subEntries.map(e => ({ baseUrl: e.baseUrl, apiKey: e.apiKey, model: e.model })), candidateProviders: candidateEntries.map((e: any) => ({ displayName: e.model, providerName: e.providerName, modelName: e.model, baseUrl: e.baseUrl })), activeTools: activeTools.length > 0 ? activeTools : undefined, activeSkills: activeSkills.length > 0 ? activeSkills : undefined, activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined };
     set({ lastReqBody: reqBody });
 
-    const assistantMsg: ChatMessage = {
-      sender: 'assistant',
-      content: '',
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      avatar: '',
-    };
-    set((s) => ({
-      conversations: { ...s.conversations, [activeChatId]: [...currentChatMsgs, assistantMsg] },
-    }));
+    const assistantMsg: ChatMessage = { sender: 'assistant', content: '', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), avatar: '' };
+    set((s) => ({ conversations: { ...s.conversations, [activeChatId]: [...currentChatMsgs, assistantMsg] } }));
 
-    // 2026-07-07: 预览触发改为 LLM 自标记模式
-    //   - 之前: 每次聊天无条件触发预览(浪费额度)
-    //   - 现在: LLM 在回复末尾加 <<<PREVIEW_NEEDED:语言>>> 标记,前端解析后才触发
-    //   - 简单任务(如"你好")无标记 → 无预览调用
     let accumulatedText = '';
-    // 2026-07-11: 实时增量画布推送器 — LLM 每输出一行代码, 立即翻译推画布
     let canvasPusher: IncrementalCanvasPusher | null = null;
 
-    // StreamPanel 桥接: 创建 streamingStore 任务, 后续事件同步推送
+    // ★ FIX 2026-07-12: 在创建 Pusher 之前同步注册 canvas sessionId
+    { const fallbackId = `canvas-${activeChatId}`; const existing = getCanvasSessionId(activeChatId); if (!existing || existing === fallbackId) { setCanvasSessionId(activeChatId, fallbackId); console.log(`[handleSend] ✅ 预注册 canvas sessionId: ${fallbackId} for chat ${activeChatId}`); } }
+
     const streamBridge = createStreamBridge(activeChatId, mainModel, finalContent, permissionMode);
 
-    // 2026-07-03 阶段5.B: 调用形式对齐 aiBackend.startChat(req, onEvent) 单回调签名
-    //   - aiBackend 把所有事件 (text/phase/error/done) 都通过 onEvent 推送
-    //   - 不再有 { onDelta, onEvent, onError, onDone } 4 回调对象 (旧形式, 用 as any 绕过类型)
-    //   - 这里按 evt.kind 分派到对应处理逻辑
-    startChat(
-      {
-        chatId: activeChatId,
-        prompt: finalContent,
-        mode: permissionMode,
-        history: activeMessages.map(m => ({ sender: m.sender, content: m.content })),
-        fileContext: selectedFile ? { name: selectedFile, content: editorContent } : undefined,
-        mainProvider: {
-          baseUrl: mainEntry.baseUrl,
-          apiKey: mainEntry.apiKey,
-          model: mainEntry.model
-        },
-        subProviders: subEntries.map(e => ({ baseUrl: e.baseUrl, apiKey: e.apiKey, model: e.model })),
-        candidateProviders: candidateEntries.map((e: any) => ({
-          displayName: e.model,
-          providerName: e.providerName,
-          modelName: e.model,
-          baseUrl: e.baseUrl
-        })),
-        ...(hashlineAgentEnabled ? { toolCallMode: 'hashline' } : {}),
-        workspaceFolder: useChatsStore.getState().getChat(activeChatId)?.workspaceFolder,
-        activeTools: activeTools.length > 0 ? activeTools : undefined,
-        activeSkills: activeSkills.length > 0 ? activeSkills : undefined,
-        activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined,
-        // Phase 3: 透传 activeSettings (personality/tone/emoji) + agentId 给 Java Spring AI
-        activeSettings: configs[activeChatId] || fallbackActiveSettings,
-        // 2026-07-09: 透传 canvasId/chatSessionId 给 Java Agent, 让 agent 知道画布存在
-        canvasId: `canvas-${activeChatId}`,
-      } as any,
-      async (evt: ChatStreamEvent) => {
-        switch (evt.kind) {
-          case 'text': {
-            // 累积完整文本,用于 done 事件中解析预览标记
-            accumulatedText += evt.text;
-
-            // 2026-07-11: 实时增量翻译 — 每行代码即时推画布
-            //   - feedChunk 检测代码块, 节流翻译, 推送画布
-            //   - 返回 displayText (代码块替换为占位符) 用于聊天区显示
-            if (!canvasPusher) {
-              canvasPusher = new IncrementalCanvasPusher(activeChatId);
-            }
-            const { displayText, inCodeBlock } = canvasPusher.feedChunk(evt.text);
-
-            // 流送区: 不在代码块内时才推送 text delta (过滤掉代码/JSON)
-            if (!inCodeBlock) {
-              streamBridge.onText(evt.text);
-            }
-
-            // 聊天区: 用 displayText (代码块→占位符) 替代原始追加
-            set((s) => {
-              const currentList = s.conversations[activeChatId] || [];
-              if (currentList.length === 0) return {};
-              const newList = [...currentList];
-              const lastMsg = { ...newList[newList.length - 1] };
-              if (lastMsg.sender === 'assistant') {
-                lastMsg.content = displayText;
-                newList[newList.length - 1] = lastMsg;
-              }
-              return {
-                conversations: { ...s.conversations, [activeChatId]: newList },
-              };
-            });
-            break;
-          }
-          case 'phase': {
-            streamBridge.onPhase(evt);
-            // phase 事件 → 走 handlePhase 更新 streamState (向后兼容)
-            get().handlePhase(evt, currentChatMsgs);
-            break;
-          }
-          case 'agent': {
-            // Java 链路 SubModelWorker 发来的 agent 事件 (副模型选定的 agent + subModel)
-            streamBridge.onAgent(evt.agentId, evt.name, evt.avatar, evt.mainModel, evt.subModels, evt.role, evt.domain, evt.subModel);
-            break;
-          }
-          case 'error': {
-            streamBridge.onError(evt.error);
-            console.error('[aiBackend error]', evt.error);
-            // P2-7: 错误分类抽到 classifyStreamError (纯函数, 可独立单测)
-            const friendlyMsg = classifyStreamError(evt.error || '');
-            set((s) => {
-              const currentList = s.conversations[activeChatId] || [];
-              if (currentList.length === 0) return { isGenerating: false, streamState: { ...emptyStreamState } };
-              const newList = [...currentList];
-              const lastMsg = { ...newList[newList.length - 1] };
-              if (lastMsg.sender === 'assistant') {
-                lastMsg.content = `❌ **AI 调用失败**：${friendlyMsg}`;
-                newList[newList.length - 1] = lastMsg;
-              }
-              return {
-                conversations: { ...s.conversations, [activeChatId]: newList },
-                isGenerating: false,
-                streamState: { ...emptyStreamState },
-              };
-            });
-            break;
-          }
-          case 'done': {
-            console.log('[useChatStore] done 事件到达, accumulatedText长度=', accumulatedText.length, '前100字符:', accumulatedText.slice(0, 100));
-            streamBridge.onDone(evt.agentId);
-            // 清理 streamState, 避免残留的流送面板在下次发送时闪现
-            set({ isGenerating: false, streamState: { ...emptyStreamState } });
-
-            // 经验路径: 把 fingerprint 存到最后一条 assistant 消息, 供 👍/👎 反馈定位 (2026-07-09)
-            const expFp = (evt as any).experienceFingerprint as string | undefined;
-            if (expFp) {
-              set((s) => {
-                const currentList = s.conversations[activeChatId] || [];
-                if (currentList.length === 0) return {};
-                const newList = [...currentList];
-                const lastMsg = { ...newList[newList.length - 1] };
-                if (lastMsg.sender === 'assistant') {
-                  lastMsg.experienceFingerprint = expFp;
-                  newList[newList.length - 1] = lastMsg;
-                }
-                return { conversations: { ...s.conversations, [activeChatId]: newList } };
-              });
-            }
-
-            // 2026-07-11: 实时增量翻译已在 text 事件中处理, 这里做最终一致性检查
-            //   - await canvasPusher.flush() 用完整代码重新翻译, 保证一致性
-            //   - 多代码块并行翻译 (Worker 多线程)
-            //   - 如果 pusher 已处理, 跳过 tryLocalTranslateAndPush (避免重复翻译)
-            //   - 如果 pusher 未处理 (无代码块或全部翻译失败), 回退到原逻辑
-            if (canvasPusher) {
-              await canvasPusher.flush();
-            }
-            const pusherHandled = canvasPusher?.wasHandled() ?? false;
-            console.log('[useChatStore] canvasPusher wasHandled:', pusherHandled);
-
-            let localPushed = pusherHandled;
-            if (!pusherHandled) {
-              // 回退: 无增量推送器或未检测到代码块 → 走原逻辑
-              localPushed = await tryLocalTranslateAndPush(accumulatedText, activeChatId);
-              console.log('[useChatStore] tryLocalTranslateAndPush 结果:', localPushed);
-            }
-
-            const previewResult = detectPreviewTrigger(accumulatedText, localPushed, detectPreviewFromResponse);
-            const { shouldPreview, previewLang } = previewResult;
-            console.log('[useChatStore] detectPreviewTrigger 结果:', { shouldPreview, previewLang, localHandled: previewResult.localHandled });
-
-            // 2026-07-11: 用 pusher 的 displayText 作为最终聊天文本 (代码块→占位符)
-            const finalDisplayText = canvasPusher?.getDisplayText() ?? previewResult.cleanText;
-            // 清理 PREVIEW_NEEDED 标记
-            const cleanDisplay = finalDisplayText.replace(/\n*<<<PREVIEW_NEEDED:\w+>>>\s*$/, '');
-
-            set((s) => {
-              const currentList = s.conversations[activeChatId] || [];
-              if (currentList.length === 0) return {};
-              const newList = [...currentList];
-              const lastMsg = { ...newList[newList.length - 1] };
-              if (lastMsg.sender === 'assistant') {
-                lastMsg.content = cleanDisplay;
-                newList[newList.length - 1] = lastMsg;
-              }
-              return { conversations: { ...s.conversations, [activeChatId]: newList } };
-            });
-
-            if (shouldPreview && typeof window !== 'undefined') {
-              // 触发预览流 (LLM 标记 或 强制检测 均走此路径)
-              window.dispatchEvent(new CustomEvent('soloforge-preview-trigger', {
-                detail: {
-                  chatId: activeChatId,
-                  message: finalContent,
-                  language: previewLang,
-                  provider: mainEntry ? {
-                    baseUrl: mainEntry.baseUrl,
-                    apiKey: mainEntry.apiKey,
-                    model: mainEntry.model,
-                  } : undefined,
-                }
-              }));
-            }
-            break;
-          }
+    startChat({ chatId: activeChatId, prompt: finalContent, mode: permissionMode, history: activeMessages.map(m => ({ sender: m.sender, content: m.content })), fileContext: selectedFile ? { name: selectedFile, content: editorContent } : undefined, mainProvider: { baseUrl: mainEntry.baseUrl, apiKey: mainEntry.apiKey, model: mainEntry.model }, subProviders: subEntries.map(e => ({ baseUrl: e.baseUrl, apiKey: e.apiKey, model: e.model })), candidateProviders: candidateEntries.map((e: any) => ({ displayName: e.model, providerName: e.providerName, modelName: e.model, baseUrl: e.baseUrl })), ...(hashlineAgentEnabled ? { toolCallMode: 'hashline' } : {}), workspaceFolder: useChatsStore.getState().getChat(activeChatId)?.workspaceFolder, activeTools: activeTools.length > 0 ? activeTools : undefined, activeSkills: activeSkills.length > 0 ? activeSkills : undefined, activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined, activeSettings: configs[activeChatId] || fallbackActiveSettings, canvasId: `canvas-${activeChatId}` } as any, async (evt: ChatStreamEvent) => {
+      switch (evt.kind) {
+        case 'text': {
+          accumulatedText += evt.text;
+          if (!canvasPusher) canvasPusher = new IncrementalCanvasPusher(activeChatId);
+          const { displayText, inCodeBlock } = canvasPusher.feedChunk(evt.text);
+          // ★ FIX 2026-07-12: 始终调用 streamBridge.onText, 即使在代码块内
+          //   原代码 if (!inCodeBlock) 导致 LLM 回复全是代码时流送区空白:
+          //   onText 从未被调用 → uiMessageStore 无 parts → StreamPanel 返回 null
+          //   代码块文本也会推入流送区,让用户看到 LLM 的完整输出进度
+          streamBridge.onText(evt.text);
+          set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') { lm.content = displayText; nl[nl.length - 1] = lm; } return { conversations: { ...s.conversations, [activeChatId]: nl } }; });
+          break;
+        }
+        case 'phase': { streamBridge.onPhase(evt); get().handlePhase(evt, currentChatMsgs); break; }
+        case 'agent': { streamBridge.onAgent(evt.agentId, evt.name, evt.avatar, evt.mainModel, evt.subModels, evt.role, evt.domain, evt.subModel); break; }
+        case 'error': { streamBridge.onError(evt.error); const fm = classifyStreamError(evt.error || ''); set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return { isGenerating: false, streamState: { ...emptyStreamState } }; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.content = `\u274C **AI 调用失败**：${fm}`; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl }, isGenerating: false, streamState: { ...emptyStreamState } }; }); break; }
+        case 'done': {
+          streamBridge.onDone(evt.agentId); set({ isGenerating: false, streamState: { ...emptyStreamState } });
+          const expFp = (evt as any).experienceFingerprint as string | undefined;
+          if (expFp) set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.experienceFingerprint = expFp; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl } }; });
+          if (canvasPusher) await canvasPusher.flush();
+          const pusherHandled = canvasPusher?.wasHandled() ?? false;
+          let localPushed = pusherHandled;
+          if (!pusherHandled) localPushed = await tryLocalTranslateAndPush(accumulatedText, activeChatId);
+          const pr = detectPreviewTrigger(accumulatedText, localPushed, detectPreviewFromResponse);
+          const fdt = canvasPusher?.getDisplayText() ?? pr.cleanText;
+          const cd = fdt.replace(/\s*<<<PREVIEW_NEEDED:\w+>>>\s*$/, '');
+          set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.content = cd; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl } }; });
+          if (pr.shouldPreview && typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('soloforge-preview-trigger', { detail: { chatId: activeChatId, message: finalContent, language: pr.previewLang, provider: mainEntry ? { baseUrl: mainEntry.baseUrl, apiKey: mainEntry.apiKey, model: mainEntry.model } : undefined } }));
+          // [CANVAS PROBE] 每次 done 后自动运行探针
+          runCanvasProbe(activeChatId).catch(() => {});
+          break;
         }
       }
-    );
+    });
   },
 
   handleAcceptEnable: (candidateName) => {
-    const state = get();
-    const { lastReqBody, options, configs } = state;
-    if (!lastReqBody) return;
-    const entry = (options.modelProviderMap || {})[candidateName];
-    if (!entry || !entry.apiKey) return;
+    const state = get(); const { lastReqBody, options, configs } = state; if (!lastReqBody) return;
+    const entry = (options.modelProviderMap || {})[candidateName]; if (!entry || !entry.apiKey) return;
     const activeChatId = options.selectedChatId || '1';
-    // 把 candidate 提升为 sub
     const newSub = { baseUrl: entry.baseUrl, apiKey: entry.apiKey, model: entry.model };
-    const newReqBody = {
-      ...lastReqBody,
-      subProviders: [...(lastReqBody.subProviders as any[]), newSub],
-      candidateProviders: (lastReqBody.candidateProviders as any[]).filter((c: any) => c.modelName !== candidateName),
-      enableDecision: { candidateName: candidateName, accept: true }
-    };
-    set({
-      streamState: { ...emptyStreamState },
-      isGenerating: true,
-    });
-
-    // StreamPanel 桥接: 重新创建任务
+    const newReqBody = { ...lastReqBody, subProviders: [...(lastReqBody.subProviders as any[]), newSub], candidateProviders: (lastReqBody.candidateProviders as any[]).filter((c: any) => c.modelName !== candidateName), enableDecision: { candidateName, accept: true } };
+    set({ streamState: { ...emptyStreamState }, isGenerating: true });
     const streamBridge = createStreamBridge(activeChatId, options.mainModel || '', '', lastReqBody.mode);
     let canvasPusher2: IncrementalCanvasPusher | null = null;
-
-    // 2026-07-03 阶段5.B: 调用形式对齐 aiBackend.startChat(req, onEvent) 单回调签名
-    startChat(
-      {
-        chatId: activeChatId,
-        prompt: '',
-        mode: lastReqBody.mode,
-        history: [],
-        mainProvider: (lastReqBody.mainProvider as any),
-        subProviders: newSub ? [...(lastReqBody.subProviders as any[]), newSub] : (lastReqBody.subProviders as any[]),
-        candidateProviders: (lastReqBody.candidateProviders as any[]).filter((c: any) => c.modelName !== candidateName),
-        activeTools: lastReqBody.activeTools,
-        activeSkills: lastReqBody.activeSkills,
-        activeKnowledge: lastReqBody.activeKnowledge,
-        // Phase 3: 透传 activeSettings 给 Java Spring AI
-        activeSettings: configs[activeChatId] || fallbackActiveSettings,
-      } as any,
-      (evt: ChatStreamEvent) => {
-        switch (evt.kind) {
-          case 'phase': {
-            streamBridge.onPhase(evt);
-            const s = get();
-            const activeMessages = s.conversations[activeChatId] || [];
-            s.handlePhase(evt, activeMessages);
-            break;
-          }
-          case 'error':
-            streamBridge.onError(evt.error);
-            console.error('[handleAcceptEnable error]', evt.error);
-            break;
-          case 'done':
-            streamBridge.onDone();
-            if (canvasPusher2) {
-              canvasPusher2.flush().catch(() => {});
-            }
-            set({ isGenerating: false });
-            break;
-          case 'text': {
-            if (!canvasPusher2) {
-              canvasPusher2 = new IncrementalCanvasPusher(activeChatId);
-            }
-            const { displayText, inCodeBlock } = canvasPusher2.feedChunk(evt.text);
-            if (!inCodeBlock) {
-              streamBridge.onText(evt.text);
-            }
-            set((s) => {
-              const currentList = s.conversations[activeChatId] || [];
-              if (currentList.length === 0) return {};
-              const newList = [...currentList];
-              const lastMsg = { ...newList[newList.length - 1] };
-              if (lastMsg.sender === 'assistant') {
-                lastMsg.content = displayText;
-                newList[newList.length - 1] = lastMsg;
-              }
-              return { conversations: { ...s.conversations, [activeChatId]: newList } };
-            });
-            break;
-          }
-        }
+    // ★ FIX 2026-07-12: handleAcceptEnable 也需要预注册 sessionId
+    { const fallbackId = `canvas-${activeChatId}`; const existing = getCanvasSessionId(activeChatId); if (!existing || existing === fallbackId) setCanvasSessionId(activeChatId, fallbackId); }
+    startChat({ chatId: activeChatId, prompt: '', mode: lastReqBody.mode, history: [], mainProvider: (lastReqBody.mainProvider as any), subProviders: newSub ? [...(lastReqBody.subProviders as any[]), newSub] : (lastReqBody.subProviders as any[]), candidateProviders: (lastReqBody.candidateProviders as any[]).filter((c: any) => c.modelName !== candidateName), activeTools: lastReqBody.activeTools, activeSkills: lastReqBody.activeSkills, activeKnowledge: lastReqBody.activeKnowledge, activeSettings: configs[activeChatId] || fallbackActiveSettings } as any, (evt: ChatStreamEvent) => {
+      switch (evt.kind) {
+        case 'phase': { streamBridge.onPhase(evt); get().handlePhase(evt, get().conversations[activeChatId] || []); break; }
+        case 'error': streamBridge.onError(evt.error); break;
+        case 'done': streamBridge.onDone(); if (canvasPusher2) canvasPusher2.flush().catch(() => {}); set({ isGenerating: false }); break;
+        case 'text': { if (!canvasPusher2) canvasPusher2 = new IncrementalCanvasPusher(activeChatId); const { displayText, inCodeBlock } = canvasPusher2.feedChunk(evt.text); streamBridge.onText(evt.text); set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.content = displayText; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl } }; }); break; }
       }
-    );
+    });
   },
 
   handlePhase: (evt, _currentChatMsgs) => {
-    // 守卫: 只处理 kind==='phase' 的事件
-    //   aiBackend 推送的 ChatStreamEvent 有 4 种 kind: text/phase/error/done
-    //   text/error/done 由调用方 (handleSend/handleAcceptEnable) 处理, 不进 handlePhase
     if (evt.kind !== 'phase') return;
-    const { options } = get();
-    const activeChatId = options.selectedChatId || '1';
-
-    set((s) => {
-      const prev = s.streamState;
-      const next: StreamState = { ...prev };
-      // 事件名映射: 后端 emit 的事件名 (phase0_subtask 等) → 前端 switch case
+    const { options } = get(); const activeChatId = options.selectedChatId || '1';
+    set((s) => { const prev = s.streamState; const next: StreamState = { ...prev };
       switch (evt.phase) {
-        // ── phase0: 子任务拆解 ──────────────────────────
-        case 'phase0_subtask': {
-          const subtasks = (evt as any).subtasks;
-          if (Array.isArray(subtasks)) {
-            next.workerOutputs = subtasks.map((st: any, i: number) => ({
-              workerIdx: st.workerIdx ?? i,
-              modelName: st.modelName ?? `Worker ${i}`,
-              content: '',
-              status: 'pending' as const,
-            }));
-          }
-          break;
-        }
-        case 'phase0_skip':
-          break;
-        case 'suggest_enable':
-          next.suggestEnables = [...prev.suggestEnables, {
-            candidateName: (evt as any).candidateName,
-            expectedGain: (evt as any).expectedGain,
-            reason: (evt as any).reason ?? ''
-          }];
-          break;
-        // ── phase1: Worker 执行 ─────────────────────────
-        case 'phase1_worker_start':
-          next.workerOutputs = prev.workerOutputs.map(w =>
-            w.workerIdx === (evt as any).workerIdx ? { ...w, status: 'streaming' as const } : w
-          );
-          break;
-        case 'phase1_worker_done':
-          next.workerOutputs = prev.workerOutputs.map(w =>
-            w.workerIdx === (evt as any).workerIdx
-              ? { ...w, status: ((evt as any).content?.startsWith('⚠️') ? 'error' : 'done') as 'error' | 'done', content: (evt as any).content ?? '' }
-              : w
-          );
-          break;
-        case 'phase1_worker_error':
-          next.workerOutputs = prev.workerOutputs.map(w =>
-            w.workerIdx === (evt as any).workerIdx
-              ? { ...w, status: 'error' as const, content: (evt as any).content ?? (evt as any).error ?? '' }
-              : w
-          );
-          break;
-        // ── phase2: 评判 ────────────────────────────────
-        case 'phase2_judge':
-          next.judgeChosen = (evt as any).chosen ?? [];
-          next.judgeReasoning = '';
-          next.scores = (evt as any).score !== undefined
-            ? [{ workerIdx: 0, score: (evt as any).score, reason: '', modelName: (evt as any).chosen?.[0] }]
-            : prev.scores;
-          break;
-        case 'phase2_judge_error':
-          console.error('[orchestrator judge error]', (evt as any).error);
-          break;
-        // ── phase3: 交付 ────────────────────────────────
-        case 'phase3_deliver_start':
-          break;
-        case 'phase3_deliver_done':
-          // 终态: 后端 HTTP 响应也会携带 output, text 事件已处理对话写入
-          // 这里只更新 streamState, 不再覆盖 conversations (修复对话历史丢失 bug)
-          if ((evt as any).reply) {
-            next.deliver = (evt as any).reply;
-          }
-          break;
-        // ── 工具调用事件 ────────────────────────────────
-        case 'tool_started': {
-          const callId = (evt as any).toolCallId ?? `tc-${Date.now()}`;
-          const toolName = (evt as any).tool ?? 'unknown';
-          const baseList = [...prev.toolCalls];
-          baseList.push({
-            id: callId,
-            kind: 'hashline.batch' as any,
-            status: 'running' as any,
-            total: 1,
-            succeeded: 0,
-            failedAt: undefined,
-            errorCode: undefined,
-            results: [{ tool: toolName, args: (evt as any).args, started: true }],
-            timestamp: (evt as any).ts ?? Date.now(),
-          } as any);
-          next.toolCalls = baseList;
-          break;
-        }
-        case 'tool_completed': {
-          const callId = (evt as any).toolCallId;
-          const baseList = [...prev.toolCalls];
-          const idx = baseList.findIndex(t => t.id === callId);
-          if (idx >= 0) {
-            baseList[idx] = {
-              ...baseList[idx],
-              status: (evt as any).success ? 'success' : 'error',
-            } as any;
-          }
-          next.toolCalls = baseList;
-          break;
-        }
-        // ── 旧版兼容 (某些代码路径可能仍用短名称) ──────────
-        case 'dispatch':
-          if (Array.isArray((evt as any).subtasks)) {
-            next.workerOutputs = (evt as any).subtasks.map((m: any, i: number) => ({
-              workerIdx: i, modelName: m, content: '', status: 'pending' as const,
-            }));
-          }
-          break;
-        case 'worker_start':
-          next.workerOutputs = prev.workerOutputs.map(w =>
-            w.workerIdx === (evt as any).workerIdx ? { ...w, status: 'streaming' as const } : w
-          );
-          break;
-        case 'worker_done':
-          next.workerOutputs = prev.workerOutputs.map(w =>
-            w.workerIdx === (evt as any).workerIdx
-              ? { ...w, status: ((evt as any).content?.startsWith('⚠️') ? 'error' : 'done') as 'error' | 'done', content: (evt as any).content ?? '' }
-              : w
-          );
-          break;
-        case 'score':
-          next.scores = (evt as any).scores ?? [];
-          break;
-        case 'judge':
-          next.judgeChosen = (evt as any).chosen ?? [];
-          next.judgeReasoning = (evt as any).reasoning ?? '';
-          break;
-        case 'audit':
-          next.auditFindings = (evt as any).findings ?? [];
-          break;
-        case 'warn':
-          console.warn('[orchestrator warn]', (evt as any).msg);
-          break;
-        case 'error':
-          console.error('[orchestrator error]', (evt as any).msg);
-          break;
-        default:
-          break;
-      }
-      return { streamState: next };
+        case 'phase0_subtask': { const st = (evt as any).subtasks; if (Array.isArray(st)) next.workerOutputs = st.map((st2: any, i: number) => ({ workerIdx: st2.workerIdx ?? i, modelName: st2.modelName ?? `Worker ${i}`, content: '', status: 'pending' as const })); break; }
+        case 'phase0_skip': break;
+        case 'suggest_enable': next.suggestEnables = [...prev.suggestEnables, { candidateName: (evt as any).candidateName, expectedGain: (evt as any).expectedGain, reason: (evt as any).reason ?? '' }]; break;
+        case 'phase1_worker_start': next.workerOutputs = prev.workerOutputs.map(w => w.workerIdx === (evt as any).workerIdx ? { ...w, status: 'streaming' as const } : w); break;
+        case 'phase1_worker_done': next.workerOutputs = prev.workerOutputs.map(w => w.workerIdx === (evt as any).workerIdx ? { ...w, status: ((evt as any).content?.startsWith('\u26A0\uFE0F') ? 'error' : 'done') as 'error' | 'done', content: (evt as any).content ?? '' } as any : w); break;
+        case 'phase1_worker_error': next.workerOutputs = prev.workerOutputs.map(w => w.workerIdx === (evt as any).workerIdx ? { ...w, status: 'error' as const, content: (evt as any).content ?? (evt as any).error ?? '' } as any : w); break;
+        case 'phase2_judge': next.judgeChosen = (evt as any).chosen ?? []; next.judgeReasoning = ''; next.scores = (evt as any).score !== undefined ? [{ workerIdx: 0, score: (evt as any).score, reason: '', modelName: (evt as any).chosen?.[0] }] : prev.scores; break;
+        case 'phase2_judge_error': console.error('[orchestrator judge error]', (evt as any).error); break;
+        case 'phase3_deliver_start': break;
+        case 'phase3_deliver_done': if ((evt as any).reply) next.deliver = (evt as any).reply; break;
+        case 'tool_started': { const callId = (evt as any).toolCallId ?? `tc-${Date.now()}`; const bl = [...prev.toolCalls]; bl.push({ id: callId, kind: 'hashline.batch' as any, status: 'running' as any, total: 1, succeeded: 0, failedAt: undefined, errorCode: undefined, results: [{ tool: (evt as any).tool ?? 'unknown', args: (evt as any).args, started: true }], timestamp: (evt as any).ts ?? Date.now() } as any); next.toolCalls = bl; break; }
+        case 'tool_completed': { const callId = (evt as any).toolCallId; const bl = [...prev.toolCalls]; const idx = bl.findIndex(t => t.id === callId); if (idx >= 0) bl[idx] = { ...bl[idx], status: (evt as any).success ? 'success' : 'error' } as any; next.toolCalls = bl; break; }
+        case 'dispatch': if (Array.isArray((evt as any).subtasks)) next.workerOutputs = (evt as any).subtasks.map((m: any, i: number) => ({ workerIdx: i, modelName: m, content: '', status: 'pending' as const })); break;
+        case 'worker_start': next.workerOutputs = prev.workerOutputs.map(w => w.workerIdx === (evt as any).workerIdx ? { ...w, status: 'streaming' as const } : w); break;
+        case 'worker_done': next.workerOutputs = prev.workerOutputs.map(w => w.workerIdx === (evt as any).workerIdx ? { ...w, status: ((evt as any).content?.startsWith('\u26A0\uFE0F') ? 'error' : 'done') as 'error' | 'done', content: (evt as any).content ?? '' } as any : w); break;
+        case 'score': next.scores = (evt as any).scores ?? []; break;
+        case 'judge': next.judgeChosen = (evt as any).chosen ?? []; next.judgeReasoning = (evt as any).reasoning ?? ''; break;
+        case 'audit': next.auditFindings = (evt as any).findings ?? []; break;
+        case 'warn': console.warn('[orchestrator warn]', (evt as any).msg); break;
+        case 'error': console.error('[orchestrator error]', (evt as any).msg); break; default: break;
+      } return { streamState: next };
     });
   },
 }));
 
-// ==========================================
-// 模块级持久化订阅 — 后端 API 同步
-// 在 store 模块加载时立即注册,组件卸载也不取消 (持久化是全局行为)
-// ==========================================
-
 useChatStore.subscribe((state, prevState) => {
   const convChanged = state.conversations !== prevState.conversations && state.conversations !== lastPersistedConversations;
   const cfgChanged = state.configs !== prevState.configs && state.configs !== lastPersistedConfigs;
-  if (convChanged) {
-    lastPersistedConversations = state.conversations;
-  }
-  if (cfgChanged) {
-    lastPersistedConfigs = state.configs;
-  }
-  if (convChanged || cfgChanged) {
-    schedulePersistToBackend(state.conversations, state.configs);
-  }
+  if (convChanged) lastPersistedConversations = state.conversations;
+  if (cfgChanged) lastPersistedConfigs = state.configs;
+  if (convChanged || cfgChanged) schedulePersistToBackend(state.conversations, state.configs);
 });
 
-// 导出模块级常量供组件 useMemo 使用
 export { defaultChatDetails, defaultConversations, defaultConfigs, fallbackActiveSettings };

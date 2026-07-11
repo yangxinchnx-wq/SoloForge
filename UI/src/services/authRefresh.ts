@@ -38,8 +38,20 @@
  *   onAuthFailed((reason) => { window.location.href = '/login'; });
  */
 
+/**
+ * Token 存储键名。
+ *
+ * ⚠️ 当前存储位置: sessionStorage (JavaScript 可读)
+ *   风险: 同源 XSS 可窃取 token。
+ *
+ * ✅ 推荐迁移方案 (按优先级):
+ *   1. [最佳] HttpOnly + Secure + SameSite=Strict Cookie
+ *   2. [次优] 保留 sessionStorage 但缩短 token 有效期 + IP 绑定
+ *   3. [最低] 维持现状但增加 CSP 限制内联脚本
+ */
 const TOKEN_STORAGE_KEY = 'soloforge_backend_token';
 const BOOTSTRAP_PATH = '/api/auth/bootstrap';
+const STARTUP_TOKEN_PATH = '/api/auth/startup-token';
 
 type FetchFn = typeof fetch;
 
@@ -125,6 +137,26 @@ async function refreshOnce(): Promise<string | null> {
     notifyAuthFailed('bootstrap_no_fetch');
     return null;
   }
+
+  try {
+    const startupRes = await fetchFn(STARTUP_TOKEN_PATH, {
+      method: 'GET',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    });
+    if (startupRes.ok) {
+      const data = await startupRes.json().catch(() => null);
+      const token = data?.token;
+      if (typeof token === 'string' && token.length > 0) {
+        writeToken(token);
+        return token;
+      }
+    }
+  } catch {
+    // startup-token 端点不可用，回退到 bootstrap
+  }
+
   try {
     const res = await fetchFn(BOOTSTRAP_PATH, {
       method: 'GET',

@@ -15,6 +15,8 @@ import { getConversationStore } from "./src/server/services/chat/ConversationSto
 import { registerSettingsRoutes, flushSettingsToDiskSync } from "./src/server/routes/settings";
 import { registerFileRoutes } from "./src/server/routes/fileRoutes";
 import { registerTrainingRoutes } from "./src/server/routes/trainingRoutes";
+import { globalRateLimit } from "./src/server/middleware/rateLimitMiddleware";
+import { initAuthToken, getStartupToken } from "./src/server/middleware/auth";
 
 // Load Environment variables
 dotenv.config();
@@ -73,6 +75,40 @@ async function startServer() {
 
   // Add JSON parsing middleware
   app.use(express.json({ limit: '10mb' }));
+
+  // ============================================================
+  // 全局速率限制 (每个 IP 每分钟 100 次)
+  //   - 防暴力破解、DDoS、爬虫
+  //   - 在所有路由之前挂载
+  // ============================================================
+  app.use(globalRateLimit);
+  console.log('[server] ✅ 全局速率限制已启用 (100 req/min per IP)');
+
+  // ============================================================
+  // 认证 Token 初始化 (开箱即用, 无需环境变量)
+  //   - 首次启动: 生成 64 字符随机 token, 持久化到 .soloforge-token
+  //   - 后续启动: 从文件读取, 保证 token 跨重启稳定
+  //   - Electron 主进程可通过读取 .soloforge-token 获取 token
+  //   - 仅 localhost 可访问 /api/auth/startup-token 端点
+  // ============================================================
+  const authToken = initAuthToken(process.cwd());
+  console.log(`[server] ✅ 认证 token 已初始化 (长度: ${authToken.length})`);
+
+  // 仅允许 localhost 访问的 token 获取端点 (供 Electron 前端首次启动时使用)
+  app.get('/api/auth/startup-token', (req, res) => {
+    const clientIp = req.ip || req.socket?.remoteAddress || '';
+    const isLocal = clientIp === '127.0.0.1' || clientIp === '::1' || clientIp === '::ffff:127.0.0.1' || clientIp === 'localhost';
+    if (!isLocal) {
+      res.status(403).json({ error: 'Token endpoint only accessible from localhost' });
+      return;
+    }
+    const token = getStartupToken();
+    if (!token) {
+      res.status(500).json({ error: 'Token not initialized' });
+      return;
+    }
+    res.json({ token });
+  });
 
   // ============================================================
   // Canvas Session API (3000 本地路由, 跨进程持久化)

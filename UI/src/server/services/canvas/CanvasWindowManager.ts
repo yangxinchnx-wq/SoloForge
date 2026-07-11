@@ -10,6 +10,18 @@ interface WindowHandle {
   process: number;
 }
 
+function validateNumericInput(value: number, paramName: string): void {
+  if (!Number.isFinite(value) || value < 0 || !Number.isInteger(value)) {
+    throw new Error(`[CanvasWindowManager] Invalid ${paramName}: must be non-negative integer, got ${value}`);
+  }
+}
+
+function validateSessionId(sessionId: string): void {
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(sessionId)) {
+    throw new Error(`[CanvasWindowManager] Invalid sessionId: must match ^[a-zA-Z0-9_-]{1,128}$`);
+  }
+}
+
 export class CanvasWindowManager {
   private sessionWindows: Map<string, WindowHandle> = new Map();
 
@@ -26,6 +38,9 @@ export class CanvasWindowManager {
   }
 
   embedWindow(flutterHwnd: number, electronHwnd: number): void {
+    validateNumericInput(flutterHwnd, 'flutterHwnd');
+    validateNumericInput(electronHwnd, 'electronHwnd');
+
     this.execPs(
       `Add-Type -TypeDefinition @'
 using System;
@@ -40,6 +55,10 @@ public class Win32 {
   }
 
   resizeCanvas(sessionId: string, width: number, height: number): void {
+    validateSessionId(sessionId);
+    validateNumericInput(width, 'width');
+    validateNumericInput(height, 'height');
+
     const entry = this.sessionWindows.get(sessionId);
     if (!entry) return;
     this.execPs(
@@ -53,6 +72,8 @@ public class Win32 {
   }
 
   showCanvas(sessionId: string): void {
+    validateSessionId(sessionId);
+
     const entry = this.sessionWindows.get(sessionId);
     if (!entry) return;
     this.execPs(
@@ -66,6 +87,8 @@ public class Win32 {
   }
 
   hideCanvas(sessionId: string): void {
+    validateSessionId(sessionId);
+
     const entry = this.sessionWindows.get(sessionId);
     if (!entry) return;
     this.execPs(
@@ -79,6 +102,8 @@ public class Win32 {
   }
 
   destroyCanvas(sessionId: string): void {
+    validateSessionId(sessionId);
+
     const entry = this.sessionWindows.get(sessionId);
     if (!entry) return;
     this.execPs(
@@ -93,6 +118,11 @@ public class Win32 {
   }
 
   registerWindow(sessionId: string, hwnd: number, processPid?: number): void {
+    validateSessionId(sessionId);
+    validateNumericInput(hwnd, 'hwnd');
+    if (processPid !== undefined) {
+      validateNumericInput(processPid, 'processPid');
+    }
     this.sessionWindows.set(sessionId, { hwnd, process: processPid || 0 });
   }
 

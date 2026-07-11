@@ -8,6 +8,19 @@ import { installWorkdirSyncChannel } from './components/terminal';
 import { useChatsStore, initChatsEventBridge } from './state/chatsStore';
 import { useChatStore } from './state/useChatStore';
 import { initActorSystem } from './services/actorIntegration';
+import { installAuthRefreshInterceptor } from './services/authRefresh';
+import { getDefaultStore } from './state/settings';
+
+// ── 认证拦截器: 必须在所有其他代码之前安装 ──────────────────────
+// patch fetch 以自动注入 auth token, 并在 401 时自动刷新。
+// 不安装此拦截器 → /api/settings 等 protected 端点全部 401 →
+// 设置无法同步 → cherry_providers_v2 为空 → "主模型未配置" 错误。
+if (typeof window !== 'undefined') {
+  installAuthRefreshInterceptor();
+  // 立即初始化设置存储, 触发服务端 → localStorage 同步。
+  // 同步完成后会派发 'providers_updated' 事件, App.tsx 据此重建 modelProviderMap。
+  getDefaultStore();
+}
 
 // ── 一次性清理: 移除旧版占位 mock 数据 (v1 → v2 迁移) ──────────
 // 旧版在 localStorage 里写入了 6 条硬编码假对话 (id 1~6),
