@@ -15,6 +15,7 @@ import {
   type CanvasResource,
 } from '../services/canvas/sessionApi';
 import { CanvasResourceBar } from './CanvasResourceBar';
+import { setCanvasSessionId, clearCanvasSessionId } from '../services/incrementalCanvasPusher';
 
 interface PreviewPanelProps {
   width?: number;
@@ -171,15 +172,25 @@ export default function PreviewPanel({
   // 画布跟随应用默认启用 — Electron 环境下自动启动
   // 防重入: autoStartRef 防止同一生命周期内重复触发
   // 失败不重试: autoStartFailed 标记防止 error→idle 循环
+  // ★ 2026-07-11: sessionId 变化时重置 autoStartRef + autoStartFailedRef
+  //   原因: 第一次用 fallbackId (canvas-1) 启动失败 → autoStartFailed=true
+  //   canvasReady 后 sessionId 切换为 canvas_1, 但 autoStartFailed 仍 true → 永远不自动启动
   const autoStartRef = useRef(false);
   const autoStartFailedRef = useRef(false);
+  const lastAutoStartSessionId = useRef<string>('');
   useEffect(() => {
+    // sessionId 变化 → 重置自动启动标志, 允许用新 sessionId 重新启动
+    if (sessionIdRef.current && sessionIdRef.current !== lastAutoStartSessionId.current) {
+      lastAutoStartSessionId.current = sessionIdRef.current;
+      autoStartRef.current = false;
+      autoStartFailedRef.current = false;
+    }
     if (autoStartRef.current || autoStartFailedRef.current) return;
     if (isElectron() && canvasState === 'idle' && selectedChatId && sessionIdRef.current) {
       autoStartRef.current = true;
       void startCanvas();
     }
-  }, [canvasState, selectedChatId]);
+  }, [canvasState, selectedChatId, canvasId, canvasReady]);
 
   // ─────────────────────────────────────────
   // ★ 画布进程崩溃检测 (2026-07-08)
@@ -317,8 +328,12 @@ export default function PreviewPanel({
   }, []);
 
   // 把根容器 backgroundColor 合并进最近一次 DSL 重新 push
+  // ★ 2026-07-11: 去掉 canvasState 依赖 — 闭包陷阱!
+  //   startCanvas 调用 pushBackground 时, setCanvasState('running') 还没生效
+  //   pushBackground 闭包中的 canvasState 仍是 'idle' → 直接 return → 画布空白
+  //   修复: 不检查 canvasState, 调用方自己保证画布已运行
   const pushBackground = useCallback(async (color: string) => {
-    if (!isElectron() || canvasState !== 'running') return;
+    if (!isElectron() || !sessionIdRef.current) return;
     const dsl = {
       ui: {
         type: 'container',
@@ -327,17 +342,18 @@ export default function PreviewPanel({
           { type: 'text', props: { content: '画布已就绪', fontSize: 18, fontWeight: 700, color: pickFg(color) } },
           { type: 'text', props: { content: `当前底色: ${color}`, fontSize: 12, color: pickFg(color), opacity: 0.75 } },
           { type: 'text', props: { content: `Session: ${sessionIdRef.current}`, fontSize: 11, color: pickFg(color), opacity: 0.6 } },
-          { type: 'text', props: { content: `Port: ${canvasInfo?.port ?? '-'}  PID: ${canvasInfo?.pid ?? '-'}`, fontSize: 11, color: pickFg(color), opacity: 0.6 } },
-          { type: 'divider', props: { color: pickFg(color), opacity: 0.2 } },
-          { type: 'text', props: { content: '通过左侧聊天窗口生成 UI 描述，会自动推送到这里', fontSize: 12, color: pickFg(color), opacity: 0.55 } },
-          { type: 'button', props: { label: '示例按钮', variant: 'filled', color: '#3b82f6' } },
-          { type: 'progress', props: { value: 0.7, color: '#3b82f6' } },
+          { type: 'text', props: { content: `通过左侧聊天窗口生成 UI 描述，会自动推送到这里`, fontSize: 12, color: pickFg(color), opacity: 0.55 } },
         ],
       },
       platform: 'material',
     };
-    await window.soloforge!.canvas.push(sessionIdRef.current, dsl).catch(() => {});
-  }, [canvasState, canvasInfo]);
+    try {
+      const r = await window.soloforge!.canvas.push(sessionIdRef.current, dsl);
+      if (!r.ok) console.warn('[pushBackground] push failed:', r.error);
+    } catch (e: any) {
+      console.warn('[pushBackground] exception:', e?.message || e);
+    }
+  }, []);
 
   // 2026-07-11: IncrementalCanvasPusher 已经在 useChatStore 中直接推画布,
   //   PreviewPanel 不再重复推送 — 避免双推冲突 + WebAstPreview 覆盖 Flutter 画布
@@ -357,6 +373,7 @@ export default function PreviewPanel({
       return;
     }
     setCanvasState('starting');
+    canvasStateRef.current = 'starting';
     setCanvasError('');
     setShowElectronHint(false);
     try {
@@ -372,15 +389,19 @@ export default function PreviewPanel({
       if (!res.ok) {
         setCanvasError(res.error || '启动失败');
         setCanvasState('error');
+        canvasStateRef.current = 'error';
         autoStartFailedRef.current = true;
         return;
       }
       setCanvasInfo({ port: res.session.port, pid: res.session.pid });
       setCanvasState('running');
+      canvasStateRef.current = 'running';
+      // ★ 同步更新 ref 后再 pushBackground, 避免闭包陷阱
       await pushBackground(bgColor);
     } catch (e: any) {
       setCanvasError(e?.message || String(e));
       setCanvasState('error');
+      canvasStateRef.current = 'error';
       autoStartFailedRef.current = true;
     }
   }, [activePreset, bgColor, pushBackground, computeFrame]);
@@ -466,7 +487,10 @@ export default function PreviewPanel({
     // 2026-07-11 关键修复: canvas running 时 Flutter 嵌入窗口在底层渲染,
     //   绝不能用 WebAstPreview 覆盖 — 否则用户看不到 Flutter 画布
     //   WebAstPreview 仅作为非 Electron / canvas 未启动时的降级方案
-    if (canvasState === 'running') {
+    //
+    // ★ 2026-07-11 v2: 如果 canvas push 失败 (sessionId 不匹配 / 进程崩溃),
+    //   回退到 WebAstPreview — 否则用户看到空白
+    if (canvasState === 'running' && !previewPushError) {
       // Flutter 画布在底层渲染, 这里只放透明占位
       // 流式状态信息已由 top bar 的 previewIsStreaming / previewLanguage 显示
       return (

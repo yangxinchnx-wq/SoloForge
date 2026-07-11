@@ -9,21 +9,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { uiMessageStore } from '../uiMessageStore';
 import { taskActorSystem } from '../taskActor';
 import { createTaskWithActor, dispatchStreamEvent, initActorSystem } from '../actorIntegration';
-import { streamPersistence } from '../streamPersistence';
 import { useStreamingStore } from '../../state/streamingStore';
 import type { StreamEvent } from '../../types/streaming';
 import type { UIMessage, UIPart } from '../../types/messages';
-
-vi.mock('../streamPersistence', () => ({
-  streamPersistence: {
-    init: vi.fn().mockResolvedValue(undefined),
-    restoreHotState: vi.fn().mockReturnValue(null),
-    scheduleFlush: vi.fn(),
-    appendEvents: vi.fn().mockResolvedValue(undefined),
-    flushNow: vi.fn(),
-    clearChat: vi.fn().mockResolvedValue(undefined),
-  },
-}));
 
 beforeEach(async () => {
   useStreamingStore.getState().__reset();

@@ -1,35 +1,30 @@
 /**
  * incrementalCanvasPusher — 逐行实时翻译 + 多线程加速 + 最终一致性检查
  *
- * 核心设计 (2026-07-11 v2):
+ * 核心设计 (2026-07-11 v3):
  *
  *  1. 逐行增量翻译
- *     - LLM 每吐出一行完整代码 → 立即送 Worker 翻译 → 推画布
- *     - 不等代码块闭合, 逐行累积, 实时预览
+ *     - LLM 每吐出一个代码 chunk → 立即尝试翻译 → 推画布
+ *     - 不等代码块闭合, 不等完整行, 有新代码就翻译
  *
- *  2. 多线程加速
+ *  2. DSL 格式转换
+ *     - 翻译器输出 UniversalNode {type, style, content, children}
+ *     - Flutter 画布期望 {type, props, children}
+ *     - pushToCanvas 做格式转换
+ *
+ *  3. 多线程加速
  *     - 用 translateCodeAsync (内部自动选 Worker / in-thread)
- *     - 多个代码块并行翻译 (translateBatchParallel)
- *     - 主线程不卡顿, 翻译在 Worker 池执行
  *
- *  3. 最终一致性检查
- *     - 增量翻译可能"前面一个意思后面一个意思" (部分代码结构不完整)
+ *  4. 最终一致性检查
  *     - done 事件时用完整代码做最终翻译 → 覆盖增量结果
- *     - 保证最终画布呈现的是完整一致的 UI
- *
- *  4. 聊天区/流送区过滤
- *     - 代码块替换为占位符 "正在渲染到画布..." → "已渲染到画布 (lang)"
- *     - 代码块内的 text delta 不推送给 streamBridge
  */
 
 import { translateCode, isLanguageSupported } from '../translate';
 import { translateCodeAsync } from '../translate/translatorWorker';
 import { usePreviewStreamStore } from '../state/previewStreamStore';
-import type { UniversalNode } from './canvas/UniversalAST';
+import type { UniversalNode, UniversalStyle } from './canvas/UniversalAST';
 
 // ── chatId → canvasSessionId 映射 ──
-// PreviewPanel 启动画布时注册, IncrementalCanvasPusher 推送时读取
-// 解决 canvas_1 (bridge) vs canvas-1 (fallback) 的 sessionId 不匹配问题
 const canvasSessionIdMap = new Map<string, string>();
 
 export function setCanvasSessionId(chatId: string, canvasSessionId: string): void {
@@ -59,9 +54,89 @@ const BLOCK_LANG_TO_TRANSLATOR: Record<string, string> = {
   qml: 'qml',
   python: 'python', py: 'python',
   c: 'c', cpp: 'c', 'c++': 'c', h: 'c',
+  // ★ 2026-07-11: json 代码块 — LLM 用 canvas_push_ui 画图时返回 DSL JSON
+  //   不走翻译器, 直接解析 JSON → 推画布
+  json: '__json_dsl__',
 };
 
-// ── 代码块解析 (不变) ──
+// ─────────────────────────────────────────────────────────────
+// UniversalNode → Flutter DSL 格式转换
+//
+// 翻译器输出: { type: 'text', content: 'Hello', style: { color: '#fff' } }
+// Flutter 期望: { type: 'text', props: { content: 'Hello', color: '#fff' } }
+//
+// 关键映射:
+//   style.background  → props.backgroundColor
+//   style.gap         → props.spacing
+//   style.radius      → props.borderRadius
+//   style.shadow      → props.boxShadow
+//   node.content      → props.content
+//   node.label        → props.label
+//   node.variant      → props.variant
+//   type 'container'  → props.layout = 'column' (默认)
+//   type 'row'        → props.layout = 'row'
+//   type 'column'     → props.layout = 'column'
+// ─────────────────────────────────────────────────────────────
+
+function styleToProps(style: UniversalStyle | undefined, nodeType: string): Record<string, any> {
+  const props: Record<string, any> = {};
+  if (!style) return props;
+
+  if (style.background) props.backgroundColor = style.background;
+  if (style.color) props.color = style.color;
+  if (style.padding != null) props.padding = style.padding;
+  if (style.margin != null) props.margin = style.margin;
+  if (style.radius != null) props.borderRadius = style.radius;
+  if (style.shadow) props.boxShadow = style.shadow;
+  if (style.border) props.border = style.border;
+  if (style.opacity != null) props.opacity = style.opacity;
+  if (style.fontSize != null) props.fontSize = style.fontSize;
+  if (style.fontWeight != null) props.fontWeight = style.fontWeight;
+  if (style.textAlign) props.textAlign = style.textAlign;
+  if (style.gap != null) props.spacing = style.gap;
+  if (style.width != null) props.width = style.width;
+  if (style.height != null) props.height = style.height;
+  if (style.flex != null) props.flex = style.flex;
+  if (style.lineHeight != null) props.lineHeight = style.lineHeight;
+  if (style.letterSpacing != null) props.letterSpacing = style.letterSpacing;
+
+  // layout 方向
+  if (nodeType === 'row') props.layout = 'row';
+  else if (nodeType === 'column') props.layout = 'column';
+  else if (nodeType === 'container') props.layout = props.layout || 'column';
+
+  // align / justify
+  if (style.align) props.align = style.align;
+  if (style.justify) props.justify = style.justify;
+
+  return props;
+}
+
+function universalNodeToFlutterDSL(node: UniversalNode): any {
+  const nodeAny = node as any;
+  const props: Record<string, any> = styleToProps(nodeAny.style, nodeAny.type);
+
+  // 把 node 级别的字段移到 props
+  if (nodeAny.content != null) props.content = nodeAny.content;
+  if (nodeAny.label != null) props.label = nodeAny.label;
+  if (nodeAny.variant != null) props.variant = nodeAny.variant;
+  if (nodeAny.placeholder != null) props.placeholder = nodeAny.placeholder;
+  if (nodeAny.value != null) props.value = nodeAny.value;
+  if (nodeAny.kind != null) props.kind = nodeAny.kind;
+  if (nodeAny.src != null) props.src = nodeAny.src;
+  if (nodeAny.alt != null) props.alt = nodeAny.alt;
+
+  const result: any = { type: nodeAny.type, props };
+
+  // 递归处理 children
+  if (nodeAny.children && Array.isArray(nodeAny.children) && nodeAny.children.length > 0) {
+    result.children = nodeAny.children.map((child: UniversalNode) => universalNodeToFlutterDSL(child));
+  }
+
+  return result;
+}
+
+// ── 代码块解析 ──
 interface CodeBlockInfo {
   lang: string;
   translatorLang: string | null;
@@ -120,9 +195,7 @@ function buildDisplayText(text: string, blocks: CodeBlockInfo[]): string {
   let lastEnd = 0;
 
   for (const block of blocks) {
-    // 代码块之前的文字保留
     result += text.slice(lastEnd, block.openFenceStart);
-    // 代码块替换为纯文字占位符 (无 emoji)
     const langLabel = block.lang || 'code';
     if (block.complete) {
       result += `已渲染到画布 (${langLabel})`;
@@ -138,22 +211,13 @@ function buildDisplayText(text: string, blocks: CodeBlockInfo[]): string {
 }
 
 // ── 逐行代码追踪器 ──
-/**
- * 跟踪单个代码块的增量翻译状态
- *
- * 工作原理:
- *   - 记录上次翻译时的代码行数
- *   - 每次 feedChunk 检查是否新增了完整行 (以 \n 结尾)
- *   - 新行到达 → 异步送 Worker 翻译 → 完成后推画布
- *   - 翻译失败 (代码不完整) 静默跳过
- */
 class LineTracker {
   private code: string = '';
-  private lastTranslatedLines: number = 0;
+  private lastTranslatedLen: number = 0;
   private translateLang: string;
   private chatSessionId: string;
   private lastPushTime: number = 0;
-  private throttleMs: number = 50; // 逐行节流: 50ms (原 150ms 太慢, 用户看不到逐笔渲染)
+  private throttleMs: number = 50;
   private translating: boolean = false;
   private _pushed: boolean = false;
 
@@ -163,42 +227,52 @@ class LineTracker {
   }
 
   /**
-   * 喂入代码增量, 返回是否有新行需要翻译
+   * 喂入代码增量
+   * 2026-07-11 v3: 用代码长度变化代替行数, 有新代码就尝试翻译
    */
   feedCode(delta: string): boolean {
     this.code += delta;
 
-    // 统计完整行数 (以 \n 结尾的行)
-    const completeLines = this.code.split('\n').length - 1; // 最后一行可能不完整
-    if (completeLines <= this.lastTranslatedLines) return false;
+    // 代码长度没变 → 不翻译
+    if (this.code.length <= this.lastTranslatedLen) return false;
 
-    // 节流: 避免每行都翻译 (150ms 内只翻译一次)
+    // 节流: 50ms 内只翻译一次
     const now = Date.now();
     if (now - this.lastPushTime < this.throttleMs) return false;
+
+    // 至少有 10 个字符才翻译 (避免太短的碎片)
+    if (this.code.length < 10) return false;
 
     return true;
   }
 
   /**
-   * 执行异步翻译 (送 Worker 池) + 推画布
+   * 执行异步翻译 + 推画布
    */
   async translateAndPush(isFinal: boolean): Promise<void> {
-    if (this.translating && !isFinal) return; // 上一次还没翻译完, 跳过 (最终翻译强制执行)
+    if (this.translating && !isFinal) return;
     if (!this.code.trim()) return;
 
     this.translating = true;
     this.lastPushTime = Date.now();
 
-    // 完整行数 (最终翻译时用全部代码)
-    const codeToTranslate = isFinal ? this.code : this.getCompleteLines();
-
+    // 增量翻译用全部已收到的代码 (不再截断最后一行)
+    const codeToTranslate = this.code;
     if (!isFinal) {
-      const completeLines = codeToTranslate.split('\n').length - 1;
-      this.lastTranslatedLines = completeLines;
+      this.lastTranslatedLen = this.code.length;
     }
 
     try {
-      // ★ 用 Worker 多线程翻译 (translateCodeAsync 内部自动选择 Worker / in-thread)
+      // ★ 2026-07-11: json DSL 直接解析推送, 不走翻译器
+      if (this.translateLang === '__json_dsl__') {
+        const parsed = JSON.parse(codeToTranslate);
+        if (parsed && parsed.type) {
+          this._pushed = true;
+          this.pushRawDsl(parsed, codeToTranslate, isFinal);
+        }
+        return;
+      }
+
       const result = await translateCodeAsync(codeToTranslate, this.translateLang);
 
       if (result.node) {
@@ -206,43 +280,93 @@ class LineTracker {
         this.pushToCanvas(result.node, codeToTranslate, isFinal);
       }
     } catch {
-      // 翻译失败 (代码不完整) — 静默跳过, 等下次重试
+      // 翻译失败 (代码不完整 / JSON 解析失败) — 静默跳过
     } finally {
       this.translating = false;
     }
   }
 
   /**
-   * 获取当前已完整的代码行
-   * 2026-07-11 修复: 如果没有换行符, 返回全部 code (单行代码也要翻译)
-   *   之前: lastNewline === -1 → return '' → 第一行永远不被翻译
-   *   现在: lastNewline === -1 → return this.code (至少翻译一次)
+   * ★ 2026-07-11: 直接推送 raw DSL (json 代码块场景)
+   * LLM 返回的 JSON 已经是 Flutter DSL 格式 {type, props, children}
+   * 不需要 universalNodeToFlutterDSL 转换
    */
-  private getCompleteLines(): string {
-    const lastNewline = this.code.lastIndexOf('\n');
-    if (lastNewline === -1) return this.code; // 单行代码也要翻译
-    return this.code.slice(0, lastNewline + 1);
+  private pushRawDsl(dsl: any, code: string, isFinal: boolean): void {
+    const canvasSessionId = getCanvasSessionId(this.chatSessionId);
+    const flutterDsl = { ui: dsl, platform: 'material' };
+
+    if (typeof window !== 'undefined' && window.soloforge?.canvas?.push) {
+      window.soloforge.canvas.push(canvasSessionId, flutterDsl).then((r: any) => {
+        if (!r?.ok) {
+          console.warn('[LineTracker] canvas.push (raw) failed:', r?.error || 'unknown', 'sessionId:', canvasSessionId);
+          usePreviewStreamStore.getState().recordPushError(this.chatSessionId,
+            `canvas.push: ${r?.error || 'failed'}`);
+        }
+      }).catch((err: any) => {
+        console.warn('[LineTracker] canvas.push (raw) exception:', err?.message || err, 'sessionId:', canvasSessionId);
+        usePreviewStreamStore.getState().recordPushError(this.chatSessionId,
+          `canvas.push: ${err?.message || 'exception'}`);
+      });
+    }
+
+    const previewStore = usePreviewStreamStore.getState();
+    previewStore.initEntry(this.chatSessionId, {
+      language: 'json',
+      sessionId: canvasSessionId,
+    });
+    previewStore.updateStream(this.chatSessionId, {
+      raw: code,
+      payload: {
+        language: 'json',
+        framework: 'json',
+        source_code: code,
+        preview: { root: dsl },
+      } as any,
+      errors: [],
+      done: isFinal,
+    });
+    if (isFinal) {
+      previewStore.confirmPayload(this.chatSessionId, {
+        language: 'json',
+        framework: 'json',
+        source_code: code,
+        preview: { root: dsl },
+      } as any);
+    }
+
+    console.log(`[LineTracker] ${isFinal ? '最终' : '增量'}JSON DSL推送`, {
+      type: dsl.type,
+      codeLen: code.length,
+      sessionId: canvasSessionId,
+    });
   }
 
   /**
    * 推送到画布 + previewStreamStore
-   * 2026-07-11: previewStreamStore 只更新状态 (language/bytes/streaming),
-   *   不再触发 PreviewPanel 的 useEffect 二次推送 — 避免双推冲突
    */
   private pushToCanvas(ast: UniversalNode, code: string, isFinal: boolean): void {
     const canvasSessionId = getCanvasSessionId(this.chatSessionId);
-    const dsl = { ...ast, platform: 'material' };
 
-    // ★ Electron IPC 推画布 — 这是唯一的推画布通道
+    // ★ 格式转换: UniversalNode → Flutter DSL {type, props, children}
+    const flutterRoot = universalNodeToFlutterDSL(ast);
+    const dsl = { ui: flutterRoot, platform: 'material' };
+
+    // ★ Electron IPC 推画布 — 记录推送结果到 previewStreamStore
     if (typeof window !== 'undefined' && window.soloforge?.canvas?.push) {
-      window.soloforge.canvas.push(canvasSessionId, dsl).catch((err: any) => {
-        console.warn('[LineTracker] canvas.push failed:', err?.message || err);
+      window.soloforge.canvas.push(canvasSessionId, dsl).then((r: any) => {
+        if (!r?.ok) {
+          console.warn('[LineTracker] canvas.push failed:', r?.error || 'unknown', 'sessionId:', canvasSessionId);
+          usePreviewStreamStore.getState().recordPushError(this.chatSessionId,
+            `canvas.push: ${r?.error || 'failed'}`);
+        }
+      }).catch((err: any) => {
+        console.warn('[LineTracker] canvas.push exception:', err?.message || err, 'sessionId:', canvasSessionId);
+        usePreviewStreamStore.getState().recordPushError(this.chatSessionId,
+          `canvas.push: ${err?.message || 'exception'}`);
       });
-    } else {
-      console.warn('[LineTracker] window.soloforge.canvas.push 不可用, 跳过画布推送');
     }
 
-    // 同步 previewStreamStore (仅状态, 不触发二次推送)
+    // 同步 previewStreamStore
     const previewStore = usePreviewStreamStore.getState();
     previewStore.initEntry(this.chatSessionId, {
       language: this.translateLang,
@@ -268,19 +392,11 @@ class LineTracker {
       } as any);
     }
 
-    if (isFinal) {
-      console.log('[LineTracker] 最终一致性翻译完成', {
-        lang: this.translateLang,
-        lines: code.split('\n').length,
-        codeLen: code.length,
-      });
-    } else {
-      console.log('[LineTracker] 增量翻译推送', {
-        lang: this.translateLang,
-        lines: code.split('\n').length,
-        codeLen: code.length,
-      });
-    }
+    console.log(`[LineTracker] ${isFinal ? '最终' : '增量'}翻译推送`, {
+      lang: this.translateLang,
+      codeLen: code.length,
+      sessionId: canvasSessionId,
+    });
   }
 
   get pushed(): boolean { return this._pushed; }
@@ -294,19 +410,13 @@ export class IncrementalCanvasPusher {
   private rawText: string = '';
   private _handled: boolean = false;
   private pushedBlockStarts: Set<number> = new Set();
-  /** 每个代码块的逐行追踪器 (key = openFenceStart) */
   private trackers: Map<number, LineTracker> = new Map();
-  /** 是否正在进行最终一致性检查 */
   private flushing: boolean = false;
 
   constructor(chatSessionId: string) {
     this.chatSessionId = chatSessionId;
   }
 
-  /**
-   * 喂入一个流式 delta 文本片段
-   * @returns { displayText: 过滤后的显示文本, inCodeBlock: 当前是否在代码块内 }
-   */
   feedChunk(text: string): { displayText: string; inCodeBlock: boolean } {
     this.rawText += text;
     this.tryIncrementalTranslate();
@@ -317,46 +427,35 @@ export class IncrementalCanvasPusher {
     };
   }
 
-  /**
-   * 最终刷新: 对所有代码块做完整翻译 (一致性检查)
-   *
-   * 用完整代码重新翻译一次, 覆盖增量翻译的结果
-   * 保证最终画布呈现的是完整一致的 UI
-   */
   async flush(): Promise<void> {
     if (this.flushing) return;
     this.flushing = true;
 
     const blocks = parseCodeBlocks(this.rawText);
 
-    // 收集所有需要最终翻译的代码块
     const finalTasks: Array<{ tracker: LineTracker; block: CodeBlockInfo }> = [];
     for (const block of blocks) {
-      if (!block.translatorLang || !isLanguageSupported(block.translatorLang)) continue;
+      if (!block.translatorLang) continue;
+      // ★ json DSL 不需要 isLanguageSupported 检查
+      if (block.translatorLang !== '__json_dsl__' && !isLanguageSupported(block.translatorLang)) continue;
       if (!block.code.trim()) continue;
 
       const tracker = this.trackers.get(block.openFenceStart);
       if (tracker) {
         finalTasks.push({ tracker, block });
       } else {
-        // 没有追踪器的代码块 (如刚闭合的) → 新建
         const newTracker = new LineTracker(block.translatorLang, this.chatSessionId);
-        // 把完整代码喂进去
         newTracker['code'] = block.code;
         this.trackers.set(block.openFenceStart, newTracker);
         finalTasks.push({ tracker: newTracker, block });
       }
     }
 
-    // ★ 并行最终翻译 (多 Worker 线程)
-    // 多个代码块同时翻译, 充分利用多核 CPU
     if (finalTasks.length > 0) {
-      console.log(`[IncrementalCanvasPusher] 最终一致性检查: ${finalTasks.length} 个代码块, 并行翻译`);
-
+      console.log(`[IncrementalCanvasPusher] 最终一致性检查: ${finalTasks.length} 个代码块`);
       const promises = finalTasks.map(({ tracker }) => tracker.translateAndPush(true));
       await Promise.all(promises);
 
-      // 标记所有已处理
       for (const { block } of finalTasks) {
         this.pushedBlockStarts.add(block.openFenceStart);
       }
@@ -366,59 +465,41 @@ export class IncrementalCanvasPusher {
     this.flushing = false;
   }
 
-  /**
-   * 是否已成功翻译并推送过代码块
-   */
   wasHandled(): boolean {
     return this._handled;
   }
 
-  /**
-   * 获取过滤后的显示文本 (代码块→占位符)
-   */
   getDisplayText(): string {
     const blocks = parseCodeBlocks(this.rawText);
     return buildDisplayText(this.rawText, blocks);
   }
 
-  // ── 内部方法 ──
-
-  /**
-   * 增量翻译: 检测新行 → 异步送 Worker 翻译 → 推画布
-   */
   private tryIncrementalTranslate(): void {
     const blocks = parseCodeBlocks(this.rawText);
     if (blocks.length === 0) return;
 
     for (const block of blocks) {
-      // 只处理有翻译器支持的代码块
-      if (!block.translatorLang || !isLanguageSupported(block.translatorLang)) continue;
-
-      // 已闭合且已推送 → 跳过
+      if (!block.translatorLang) continue;
+      // ★ json DSL 不需要 isLanguageSupported 检查
+      if (block.translatorLang !== '__json_dsl__' && !isLanguageSupported(block.translatorLang)) continue;
       if (block.complete && this.pushedBlockStarts.has(block.openFenceStart)) continue;
 
-      // 获取或创建追踪器
       let tracker = this.trackers.get(block.openFenceStart);
       if (!tracker) {
         tracker = new LineTracker(block.translatorLang, this.chatSessionId);
         this.trackers.set(block.openFenceStart, tracker);
       }
 
-      // 计算自上次 feed 以来的代码增量
-      // tracker 内部记录了已处理的 code 长度, 我们需要把新增部分喂给它
       const prevCodeLen = tracker.fullCode.length;
       const newDelta = block.code.slice(prevCodeLen);
       if (newDelta) {
         const shouldTranslate = tracker.feedCode(newDelta);
         if (shouldTranslate) {
-          // 异步翻译 (不阻塞主线程, 送 Worker 池)
-          // 用 .catch 捕获异常, 不影响后续 delta 处理
           tracker.translateAndPush(false).catch(() => {});
           this._handled = true;
         }
       }
 
-      // 代码块刚闭合 → 标记 (最终翻译在 flush 中做)
       if (block.complete) {
         this.pushedBlockStarts.add(block.openFenceStart);
       }

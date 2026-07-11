@@ -24,13 +24,17 @@ public class MemoryClient {
     private final JdbcTemplate jdbcTemplate;
 
     /**
-     * 获取所有经验教训 (用于 System Prompt 第 11 层)
+     * 获取经验教训 (用于 System Prompt 第 11 层)
+     *
+     * ★ 2026-07-11: 限制为最近 3 条, 避免大量历史记忆污染当前会话上下文
      */
     public List<String> getLessons(String domain) {
         try {
+            // ★ 2026-07-11: LIMIT 3 (之前 10), 只取最近的少量经验
+            //   过多的经验会占据大量 prompt 空间并干扰当前对话
             String sql = domain != null
-                ? "SELECT lessons FROM social_memory WHERE impact = 'positive' AND (domain = ? OR domain IS NULL) ORDER BY created_at DESC LIMIT 10"
-                : "SELECT lessons FROM social_memory WHERE impact = 'positive' ORDER BY created_at DESC LIMIT 10";
+                ? "SELECT lessons FROM social_memory WHERE impact = 'positive' AND (domain = ? OR domain IS NULL) ORDER BY created_at DESC LIMIT 3"
+                : "SELECT lessons FROM social_memory WHERE impact = 'positive' ORDER BY created_at DESC LIMIT 3";
 
             List<Map<String, Object>> rows = domain != null
                 ? jdbcTemplate.queryForList(sql, domain)

@@ -746,19 +746,21 @@ export class SessionStore {
     }
 
     // 持久层清理 — 尽力而为, 失败不阻塞
+    // ★ 2026-07-11: 修复方法名 — GarnetStore.deleteSessionState (非 deleteSession)
     try {
       const { getGarnetStore } = await import('../persistence/GarnetStore');
       const garnet = getGarnetStore();
-      if (garnet && typeof (garnet as any).deleteSession === 'function') {
-        await (garnet as any).deleteSession(sessionId).catch(() => {});
+      if (garnet && typeof (garnet as any).deleteSessionState === 'function') {
+        await (garnet as any).deleteSessionState(sessionId).catch(() => {});
       }
     } catch (err) { console.warn('[SessionStore] GarnetStore 清理失败:', err); }
 
+    // ★ 2026-07-11: SurrealStore 现在有 deleteSessionState 方法
     try {
       const { getSurrealStore } = await import('../persistence/SurrealStore');
       const surreal = getSurrealStore();
-      if (surreal && typeof (surreal as any).deleteSession === 'function') {
-        await (surreal as any).deleteSession(sessionId).catch(() => {});
+      if (surreal && typeof (surreal as any).deleteSessionState === 'function') {
+        await (surreal as any).deleteSessionState(sessionId).catch(() => {});
       }
     } catch (err) { console.warn('[SessionStore] SurrealStore 清理失败:', err); }
 

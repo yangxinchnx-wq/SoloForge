@@ -13,7 +13,6 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useStreamingStore } from '../../state/streamingStore';
 import { uiMessageStore } from '../uiMessageStore';
 import { taskActorSystem } from '../taskActor';
-import { streamPersistence } from '../streamPersistence';
 import {
   createTaskWithActor,
   dispatchStreamEvent,
@@ -21,14 +20,6 @@ import {
   initActorSystem,
 } from '../actorIntegration';
 import type { StreamEvent } from '../../types/streaming';
-
-// Mock persistence (避免 IndexedDB 在测试环境不可用)
-vi.spyOn(streamPersistence, 'init').mockResolvedValue(undefined);
-vi.spyOn(streamPersistence, 'restoreHotState').mockReturnValue(null);
-vi.spyOn(streamPersistence, 'scheduleFlush').mockImplementation(() => {});
-vi.spyOn(streamPersistence, 'appendEvents').mockResolvedValue(undefined);
-vi.spyOn(streamPersistence, 'flushNow').mockImplementation(() => {});
-vi.spyOn(streamPersistence, 'clearChat').mockResolvedValue(undefined);
 
 beforeEach(async () => {
   useStreamingStore.getState().__reset();
@@ -229,9 +220,6 @@ describe('clearChatAll 全链路清理', () => {
 
     // uiMessageStore: 已清空
     expect(uiMessageStore.getMessages('c1').length).toBe(0);
-
-    // persistence.clearChat 被调用
-    expect(streamPersistence.clearChat).toHaveBeenCalledWith('c1');
   });
 
   it('对不存在的 chatId 不抛错', () => {

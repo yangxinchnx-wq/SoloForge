@@ -15,7 +15,6 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useStreamingStore } from '../streamingStore';
 import { uiMessageStore } from '../../services/uiMessageStore';
 import { taskActorSystem } from '../../services/taskActor';
-import { streamPersistence } from '../../services/streamPersistence';
 import { createTaskWithActor, dispatchStreamEvent } from '../../services/actorIntegration';
 import type { PhaseMapperContext } from '../../services/phaseMappers';
 import type { TaskPhase } from '../../types/streaming';
@@ -27,14 +26,6 @@ import type {
   UIDeliveryPart,
   UITextPart,
 } from '../../types/messages';
-
-// ── Mock persistence (避免 localStorage / IndexedDB / timer 副作用) ──
-vi.spyOn(streamPersistence, 'init').mockResolvedValue(undefined);
-vi.spyOn(streamPersistence, 'restoreHotState').mockReturnValue(null);
-vi.spyOn(streamPersistence, 'scheduleFlush').mockImplementation(() => {});
-vi.spyOn(streamPersistence, 'appendEvents').mockResolvedValue(undefined);
-vi.spyOn(streamPersistence, 'flushNow').mockImplementation(() => {});
-vi.spyOn(streamPersistence, 'clearChat').mockResolvedValue(undefined);
 
 let subIdCounter = 0;
 

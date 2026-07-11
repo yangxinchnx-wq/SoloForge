@@ -10,6 +10,8 @@ import { registerBrowserUseRoutes } from "../src/core/browser-use/routes";
 import { bootstrapCanvasSessionLayer } from "./src/server/bootstrap/canvas";
 import { registerChatSessionRoutes, flushChatStore } from "./src/server/routes/chatSession";
 import { registerConversationRoutes, flushConversationStore } from "./src/server/routes/conversationRoutes";
+import { getChatStore } from "./src/server/services/chat/ChatStore";
+import { getConversationStore } from "./src/server/services/chat/ConversationStore";
 import { registerSettingsRoutes, flushSettingsToDiskSync } from "./src/server/routes/settings";
 import { registerFileRoutes } from "./src/server/routes/fileRoutes";
 import { registerTrainingRoutes } from "./src/server/routes/trainingRoutes";
@@ -85,7 +87,7 @@ async function startServer() {
   bootstrapCanvasSessionLayer(app);
 
   // ============================================================
-  // Chat Session API (3000 本地路由, JSON 持久化)
+  // Chat Session API (3000 本地路由, 三层架构)
   //   GET    /api/chats/list          — 列出所有对话 + 选中ID + liveStates
   //   POST   /api/chats               — 创建新对话
   //   PATCH  /api/chats/:id           — 更新对话 (title/tag/permission)
@@ -95,12 +97,16 @@ async function startServer() {
   //   POST   /api/chats/:id/state     — 上报实时流式状态
   //   DELETE /api/chats/:id/state     — 清除实时流式状态
   //
-  // 设计:
-  //   - 内存 Map + JSON 文件冷持久化 (.soloforge/chats.json)
-  //   - 防抖 flush (500ms), 优雅退出时同步 flush
-  //   - 删除对话时级联删除该 chat 拥有的所有画布
+  // ★ 2026-07-11: 三层架构
+  //   - 内存 Map → Garnet (热, 24h TTL) → SurrealDB (温, 持久) → JSONL (冷, 归档)
+  //   - 冷启动从 SurrealDB 恢复, 旧 JSON 自动迁移
   // ============================================================
   registerChatSessionRoutes(app);
+
+  // ★ 三层架构: 冷启动从温存储 (SurrealDB) 恢复对话列表
+  void getChatStore().restoreFromWarm().catch((e: Error) => {
+    console.warn('[server] ChatStore 冷启动恢复失败:', e.message);
+  });
 
   // ── 临时诊断端点 ──
   app.post('/api/debug-log', (req, res) => {
@@ -109,7 +115,7 @@ async function startServer() {
   });
 
   // ============================================================
-  // Conversation API (3000 本地路由, JSON 持久化)
+  // Conversation API (3000 本地路由, 三层架构)
   //   GET    /api/conversations              — 获取所有对话消息 + 配置
   //   PUT    /api/conversations              — 全量替换所有对话消息
   //   GET    /api/conversations/:chatId      — 获取单个对话消息
@@ -119,12 +125,16 @@ async function startServer() {
   //   PUT    /api/conversations/:chatId/config   — 替换配置
   //   DELETE /api/conversations/:chatId/config   — 删除配置
   //
-  // 设计:
-  //   - 内存 Map + JSON 文件冷持久化 (.soloforge/conversations.json)
-  //   - 防抖 flush (800ms), 优雅退出时同步 flush
-  //   - 删除对话时级联删除该 chat 的所有消息 + 配置
+  // ★ 2026-07-11: 三层架构
+  //   - 内存 Map → Garnet (热, 24h TTL) → SurrealDB (温, 持久) → JSONL (冷, 归档)
+  //   - 冷启动从 SurrealDB 恢复, 旧 JSON 自动迁移
   // ============================================================
   registerConversationRoutes(app);
+
+  // ★ 三层架构: 冷启动从温存储 (SurrealDB) 恢复对话消息
+  void getConversationStore().restoreFromWarm().catch((e: Error) => {
+    console.warn('[server] ConversationStore 冷启动恢复失败:', e.message);
+  });
 
   // ============================================================
   // Settings API (3000 本地路由, JSON 文件持久化)

@@ -285,16 +285,33 @@ export default function ChatPanel({
       }
     }
 
-    // ── 路径分流 (2026-07-09) ──────────────────────────────────────
+    // ── 路径分流 (2026-07-09) + 经济系统联动 (2026-07-11) ──────────
     // 经验路径 (experienceFingerprint 存在) → Node.js 经验反馈, 更新 successRate
     //   👎 连续打分低于 0.3 → 经验自动失效删除, 下次重新走 Agent Loop (解决越做越错)
     // 其他路径 (无 fingerprint) → Java Agent 案例库 (原逻辑)
+    //
+    // ★ 2026-07-11: 无论走哪条路径, 都同步调用 Java FeedbackController
+    //   → 👍 加信用分 / 👎 扣信用分 (经济系统驱动)
     const expFp = (msg as any)?.experienceFingerprint as string | undefined;
+    const agentId = activeSettings.agentId || 'code_agent';
 
     try {
+      // ── 1. 经济系统: 始终调用 Java FeedbackController (👍加钱 / 👎扣钱) ──
+      const econPromise = fetch('/api/java-agent/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentId,
+          positive,
+          message: userMessage,
+          response: msg?.content || '',
+          chatId: activeChatId,
+        }),
+      }).then(r => r.ok ? r.json().catch(() => ({})) : {}).catch(() => ({}));
+
+      // ── 2. 经验路径: 同时走 Node.js 更新 successRate ──
       if (expFp) {
-        // ── 经验路径: 走 Node.js /api/agents/experience/feedback ──
-        const res = await fetch('/api/agents/experience/feedback', {
+        const expPromise = fetch('/api/agents/experience/feedback', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -302,38 +319,37 @@ export default function ChatPanel({
             prompt: userMessage,
             positive,
           }),
-        });
-        if (!res.ok) {
+        }).then(r => r.ok ? r.json().catch(() => ({})) : {}).catch(() => ({}));
+
+        // 并行等待两个请求
+        const [econData, expData] = await Promise.all([econPromise, expPromise]);
+
+        // 经济系统结果
+        if (econData?.creditsAfter !== undefined) {
+          console.info(`[经济系统] ${positive ? '👍' : '👎'} agent=${agentId} 信用分: ${econData.creditsBefore} → ${econData.creditsAfter}`);
+        }
+
+        // 经验系统结果
+        if (expData?.alive === false) {
+          console.info(`[经验失效] fingerprint=${expFp} 已因 👎 降权失效, 下次重新解决`);
+        } else if (expData?.successRate !== undefined) {
+          console.info(`[经验${positive ? '强化' : '降权'}] fingerprint=${expFp} successRate=${expData.successRate.toFixed(2)}`);
+        }
+
+        if (!econData?.acknowledged && !expData?.acknowledged) {
           setFeedbackMap(prev => ({ ...prev, [index]: undefined }));
-        } else {
-          const data = await res.json().catch(() => ({}));
-          if (data?.alive === false) {
-            // 经验已失效删除, 下次该问题重新走 Agent Loop
-            console.info(`[经验失效] fingerprint=${expFp} 已因 👎 降权失效, 下次重新解决`);
-          } else {
-            console.info(`[经验${positive ? '强化' : '降权'}] fingerprint=${expFp} successRate=${data?.successRate?.toFixed(2)}`);
-          }
         }
       } else {
-        // ── 其他路径: 走 Java Agent /api/java-agent/api/feedback (原逻辑) ──
-        const res = await fetch('/api/java-agent/api/feedback', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            agentId: activeSettings.agentId || 'code_agent',
-            positive,
-            message: userMessage,
-            response: msg?.content || '',
-            chatId: activeChatId,
-          }),
-        });
-        if (!res.ok) {
+        // ── 非经验路径: 只走 Java FeedbackController ──
+        const econData = await econPromise;
+        if (econData?.creditsAfter !== undefined) {
+          console.info(`[经济系统] ${positive ? '👍' : '👎'} agent=${agentId} 信用分: ${econData.creditsBefore} → ${econData.creditsAfter}`);
+        }
+        if (econData?.caseId) {
+          console.info(`[案例入库] ${agentId} caseId=${econData.caseId} positive=${positive}`);
+        }
+        if (!econData?.acknowledged) {
           setFeedbackMap(prev => ({ ...prev, [index]: undefined }));
-        } else {
-          const data = await res.json().catch(() => ({}));
-          if (data?.caseId) {
-            console.info(`[案例入库] ${data.agentId || activeSettings.agentId} caseId=${data.caseId} positive=${positive}`);
-          }
         }
       }
     } catch (e) {

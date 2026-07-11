@@ -704,7 +704,15 @@ async function startCanvas(sessionId, width, height) {
   if (canvasSessions.has(sessionId)) {
     const existing = canvasSessions.get(sessionId);
     if (existing.process && !existing.process.killed) {
-      const { process: _omit, ...ipcSession } = existing;
+      // ★ 2026-07-11: 同样用 JSON round-trip 确保可序列化
+      const ipcSession = JSON.parse(JSON.stringify({
+        sessionId: existing.sessionId,
+        pid: existing.pid,
+        port: existing.port,
+        hwnd: existing.hwnd,
+        width: existing.width,
+        height: existing.height,
+      }));
       return { ok: true, session: ipcSession, reused: true };
     }
     canvasSessions.delete(sessionId);
@@ -878,7 +886,17 @@ async function startCanvas(sessionId, width, height) {
   // ★ 2026-07-09: 把画布端口注册到 Node.js 后端 (让 Java Agent 能 relay 推送 DSL)
   registerCanvasPortToBackend(sessionId, port, pid, hwnd);
   // IPC 返回时去掉无法 structured clone 的对象 (ChildProcess + Timer)
-  const { process: _omit, watchdog: _omit2, ...ipcSession } = session;
+  // ★ 2026-07-11: 用 JSON.parse(JSON.stringify(...)) 确保 100% 可序列化
+  //   之前用 destructuring 去掉 process/watchdog, 但仍报 "An object could not be cloned"
+  //   可能是 session 对象上有其他非可克隆属性 (如 embedStatus 中的 PowerShell 对象)
+  const ipcSession = JSON.parse(JSON.stringify({
+    sessionId: session.sessionId,
+    pid: session.pid,
+    port: session.port,
+    hwnd: session.hwnd,
+    width: session.width,
+    height: session.height,
+  }));
   return { ok: true, session: ipcSession, reused: false };
 }
 

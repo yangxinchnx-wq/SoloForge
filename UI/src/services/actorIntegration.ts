@@ -11,13 +11,12 @@
  * 2026-07-10: P3-2 + P3-3 集成层
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { StreamEvent, PermissionMode, SubAgent, TaskPhase, PromptCardSpec } from '../types/streaming';
 import type { UIPhaseChangePart } from '../types/messages';
 import { useStreamingStore } from '../state/streamingStore';
 import { taskActorSystem, type ActorStateSnapshot } from './taskActor';
 import { taskActorSupervisor, type ActorErrorEvent } from './supervisorStrategy';
-import { streamPersistence } from './streamPersistence';
 import { uiMessageStore } from './uiMessageStore';
 import { promptCardPool } from './promptCardPool';
 import { createTaskMachineActor, type Actor as XstateActor, type TaskMachineSnapshot } from './taskMachine';
@@ -41,17 +40,17 @@ export function getTaskMachineSnapshot(chatId: string): TaskMachineSnapshot | un
 }
 
 /**
- * 初始化 Actor 系统 + 持久化 + 监督策略
+ * 初始化 Actor 系统 + 监督策略
  * 在应用启动 (bootstrap) 时调用一次
+ *
+ * ★ 2026-07-11: 移除 IndexedDB 持久化, 对话数据由后端三层架构管理
+ *   (Garnet 热 → SurrealDB 温 → JSONL 冷)
  */
 export async function initActorSystem(): Promise<void> {
   if (initialized) return;
   initialized = true;
 
-  // 1. 初始化持久化层
-  await streamPersistence.init();
-
-  // 2. 设置监督策略: 错误事件通知 UI
+  // 1. 设置监督策略: 错误事件通知 UI
   taskActorSupervisor.onError((event: ActorErrorEvent) => {
     // 将 Actor 错误转换为 StreamEvent, 投递到 uiMessageStore
     if (event.decision.action === 'stop') {
@@ -71,29 +70,8 @@ export async function initActorSystem(): Promise<void> {
     // 非致命错误 (restart/resume) 不发 error 事件, Actor 会自动恢复
   });
 
-  // 3. 从持久化恢复热状态
-  const hotState = streamPersistence.restoreHotState();
-  if (hotState) {
-    // P0: 恢复 uiMessageStore messages (替代 streamingStore.tasks + textBuffers)
-    if ((hotState as any).messages) {
-      for (const [chatId, msgs] of Object.entries((hotState as any).messages)) {
-        uiMessageStore.deserialize(chatId, JSON.stringify(msgs));
-      }
-    }
-    // 恢复 agents (控制流字段, 保留)
-    if (hotState.agents) {
-      useStreamingStore.setState(s => ({
-        agentsMap: { ...s.agentsMap, ...hotState.agents! },
-      }));
-    }
-    // 恢复 Actor 快照
-    if (hotState.actorSnapshots) {
-      for (const snapshot of hotState.actorSnapshots) {
-        const actor = taskActorSystem.createActor(snapshot.taskId, snapshot.chatId);
-        actor.restoreFromSnapshot(snapshot);
-      }
-    }
-  }
+  // 2. 对话数据恢复由后端 API 驱动 (loadConversationsFromBackend)
+  //    不再需要前端 IndexedDB 恢复
 }
 
 // ==================== 事件投递适配器 ====================
@@ -108,7 +86,7 @@ export async function initActorSystem(): Promise<void> {
  *   1. promptCardPool 直投 (clarify_request / browser_enable_request / tool_suggestion)
  *   2. taskActorSystem.tell (mailbox 排队, 微任务异步处理)
  *   3. uiMessageStore.appendEventAsPart (Data Parts 模式)
- *   4. streamPersistence.appendEvents (持久化日志)
+ *   4. 持久化由后端三层架构处理 (不再前端 IndexedDB)
  */
 export function dispatchStreamEvent(event: StreamEvent): void {
   const meta = useStreamingStore.getState().getStreamTaskMeta(event.chatId);
@@ -208,10 +186,8 @@ export function dispatchStreamEvent(event: StreamEvent): void {
     }
   }
 
-  // 4. 持久化 (异步, 不阻塞)
-  streamPersistence.appendEvents(event.chatId, [event]).catch(() => {
-    // 持久化失败不影响主流程
-  });
+  // 4. 持久化由后端三层架构处理 (Garnet 热 → SurrealDB 温 → JSONL 冷)
+  //    前端不再需要主动持久化流事件
 }
 
 /**
@@ -312,12 +288,7 @@ export function createTaskWithActor(
   // 3. 创建 assistant UIMessage
   uiMessageStore.createMessage(chatId, 'assistant', task.id);
 
-  // 4. 立即持久化 (P0: 持久化 uiMessageStore messages 替代 streamingStore.tasks)
-  const messages = uiMessageStore.getMessages(chatId);
-  streamPersistence.scheduleFlush({
-    messages,
-  });
-
+  // 4. 持久化由后端三层架构处理 (useChatStore → PUT /api/conversations)
   return task;
 }
 
@@ -352,41 +323,14 @@ export function useActorState(chatId: string | null | undefined): ActorStateSnap
 }
 
 /**
- * useAutoPersist — 自动持久化 streamingStore 状态
+ * useAutoPersist — 自动同步到后端 (三层架构)
  * 在 StreamPanel 或顶层组件挂载时使用
+ *
+ * ★ 2026-07-11: 前端不再直接持久化, 由 useChatStore → PUT /api/conversations 驱动
  */
 export function useAutoPersist(chatId: string | null): void {
-  const flushCounter = useRef(0);
-
-  useEffect(() => {
-    if (!chatId) return;
-
-    // P0: 订阅 uiMessageStore 变化 (替代 streamingStore.tasks)
-    // uiMessageStore.subscribe 是同步通知, 回调内读取最新 messages
-    const unsubscribe = uiMessageStore.subscribe(() => {
-      const messages = uiMessageStore.getMessages(chatId);
-      if (messages.length === 0) return;
-
-      flushCounter.current++;
-      // 每 10 次变化触发一次持久化 (或由 scheduleFlush 的节流控制)
-      if (flushCounter.current % 10 === 0) {
-        streamPersistence.scheduleFlush({
-          messages,
-        });
-      }
-    });
-
-    return unsubscribe;
-  }, [chatId]);
-
-  // 页面卸载时强制写入
-  useEffect(() => {
-    const handler = () => {
-      streamPersistence.flushNow();
-    };
-    window.addEventListener('beforeunload', handler);
-    return () => window.removeEventListener('beforeunload', handler);
-  }, []);
+  // 后端三层架构会自动处理持久化, 前端无需额外操作
+  // 保留 hook 以兼容已有调用方
 }
 
 /**
@@ -428,8 +372,5 @@ export function clearChatAll(chatId: string): void {
   // 3. 清理 uiMessageStore
   uiMessageStore.clearChat(chatId);
 
-  // 4. 清理持久化
-  streamPersistence.clearChat(chatId).catch(() => {
-    // 清理失败不影响主流程
-  });
+  // 4. 清理后端数据由 deleteChat API 级联处理 (三层架构自动清理)
 }

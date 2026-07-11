@@ -20,7 +20,6 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useStreamingStore } from '../../state/streamingStore';
 import { uiMessageStore } from '../uiMessageStore';
 import { taskActorSystem } from '../taskActor';
-import { streamPersistence } from '../streamPersistence';
 import {
   createTaskWithActor,
   dispatchStreamEvent,
@@ -29,14 +28,6 @@ import {
 } from '../actorIntegration';
 import type { StreamEvent, TaskPhase } from '../../types/streaming';
 import type { UIMessage, UIPart } from '../../types/messages';
-
-// ── Mock persistence ──
-vi.spyOn(streamPersistence, 'init').mockResolvedValue(undefined);
-vi.spyOn(streamPersistence, 'restoreHotState').mockReturnValue(null);
-vi.spyOn(streamPersistence, 'scheduleFlush').mockImplementation(() => {});
-vi.spyOn(streamPersistence, 'appendEvents').mockResolvedValue(undefined);
-vi.spyOn(streamPersistence, 'flushNow').mockImplementation(() => {});
-vi.spyOn(streamPersistence, 'clearChat').mockResolvedValue(undefined);
 
 beforeEach(async () => {
   // reset 顺序: store → uiMessage → actor → init
@@ -189,7 +180,6 @@ describe('E2E: 完整生命周期 (create → events → clear)', () => {
     expect(useStreamingStore.getState().getStreamTaskMeta('c1')).toBeUndefined();
     expect(taskActorSystem.getActorByChat('c1')).toBeUndefined();
     expect(uiMessageStore.getMessages('c1').length).toBe(0);
-    expect(streamPersistence.clearChat).toHaveBeenCalledWith('c1');
   });
 
   it('多模型路径: prompt → DECOMPOSING → 3 subtasks → DISPATCHING → EXECUTING → REVIEWING → DELIVERING → DONE', async () => {

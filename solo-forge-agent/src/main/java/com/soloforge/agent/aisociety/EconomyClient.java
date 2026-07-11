@@ -59,15 +59,17 @@ public class EconomyClient {
 
     /**
      * 检查余额是否足够
+     *
+     * ★ 2026-07-11: 信用分只通过 👍/👎 变动, LLM 调用不再扣费。
+     * 此处仅检查 credits > 0, 即 👎 累积到归零才会被拦截。
      */
     public boolean checkBalance(String agentId, String modelBinding) {
-        double cost = getCost(modelBinding);
         try {
             var rows = jdbcTemplate.queryForList(
                 "SELECT credits FROM economy WHERE agent_id = ?", agentId);
             if (!rows.isEmpty()) {
                 double credits = ((Number) rows.get(0).get("credits")).doubleValue();
-                return credits >= cost;
+                return credits > 0;
             }
         } catch (Exception e) {
             log.warn("EconomyClient.checkBalance failed: {}", e.getMessage());
@@ -76,31 +78,14 @@ public class EconomyClient {
     }
 
     /**
-     * 扣费
+     * 扣费 (已停用 — 2026-07-11)
+     *
+     * 信用分只通过用户 👍/👎 反馈变动, LLM 调用不再扣费。
+     * 保留方法签名兼容已有调用点, 但内部不再执行扣减。
      */
     public void spend(String agentId, String modelBinding) {
-        double cost = getCost(modelBinding);
-        try {
-            ensureAccount(agentId);
-            String now = LocalDateTime.now().toString();
-            jdbcTemplate.update(
-                "UPDATE economy SET credits = credits - ?, updated_at = ? WHERE agent_id = ?",
-                cost, now, agentId);
-
-            // 记录交易
-            String txId = "ctx_" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 12);
-            var econRows = jdbcTemplate.queryForList("SELECT id FROM economy WHERE agent_id = ?", agentId);
-            if (!econRows.isEmpty()) {
-                String econId = (String) econRows.get(0).get("id");
-                jdbcTemplate.update("""
-                    INSERT INTO credit_transaction (id, economy_id, amount, transaction_type, category, description, created_at)
-                    VALUES (?, ?, ?, 'debit', 'llm_call', ?, ?)
-                    """, txId, econId, cost, "LLM call: " + modelBinding, now);
-            }
-            log.debug("Economy spend: agent={} cost={} model={}", agentId, cost, modelBinding);
-        } catch (Exception e) {
-            log.error("EconomyClient.spend failed: {}", e.getMessage());
-        }
+        // no-op: 信用分仅通过反馈系统变动
+        log.debug("Economy spend skipped (feedback-only mode): agent={}", agentId);
     }
 
     /**
@@ -125,6 +110,32 @@ public class EconomyClient {
             }
         } catch (Exception e) {
             log.error("EconomyClient.reward failed: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 扣减信用分 (固定金额, 用于反馈惩罚等场景)
+     */
+    public void penalty(String agentId, double amount, String category) {
+        try {
+            ensureAccount(agentId);
+            String now = LocalDateTime.now().toString();
+            jdbcTemplate.update(
+                "UPDATE economy SET credits = credits - ?, updated_at = ? WHERE agent_id = ?",
+                amount, now, agentId);
+
+            String txId = "ctx_" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+            var econRows = jdbcTemplate.queryForList("SELECT id FROM economy WHERE agent_id = ?", agentId);
+            if (!econRows.isEmpty()) {
+                String econId = (String) econRows.get(0).get("id");
+                jdbcTemplate.update("""
+                    INSERT INTO credit_transaction (id, economy_id, amount, transaction_type, category, description, created_at)
+                    VALUES (?, ?, ?, 'debit', ?, ?, ?)
+                    """, txId, econId, amount, category, "Feedback penalty", now);
+            }
+            log.info("Economy penalty: agent={} amount={} category={}", agentId, amount, category);
+        } catch (Exception e) {
+            log.error("EconomyClient.penalty failed: {}", e.getMessage());
         }
     }
 

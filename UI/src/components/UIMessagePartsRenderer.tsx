@@ -14,6 +14,7 @@
  *
  * 2026-07-10: P3 集成层
  * 2026-07-10: 视觉打磨 — 交错入场动画、审计折叠、phase 过渡、步骤条动画
+ * 2026-07-11: 补充 model-action Part 渲染器 (修复 LLM/Agent 思考过程不显示的 bug)
  */
 
 import React, { memo, useDeferredValue, useState, useCallback } from 'react';
@@ -42,6 +43,7 @@ import type {
   UISubTaskStepPart,
   UISubTaskDonePart,
   UIModelDelegationPart,
+  UIModelActionPart,
   UIAuditStartPart,
   UIAuditFindingPart,
   UIAuditDonePart,
@@ -123,6 +125,8 @@ const PartRenderer = memo(function PartRenderer({ part, isStreaming, isLast, cha
       return <SubTaskDonePartView part={part} />;
     case 'model-delegation':
       return <ModelDelegationPartView part={part} chatId={chatId} />;
+    case 'model-action':
+      return <ModelActionPartView part={part} />;
     case 'audit-start':
       return <AuditStartPartView part={part} />;
     case 'audit-finding':
@@ -353,6 +357,20 @@ const ModelDelegationPartView = memo(function ModelDelegationPartView({ part, ch
       )}
       <ArrowRight className="w-3 h-3 text-on-surface/30" />
       {part.detail && <span className="text-on-surface/70 font-medium truncate max-w-[120px]">{part.detail}</span>}
+    </div>
+  );
+});
+
+// ── Model Action: LLM/Agent 思考与调用过程 (v3.2 新增, v3.2.1 去除图标) ──
+
+const ModelActionPartView = memo(function ModelActionPartView({ part }: { part: UIModelActionPart }) {
+  return (
+    <div className="flex items-center gap-1.5 pl-2 py-0.5 text-[10px] text-on-surface/50 font-mono">
+      <span className="text-on-surface/30">[动作]</span>
+      <span>{part.action}</span>
+      {part.detail && (
+        <span className="text-on-surface/25 truncate max-w-[240px]">{part.detail}</span>
+      )}
     </div>
   );
 });

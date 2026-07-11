@@ -96,7 +96,7 @@ export async function handleDeleteChat(req: Request, res: Response): Promise<Res
   // 级联删除对话消息 + 配置
   try {
     const { getConversationStore } = await import('../services/chat/ConversationStore');
-    const deleted = getConversationStore().deleteAllForChat(id);
+    const deleted = await getConversationStore().deleteAllForChat(id);
     console.log(`[chats] DELETE chat=${id} cascaded delete conversations:`, deleted);
   } catch (e) {
     console.warn(`[chats] DELETE chat=${id} cascade delete conversations failed:`, (e as Error).message);
@@ -186,11 +186,11 @@ export function registerChatSessionRoutes(app: import('express').Express): void 
 }
 
 /**
- * 优雅退出: 进程退出时同步 flush 到磁盘
+ * 优雅退出: 进程退出时 flush 到热+温存储
  */
 export function flushChatStore(): void {
   try {
-    getChatStore().flushNow();
+    void getChatStore().flushNow();
   } catch (e) {
     console.warn('[chats] flushChatStore failed:', (e as Error).message);
   }

@@ -16,7 +16,7 @@ import java.util.List;
  *
  * 检索策略 (简单可控, 无需 embedding):
  *   1. 关键词匹配: 在 user_message 字段上做 LIKE, 按 domain 过滤
- *   2. Fallback: 无命中时取最近 N 条 (按 domain 过滤)
+ *   2. ★ 2026-07-11: 移除 Fallback — 无命中时不拉取无关案例, 避免其他会话记忆污染
  *
  * 格式化输出: 每条案例格式为 "用户问: ... → 助手答: ... (正向/负向)"
  * 正向案例供 Agent 学习好的回复模式, 负向案例标注"用户认为不好"供规避。
@@ -49,16 +49,14 @@ public class CaseRetriever {
     public List<String> retrieve(String query, String domain, int limit) {
         List<ExperienceCaseEntity> cases = new ArrayList<>();
 
-        // 1. 关键词检索
+        // 1. 关键词检索 — 只返回真正相关的案例
         if (query != null && !query.isBlank()) {
             cases = caseRepo.searchByKeyword(query, domain, limit);
         }
 
-        // 2. Fallback: 无命中时取最近 N 条
-        if (cases.isEmpty()) {
-            log.debug("No keyword match, falling back to recent cases (domain={})", domain);
-            cases = caseRepo.findRecent(domain, limit);
-        }
+        // ★ 2026-07-11: 移除 Fallback — 无关键词命中时返回空列表
+        //   之前: 无命中时取最近 N 条 → 其他会话的无关案例污染当前对话
+        //   现在: 只用关键词匹配的案例, 无匹配则不注入案例
 
         if (cases.isEmpty()) {
             return List.of();

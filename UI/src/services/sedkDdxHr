@@ -1,5 +1,5 @@
 /**
- * sseBackend.ts — SoloForge 事件总线 SSE 订阅层 (v3.2)
+ * sseBackend.ts — SoloForge 事件总线 SSE 订阅层 (v3.1)
  *
  * 监听后端 /api/events/stream, 把 phase 事件 (phase0/1/2/3) 翻译成 ChatStreamEvent
  * 推到 ChatPanel 回调, 由 ChatPanel 进一步喂给 useStreamingStore。
@@ -12,12 +12,9 @@
  *   - chatId 匹配: 收到 phase 事件按 payload.chatId 路由到对应 subscriber
  *   - 自动重连 (EventSource 原生 + 退避)
  *
- * v3.2 修复: 将 model_action 加入 PHASE_EVENTS 白名单,
- *       使 LLM/Agent 思考/调用过程事件能穿透传输层到达 subscriber handler。
- *
  * 协议:
- *   data: {"event":"phase0_subtask","payload":{...},"timestamp":123}
- *   data: {"event":"phase1_worker_start","payload":{...},"timestamp":123}
+ *   data: {"event":"phase0_subtask","payload":{...},"timestamp":123}\n\n
+ *   data: {"event":"phase1_worker_start","payload":{...},"timestamp":123}\n\n
  *   ...
  */
 
@@ -44,9 +41,6 @@ const PHASE_EVENTS = new Set([
   'tool_stdout',
   'tool_stderr',
   'tool_exit',
-  // 模型推理动作事件 (LLM/Agent 思考/调用过程)
-  // v3.2 补充: 使 model_action 能穿透 dispatchEvent 白名单过滤
-  'model_action',
 ]);
 
 export interface PhaseHandler {
@@ -188,7 +182,7 @@ class SseBackend {
    * v3.2 性能: rAF 16ms 合并,避开 LLM 流式事件高峰导致 React 长任务
    */
   private dispatchEvent(eventName: string, payload: any, timestamp: number): void {
-    // 1) 只关心 phase 事件 (含 model_action)
+    // 1) 只关心 phase 事件
     if (!PHASE_EVENTS.has(eventName)) return;
 
     // 2) payload.chatId 必须存在
@@ -206,95 +200,80 @@ class SseBackend {
       } catch (err) {
         console.error('[sseBackend] routeToolEventToTerminalStore threw', err);
       }
-      return;
     }
 
-    // 3) 入队批处理
+    // 入队 → schedule rAF
     this.batchQueue.push({ eventName, payload, timestamp });
-    this.scheduleDrain();
-  }
-
-  /** rAF 批量刷新: 每帧最多 drain 1 次 */
-  private scheduleDrain(): void {
-    if (this.batchRafId !== null) return;
-    this.batchRafId = requestAnimationFrame(() => {
-      this.batchRafId = null;
-      this.drainBatch();
-    });
-  }
-
-  /** 顺序消费队列, 单批次内串行调用所有 subscriber handler */
-  private drainBatch(): void {
-    const batch = this.batchQueue.splice(0);
-    if (batch.length === 0) return;
-    for (const { eventName, payload, timestamp } of batch) {
-      const evtChatId = payload?.chatId;
-      for (const sub of this.subscribers) {
-        if (sub.chatId === evtChatId) {
-          try {
-            sub.handler({ event: eventName as any, payload, timestamp });
-          } catch (err) {
-            console.error('[sseBackend] subscriber handler threw', { eventName, evtChatId }, err);
-          }
-          break; // 每个 chatId 只匹配第一个 subscriber
-        }
-      }
+    if (this.batchRafId === null) {
+      const raf = typeof requestAnimationFrame !== 'undefined'
+        ? requestAnimationFrame.bind(typeof window !== 'undefined' ? window : globalThis)
+        : (cb: FrameRequestCallback) => setTimeout(() => cb(Date.now()), 16) as unknown as typeof requestAnimationFrame;
+      this.batchRafId = raf(() => this.flushBatch());
     }
   }
 
   /**
-   * tool_* 事件直通路由 → terminalLogStore
-   *
-   * 映射关系:
-   *   - tool_started:     { chatId, toolCallId, tool, command?, ts }
-   *   - tool_stdout:      { chatId, toolCallId, data (string), ts }
-   *   - tool_stderr:      { chatId, toolCallId, data (string), ts }
-   *   - tool_exit:         { chatId, toolCallId, tool, exitCode, durationMs?, ts }
-   *   - tool_completed:    { chatId, toolCallId, success, durationMs?, ts }
+   * 把 tool_* 事件路由到 terminalLogStore (按 chatId 隔离)
+   * 事件 payload 字段:
+   *   - tool_started:   { chatId, toolCallId, tool, args?, ts }
+   *   - tool_stdout:    { chatId, toolCallId, tool, chunk, ts }
+   *   - tool_stderr:    { chatId, toolCallId, tool, chunk, ts }
+   *   - tool_exit:      { chatId, toolCallId, tool, exitCode, durationMs?, ts }
+   *   - tool_completed: { chatId, toolCallId, success, durationMs?, ts }
    */
   private routeToolEventToTerminalStore(eventName: string, payload: any): void {
     const store = useTerminalLogStore.getState();
     const chatId = payload?.chatId;
     const toolCallId = payload?.toolCallId;
     if (!chatId || !toolCallId) return;
+    const tool = String(payload?.tool || 'execute_cmd');
 
     switch (eventName) {
       case 'tool_started':
-        store.appendLine(chatId, toolCallId, {
-          type: 'start',
-          tool: payload.tool ?? 'unknown',
-          command: payload.command ?? '',
-          timestamp: payload.ts ?? Date.now(),
-        });
+        store.onToolStarted(chatId, toolCallId, tool, payload.args);
         break;
       case 'tool_stdout':
-        store.appendLine(chatId, toolCallId, {
-          type: 'stdout',
-          data: String(payload.data ?? ''),
-          timestamp: payload.ts ?? Date.now(),
-        });
+        store.onToolStdout(chatId, toolCallId, String(payload.chunk ?? ''), tool);
         break;
       case 'tool_stderr':
-        store.appendLine(chatId, toolCallId, {
-          type: 'stderr',
-          data: String(payload.data ?? ''),
-          timestamp: payload.ts ?? Date.now(),
-        });
+        store.onToolStderr(chatId, toolCallId, String(payload.chunk ?? ''), tool);
         break;
       case 'tool_exit':
-        store.markCompleted(chatId, toolCallId, {
-          exitCode: payload.exitCode ?? 1,
-          durationMs: payload.durationMs,
-          timestamp: payload.ts ?? Date.now(),
-        });
+        store.onToolExit(chatId, toolCallId, Number(payload.exitCode ?? 0), payload.durationMs);
         break;
       case 'tool_completed':
-        store.markCompleted(chatId, toolCallId, {
-          exitCode: payload.success ? 0 : 1,
-          durationMs: payload.durationMs,
-          timestamp: payload.ts ?? Date.now(),
-        });
+        store.onToolCompleted(chatId, toolCallId, Boolean(payload.success), payload.durationMs);
         break;
+    }
+  }
+
+  private flushBatch(): void {
+    this.batchRafId = null;
+    if (this.batchQueue.length === 0) return;
+    // drain 队列引用,避免 flush 期间新事件入队再被本批消费
+    const drained = this.batchQueue;
+    this.batchQueue = [];
+    // 拷贝 subscribers — handler 内部可能 subscribe/unsubscribe, 改了原数组会破坏迭代
+    const subsSnapshot = this.subscribers.slice();
+    for (const { eventName, payload, timestamp } of drained) {
+      const evtChatId = payload.chatId;
+      if (!evtChatId) continue;
+      for (const sub of subsSnapshot) {
+        if (sub.chatId !== evtChatId) continue;
+        const taskId = payload.packetUuid ?? `phase-${timestamp}`;
+        // handler 抛错不能让整批 batch 中断
+        try {
+          sub.handler({
+            kind: 'phase',
+            phase: eventName,
+            taskId,
+            ...payload,
+            chatId: undefined,
+          });
+        } catch (err) {
+          console.error('[sseBackend] handler threw, continuing batch', err);
+        }
+      }
     }
   }
 }

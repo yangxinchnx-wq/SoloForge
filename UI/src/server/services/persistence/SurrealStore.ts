@@ -31,6 +31,8 @@ export interface ISurrealStore {
    *   - Noop / Garnet 退化为 []
    */
   listAllSessionIds?(): Promise<string[]>;
+  /** ★ 2026-07-11: 删除画布会话状态 (级联清理) */
+  deleteSessionState?(sessionId: string): Promise<boolean>;
   close(): Promise<void>;
   isAvailable(): boolean;
 }
@@ -44,6 +46,8 @@ class NoopSurrealStore implements ISurrealStore {
   async loadSessionSnapshot(): Promise<SessionState | null> { return null; }
   // s2.4: noop 不支持 listAllSessionIds, 返回空数组
   async listAllSessionIds(): Promise<string[]> { return []; }
+  // ★ 2026-07-11: noop deleteSessionState
+  async deleteSessionState(): Promise<boolean> { return false; }
   async close(): Promise<void> { /* noop */ }
   isAvailable(): boolean { return false; }
 }
@@ -195,6 +199,21 @@ class SurrealStoreImpl implements ISurrealStore {
   isAvailable(): boolean { return this.connected; }
 
   /**
+   * ★ 2026-07-11: 删除画布会话状态 (级联清理)
+   * DELETE FROM session_state WHERE sessionId = $sid
+   */
+  async deleteSessionState(sessionId: string): Promise<boolean> {
+    if (!this.connected) return false;
+    try {
+      await this.db.query('DELETE FROM session_state WHERE sessionId = $sid', { sid: sessionId });
+      return true;
+    } catch (e) {
+      console.warn(`[SurrealStore] deleteSessionState failed for ${sessionId}:`, (e as Error).message);
+      return false;
+    }
+  }
+
+  /**
    * s2.4: 列出 SurrealDB 里所有 sessionId
    *
    * 用 `SELECT id FROM session_state` 拿全部 id
@@ -298,6 +317,13 @@ const _synchronousFallback: ISurrealStore = {
       return _instance.listAllSessionIds();
     }
     return [];
+  },
+  // ★ 2026-07-11: 同步 fallback deleteSessionState — 转发给真实实例
+  async deleteSessionState(sessionId: string) {
+    if (_instance && typeof _instance.deleteSessionState === 'function') {
+      return _instance.deleteSessionState(sessionId);
+    }
+    return false;
   },
   async close() { /* noop */ },
   isAvailable() { return _instance?.isAvailable() ?? false; },

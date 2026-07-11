@@ -1,6 +1,8 @@
 /**
  * Conversation API 路由处理器 (Node-only)
  *
+ * ★ 2026-07-11: deleteAllForChat / deleteConfig 改为 async (三层删除)
+ *
  * 路由:
  *   GET    /api/conversations                    → 获取所有对话消息 + 配置
  *   PUT    /api/conversations                    → 全量替换所有对话消息
@@ -58,6 +60,7 @@ export function handlePutAllConversations(req: Request, res: Response): Response
 
 /**
  * GET /api/conversations/:chatId
+ * 同步返回内存缓存; 如果 miss, 后台异步从热/温层加载, 下次请求命中
  */
 export function handleGetConversation(req: Request, res: Response): Response {
   const chatId = String(req.params.chatId || '');
@@ -85,13 +88,13 @@ export function handlePutConversation(req: Request, res: Response): Response {
 
 /**
  * DELETE /api/conversations/:chatId
- * 级联删除消息 + 配置
+ * 级联删除消息 + 配置 (三层: 内存 + Garnet + SurrealDB)
  */
-export function handleDeleteConversation(req: Request, res: Response): Response {
+export async function handleDeleteConversation(req: Request, res: Response): Promise<Response> {
   const chatId = String(req.params.chatId || '');
   if (!chatId) return err(res, 400, 'chatId required');
   const store = getConversationStore();
-  const result = store.deleteAllForChat(chatId);
+  const result = await store.deleteAllForChat(chatId);
   return ok(res, result);
 }
 
@@ -125,11 +128,11 @@ export function handlePutConfig(req: Request, res: Response): Response {
 /**
  * DELETE /api/conversations/:chatId/config
  */
-export function handleDeleteConfig(req: Request, res: Response): Response {
+export async function handleDeleteConfig(req: Request, res: Response): Promise<Response> {
   const chatId = String(req.params.chatId || '');
   if (!chatId) return err(res, 400, 'chatId required');
   const store = getConversationStore();
-  store.deleteConfig(chatId);
+  await store.deleteConfig(chatId);
   return ok(res);
 }
 
@@ -151,15 +154,15 @@ export function registerConversationRoutes(app: import('express').Express): void
   app.get('/api/conversations/:chatId', handleGetConversation);
   app.put('/api/conversations/:chatId', handlePutConversation);
   app.delete('/api/conversations/:chatId', handleDeleteConversation);
-  console.log('[conversations] /api/conversations/* 路由已注册 (8 endpoints)');
+  console.log('[conversations] /api/conversations/* 路由已注册 (8 endpoints) ★ 三层架构');
 }
 
 /**
- * 优雅退出: 进程退出时同步 flush 到磁盘
+ * 优雅退出: 进程退出时 flush 到热+温存储
  */
 export function flushConversationStore(): void {
   try {
-    getConversationStore().flushNow();
+    void getConversationStore().flushNow();
   } catch (e) {
     console.warn('[conversations] flushConversationStore failed:', (e as Error).message);
   }

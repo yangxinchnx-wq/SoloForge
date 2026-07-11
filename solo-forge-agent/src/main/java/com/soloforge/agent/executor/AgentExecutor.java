@@ -94,16 +94,16 @@ public class AgentExecutor {
 
         // 3. 信用分检查
         economyClient.ensureAccount(agent.getId());
-        if (!economyClient.checkBalance(agent.getId(), agent.getModelBinding())) {
-            double credits = economyClient.getCredits(agent.getId());
-            double cost = economyClient.getCost(agent.getModelBinding());
-            return String.format("信用分不足: 当前 %.1f, 需要 %.1f", credits, cost);
-        }
+if (!economyClient.checkBalance(agent.getId(), agent.getModelBinding())) {
+double credits = economyClient.getCredits(agent.getId());
+return String.format("信用分耗尽: 当前 %.1f, 请通过 👍 反馈恢复", credits);
+}
 
         // 4. 构建 System Prompt
         List<String> capabilities = agentRepo.parseCapabilities(agent);
         List<String> toolDescs = toolRegistry.getToolDescriptions();
-        List<String> experiences = memoryClient.getLessons(agent.getDomain());
+        // ★ 2026-07-11: 经验只来自用户 👍/👎 反馈 (experience_case 表),
+        //   不再注入 social_memory 自动生成的流水账记忆
         List<String> cases = caseRetriever.retrieve(userMessage, agent.getDomain());
         List<String> culturePrinciples = cultureClient.getPrinciples();
 
@@ -115,7 +115,7 @@ public class AgentExecutor {
             canvasCtx,
             List.of(), // skillContents (Phase 3 接入)
             settings.getEnabledKnowledge(),
-            experiences,
+            List.of(), // experiences — 不再注入自动记忆, 只靠 👍/👎 案例库
             cases,
             culturePrinciples);
 
@@ -217,18 +217,17 @@ public class AgentExecutor {
 
                 // 3. 信用分检查
                 economyClient.ensureAccount(agent.getId());
-                if (!economyClient.checkBalance(agent.getId(), agent.getModelBinding())) {
-                    double credits = economyClient.getCredits(agent.getId());
-                    double cost = economyClient.getCost(agent.getModelBinding());
-                    sink.next(String.format("信用分不足: 当前 %.1f, 需要 %.1f", credits, cost));
-                    sink.complete();
-                    return;
-                }
+if (!economyClient.checkBalance(agent.getId(), agent.getModelBinding())) {
+double credits = economyClient.getCredits(agent.getId());
+sink.next(String.format("信用分耗尽: 当前 %.1f, 请通过 👍 反馈恢复", credits));
+sink.complete();
+return;
+}
 
                 // 4. 构建 System Prompt
                 List<String> capabilities = agentRepo.parseCapabilities(agent);
                 List<String> toolDescs = toolRegistry.getToolDescriptions();
-                List<String> experiences = memoryClient.getLessons(agent.getDomain());
+                // ★ 2026-07-11: 经验只来自用户 👍/👎 反馈 (experience_case 表)
                 List<String> cases = caseRetriever.retrieve(userMessage, agent.getDomain());
                 List<String> culturePrinciples = cultureClient.getPrinciples();
 
@@ -238,7 +237,8 @@ public class AgentExecutor {
                     agent, settings, capabilities, toolDescs,
                     settings.getWorkspaceFolder(),
                     canvasCtx, List.of(), settings.getEnabledKnowledge(),
-                    experiences, cases, culturePrinciples);
+                    List.of(), // experiences — 不再注入自动记忆
+                    cases, culturePrinciples);
 
                 // 5. 工具 schema
                 List<Map<String, Object>> tools = buildToolSchemas();
