@@ -3,14 +3,12 @@ import {
   RefreshCw, Play, Square, Loader2,
   CircleDot, AlertCircle, Monitor, Smartphone, Tablet, Watch,
   Palette, MonitorSmartphone, Info, ChevronDown, Check, Maximize2,
-  Code2, Box, Sparkles
+  Code2, Box
 } from '../utils/icons';
 import { MountTransition } from './MountTransition';
 import { CanvasNotificationStack } from './CanvasNotificationBubble';
 import { usePreviewStreamStore } from '../state/previewStreamStore';
 import WebAstPreview from './WebAstPreview';
-import CanvasStudioPanel from './CanvasStudioPanel';
-import { useChatStore } from '../state/useChatStore';
 import {
   drainCanvasNotifications,
   type CanvasNotification,
@@ -770,38 +768,6 @@ export default function PreviewPanel({
         <div className="flex-1 relative overflow-hidden">
           {noCanvas ? renderStandby() : renderPlaceholder()}
 
-          {/* ★ 2026-07-12: Canvas Studio toggle — 纯预览 + AI 指令修改 */}
-          {(previewAst || previewPayload) && (
-            <div className="absolute bottom-2 left-2 z-40">
-              <button
-                onClick={() => setShowSourceCode(s => !s)}
-                title="打开 Studio 面板"
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md backdrop-blur-md text-[10px] font-mono font-semibold transition-colors border ${
-                  showSourceCode
-                    ? 'bg-primary/80 border-primary text-white'
-                    : 'bg-black/50 hover:bg-black/65 border-white/15 text-white'
-                }`}
-              >
-                <Sparkles className="w-3 h-3" />
-                <span>Studio</span>
-              </button>
-            </div>
-          )}
-
-          {/* ★ 2026-07-12: Canvas Studio Panel — 纯预览 + 自然语言指令 */}
-          {showSourceCode && (previewAst || previewPayload) && (
-            <CanvasStudioPanel
-              dsl={previewPayload?.preview?.root || previewAst}
-              bgColor={bgColor}
-              isGenerating={previewIsStreaming}
-              onClose={() => setShowSourceCode(false)}
-              onSendToLLM={(instruction) => {
-                const store = useChatStore.getState();
-                store.setInputValue(() => instruction);
-                store.handleSend();
-              }}
-            />
-          )}
         </div>
       </div>
 

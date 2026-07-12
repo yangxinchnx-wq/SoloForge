@@ -475,6 +475,9 @@ export default function ChatPanel({
               }
             }
             const uiMessageId = assistantOrdinal >= 0 ? assistantUiMessageIds[assistantOrdinal] : undefined;
+            // ★ 2026-07-13: 判断是否是最后一个 assistant 消息
+            //   StreamPanel (TaskExecutionCard + 任务总结) 只在最后一个 assistant 消息上方渲染
+            const isLastAssistant = !isUser && assistantOrdinal === assistantUiMessageIds.length - 1;
             return (
               <div
                 key={index}
@@ -508,6 +511,24 @@ export default function ChatPanel({
                     <span className="text-[9px] text-on-surface/30 font-mono tracking-wide">{msg.time}</span>
                   </div>
                 </div>
+
+                {/* ★ 2026-07-13: 流送过程在 LLM 文本气泡上方
+                    过程信息 (phase-change / subtask / model-action / audit / delivery 等)
+                    + StreamPanel (TaskExecutionCard + 任务总结, 仅最后一个 assistant 消息)
+                    都在 LLM 文本气泡上方, 让用户先看到过程再看结果 */}
+                {!isUser && uiMessageId && (
+                  <div className="w-full max-w-[90%] pl-[58px]">
+                    <UIMessagePartsRenderer chatId={activeChatId} messageId={uiMessageId} />
+                  </div>
+                )}
+                {!isUser && isLastAssistant && (
+                  <StreamPanel
+                    chatId={activeChatId}
+                    mainModel={mainModel}
+                    modelCount={1 + (secModels?.length || 0)}
+                    permissionMode={permissionMode}
+                  />
+                )}
 
                 {/* Content block: aligned on right or left
                     ★ 2026-07-13: 空的 assistant 占位消息在生成中时隐藏气泡,
