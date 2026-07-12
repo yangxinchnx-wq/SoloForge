@@ -22,8 +22,7 @@ import { PromptCard } from './PromptCard';
 import { ModelIcon } from './ModelIcon';
 // P3 集成: 自动持久化 + clearChatAll (同时清理 Actor + uiMessageStore + persistence)
 import { useAutoPersist, clearChatAll } from '../services/actorIntegration';
-// P3 集成: Data Parts 模式渲染器 — 与 TaskTree 并行, 展示 UIMessage parts 时间线
-import { UIMessagePartsRenderer } from './UIMessagePartsRenderer';
+// ★ 2026-07-13: UIMessagePartsRenderer 已移至 ChatPanel map 内, 每轮独立渲染
 import { MountTransition } from './MountTransition';
 // H-3 迁移: 从 uiMessageStore 派生摘要状态, 替代直接订阅 streamingStore.tasks[chatId]
 import { useStreamSummary } from '../services/useStreamSummary';

@@ -91,9 +91,21 @@ export const UIMessagePartsRenderer = memo(function UIMessagePartsRenderer({
   //   原代码同时渲染 text part 导致 LLM 回复在两处重复显示
   const processParts = deferredParts.filter(p => p.type !== 'text');
 
-  if (!message || processParts.length === 0) return null;
+  const isStreaming = message?.status === 'streaming';
 
-  const isStreaming = message.status === 'streaming';
+  // ★ 2026-07-13: 消息不存在直接返回
+  if (!message) return null;
+
+  // ★ 2026-07-13: streaming 时 parts 为空, 显示 loading 占位
+  //   确保发送瞬间流送区立即出现, 而非等第一个 SSE 事件
+  if (processParts.length === 0) {
+    return isStreaming ? (
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] text-on-surface/50 font-mono">
+        <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
+        <span>正在准备…</span>
+      </div>
+    ) : null;
+  }
 
   return (
     <div className="flex flex-col gap-1.5">
