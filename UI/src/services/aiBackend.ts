@@ -15,15 +15,13 @@
  *            每个 text 事件携带 LLM delta 文本片段, 前端逐字追加渲染
  */
 
-import { StreamingLatencyTracker } from './perfMonitor';
-
 export type ChatStreamEvent =
   | { kind: 'text'; text: string; taskId?: string }
+  | { kind: 'reasoning'; text: string; taskId?: string }
   | { kind: 'phase'; phase: string; taskId?: string; [k: string]: any }
   | { kind: 'agent'; agentId: string; name: string; avatar?: string; role?: string; domain?: string; modelBinding?: string; mainModel?: string; subModels?: string[]; subModel?: string; taskId?: string }
   | { kind: 'error'; error: string; taskId?: string }
-  | { kind: 'done'; taskId?: string; agentId?: string; experienceFingerprint?: string; strategy?: string }
-  | { kind: 'usage'; usage: { promptTokens: number; completionTokens: number; totalTokens: number; cachedTokens?: number }; taskId?: string };
+  | { kind: 'done'; taskId?: string; agentId?: string; experienceFingerprint?: string; strategy?: string };
 
 export interface ChatRequest {
   prompt: string;
@@ -169,6 +167,26 @@ function buildRacerRequestBody(req: ChatRequest): any {
   };
 }
 
+/**
+ * ★ 读取自定义性格描述 (透传给 Java SystemPromptBuilder)
+ * 内置 4 个性格 (professional/sarcastic/zen/geek) 返回 null, 走 Java 映射表;
+ * 自定义性格 (custom_*) 优先读 localStorage rules, 回退到 customPersonalities 列表的 desc
+ */
+function readPersonalityDesc(personality: string): string | null {
+  const BUILTIN = new Set(['professional', 'sarcastic', 'zen', 'geek']);
+  if (BUILTIN.has(personality)) return null; // 内置性格走 Java 映射表
+  if (typeof localStorage === 'undefined') return null;
+  // 优先读 rules localStorage (AgentSettingsModal 编辑后实时保存)
+  const rules = localStorage.getItem(`soloforge_personality_${personality}`);
+  if (rules) return rules;
+  // 回退到 customPersonalities 列表里的 desc
+  try {
+    const list = JSON.parse(localStorage.getItem('soloforge_custom_personalities') || '[]');
+    const found = Array.isArray(list) ? list.find((p: any) => p.id === personality) : null;
+    return found?.desc || null;
+  } catch { return null; }
+}
+
 function buildJavaRequestBody(req: ChatRequest): any {
   const settings = req.activeSettings || {};
 
@@ -199,6 +217,8 @@ function buildJavaRequestBody(req: ChatRequest): any {
     settings: {
       agentId: req.agentId || settings.agentId || 'code_agent',
       personality: settings.personality || 'professional',
+      // ★ 自定义性格描述透传给 Java SystemPromptBuilder (内置 4 个性格时为 null, 走映射表)
+      personalityDesc: readPersonalityDesc(settings.personality || 'professional'),
       tone: settings.tone || 'detailed',
       emojiMode: settings.emojiMode || (settings.emojiEnabled ? settings.emojiType || 'standard' : 'off'),
       emojiEnabled: settings.emojiEnabled ?? false,
@@ -263,25 +283,15 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
   let currentEvent = '';
   let currentData = '';
   let doneSent = false;
-  let sseDebugLineCount = 0;
-  // ★ 启动 LLM 流式延迟追踪 (TTFT / 总时延 / 字节数)
-  const latencyTracker = new StreamingLatencyTracker();
-  latencyTracker.start(`llm-stream:${req.mainModel || 'java-agent'}`);
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    if (value) latencyTracker.recordChunk(value.byteLength);
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n');
     buffer = lines.pop() || '';
 
     for (const line of lines) {
-      // [DEBUG SSE] 打印前 30 行原始数据, 看 Java 后端实际返回了什么
-      if (sseDebugLineCount < 30 && line.trim()) {
-        console.log(`[SSE DEBUG] line#${sseDebugLineCount}: ${line.slice(0, 200)}`);
-        sseDebugLineCount++;
-      }
       if (line.startsWith('event:')) {
         currentEvent = line.substring(6).trim();
       } else if (line.startsWith('data:')) {
@@ -292,13 +302,12 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
             const data = JSON.parse(currentData);
             if (currentEvent === 'text' && data.content) {
               onEvent({ kind: 'text', text: data.content, taskId });
+            } else if (currentEvent === 'reasoning' && data.content) {
+              onEvent({ kind: 'reasoning', text: data.content, taskId });
             } else if (currentEvent === 'phase') {
               onEvent({ kind: 'phase', phase: data.phase, taskId, ...data });
             } else if (currentEvent === 'agent') {
               onEvent({ kind: 'agent', agentId: data.agentId, name: data.name, avatar: data.avatar, role: data.role, domain: data.domain, modelBinding: data.modelBinding, mainModel: data.mainModel, subModels: data.subModels, subModel: data.subModel, taskId });
-            } else if (currentEvent === 'usage') {
-              // ★ Java Agent 发送的 token 统计事件
-              onEvent({ kind: 'usage', usage: { promptTokens: data.promptTokens ?? 0, completionTokens: data.completionTokens ?? 0, totalTokens: data.totalTokens ?? 0, cachedTokens: data.cachedTokens }, taskId });
             } else if (currentEvent === 'error') {
               onEvent({ kind: 'error', error: data.error || 'Unknown error', taskId });
             } else if (currentEvent === 'done') {
@@ -306,8 +315,7 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
               onEvent({ kind: 'done', taskId, agentId: data.agentId });
             }
           } catch (e) {
-            // [DEBUG SSE] 不再静默吞错, 打印解析失败的信息
-            console.warn(`[SSE DEBUG] JSON.parse failed: event=${currentEvent}, data=${currentData.slice(0, 200)}, error=${e}`);
+            // SSE JSON parse error — silently skip malformed events
           }
         }
         currentEvent = '';
@@ -321,12 +329,12 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
       const data = JSON.parse(currentData);
       if (currentEvent === 'text' && data.content) {
         onEvent({ kind: 'text', text: data.content, taskId });
+      } else if (currentEvent === 'reasoning' && data.content) {
+        onEvent({ kind: 'reasoning', text: data.content, taskId });
       } else if (currentEvent === 'phase') {
         onEvent({ kind: 'phase', phase: data.phase, taskId, ...data });
       } else if (currentEvent === 'agent') {
         onEvent({ kind: 'agent', agentId: data.agentId, name: data.name, avatar: data.avatar, role: data.role, domain: data.domain, modelBinding: data.modelBinding, mainModel: data.mainModel, subModels: data.subModels, subModel: data.subModel, taskId });
-      } else if (currentEvent === 'usage') {
-        onEvent({ kind: 'usage', usage: { promptTokens: data.promptTokens ?? 0, completionTokens: data.completionTokens ?? 0, totalTokens: data.totalTokens ?? 0, cachedTokens: data.cachedTokens }, taskId });
       } else if (currentEvent === 'done') {
         doneSent = true;
         onEvent({ kind: 'done', taskId, agentId: data.agentId });
@@ -339,8 +347,6 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
     console.log('[aiBackend] Java SSE 流结束, 后端未发 done 事件 → 合成 done');
     onEvent({ kind: 'done', taskId });
   }
-  // ★ 结束延迟追踪, emit LatencySample
-  latencyTracker.finish();
 }
 
 /**
@@ -368,6 +374,11 @@ async function parseRacerSSE(
         case 'text':
           if (data.content) {
             onEvent({ kind: 'text', text: data.content, taskId });
+          }
+          break;
+        case 'reasoning':
+          if (data.content) {
+            onEvent({ kind: 'reasoning', text: data.content, taskId });
           }
           break;
         case 'phase':
@@ -435,6 +446,68 @@ class JavaUnavailableError extends Error {
  * 不经过 Java Agent 编排 (无 Function Calling/Agent 循环),
  * 但保证基本的 LLM 对话能力可用
  */
+/**
+ * 构建 LLM 代理路径的 system prompt
+ * 与 Java SystemPromptBuilder 对齐: personality + tone + emoji
+ * 当 Java Agent 不可用时, LLM 代理也能尊重用户的对话设置
+ * 性格描述优先读取 localStorage 自定义内容 (由 AgentSettingsModal 编辑)
+ */
+function buildLLMProxySystemPrompt(settings?: ChatRequest['activeSettings']): string {
+  if (!settings) return '你是 SoloForge AI 助手。请用中文回答用户问题。';
+
+  const PERSONALITY_DEFAULTS: Record<string, string> = {
+    professional: '保持专业严谨的工程师风格，使用准确的技术术语',
+    sarcastic:    '可以适度毒舌，用反讽手法指出问题，但保持技术准确',
+    zen:          '用禅意、克制的语言，少废话，直击本质',
+    geek:         '用极客黑话和技术梗，展现黑客气质',
+  };
+  const TONE_MAP: Record<string, string> = {
+    detailed:  '回答要详尽，包含原理说明和代码示例',
+    concise:   '回答要简洁，直击要点，避免冗余解释',
+    humorous:  '回答可适度幽默，但不要影响技术准确性',
+  };
+  const EMOJI_MAP: Record<string, string> = {
+    standard: '可以使用标准 emoji 表情',
+    kaomoji:  '可以使用颜文字 (如 (╯°□°)╯)',
+    mixed:    '可以混合使用 emoji 和颜文字',
+    off:      '不要使用 emoji 或颜文字',
+  };
+
+  const parts: string[] = ['你是 SoloForge AI 助手。'];
+
+  const personality = settings.personality || 'professional';
+  // ★ 优先从 localStorage 读取用户自定义的性格描述
+  const customPersonality = typeof localStorage !== 'undefined'
+    ? localStorage.getItem(`soloforge_personality_${personality}`)
+    : null;
+  // 自定义性格: 若 rules localStorage 未存, 则回退到 customPersonalities 列表里的 desc
+  const customListDesc = (() => {
+    if (typeof localStorage === 'undefined') return '';
+    try {
+      const list = JSON.parse(localStorage.getItem('soloforge_custom_personalities') || '[]');
+      const found = Array.isArray(list) ? list.find((p: any) => p.id === personality) : null;
+      return found?.desc || '';
+    } catch { return ''; }
+  })();
+  const personalityDesc = customPersonality ?? PERSONALITY_DEFAULTS[personality] ?? customListDesc ?? '';
+  if (personalityDesc) {
+    parts.push(`性格: ${personalityDesc}`);
+  }
+
+  const tone = settings.tone || 'detailed';
+  if (TONE_MAP[tone]) {
+    parts.push(TONE_MAP[tone]);
+  }
+
+  const emojiMode = settings.emojiEnabled ? (settings.emojiType || 'mixed') : 'off';
+  if (EMOJI_MAP[emojiMode]) {
+    parts.push(EMOJI_MAP[emojiMode]);
+  }
+
+  parts.push('请用中文回答用户问题。');
+  return parts.join('\n');
+}
+
 async function executeLLMProxyPath(req: ChatRequest, signal: AbortSignal, taskId: string, onEvent: (e: ChatStreamEvent) => void): Promise<void> {
   if (!req.mainProvider) {
     onEvent({ kind: 'error', error: 'Java Agent 不可达且未配置 mainProvider, 无法 fallback 到 LLM 代理。请启动 Java 后端 (8770) 或配置模型。', taskId });
@@ -448,11 +521,8 @@ async function executeLLMProxyPath(req: ChatRequest, signal: AbortSignal, taskId
     baseUrl: req.mainProvider.baseUrl,
     apiKey: req.mainProvider.apiKey,
     model: req.mainProvider.model,
+    systemPrompt: buildLLMProxySystemPrompt(req.activeSettings),
   };
-
-  if (req.activeSettings?.personality) {
-    llmReqBody.systemPrompt = `你是 SoloForge AI 助手。性格: ${req.activeSettings.personality}。请用中文回答用户问题。`;
-  }
 
   const res = await fetch('/api/llm/stream', {
     method: 'POST',
@@ -471,14 +541,10 @@ async function executeLLMProxyPath(req: ChatRequest, signal: AbortSignal, taskId
   const decoder = new TextDecoder();
   let buffer = '';
   let doneSent = false;
-  // ★ 启动 LLM 流式延迟追踪
-  const latencyTracker = new StreamingLatencyTracker();
-  latencyTracker.start(`llm-proxy:${req.mainProvider?.model || 'unknown'}`);
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    if (value) latencyTracker.recordChunk(value.byteLength);
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n');
     buffer = lines.pop() || '';
@@ -496,10 +562,6 @@ async function executeLLMProxyPath(req: ChatRequest, signal: AbortSignal, taskId
         }
         if (chunk.done) {
           doneSent = true;
-          // ★ done 帧可能携带 usage (Node LLM 代理在流式最后一帧合并)
-          if (chunk.usage) {
-            onEvent({ kind: 'usage', usage: chunk.usage, taskId });
-          }
           onEvent({ kind: 'done', taskId });
           return;
         }
@@ -513,8 +575,6 @@ async function executeLLMProxyPath(req: ChatRequest, signal: AbortSignal, taskId
   if (!doneSent && !signal.aborted) {
     onEvent({ kind: 'done', taskId });
   }
-  // ★ 结束延迟追踪
-  latencyTracker.finish();
 }
 
 /**

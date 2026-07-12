@@ -15,7 +15,7 @@
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown } from '../../utils/icons';
+import { ChevronDown, Plus } from '../../utils/icons';
 import { useThemedSurface } from './themeColors';
 
 const AVATARS = [
@@ -27,7 +27,12 @@ const AVATARS = [
 
 const STORAGE_AVATAR = 'soloforge_user_avatar_idx';
 const STORAGE_NAME = 'soloforge_user_name';
+const STORAGE_CUSTOM_AVATAR = 'soloforge_user_custom_avatar';
 const DEFAULT_NAME = '问剑白玉京';
+
+// 允许上传的图片 MIME 类型白名单 (拒绝音乐、视频、可执行等)
+const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/svg+xml'];
+const MAX_AVATAR_SIZE = 2 * 1024 * 1024; // 2MB
 
 type OpenMenu = 'avatar' | 'name' | null;
 
@@ -36,12 +41,14 @@ function UserBadgeSelectorImpl() {
   const [names, setNames] = useState<string[]>([]);
   const [customName, setCustomName] = useState<string>('');
   const [avatarIdx, setAvatarIdx] = useState(0);
+  const [customAvatar, setCustomAvatar] = useState<string>('');
   const [name, setName] = useState('');
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
   const rootRef = useRef<HTMLDivElement | null>(null);
   const lastWheelRef = useRef(0);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const editValueRef = useRef('');
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -80,6 +87,41 @@ function UserBadgeSelectorImpl() {
       const idx = parseInt(saved, 10);
       if (idx >= 0 && idx < AVATARS.length) setAvatarIdx(idx);
     }
+    const savedCustom = localStorage.getItem(STORAGE_CUSTOM_AVATAR);
+    if (savedCustom) setCustomAvatar(savedCustom);
+  }, []);
+
+  // ── 上传自定义头像 ─────────────────────────────────────
+  // 校验: 仅允许图片 MIME, ≤2MB; 拒绝音乐/视频/可执行等
+  const handleAvatarUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+      alert('仅支持上传图片文件 (PNG / JPEG / WebP / GIF / SVG)');
+      e.target.value = '';
+      return;
+    }
+    if (file.size > MAX_AVATAR_SIZE) {
+      alert('头像文件过大, 请控制在 2MB 以内');
+      e.target.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      setCustomAvatar(dataUrl);
+      localStorage.setItem(STORAGE_CUSTOM_AVATAR, dataUrl);
+      window.dispatchEvent(new CustomEvent('soloforge-user-badge-updated'));
+    };
+    reader.onerror = () => alert('头像读取失败, 请重试');
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  }, []);
+
+  const removeCustomAvatar = useCallback(() => {
+    setCustomAvatar('');
+    localStorage.removeItem(STORAGE_CUSTOM_AVATAR);
+    window.dispatchEvent(new CustomEvent('soloforge-user-badge-updated'));
   }, []);
 
   // ── 编辑模式: 自动聚焦 input ──────────────────────────
@@ -393,10 +435,10 @@ function UserBadgeSelectorImpl() {
             key="panel-avatar"
             role="listbox"
             aria-label="选择头像"
-            initial={{ opacity: 0, scale: 0.9, y: -4 }}
+            initial={{ opacity: 0, scale: 0.94, y: -3 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.9, y: -4 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            exit={{ opacity: 0, scale: 0.94, y: -3 }}
+            transition={{ duration: 0.1, ease: [0.16, 1, 0.3, 1] }}
             onMouseDown={(e) => e.stopPropagation()}
             style={{
               ...panelStyle,
@@ -431,6 +473,56 @@ function UserBadgeSelectorImpl() {
                 <img src={src} alt={`头像 ${idx + 1}`} className="w-12 h-12 object-cover" draggable={false} />
               </motion.button>
             ))}
+            {/* 自定义头像 (已上传) */}
+            {customAvatar && (
+              <motion.button
+                key="custom-avatar"
+                type="button"
+                role="option"
+                aria-selected={false}
+                aria-label="自定义头像 (右键移除)"
+                title="右键单击移除自定义头像"
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1], delay: AVATARS.length * 0.02 }}
+                onClick={() => setAvatarIdx(0)}
+                onContextMenu={(e) => { e.preventDefault(); removeCustomAvatar(); }}
+                whileHover={{ scale: 1.08 }}
+                whileTap={{ scale: 0.94 }}
+                className="relative shrink-0 rounded-xl overflow-hidden cursor-pointer"
+                style={{ border: '2px solid var(--color-primary)' }}
+              >
+                <img src={customAvatar} alt="自定义头像" className="w-12 h-12 object-cover" draggable={false} />
+              </motion.button>
+            )}
+            {/* 上传按钮 — 虚线轮廓, 主题色 */}
+            <motion.button
+              key="upload-avatar"
+              type="button"
+              aria-label="上传自定义头像"
+              title="上传自定义头像 (PNG / JPEG / WebP / GIF / SVG, ≤2MB)"
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1], delay: (AVATARS.length + 1) * 0.02 }}
+              onClick={() => fileInputRef.current?.click()}
+              whileHover={{ scale: 1.08 }}
+              whileTap={{ scale: 0.94 }}
+              className="relative shrink-0 rounded-xl overflow-hidden cursor-pointer w-12 h-12 flex items-center justify-center"
+              style={{
+                border: `2px dashed var(--color-primary)`,
+                color: 'var(--color-primary)',
+                background: rgba('--color-primary-rgb', 0.06),
+              }}
+            >
+              <Plus className="w-5 h-5" />
+            </motion.button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+              onChange={handleAvatarUpload}
+              className="hidden"
+            />
           </motion.div>
         )}
       </AnimatePresence>
@@ -442,10 +534,10 @@ function UserBadgeSelectorImpl() {
             key="panel-name"
             role="listbox"
             aria-label="选择名字"
-            initial={{ opacity: 0, scale: 0.9, y: -4 }}
+            initial={{ opacity: 0, scale: 0.94, y: -3 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.9, y: -4 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            exit={{ opacity: 0, scale: 0.94, y: -3 }}
+            transition={{ duration: 0.1, ease: [0.16, 1, 0.3, 1] }}
             onMouseDown={(e) => e.stopPropagation()}
             style={{
               ...panelStyle,
@@ -469,7 +561,7 @@ function UserBadgeSelectorImpl() {
                     aria-selected={isSelected}
                     initial={{ opacity: 0, y: -4 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1], delay: Math.min(idx * 0.015, 0.3) }}
+                    transition={{ duration: 0.1, ease: [0.22, 1, 0.36, 1], delay: Math.min(idx * 0.008, 0.08) }}
                     onClick={() => selectName(n)}
                     whileHover={{ x: 2 }}
                     className={`relative w-full text-left px-3 py-2 rounded-lg text-xs font-semibold flex items-center justify-between select-none cursor-pointer hover:bg-primary/10 ${

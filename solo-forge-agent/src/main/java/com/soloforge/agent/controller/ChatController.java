@@ -120,7 +120,13 @@ public class ChatController {
             textFlux.subscribe(
                 chunk -> {
                     try {
-                        sendSseEvent(emitter, "text", Map.of("content", chunk));
+                        // ★ FIX 2026-07-12: reasoning_content 用 \u0001 前缀标记
+                        //   发送 'reasoning' 事件, 前端不喂给 IncrementalCanvasPusher
+                        if (chunk.startsWith("\u0001")) {
+                            sendSseEvent(emitter, "reasoning", Map.of("content", chunk.substring(1)));
+                        } else {
+                            sendSseEvent(emitter, "text", Map.of("content", chunk));
+                        }
                     } catch (Exception e) {
                         log.warn("SSE send chunk failed: {}", e.getMessage());
                     }

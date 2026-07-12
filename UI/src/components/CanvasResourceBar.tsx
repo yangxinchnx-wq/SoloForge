@@ -16,7 +16,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Layers, Plus, Crown, Users } from '../utils/icons';
+import { Plus, Crown, Users } from '../utils/icons';
 import type { CanvasResource } from '../services/canvas/sessionApi';
 
 interface Props {
@@ -85,11 +85,7 @@ export function CanvasResourceBar({
   };
 
   return (
-    <div className="flex items-center gap-1 px-2 h-9 bg-surface/60 border-b border-outline/30 select-none">
-      <Layers className="w-3.5 h-3.5 text-on-surface/60 shrink-0 mr-1" />
-      <span className="text-[10px] uppercase tracking-wider text-on-surface/50 mr-1 shrink-0">
-        画布池
-      </span>
+    <div className="flex items-center gap-1 px-3 h-14 bg-surface/60 border-b border-outline/30 select-none">
       <div className="flex items-center gap-1 overflow-x-auto scrollbar-none">
         {sorted.map((c) => {
           const active = c.sessionId === activeCanvasId;

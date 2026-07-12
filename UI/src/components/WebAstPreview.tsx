@@ -8,12 +8,6 @@
  *   当 LLM 返回 json 代码块时, pushRawDsl 直接写入 Flutter DSL 到 previewStreamStore,
  *   WebAstPreview 需要同时处理 UniversalNode 和 Flutter DSL 两种格式。
  *
- * ★ 2026-07-12 v2: 优化 SVG 渲染质量
- *   - 提取 viewBox 自动计算宽高比
- *   - shape-rendering: geometricPrecision 抗锯齿
- *   - preserveAspectRatio: xMidYMid meet 居中
- *   - 自适应容器大小, max-width 限制
- *
  * 支持 12 种节点类型: container/row/column/stack/text/button/input/image/divider/spacer/svg/canvas
  */
 
@@ -157,33 +151,6 @@ function justifyToCSS(justify?: string): React.CSSProperties {
   return map[justify] || {};
 }
 
-// ── SVG 优化处理 ──
-
-function optimizeSvg(svgContent: string): { html: string; viewBox: string } {
-  let cleanSvg = svgContent;
-
-  // 提取 viewBox
-  const viewBoxMatch = cleanSvg.match(/viewBox=["'](\S+\s+\S+\s+\S+\s+\S+)["']/);
-  const viewBox = viewBoxMatch?.[1] || '0 0 200 200';
-
-  // 移除 width/height 属性让 SVG 自适应
-  cleanSvg = cleanSvg.replace(/\swidth=["'][^"']*["']/g, '');
-  cleanSvg = cleanSvg.replace(/\sheight=["'][^"']*["']/g, '');
-
-  // 确保 viewBox 存在
-  if (!cleanSvg.includes('viewBox')) {
-    cleanSvg = cleanSvg.replace('<svg', `<svg viewBox="${viewBox}"`);
-  }
-
-  // 添加抗锯齿和响应式样式
-  cleanSvg = cleanSvg.replace(
-    '<svg',
-    '<svg style="width:100%;height:100%;display:block;shape-rendering:geometricPrecision;" preserveAspectRatio="xMidYMid meet"'
-  );
-
-  return { html: cleanSvg, viewBox };
-}
-
 // ── 节点渲染 ──
 
 function renderNode(node: UniversalNode, key: string): React.ReactNode {
@@ -206,20 +173,10 @@ function renderNode(node: UniversalNode, key: string): React.ReactNode {
       return <div key={key} style={style}>{n.content}</div>;
 
     case 'svg': {
-      // ★ 2026-07-12 v2: 优化 SVG 渲染质量
+      // ★ 2026-07-12: 支持 SVG 类型 — LLM 经常用 SVG 画图
       const svgContent = n.props?.content || n.content || '';
-      const { html: optimizedSvg, viewBox } = optimizeSvg(svgContent);
-
-      // 从 viewBox 计算宽高比
-      const parts = viewBox.split(/\s+/).map(Number);
-      const vbW = parts[2] || 200;
-      const vbH = parts[3] || 200;
-
-      // 用户指定的最大宽度
-      const maxWidth = n.props?.width
-        ? (typeof n.props.width === 'number' ? `${n.props.width}px` : n.props.width)
-        : '400px';
-
+      const svgWidth = n.props?.width || n.style?.width || '100%';
+      const svgHeight = n.props?.height || n.style?.height || '100%';
       return (
         <div
           key={key}
@@ -229,19 +186,12 @@ function renderNode(node: UniversalNode, key: string): React.ReactNode {
             alignItems: 'center',
             justifyContent: 'center',
             width: '100%',
-            minHeight: '80px',
-            padding: style.padding || '8px',
+            minHeight: '60px',
           }}
-        >
-          <div
-            style={{
-              width: '100%',
-              maxWidth,
-              aspectRatio: `${vbW} / ${vbH}`,
-            }}
-            dangerouslySetInnerHTML={{ __html: optimizedSvg }}
-          />
-        </div>
+          dangerouslySetInnerHTML={{
+            __html: `<div style="width:${typeof svgWidth === 'number' ? svgWidth + 'px' : svgWidth};height:${typeof svgHeight === 'number' ? svgHeight + 'px' : svgHeight};">${svgContent}</div>`,
+          }}
+        />
       );
     }
 
@@ -249,36 +199,6 @@ function renderNode(node: UniversalNode, key: string): React.ReactNode {
       // ★ 2026-07-12: 支持 canvas 类型 — 可能包含 SVG 或自定义绘制
       const innerContent = n.props?.content || n.content || '';
       if (innerContent) {
-        // 如果内容是 SVG, 用优化后的渲染
-        if (innerContent.includes('<svg')) {
-          const { html: optimizedSvg, viewBox } = optimizeSvg(innerContent);
-          const parts = viewBox.split(/\s+/).map(Number);
-          const vbW = parts[2] || 200;
-          const vbH = parts[3] || 200;
-          return (
-            <div
-              key={key}
-              style={{
-                ...style,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: '100%',
-                minHeight: '80px',
-                padding: '8px',
-              }}
-            >
-              <div
-                style={{
-                  width: '100%',
-                  maxWidth: '400px',
-                  aspectRatio: `${vbW} / ${vbH}`,
-                }}
-                dangerouslySetInnerHTML={{ __html: optimizedSvg }}
-              />
-            </div>
-          );
-        }
         return (
           <div
             key={key}
@@ -297,16 +217,16 @@ function renderNode(node: UniversalNode, key: string): React.ReactNode {
           style={{
             ...style,
             cursor: 'pointer',
-            border: n.variant === 'outlined' ? '1px solid currentColor' : 'none',
-            background: n.variant === 'filled' ? style.background || '#3b82f6' : 'transparent',
-            color: style.color || (n.variant === 'filled' ? '#fff' : '#3b82f6'),
+            border: node.variant === 'outlined' ? '1px solid currentColor' : 'none',
+            background: node.variant === 'filled' ? style.background || '#3b82f6' : 'transparent',
+            color: style.color || (node.variant === 'filled' ? '#fff' : '#3b82f6'),
             padding: '8px 16px',
             borderRadius: '6px',
             fontSize: '13px',
             fontWeight: 500,
           }}
         >
-          {n.label}
+          {node.label}
         </button>
       );
 
@@ -314,9 +234,9 @@ function renderNode(node: UniversalNode, key: string): React.ReactNode {
       return (
         <input
           key={key}
-          placeholder={n.placeholder}
-          defaultValue={n.value}
-          type={n.kind || 'text'}
+          placeholder={node.placeholder}
+          defaultValue={node.value}
+          type={node.kind || 'text'}
           style={{
             ...style,
             padding: '8px 12px',
@@ -349,32 +269,12 @@ function renderNode(node: UniversalNode, key: string): React.ReactNode {
       // ★ 2026-07-12: 未知类型尝试从 props.content 渲染
       const fallbackContent = n.props?.content || n.content;
       if (fallbackContent && typeof fallbackContent === 'string' && fallbackContent.includes('<svg')) {
-        const { html: optimizedSvg, viewBox } = optimizeSvg(fallbackContent);
-        const parts = viewBox.split(/\s+/).map(Number);
-        const vbW = parts[2] || 200;
-        const vbH = parts[3] || 200;
         return (
           <div
             key={key}
-            style={{
-              ...style,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: '100%',
-              minHeight: '80px',
-              padding: '8px',
-            }}
-          >
-            <div
-              style={{
-                width: '100%',
-                maxWidth: '400px',
-                aspectRatio: `${vbW} / ${vbH}`,
-              }}
-              dangerouslySetInnerHTML={{ __html: optimizedSvg }}
-            />
-          </div>
+            style={{ ...style, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            dangerouslySetInnerHTML={{ __html: fallbackContent }}
+          />
         );
       }
       if (n.children && n.children.length > 0) {

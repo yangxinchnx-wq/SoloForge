@@ -1,17 +1,13 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
-import type { CSSProperties } from 'react';
-import {
-  X, BarChart3, TrendingUp, Clock,
-  Database, MessageSquare, Flame, Cpu, Zap,
-  Activity, Gauge, HardDrive, LineChart as LineChartIcon, Brain, Search, Download
+import React, { useState, useEffect } from 'react';
+import { 
+  X, BarChart3, PieChart, TrendingUp, Clock, ArrowUpRight, ArrowDownRight, 
+  Database, MessageSquare, Calendar, Flame, Cpu, Zap, Award, Download,
+  Activity, Gauge, HardDrive, LineChart as LineChartIcon, Brain
 } from '../utils/icons';
 import {
   ResponsiveContainer,
   AreaChart,
   Area,
-  PieChart as RePieChart,
-  Pie,
-  Cell,
   XAxis,
   YAxis,
   Tooltip as ReChartsTooltip,
@@ -22,119 +18,311 @@ import {
   Line,
   Legend
 } from 'recharts';
-import { uiMessageStore } from '../services/uiMessageStore';
-import { useChatsStore } from '../state/chatsStore';
-import {
-  onPerfSample, FPSCounter, sampleMemory,
-  type FPSSample, type LatencySample, type MemorySample
-} from '../services/perfMonitor';
-import type { UIUsagePart } from '../types/messages';
 
 interface StatsModalProps {
   onClose: () => void;
 }
 
-// ─── 颜色 & 样式常量 ───
-const MODEL_COLORS = ['#3b82f6', '#4cf0b5', '#f59e0b', '#a855f7'];
-const getModelColor = (idx: number) => MODEL_COLORS[idx % MODEL_COLORS.length];
-
-const TOOLTIP_STYLE: CSSProperties = {
-  background: 'var(--color-surface)',
-  border: '1px solid var(--color-outline)',
-  borderRadius: '8px',
-  color: 'var(--color-on-surface)',
+const PERFORMANCE_DATA_DAY = {
+  renderHistory: [
+    { label: '02:00', editor: 8, chat: 18, sandbox: 35, avg: 20 },
+    { label: '06:00', editor: 9, chat: 20, sandbox: 38, avg: 22 },
+    { label: '10:00', editor: 12, chat: 32, sandbox: 54, avg: 32 },
+    { label: '14:00', editor: 14, chat: 38, sandbox: 62, avg: 38 },
+    { label: '18:00', editor: 11, chat: 30, sandbox: 48, avg: 29 },
+    { label: '22:00', editor: 9, chat: 22, sandbox: 39, avg: 23 },
+  ],
+  memoryBreakdown: [
+    { name: '代码编辑器', value: 16.4, color: '#3b82f6' },
+    { name: 'AI 聊天消息实体队列', value: 12.8, color: '#ffde82' },
+    { name: 'Virtual DOM & Layout 树基模', value: 8.5, color: '#4cf0b5' },
+    { name: '沙箱内运行时 JS Stack 堆栈', value: 24.3, color: '#a855f7' }
+  ],
+  apiPerformance: [
+    { model: 'GPT-4o', ttft: 280, speed: 85, successRate: 99.8 },
+    { model: 'Claude 3.5', ttft: 310, speed: 72, successRate: 99.5 },
+    { model: 'DeepSeek-R1', ttft: 460, speed: 48, successRate: 98.4 },
+    { model: 'Qwen-2.5-Local', ttft: 75, speed: 38, successRate: 100.0 }
+  ],
+  overall: {
+    avgRender: '23.4 ms',
+    activeMem: '62.0 MB',
+    avgTtft: '281 ms',
+    gcCount: '4 次',
+    loadSpeed: '0.85s',
+    concurrency: '4 c/s'
+  }
 };
 
-const TOOLTIP_LABEL_STYLE: CSSProperties = {
-  color: 'var(--color-primary)',
-  fontWeight: 'bold',
+const PERFORMANCE_DATA_WEEK = {
+  renderHistory: [
+    { label: '周一', editor: 10, chat: 25, sandbox: 44, avg: 26 },
+    { label: '周二', editor: 11, chat: 28, sandbox: 48, avg: 29 },
+    { label: '周三', editor: 13, chat: 34, sandbox: 58, avg: 35 },
+    { label: '周四', editor: 14, chat: 37, sandbox: 60, avg: 37 },
+    { label: '周五', editor: 12, chat: 31, sandbox: 51, avg: 31 },
+    { label: '周六', editor: 9, chat: 21, sandbox: 38, avg: 22 },
+    { label: '周日', editor: 8, chat: 18, sandbox: 35, avg: 20 },
+  ],
+  memoryBreakdown: [
+    { name: '代码编辑器', value: 24.1, color: '#3b82f6' },
+    { name: 'AI 聊天消息实体队列', value: 18.5, color: '#ffde82' },
+    { name: 'Virtual DOM & Layout 树基模', value: 11.2, color: '#4cf0b5' },
+    { name: '沙箱内运行时 JS Stack 堆栈', value: 34.2, color: '#a855f7' }
+  ],
+  apiPerformance: [
+    { model: 'GPT-4o', ttft: 290, speed: 83, successRate: 99.7 },
+    { model: 'Claude 3.5', ttft: 320, speed: 70, successRate: 99.4 },
+    { model: 'DeepSeek-R1', ttft: 480, speed: 45, successRate: 98.1 },
+    { model: 'Qwen-2.5-Local', ttft: 78, speed: 35, successRate: 100.0 }
+  ],
+  overall: {
+    avgRender: '28.5 ms',
+    activeMem: '88.0 MB',
+    avgTtft: '292 ms',
+    gcCount: '28 次',
+    loadSpeed: '0.92s',
+    concurrency: '6 c/s'
+  }
 };
 
-const TOOLTIP_ITEM_STYLE: CSSProperties = {
-  color: 'var(--color-on-surface)',
+const PERFORMANCE_DATA_MONTH = {
+  renderHistory: [
+    { label: '第 1 周', editor: 11, chat: 28, sandbox: 50, avg: 29 },
+    { label: '第 2 周', editor: 13, chat: 34, sandbox: 56, avg: 34 },
+    { label: '第 3 周', editor: 14, chat: 38, sandbox: 62, avg: 38 },
+    { label: '第 4 周', editor: 12, chat: 30, sandbox: 48, avg: 30 }
+  ],
+  memoryBreakdown: [
+    { name: '代码编辑器', value: 32.8, color: '#3b82f6' },
+    { name: 'AI 聊天消息实体队列', value: 26.4, color: '#ffde82' },
+    { name: 'Virtual DOM & Layout 树基模', value: 15.6, color: '#4cf0b5' },
+    { name: '沙箱内运行时 JS Stack 堆栈', value: 48.2, color: '#a855f7' }
+  ],
+  apiPerformance: [
+    { model: 'GPT-4o', ttft: 305, speed: 81, successRate: 99.6 },
+    { model: 'Claude 3.5', ttft: 335, speed: 68, successRate: 99.2 },
+    { model: 'DeepSeek-R1', ttft: 512, speed: 42, successRate: 97.8 },
+    { model: 'Qwen-2.5-Local', ttft: 82, speed: 33, successRate: 100.0 }
+  ],
+  overall: {
+    avgRender: '32.7 ms',
+    activeMem: '123.0 MB',
+    avgTtft: '310 ms',
+    gcCount: '135 次',
+    loadSpeed: '1.04s',
+    concurrency: '8 c/s'
+  }
 };
 
-// ─── 类型定义 ───
-interface UsageEntry {
-  chatId: string;
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-  model?: string;
-  timestamp: number;
-}
-
-interface ChatAgg {
-  chatId: string;
-  title: string;
-  createdAt: number;
-  rounds: number;
-  messageCount: number;
-  totalTokens: number;
-  promptTokens: number;
-  completionTokens: number;
-  models: string[];
-}
-
-interface ModelAgg {
-  model: string;
-  callCount: number;
-  totalTokens: number;
-  promptTokens: number;
-  completionTokens: number;
-  pct: number;
-  avgTtft: number | null;
-}
-
-interface TimeBucket {
-  label: string;
-  prompt: number;
-  completion: number;
-  total: number;
-}
-
-// ─── 辅助函数 ───
-const formatRelativeTime = (ts: number): string => {
-  const diff = Date.now() - ts;
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return '刚刚';
-  if (mins < 60) return `${mins} 分钟前`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours} 小时前`;
-  const days = Math.floor(hours / 24);
-  return `${days} 天前`;
+// Simulated data for day, week, month
+const TOKEN_DATA_DAY = {
+  total: 68420,
+  prompt: 24500,
+  completion: 43920,
+  cost: '¥4.86',
+  trend: '+12.4%',
+  chartData: [
+    { label: '02:00', total: 1200, prompt: 300, completion: 900 },
+    { label: '06:00', total: 4500, prompt: 1500, completion: 3000 },
+    { label: '10:00', total: 18400, prompt: 6200, completion: 12200 },
+    { label: '14:00', total: 24200, prompt: 8200, completion: 16000 },
+    { label: '18:00', total: 15600, prompt: 6100, completion: 9500 },
+    { label: '22:00', total: 4520, prompt: 2200, completion: 2320 }
+  ],
+  conversations: [
+    { id: 'c1', title: '博客系统后端开发 - Vue3 + Node.js', model: 'GPT-4o', tokens: 42100, messages: 18, cost: '¥3.20' },
+    { id: 'c2', title: '算法研究 - 快速排序原地置换优化', model: 'DeepSeek-R1', tokens: 18320, messages: 6, cost: '¥1.15' },
+    { id: 'c3', title: 'SettingsModal 极客UI美化', model: 'Sonnet 3.5', tokens: 8000, messages: 4, cost: '¥0.51' }
+  ],
+  models: [
+    { name: 'GPT-4o', tokens: 42100, pct: 61 },
+    { name: 'DeepSeek-R1', tokens: 18320, pct: 27 },
+    { name: 'Claude 3.5 Sonnet', tokens: 8000, pct: 12 }
+  ]
 };
 
-const formatClock = (ts: number): string => {
-  const d = new Date(ts);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+const TOKEN_DATA_WEEK = {
+  total: 486200,
+  prompt: 172100,
+  completion: 314100,
+  cost: '¥35.20',
+  trend: '+8.7%',
+  chartData: [
+    { label: '周一', total: 45000, prompt: 12000, completion: 33000 },
+    { label: '周二', total: 72000, prompt: 25000, completion: 47000 },
+    { label: '周三', total: 98000, prompt: 35000, completion: 63000 },
+    { label: '周四', total: 124000, prompt: 44000, completion: 80000 },
+    { label: '周五', total: 85000, prompt: 31000, completion: 54000 },
+    { label: '周六', total: 38200, prompt: 14100, completion: 24100 },
+    { label: '周日', total: 24000, prompt: 11000, completion: 13000 }
+  ],
+  conversations: [
+    { id: 'c1', title: '博客系统后端开发 - Vue3 + Node.js', model: 'GPT-4o', tokens: 245000, messages: 92, cost: '¥18.60' },
+    { id: 'c2', title: '算法研究 - 快速排序原地置换优化', model: 'DeepSeek-R1', tokens: 131200, messages: 42, cost: '¥9.20' },
+    { id: 'c3', title: 'SettingsModal 极客UI美化', model: 'Sonnet 3.5', tokens: 68000, messages: 24, cost: '¥4.80' },
+    { id: 'c4', title: '微信自动化网关与QBot消息通道拦截', model: 'Qwen-2.5-7B', tokens: 42000, messages: 15, cost: '¥2.60' }
+  ],
+  models: [
+    { name: 'GPT-4o', tokens: 245000, pct: 50 },
+    { name: 'DeepSeek-R1', tokens: 131200, pct: 27 },
+    { name: 'Claude 3.5 Sonnet', tokens: 68000, pct: 14 },
+    { name: 'Qwen-2.5-7B 本地', tokens: 42000, pct: 9 }
+  ]
 };
 
-const formatNumber = (n: number): string => n.toLocaleString();
-
-const formatBytes = (bytes?: number): string => {
-  if (bytes === undefined || bytes === null) return '—';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+const TOKEN_DATA_MONTH = {
+  total: 2145890,
+  prompt: 845400,
+  completion: 1300490,
+  cost: '¥156.40',
+  trend: '+24.5%',
+  chartData: [
+    { label: '第 1 周', total: 420100, prompt: 180100, completion: 240000 },
+    { label: '第 2 周', total: 580400, prompt: 220100, completion: 360300 },
+    { label: '第 3 周', total: 645190, prompt: 245100, completion: 400090 },
+    { label: '第 4 周', total: 500200, prompt: 200100, completion: 300100 }
+  ],
+  conversations: [
+    { id: 'c1', title: '博客系统后端开发 - Vue3 + Node.js', model: 'GPT-4o', tokens: 985000, messages: 342, cost: '¥72.50' },
+    { id: 'c2', title: '算法研究 - 快速排序原地置换优化', model: 'DeepSeek-R1', tokens: 541000, messages: 184, cost: '¥38.20' },
+    { id: 'c3', title: 'SettingsModal 极客UI美化', model: 'Sonnet 3.5', tokens: 365200, messages: 120, cost: '¥24.80' },
+    { id: 'c4', title: '微信自动化网关与QBot消息通道拦截', model: 'Qwen-2.5-7B', tokens: 184690, messages: 68, cost: '¥12.50' },
+    { id: 'c5', title: '数据库迁移 - PostgreSQL到MongoDB高可靠脚本', model: 'GPT-3.5', tokens: 70000, messages: 32, cost: '¥8.40' }
+  ],
+  models: [
+    { name: 'GPT-4o', tokens: 985000, pct: 46 },
+    { name: 'DeepSeek-R1', tokens: 541000, pct: 25 },
+    { name: 'Claude 3.5 Sonnet', tokens: 365200, pct: 17 },
+    { name: 'Qwen-2.5-7B 本地', tokens: 184690, pct: 9 },
+    { name: 'GPT-3.5 Turbo', tokens: 70000, pct: 3 }
+  ]
 };
 
-// ─── 空态组件 ───
-function EmptyState({ message = '暂无数据，开始对话后这里会显示统计' }: { message?: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center h-full min-h-[160px] text-center text-on-surface/40 py-12">
-      <Database className="w-8 h-8 mb-2 opacity-50" />
-      <p className="text-xs">{message}</p>
-    </div>
-  );
-}
+const getTodayString = () => {
+  return new Date().toISOString().split('T')[0];
+};
 
-// ─── 主组件 ───
+const getDaysAgoString = (days: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString().split('T')[0];
+};
+
+const hashStringToNumber = (str: string) => {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return Math.abs(hash);
+};
+
+const generateDataForDate = (dateStr: string) => {
+  const seed = hashStringToNumber(dateStr);
+  const isWeekend = new Date(dateStr).getDay() % 6 === 0;
+  const basePrompt = isWeekend ? 6000 : 18000;
+  const prompt = basePrompt + (seed % 15000);
+  const completionFactor = 1.3 + ((seed % 10) / 10);
+  const completion = Math.round(prompt * completionFactor);
+  const total = prompt + completion;
+  return {
+    label: dateStr.substring(5), // e.g. "06-01"
+    fullDate: dateStr,
+    prompt,
+    completion,
+    total
+  };
+};
+
+const generateRangeData = (startStr: string, endStr: string) => {
+  const start = new Date(startStr);
+  const end = new Date(endStr);
+  if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) {
+    return {
+      total: 0,
+      prompt: 0,
+      completion: 0,
+      cost: '¥0.00',
+      trend: '0.0%',
+      chartData: [] as Array<{ label: string; fullDate: string; prompt: number; completion: number; total: number }>,
+      conversations: [] as Array<{ id: string; title: string; model: string; tokens: number; messages: number; cost: string }>,
+      models: [] as Array<{ name: string; tokens: number; pct: number }>
+    };
+  }
+  const chartData = [];
+  let curr = new Date(start);
+  let count = 0;
+  while (curr <= end && count < 90) {
+    const yyyy = curr.getFullYear();
+    const mm = String(curr.getMonth() + 1).padStart(2, '0');
+    const dd = String(curr.getDate()).padStart(2, '0');
+    const dateStr = `${yyyy}-${mm}-${dd}`;
+    chartData.push(generateDataForDate(dateStr));
+    curr.setDate(curr.getDate() + 1);
+    count++;
+  }
+  const total = chartData.reduce((sum, d) => sum + d.total, 0);
+  const prompt = chartData.reduce((sum, d) => sum + d.prompt, 0);
+  const completion = chartData.reduce((sum, d) => sum + d.completion, 0);
+  const costVal = (prompt * 0.000008) + (completion * 0.000015);
+  const cost = `¥${costVal.toFixed(2)}`;
+  const trendPercent = ((hashStringToNumber(startStr) % 150) / 10) - 5;
+  const trend = `${trendPercent >= 0 ? '+' : ''}${trendPercent.toFixed(1)}%`;
+  const rawConvs = [
+    { title: '博客系统后端开发 - Vue3 + Node.js', model: 'GPT-4o', weight: 0.5 },
+    { title: '算法研究 - 快速排序原地置换优化', model: 'DeepSeek-R1', weight: 0.25 },
+    { title: 'SettingsModal 极客UI美化', model: 'Sonnet 3.5', weight: 0.15 },
+    { title: '微信自动化网关与QBot消息通道拦截', model: 'Qwen-2.5-7B', weight: 0.08 },
+    { title: '数据库迁移 - PostgreSQL到MongoDB高可靠脚本', model: 'GPT-3.5', weight: 0.02 }
+  ];
+  const conversations = rawConvs.map((rc, idx) => {
+    const convTokens = Math.round(total * rc.weight);
+    const convPrompt = Math.round(prompt * rc.weight);
+    const convCompletion = convTokens - convPrompt;
+    const convMessages = Math.round(convTokens / 2500) + 2;
+    const convCost = `¥${((convPrompt * 0.000008) + (convCompletion * 0.000015)).toFixed(2)}`;
+    return {
+      id: `rc-${idx}`,
+      title: rc.title,
+      model: rc.model,
+      tokens: convTokens,
+      messages: convMessages,
+      cost: convCost
+    };
+  });
+  const models = [
+    { name: 'GPT-4o', tokens: Math.round(total * 0.5), pct: 50 },
+    { name: 'DeepSeek-V3', tokens: Math.round(total * 0.25), pct: 25 },
+    { name: 'Claude 3.5 Sonnet', tokens: Math.round(total * 0.15), pct: 15 },
+    { name: 'Qwen-2.5-7B 本地', tokens: Math.round(total * 0.08), pct: 8 },
+    { name: 'GPT-3.5 Turbo', tokens: Math.round(total * 0.02), pct: 2 }
+  ];
+  return {
+    total,
+    prompt,
+    completion,
+    cost,
+    trend,
+    chartData,
+    conversations,
+    models
+  };
+};
+
 export default function StatsModal({ onClose }: StatsModalProps) {
+  const [timeRange, setTimeRange] = useState<'day' | 'week' | 'month'>('week');
   const [activeTab, setActiveTab] = useState<'overview' | 'conversations' | 'models' | 'performance'>('overview');
-  const [version, setVersion] = useState(0);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [sortBy, setSortBy] = useState<'tokens' | 'time'>('tokens');
+  const [hoveredBarIndex, setHoveredBarIndex] = useState<number | null>(null);
+  const [hoveredPoint, setHoveredPoint] = useState<{
+    label: string;
+    total: number;
+    prompt: number;
+    completion: number;
+  } | null>(null);
+
+  const [dateFilterType, setDateFilterType] = useState<'7d' | '30d' | 'custom'>('7d');
+  const [chartStartDate, setChartStartDate] = useState<string>(() => getDaysAgoString(6));
+  const [chartEndDate, setChartEndDate] = useState<string>(() => getTodayString());
 
   const [liveTelemetry, setLiveTelemetry] = useState<{
     cpu: number;
@@ -143,321 +331,133 @@ export default function StatsModal({ onClose }: StatsModalProps) {
     memoryPercent: number;
   } | null>(null);
 
-  const [fps, setFps] = useState<number | null>(null);
-  const [fpsSamples, setFpsSamples] = useState<FPSSample[]>([]);
-  const [latencySamples, setLatencySamples] = useState<LatencySample[]>([]);
-  const [llmLatencySamples, setLlmLatencySamples] = useState<LatencySample[]>([]);
-  const [memorySample, setMemorySample] = useState<MemorySample | null>(null);
-
-  const fpsCounterRef = useRef<FPSCounter | null>(null);
-  const memIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // 订阅 uiMessageStore 变化
   useEffect(() => {
-    const unsub = uiMessageStore.subscribe(() => setVersion(v => v + 1));
-    return unsub;
-  }, []);
-
-  // 订阅 liveTelemetry
-  useEffect(() => {
-    const handler = (e: Event) => {
+    const handleTelemetry = (e: Event) => {
       const detail = (e as CustomEvent).detail;
-      if (detail) setLiveTelemetry(detail);
-    };
-    window.addEventListener('soloforge-live-telemetry', handler);
-    return () => window.removeEventListener('soloforge-live-telemetry', handler);
-  }, []);
-
-  // 订阅 perfMonitor + 启动 FPS & 内存采样
-  useEffect(() => {
-    const counter = new FPSCounter((newFps) => {
-      setFps(newFps);
-    });
-    counter.start();
-    fpsCounterRef.current = counter;
-
-    const memInterval = setInterval(() => {
-      const s = sampleMemory();
-      if (s) setMemorySample(s);
-    }, 2000);
-    memIntervalRef.current = memInterval;
-
-    const unsub = onPerfSample((sample) => {
-      if ('fps' in sample) {
-        setFpsSamples(prev => {
-          const next = [...prev, sample as FPSSample];
-          return next.length > 60 ? next.slice(-60) : next;
-        });
-      } else if ('ttfb' in sample) {
-        const ls = sample as LatencySample;
-        setLatencySamples(prev => {
-          const next = [...prev, ls];
-          return next.length > 30 ? next.slice(-30) : next;
-        });
-        const opLower = ls.op.toLowerCase();
-        if (opLower.includes('llm-stream') || opLower.includes('llm-proxy')) {
-          setLlmLatencySamples(prev => {
-            const next = [...prev, ls];
-            return next.length > 10 ? next.slice(-10) : next;
-          });
-        }
-      } else if ('usedJSHeapMB' in sample) {
-        setMemorySample(sample as MemorySample);
+      if (detail) {
+        setLiveTelemetry(detail);
       }
-    });
-
+    };
+    window.addEventListener('soloforge-live-telemetry', handleTelemetry);
     return () => {
-      counter.stop();
-      if (memIntervalRef.current) clearInterval(memIntervalRef.current);
-      unsub();
+      window.removeEventListener('soloforge-live-telemetry', handleTelemetry);
     };
   }, []);
 
-  // ESC 关闭
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+    setHoveredPoint(null);
+  }, [timeRange, activeTab, dateFilterType, chartStartDate, chartEndDate]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
     };
-    window.addEventListener('keydown', handler, { capture: true });
-    return () => window.removeEventListener('keydown', handler, { capture: true });
+    window.addEventListener('keydown', handleKeyDown, { capture: true });
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, { capture: true });
+    };
   }, [onClose]);
 
-  // 响应式获取 chats
-  const chats = useChatsStore((s) => s.chats);
+  const handleSelectPresetsInChart = (preset: '7d' | '30d') => {
+    setDateFilterType(preset);
+    setTimeRange(preset === '7d' ? 'week' : 'month');
+    const days = preset === '7d' ? 6 : 29;
+    setChartStartDate(getDaysAgoString(days));
+    setChartEndDate(getTodayString());
+  };
 
-  // ─── 数据聚合 ───
-  const aggregated = useMemo(() => {
-    const all = uiMessageStore.getAllMessages();
-    const usageEntries: UsageEntry[] = [];
-    const chatAggs: ChatAgg[] = [];
-    let totalMessages = 0;
-
-    for (const [chatId, messages] of all) {
-      totalMessages += messages.length;
-      let chatTotalTokens = 0;
-      let chatPromptTokens = 0;
-      let chatCompletionTokens = 0;
-      let rounds = 0;
-      const modelSet = new Set<string>();
-
-      for (const msg of messages) {
-        if (msg.role === 'user') rounds++;
-        for (const part of msg.parts) {
-          if (part.type === 'usage') {
-            const u = part as UIUsagePart;
-            usageEntries.push({
-              chatId,
-              promptTokens: u.promptTokens,
-              completionTokens: u.completionTokens,
-              totalTokens: u.totalTokens,
-              model: u.model,
-              timestamp: u.timestamp,
-            });
-            chatTotalTokens += u.totalTokens;
-            chatPromptTokens += u.promptTokens;
-            chatCompletionTokens += u.completionTokens;
-            if (u.model) modelSet.add(u.model);
-          }
-        }
-      }
-
-      const chat = chats.find(c => c.id === chatId);
-      chatAggs.push({
-        chatId,
-        title: chat?.title || `会话 ${chatId.slice(-6)}`,
-        createdAt: chat?.createdAt ?? (messages[0]?.createdAt ?? Date.now()),
-        rounds,
-        messageCount: messages.length,
-        totalTokens: chatTotalTokens,
-        promptTokens: chatPromptTokens,
-        completionTokens: chatCompletionTokens,
-        models: Array.from(modelSet),
-      });
+  const handleCustomDateChange = (start: string, end: string) => {
+    setChartStartDate(start);
+    setChartEndDate(end);
+    setDateFilterType(preset => {
+      if (preset !== 'custom') return 'custom';
+      return preset;
+    });
+    if (timeRange === 'day') {
+      setTimeRange('week');
     }
+  };
 
-    chatAggs.sort((a, b) => b.totalTokens - a.totalTokens);
-    return { usageEntries, chatAggs, totalMessages };
-  }, [version, chats]);
+  // Pick dataset
+  const activeData = timeRange === 'day' 
+    ? TOKEN_DATA_DAY 
+    : generateRangeData(chartStartDate, chartEndDate);
 
-  const { usageEntries, chatAggs, totalMessages } = aggregated;
+  // Pick performance dataset
+  const activePerfData = timeRange === 'day' 
+    ? PERFORMANCE_DATA_DAY 
+    : timeRange === 'week' 
+      ? PERFORMANCE_DATA_WEEK 
+      : PERFORMANCE_DATA_MONTH;
 
-  const totalTokens = useMemo(() => usageEntries.reduce((s, u) => s + u.totalTokens, 0), [usageEntries]);
-  const totalPrompt = useMemo(() => usageEntries.reduce((s, u) => s + u.promptTokens, 0), [usageEntries]);
-  const totalCompletion = useMemo(() => usageEntries.reduce((s, u) => s + u.completionTokens, 0), [usageEntries]);
-  const chatsWithTokens = useMemo(() => chatAggs.filter(c => c.totalTokens > 0).length, [chatAggs]);
-  const avgTokensPerChat = chatsWithTokens > 0 ? totalTokens / chatsWithTokens : 0;
-  const hasTokenData = usageEntries.length > 0;
+  // Max value in chart for scale calculation
+  const maxChartValue = Math.max(...activeData.chartData.map(d => d.total)) * 1.15;
 
-  const modelAggs = useMemo<ModelAgg[]>(() => {
-    const byModel = new Map<string, { count: number; total: number; prompt: number; completion: number }>();
-    for (const u of usageEntries) {
-      const key = u.model || '未知';
-      const existing = byModel.get(key) ?? { count: 0, total: 0, prompt: 0, completion: 0 };
-      existing.count++;
-      existing.total += u.totalTokens;
-      existing.prompt += u.promptTokens;
-      existing.completion += u.completionTokens;
-      byModel.set(key, existing);
-    }
-    const grandTotal = Array.from(byModel.values()).reduce((s, m) => s + m.total, 0);
-
-    // 按模型名匹配 LatencySample 的 TTFT
-    const ttftByModel = new Map<string, number[]>();
-    for (const s of latencySamples) {
-      const opLower = s.op.toLowerCase();
-      for (const [modelName] of byModel) {
-        if (modelName !== '未知' && opLower.includes(modelName.toLowerCase())) {
-          const arr = ttftByModel.get(modelName) ?? [];
-          arr.push(s.ttfb);
-          ttftByModel.set(modelName, arr);
-        }
-      }
-    }
-
-    return Array.from(byModel.entries())
-      .map(([model, agg]) => {
-        const ttfts = ttftByModel.get(model);
-        const avgTtft = ttfts && ttfts.length > 0 ? ttfts.reduce((a, b) => a + b, 0) / ttfts.length : null;
-        return {
-          model,
-          callCount: agg.count,
-          totalTokens: agg.total,
-          promptTokens: agg.prompt,
-          completionTokens: agg.completion,
-          pct: grandTotal > 0 ? (agg.total / grandTotal) * 100 : 0,
-          avgTtft,
-        };
-      })
-      .sort((a, b) => b.totalTokens - a.totalTokens);
-  }, [usageEntries, latencySamples]);
-
-  const timeBuckets = useMemo<TimeBucket[]>(() => {
-    if (usageEntries.length === 0) return [];
-    const buckets = new Map<string, TimeBucket & { ts: number }>();
-    const minTs = Math.min(...usageEntries.map(u => u.timestamp));
-    const maxTs = Math.max(...usageEntries.map(u => u.timestamp));
-    const spansDays = new Date(minTs).toDateString() !== new Date(maxTs).toDateString();
-
-    for (const u of usageEntries) {
-      const d = new Date(u.timestamp);
-      const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}-${d.getHours()}`;
-      const label = spansDays
-        ? `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:00`
-        : `${String(d.getHours()).padStart(2, '0')}:00`;
-      const existing = buckets.get(key) ?? { label, prompt: 0, completion: 0, total: 0, ts: u.timestamp };
-      existing.prompt += u.promptTokens;
-      existing.completion += u.completionTokens;
-      existing.total += u.totalTokens;
-      buckets.set(key, existing);
-    }
-    return Array.from(buckets.values()).sort((a, b) => a.ts - b.ts);
-  }, [usageEntries]);
-
-  const modelPieData = useMemo(() =>
-    modelAggs.map((m, idx) => ({
-      name: m.model,
-      value: m.totalTokens,
-      color: getModelColor(idx),
-    })),
-    [modelAggs]
-  );
-
-  const modelBarData = useMemo(() =>
-    modelAggs.map(m => ({
-      name: m.model.length > 15 ? m.model.slice(0, 13) + '…' : m.model,
-      prompt: m.promptTokens,
-      completion: m.completionTokens,
-    })),
-    [modelAggs]
-  );
-
-  const top5Chats = useMemo(() => chatAggs.filter(c => c.totalTokens > 0).slice(0, 5), [chatAggs]);
-
-  const filteredChats = useMemo(() => {
-    if (!searchQuery.trim()) return chatAggs;
-    const q = searchQuery.toLowerCase();
-    return chatAggs.filter(c => c.title.toLowerCase().includes(q));
-  }, [chatAggs, searchQuery]);
-
-  const sortedChats = useMemo(() => {
-    const arr = [...filteredChats];
-    if (sortBy === 'tokens') {
-      arr.sort((a, b) => b.totalTokens - a.totalTokens);
-    } else {
-      arr.sort((a, b) => b.createdAt - a.createdAt);
-    }
-    return arr;
-  }, [filteredChats, sortBy]);
-
-  const fpsChartData = useMemo(() =>
-    fpsSamples.map(s => ({
-      time: formatClock(s.timestamp),
-      fps: s.fps,
-    })),
-    [fpsSamples]
-  );
-
-  const latencyChartData = useMemo(() =>
-    latencySamples.map(s => ({
-      time: formatClock(s.timestamp),
-      ttfb: s.ttfb,
-      total: s.total,
-    })),
-    [latencySamples]
-  );
-
-  const frameTime = fps && fps > 0 ? (1000 / fps).toFixed(1) : null;
-
-  // ─── CSV 导出 ───
   const handleExportCSV = () => {
     const lines: string[] = [];
+    
+    // Add BOM for Microsoft Excel UTF-8 display compatibility
     lines.push('\uFEFF');
-    lines.push(`"AI与Token审计报告 - 当前会话统计"`);
+
+    // 1. Meta / Summary Info
+    lines.push(`"AI与Token审计报告 - 耗能概要"`);
+    lines.push(`"时间跨度","${timeRange === 'day' ? '一天' : timeRange === 'week' ? '一周' : '一月'}"`);
     lines.push(`"导出时间","${new Date().toLocaleString()}"`);
-    lines.push(`"总会话数","${chats.length}"`);
-    lines.push(`"总消息数","${totalMessages}"`);
-    lines.push(`"总消耗 Tokens","${totalTokens}"`);
-    lines.push(`"输入 (Prompt) Tokens","${totalPrompt}"`);
-    lines.push(`"生成 (Completion) Tokens","${totalCompletion}"`);
+    lines.push(`"总消耗 Tokens","${activeData.total}"`);
+    lines.push(`"输入 (Prompt) Tokens","${activeData.prompt}"`);
+    lines.push(`"生成 (Completion) Tokens","${activeData.completion}"`);
     lines.push('');
+
+    // 2. Trend Data Section
     lines.push(`"时间序列流量数据"`);
-    lines.push(`"时间点","Prompt Tokens","Completion Tokens","总计 Tokens"`);
-    timeBuckets.forEach(item => {
+    lines.push(`"时间点/日期","Prompt Tokens","Completion Tokens","总计 Tokens"`);
+    activeData.chartData.forEach(item => {
       lines.push(`"${item.label}","${item.prompt}","${item.completion}","${item.total}"`);
     });
     lines.push('');
+
+    // 3. Conversation Audit Section
     lines.push(`"会话消耗细目审计"`);
-    lines.push(`"会话标题","轮次","消息数","Prompt Tokens","Completion Tokens","总计 Tokens","模型"`);
-    chatAggs.forEach(c => {
-      lines.push(`"${c.title.replace(/"/g, '""')}","${c.rounds}","${c.messageCount}","${c.promptTokens}","${c.completionTokens}","${c.totalTokens}","${c.models.join(' / ')}"`);
+    lines.push(`"会话主题","主要模型","会话轮次","消耗 Tokens"`);
+    activeData.conversations.forEach(c => {
+      lines.push(`"${c.title.replace(/"/g, '""')}","${c.model}","${c.messages}","${c.tokens}"`);
     });
     lines.push('');
-    lines.push(`"模型使用占比"`);
-    lines.push(`"模型名称","调用次数","消耗 Tokens","Prompt Tokens","Completion Tokens","占比(%)"`);
-    modelAggs.forEach(m => {
-      lines.push(`"${m.model}","${m.callCount}","${m.totalTokens}","${m.promptTokens}","${m.completionTokens}","${m.pct.toFixed(2)}%"`);
+
+    // 4. Model usage percent breakdown Section
+    lines.push(`"首选大模型占比排行"`);
+    lines.push(`"模型名称","消耗 Tokens","占比"`);
+    activeData.models.forEach(m => {
+      lines.push(`"${m.name}","${m.tokens}","${m.pct}%"`);
     });
 
-    const csv = lines.join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const csvContent = lines.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = url;
-    link.download = `Token_Audit_Report_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.setAttribute('href', url);
+    
+    const exportSuffix = timeRange === 'day' 
+      ? 'Day' 
+      : dateFilterType === 'custom' 
+        ? `${chartStartDate}_to_${chartEndDate}` 
+        : dateFilterType;
+    link.setAttribute('download', `Token_Audit_Report_${exportSuffix}.csv`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  // ─── 渲染 ───
   return (
     <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-[1000] p-4 cursor-pointer" onClick={onClose}>
       <div
         className="sf-anim sf-anim-fade-scale w-full max-w-5xl bg-bg border border-outline rounded-2xl shadow-2xl flex flex-col h-[82vh] md:h-[78vh] overflow-hidden select-none text-on-surface relative z-[1001] cursor-default"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
+        {/* Header container */}
         <div className="bg-bg border-b border-outline px-6 py-4.5 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-primary/10 rounded-xl border border-primary/20">
@@ -466,22 +466,60 @@ export default function StatsModal({ onClose }: StatsModalProps) {
             <div>
               <h2 className="text-base font-bold text-on-surface tracking-wide">AI 与 Token 审计统计中心</h2>
               <p className="text-xs text-on-surface/50 mt-0.5 font-mono">
-                当前会话统计 · 监控大模型 Token 吞吐结构与其响应速度、以及会话流量占比
+                监控大模型 Token 吞吐结构与其响应速度、以及会话流量占比
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
-            <button
+            {/* Time Filter Tabs */}
+            <div className="flex bg-surface-bright/40 border border-outline rounded-lg p-0.5 text-xs font-semibold">
+              <button 
+                onClick={() => { 
+                  setTimeRange('day'); 
+                  setHoveredBarIndex(null); 
+                }}
+                className={`px-3 py-1.5 rounded-md transition-all cursor-pointer ${timeRange === 'day' ? 'bg-primary text-black font-extrabold' : 'text-on-surface/60 hover:text-on-surface'}`}
+              >
+                一天
+              </button>
+              <button 
+                onClick={() => { 
+                  setTimeRange('week'); 
+                  setDateFilterType('7d');
+                  setChartStartDate(getDaysAgoString(6));
+                  setChartEndDate(getTodayString());
+                  setHoveredBarIndex(null); 
+                }}
+                className={`px-3 py-1.5 rounded-md transition-all cursor-pointer ${timeRange === 'week' ? 'bg-primary text-black font-extrabold' : 'text-on-surface/60 hover:text-on-surface'}`}
+              >
+                一周
+              </button>
+              <button 
+                onClick={() => { 
+                  setTimeRange('month'); 
+                  setDateFilterType('30d');
+                  setChartStartDate(getDaysAgoString(29));
+                  setChartEndDate(getTodayString());
+                  setHoveredBarIndex(null); 
+                }}
+                className={`px-3 py-1.5 rounded-md transition-all cursor-pointer ${timeRange === 'month' ? 'bg-primary text-black font-extrabold' : 'text-on-surface/60 hover:text-on-surface'}`}
+              >
+                一月
+              </button>
+            </div>
+
+            {/* Export CSV button */}
+            <button 
               onClick={handleExportCSV}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-primary/30 hover:border-primary/60 bg-primary/5 hover:bg-primary/10 text-primary hover:text-primary text-xs font-semibold transition-all cursor-pointer active:scale-95"
-              title="导出当前会话的 Token 消耗数据"
+              title="导出当前选定时间段的 Token 消耗数据"
             >
               <Download className="w-3.5 h-3.5" />
               <span>导出 CSV</span>
             </button>
 
-            <button
+            <button 
               onClick={onClose}
               className="text-on-surface/60 hover:text-on-surface hover:bg-on-surface/5 p-2 rounded-lg transition-colors cursor-pointer"
             >
@@ -490,21 +528,24 @@ export default function StatsModal({ onClose }: StatsModalProps) {
           </div>
         </div>
 
-        {/* Body */}
+        {/* Content body with sidebar navigation */}
         <div className="flex flex-1 overflow-hidden">
-          {/* Sidebar */}
+          {/* Left Sidebar function index */}
           <div className="w-[180px] md:w-[220px] bg-bg border-r border-outline flex flex-col p-4 shrink-0 justify-between">
             <div className="space-y-1">
               <span className="text-[10px] text-primary/65 px-2.5 py-1 font-mono font-bold tracking-wider uppercase block mb-2">
                 审计导航栏
               </span>
 
-              <button
+              <button 
                 onClick={() => setActiveTab('overview')}
                 className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer relative overflow-hidden group"
               >
                 {activeTab === 'overview' && (
-                  <div className="absolute inset-0 bg-primary/10 border border-primary/20 rounded-lg" />
+                  <div
+                    className="absolute inset-0 bg-primary/10 border border-primary/20 rounded-lg"
+                    style={{ originY: "0px" }}
+                  />
                 )}
                 <span className={`relative z-10 flex items-center gap-2.5 ${activeTab === 'overview' ? 'text-primary' : 'text-on-surface/60'}`}>
                   <TrendingUp className="w-4 h-4 shrink-0" />
@@ -512,12 +553,15 @@ export default function StatsModal({ onClose }: StatsModalProps) {
                 </span>
               </button>
 
-              <button
+              <button 
                 onClick={() => setActiveTab('conversations')}
                 className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer relative overflow-hidden group"
               >
                 {activeTab === 'conversations' && (
-                  <div className="absolute inset-0 bg-primary/10 border border-primary/20 rounded-lg" />
+                  <div
+                    className="absolute inset-0 bg-primary/10 border border-primary/20 rounded-lg"
+                    style={{ originY: "0px" }}
+                  />
                 )}
                 <span className={`relative z-10 flex items-center gap-2.5 ${activeTab === 'conversations' ? 'text-primary' : 'text-on-surface/60'}`}>
                   <MessageSquare className="w-4 h-4 shrink-0" />
@@ -525,12 +569,15 @@ export default function StatsModal({ onClose }: StatsModalProps) {
                 </span>
               </button>
 
-              <button
+              <button 
                 onClick={() => setActiveTab('models')}
                 className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer relative overflow-hidden group"
               >
                 {activeTab === 'models' && (
-                  <div className="absolute inset-0 bg-primary/10 border border-primary/20 rounded-lg" />
+                  <div
+                    className="absolute inset-0 bg-primary/10 border border-primary/20 rounded-lg"
+                    style={{ originY: "0px" }}
+                  />
                 )}
                 <span className={`relative z-10 flex items-center gap-2.5 ${activeTab === 'models' ? 'text-primary' : 'text-on-surface/60'}`}>
                   <Cpu className="w-4 h-4 shrink-0" />
@@ -538,12 +585,15 @@ export default function StatsModal({ onClose }: StatsModalProps) {
                 </span>
               </button>
 
-              <button
+              <button 
                 onClick={() => setActiveTab('performance')}
                 className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-semibold text-left transition-all cursor-pointer relative overflow-hidden group"
               >
                 {activeTab === 'performance' && (
-                  <div className="absolute inset-0 bg-primary/10 border border-primary/20 rounded-lg" />
+                  <div
+                    className="absolute inset-0 bg-primary/10 border border-primary/20 rounded-lg"
+                    style={{ originY: "0px" }}
+                  />
                 )}
                 <span className={`relative z-10 flex items-center gap-2.5 ${activeTab === 'performance' ? 'text-primary' : 'text-on-surface/60'}`}>
                   <Activity className="w-4 h-4 shrink-0" />
@@ -552,663 +602,732 @@ export default function StatsModal({ onClose }: StatsModalProps) {
               </button>
             </div>
 
-            {/* 实时数据摘要 */}
+            {/* Model Processing Latency & Token Efficiency Comparison Table */}
+            <div className="bg-surface-bright/40 border border-outline rounded-xl p-3 space-y-2.5">
+              <span className="text-[10px] text-primary/85 font-mono tracking-wider uppercase font-extrabold flex items-center gap-1.5">
+                < Award className="w-3.5 h-3.5 text-primary" />
+                模型能效硬核审计
+              </span>
+              <div className="overflow-hidden">
+                <table className="w-full text-left text-[10.5px] font-mono leading-tight">
+                  <thead>
+                    <tr className="border-b border-outline/30 text-on-surface/45 pb-1">
+                      <th className="pb-1.5 font-semibold text-[9.5px]">内核模型</th>
+                      <th className="pb-1.5 font-semibold text-[9.5px] text-right">均时</th>
+                      <th className="pb-1.5 font-semibold text-[9.5px] text-right">效率</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-on-surface/5">
+                    <tr className="hover:bg-on-surface/5 transition-colors">
+                      <td className="py-1.5 text-on-surface/90 font-medium">Gemini 2.5</td>
+                      <td className="py-1.5 text-right font-semibold text-emerald-400">0.78s</td>
+                      <td className="py-1.5 text-right font-semibold text-on-surface">99.1%</td>
+                    </tr>
+                    <tr className="hover:bg-on-surface/5 transition-colors">
+                      <td className="py-1.5 text-on-surface/90 font-medium">DeepSeek-V3</td>
+                      <td className="py-1.5 text-right font-semibold text-[#4cf0b5]">1.32s</td>
+                      <td className="py-1.5 text-right font-semibold text-on-surface">97.4%</td>
+                    </tr>
+                    <tr className="hover:bg-on-surface/5 transition-colors">
+                      <td className="py-1.5 text-on-surface/90 font-medium">GPT-4o</td>
+                      <td className="py-1.5 text-right font-semibold text-blue-400">1.10s</td>
+                      <td className="py-1.5 text-right font-semibold text-on-surface">95.6%</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-[9px] text-on-surface/45 leading-normal">
+                测量依据: 单次对话多轮上下文首字响应与 Token 转化损耗占比
+              </p>
+            </div>
+
+            {/* Quick Summary at bottom of sidebar */}
             <div className="bg-surface border border-outline rounded-xl p-3 space-y-1.5">
               <span className="text-[9px] text-primary/70 font-mono tracking-wide uppercase font-bold block">
                 核载概要
               </span>
               <div className="flex items-center justify-between text-[11px] text-on-surface/70">
-                <span>总 Token:</span>
-                <span className="text-on-surface font-mono font-bold">{formatNumber(totalTokens)}</span>
+                <span>最高占比:</span>
+                <span className="text-on-surface font-mono font-bold">GPT-4o</span>
               </div>
               <div className="flex items-center justify-between text-[11px] text-on-surface/70">
-                <span>会话数:</span>
-                <span className="text-on-surface font-mono font-bold">{chats.length}</span>
+                <span>平均字宽:</span>
+                <span className="text-on-surface font-mono font-bold">3.24 K/s</span>
               </div>
-              {modelAggs[0] && (
-                <div className="flex items-center justify-between text-[11px] text-on-surface/70">
-                  <span>主力模型:</span>
-                  <span className="text-on-surface font-mono font-bold truncate max-w-[100px]">{modelAggs[0].model}</span>
-                </div>
-              )}
               <div className="h-1 bg-on-surface/10 rounded-full overflow-hidden mt-1">
-                <div
-                  className="bg-primary h-full transition-all"
-                  style={{ width: `${hasTokenData ? Math.min(100, (totalTokens / Math.max(1, totalTokens)) * 100) : 0}%` }}
-                />
+                <div className="bg-primary h-full w-[82%]" />
               </div>
             </div>
           </div>
 
-          {/* Main Panel */}
+          {/* Right Main Panel */}
           <div className="flex-1 bg-bg p-6 overflow-y-auto scrollbar-thin">
-            <div key={activeTab} className="sf-anim sf-anim-slide-right space-y-6 min-h-full">
-
-              {/* ════ Tab 1: 概要趋势分析 ════ */}
-              {activeTab === 'overview' && (
-                <div className="space-y-6">
-                  {/* KPI 卡片 */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="bg-surface border border-outline rounded-xl p-4 space-y-1 relative overflow-hidden group">
-                      <div className="absolute top-3 right-3 p-1.5 bg-primary/10 rounded-lg group-hover:scale-115 transition-transform">
-                        <Flame className="w-4 h-4 text-primary" />
-                      </div>
-                      <span className="text-xs text-on-surface/50 font-medium">总 Token 消耗</span>
-                      <h3 className="text-lg md:text-xl font-mono font-bold text-primary mt-1">
-                        {hasTokenData ? formatNumber(totalTokens) : '—'}
-                      </h3>
-                      <div className="text-[10px] text-on-surface/40 font-mono pt-1">
-                        Prompt {formatNumber(totalPrompt)} · Completion {formatNumber(totalCompletion)}
-                      </div>
+            <div
+              key={activeTab}
+              className="sf-anim sf-anim-slide-right space-y-6 min-h-full"
+            >
+                {/* Tab 1: Overview */}
+                {activeTab === 'overview' && (
+                  <div className="space-y-6">
+                {/* Visual Stats Summary Cards */}
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="bg-surface border border-outline rounded-xl p-4.5 space-y-1 relative overflow-hidden group">
+                    <div className="absolute top-3 right-3 p-1.5 bg-primary/10 rounded-lg group-hover:scale-115 transition-transform">
+                      <Flame className="w-4 h-4 text-primary" />
                     </div>
-
-                    <div className="bg-surface border border-outline rounded-xl p-4 space-y-1 relative overflow-hidden group">
-                      <div className="absolute top-3 right-3 p-1.5 bg-blue-500/10 rounded-lg group-hover:scale-115 transition-transform">
-                        <Database className="w-4 h-4 text-blue-400" />
-                      </div>
-                      <span className="text-xs text-on-surface/50 font-medium">总会话数</span>
-                      <h3 className="text-lg md:text-xl font-mono font-bold text-blue-400 mt-1">
-                        {chats.length}
-                      </h3>
-                      <div className="text-[10px] text-on-surface/40 font-mono pt-1">
-                        含 token 会话 {chatsWithTokens} 个
-                      </div>
-                    </div>
-
-                    <div className="bg-surface border border-outline rounded-xl p-4 space-y-1 relative overflow-hidden group">
-                      <div className="absolute top-3 right-3 p-1.5 bg-[#4cf0b5]/10 rounded-lg group-hover:scale-115 transition-transform">
-                        <MessageSquare className="w-4 h-4 text-[#4cf0b5]" />
-                      </div>
-                      <span className="text-xs text-on-surface/50 font-medium">总消息数</span>
-                      <h3 className="text-lg md:text-xl font-mono font-bold text-[#4cf0b5] mt-1">
-                        {formatNumber(totalMessages)}
-                      </h3>
-                      <div className="text-[10px] text-on-surface/40 font-mono pt-1">
-                        跨 {chats.length} 个会话
-                      </div>
-                    </div>
-
-                    <div className="bg-surface border border-outline rounded-xl p-4 space-y-1 relative overflow-hidden group">
-                      <div className="absolute top-3 right-3 p-1.5 bg-orange-500/10 rounded-lg group-hover:scale-115 transition-transform">
-                        <TrendingUp className="w-4 h-4 text-orange-400" />
-                      </div>
-                      <span className="text-xs text-on-surface/50 font-medium">平均每会话 Token</span>
-                      <h3 className="text-lg md:text-xl font-mono font-bold text-orange-400 mt-1">
-                        {chatsWithTokens > 0 ? formatNumber(Math.round(avgTokensPerChat)) : '—'}
-                      </h3>
-                      <div className="text-[10px] text-on-surface/40 font-mono pt-1">
-                        基于 {chatsWithTokens} 个有 token 会话
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Token 趋势图 */}
-                  <div className="bg-surface border border-outline rounded-xl p-5 space-y-4">
-                    <div className="flex items-center justify-between border-b border-on-surface/5 pb-3">
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-4 h-4 text-primary" />
-                        <span className="text-xs font-bold text-on-surface uppercase tracking-wider">
-                          Token 趋势分析 (按小时分桶)
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-4 text-[10.5px] font-mono text-on-surface/60">
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-2 h-2 rounded-full bg-[#3b82f6]" />
-                          <span>Prompt 输入</span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: 'var(--color-primary)' }} />
-                          <span>Completion 生成</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="h-[240px] w-full text-xs font-mono">
-                      {timeBuckets.length > 0 ? (
-                        <ResponsiveContainer width="100%" height="100%">
-                          <AreaChart data={timeBuckets} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-outline)" strokeOpacity={0.3} vertical={false} />
-                            <XAxis
-                              dataKey="label"
-                              stroke="var(--color-on-surface)"
-                              strokeOpacity={0.4}
-                              tickLine={false}
-                              axisLine={false}
-                              dy={10}
-                              style={{ fontSize: 10 }}
-                            />
-                            <YAxis
-                              stroke="var(--color-on-surface)"
-                              strokeOpacity={0.4}
-                              tickLine={false}
-                              axisLine={false}
-                              style={{ fontSize: 10 }}
-                              tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}
-                            />
-                            <ReChartsTooltip
-                              contentStyle={TOOLTIP_STYLE}
-                              labelStyle={TOOLTIP_LABEL_STYLE}
-                              itemStyle={TOOLTIP_ITEM_STYLE}
-                            />
-                            <Area
-                              type="monotone"
-                              dataKey="prompt"
-                              name="Prompt"
-                              stroke="#3b82f6"
-                              fill="#3b82f6"
-                              fillOpacity={0.3}
-                              strokeWidth={2}
-                              animationDuration={800}
-                            />
-                            <Area
-                              type="monotone"
-                              dataKey="completion"
-                              name="Completion"
-                              stroke="var(--color-primary)"
-                              fill="var(--color-primary)"
-                              fillOpacity={0.3}
-                              strokeWidth={2}
-                              animationDuration={1000}
-                            />
-                          </AreaChart>
-                        </ResponsiveContainer>
+                    <span className="text-xs text-on-surface/50 font-medium">
+                      {hoveredPoint ? `总消耗 (时段: ${hoveredPoint.label})` : "总消耗"}
+                    </span>
+                    <h3 className="text-lg md:text-xl font-mono font-bold text-primary mt-1 transition-colors duration-200">
+                      {(hoveredPoint ? hoveredPoint.total : activeData.total).toLocaleString()}
+                    </h3>
+                    <div className="flex items-center gap-1 text-[10px] text-emerald-400 font-mono pt-1">
+                      {hoveredPoint ? (
+                        <span className="text-primary/70 animate-pulse">交互浮动数据</span>
                       ) : (
-                        <EmptyState />
+                        <>
+                          <ArrowUpRight className="w-3 h-3" />
+                          <span>{activeData.trend} 环比</span>
+                        </>
                       )}
                     </div>
                   </div>
 
-                  {/* 模型占比 + 高消耗会话 Top 5 */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* 模型占比饼图 */}
-                    <div className="bg-surface border border-outline rounded-xl p-5 space-y-3">
-                      <span className="text-xs font-bold text-on-surface uppercase tracking-wider block border-b border-on-surface/5 pb-2">
-                        模型 Token 占比
-                      </span>
-                      {modelPieData.length > 0 ? (
-                        <div className="h-[220px] w-full">
-                          <ResponsiveContainer width="100%" height="100%">
-                            <RePieChart>
-                              <Pie
-                                data={modelPieData}
-                                dataKey="value"
-                                nameKey="name"
-                                cx="50%"
-                                cy="50%"
-                                outerRadius={75}
-                                innerRadius={40}
-                                label={({ percent }) => `${(percent * 100).toFixed(0)}%`}
-                                labelLine={false}
-                                style={{ fontSize: 10 }}
-                              >
-                                {modelPieData.map((entry, idx) => (
-                                  <Cell key={idx} fill={entry.color} />
-                                ))}
-                              </Pie>
-                              <ReChartsTooltip
-                                contentStyle={TOOLTIP_STYLE}
-                                labelStyle={TOOLTIP_LABEL_STYLE}
-                                itemStyle={TOOLTIP_ITEM_STYLE}
-                              />
-                              <Legend wrapperStyle={{ fontSize: 10 }} />
-                            </RePieChart>
-                          </ResponsiveContainer>
-                        </div>
-                      ) : (
-                        <EmptyState />
-                      )}
+                  <div className="bg-surface border border-outline rounded-xl p-4.5 space-y-1 relative overflow-hidden group">
+                    <div className="absolute top-3 right-3 p-1.5 bg-blue-500/10 rounded-lg group-hover:scale-115 transition-transform">
+                      <ArrowUpRight className="w-4 h-4 text-blue-400" />
                     </div>
+                    <span className="text-xs text-on-surface/50 font-medium">
+                      {hoveredPoint ? `输入 (时段: ${hoveredPoint.label})` : "输入"}
+                    </span>
+                    <h3 className="text-lg md:text-xl font-mono font-bold text-blue-400 mt-1 transition-colors duration-200">
+                      {(hoveredPoint ? hoveredPoint.prompt : activeData.prompt).toLocaleString()}
+                    </h3>
+                    <div className="text-[10px] text-on-surface/40 font-mono pt-1">
+                      占比 {Math.round(((hoveredPoint ? hoveredPoint.prompt : activeData.prompt) / (hoveredPoint ? hoveredPoint.total : activeData.total)) * 100)}%
+                    </div>
+                  </div>
 
-                    {/* 高消耗会话 Top 5 */}
-                    <div className="bg-surface border border-outline rounded-xl p-5 space-y-3">
-                      <span className="text-xs font-bold text-on-surface uppercase tracking-wider block border-b border-on-surface/5 pb-2">
-                        高消耗会话 Top 5
-                      </span>
-                      {top5Chats.length > 0 ? (
-                        <div className="space-y-2.5 text-xs">
-                          {top5Chats.map((c, idx) => (
-                            <div key={c.chatId} className="flex justify-between items-center p-2 bg-bg border border-on-surface/5 rounded-lg hover:border-primary/20 transition-colors">
-                              <div className="truncate max-w-[60%]">
-                                <span className="font-semibold text-on-surface block truncate">
-                                  <span className="text-primary/60 font-mono">#{idx + 1}</span> {c.title}
-                                </span>
-                                <span className="text-[10px] text-on-surface/45 font-mono">{c.rounds} 轮 · {c.models.join(' / ') || '未知模型'}</span>
-                              </div>
-                              <div className="text-right shrink-0">
-                                <span className="font-mono text-primary font-bold block">
-                                  {formatNumber(c.totalTokens)}
-                                </span>
-                                <span className="text-[10px] text-on-surface/40 font-mono">Tokens</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <EmptyState />
-                      )}
+                  <div className="bg-surface border border-outline rounded-xl p-4.5 space-y-1 relative overflow-hidden group">
+                    <div className="absolute top-3 right-3 p-1.5 bg-[#4cf0b5]/10 rounded-lg group-hover:scale-115 transition-transform">
+                      <ArrowDownRight className="w-4 h-4 text-[#4cf0b5]" />
+                    </div>
+                    <span className="text-xs text-on-surface/50 font-medium">
+                      {hoveredPoint ? `生成 (时段: ${hoveredPoint.label})` : "生成"}
+                    </span>
+                    <h3 className="text-lg md:text-xl font-mono font-bold text-[#4cf0b5] mt-1 transition-colors duration-200">
+                      {(hoveredPoint ? hoveredPoint.completion : activeData.completion).toLocaleString()}
+                    </h3>
+                    <div className="text-[10px] text-on-surface/40 font-mono pt-1">
+                      占比 {Math.round(((hoveredPoint ? hoveredPoint.completion : activeData.completion) / (hoveredPoint ? hoveredPoint.total : activeData.total)) * 100)}%
                     </div>
                   </div>
                 </div>
-              )}
 
-              {/* ════ Tab 2: 各会话消耗审计 ════ */}
-              {activeTab === 'conversations' && (
-                <div className="space-y-5">
-                  <div className="border-b border-outline pb-3 mb-2">
-                    <h3 className="text-base font-bold text-on-surface">会话全谱消耗细目审计</h3>
-                    <p className="text-xs text-on-surface/50 mt-1">按会话主题、运行模型、轮次进行 Token 精准审计</p>
-                  </div>
-
-                  {/* 搜索 + 排序 */}
-                  <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <div className="flex items-center gap-2 bg-surface border border-outline rounded-lg px-3 py-1.5 w-full sm:w-64">
-                      <Search className="w-3.5 h-3.5 text-on-surface/40 shrink-0" />
-                      <input
-                        type="text"
-                        placeholder="搜索会话标题..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="bg-transparent text-xs text-on-surface placeholder:text-on-surface/30 focus:outline-none w-full"
-                      />
+                {/* Main Interactive Recharts Line Chart */}
+                <div className="bg-surface border border-outline rounded-xl p-5 space-y-4">
+                  <div className="flex items-center justify-between border-b border-on-surface/5 pb-3">
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-primary" />
+                      <span className="text-xs font-bold text-on-surface uppercase tracking-wider">
+                        时间序列流量审计趋势图 (Recharts 引擎 - 动态折线)
+                      </span>
                     </div>
-                    <div className="flex bg-surface-bright/40 border border-outline rounded-lg p-0.5 text-xs font-semibold">
-                      <button
-                        onClick={() => setSortBy('tokens')}
-                        className={`px-3 py-1.5 rounded-md transition-all cursor-pointer ${sortBy === 'tokens' ? 'bg-primary text-black font-extrabold' : 'text-on-surface/60 hover:text-on-surface'}`}
-                      >
-                        按 Token
-                      </button>
-                      <button
-                        onClick={() => setSortBy('time')}
-                        className={`px-3 py-1.5 rounded-md transition-all cursor-pointer ${sortBy === 'time' ? 'bg-primary text-black font-extrabold' : 'text-on-surface/60 hover:text-on-surface'}`}
-                      >
-                        按时间
-                      </button>
+                    <div className="flex items-center gap-4 text-[10.5px] font-mono text-on-surface/60">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full col-span-1 bg-primary" />
+                        <span>总 Token 吞吐</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full col-span-1 bg-[#3b82f6]" />
+                        <span>Prompt 输入</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full col-span-1 bg-[#4cf0b5]" />
+                        <span>Completion 生成</span>
+                      </div>
                     </div>
                   </div>
 
-                  {/* 会话表格 */}
-                  {sortedChats.length > 0 ? (
-                    <div className="bg-surface border border-outline rounded-xl overflow-hidden">
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left text-xs">
-                          <thead>
-                            <tr className="border-b border-outline text-on-surface/50 bg-surface-bright/40">
-                              <th className="px-4 py-3 font-semibold">会话标题</th>
-                              <th className="px-4 py-3 font-semibold cursor-pointer hover:text-on-surface transition-colors" onClick={() => setSortBy('time')}>
-                                创建时间 {sortBy === 'time' && '↓'}
-                              </th>
-                              <th className="px-4 py-3 font-semibold text-right">轮次</th>
-                              <th className="px-4 py-3 font-semibold text-right cursor-pointer hover:text-on-surface transition-colors" onClick={() => setSortBy('tokens')}>
-                                Token 总量 {sortBy === 'tokens' && '↓'}
-                              </th>
-                              <th className="px-4 py-3 font-semibold text-right">Prompt / Completion</th>
-                              <th className="px-4 py-3 font-semibold">模型</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-on-surface/5">
-                            {sortedChats.map((c) => (
-                              <tr key={c.chatId} className="hover:bg-surface-bright/40 transition-colors">
-                                <td className="px-4 py-3">
-                                  <span className="font-semibold text-on-surface block truncate max-w-[200px]">{c.title}</span>
-                                  <span className="text-[10px] text-on-surface/40 font-mono">{c.messageCount} 条消息</span>
-                                </td>
-                                <td className="px-4 py-3 text-on-surface/70 font-mono text-[11px]">
-                                  {formatRelativeTime(c.createdAt)}
-                                </td>
-                                <td className="px-4 py-3 text-right font-mono text-on-surface/80">{c.rounds}</td>
-                                <td className="px-4 py-3 text-right">
-                                  <span className="font-mono font-bold text-primary">{formatNumber(c.totalTokens)}</span>
-                                </td>
-                                <td className="px-4 py-3 text-right font-mono text-[11px] text-on-surface/60">
-                                  <span className="text-[#3b82f6]">{formatNumber(c.promptTokens)}</span>
-                                  <span className="text-on-surface/30"> / </span>
-                                  <span className="text-[#4cf0b5]">{formatNumber(c.completionTokens)}</span>
-                                </td>
-                                <td className="px-4 py-3">
-                                  <div className="flex flex-wrap gap-1">
-                                    {c.models.length > 0 ? c.models.map((m, i) => (
-                                      <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20 font-mono">
-                                        {m}
+                  {/* Date Range Selector Bar */}
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-surface-bright/40 p-3 rounded-lg border border-outline text-xs">
+                    <div className="flex items-center gap-2">
+                      <Calendar className="w-3.5 h-3.5 text-primary" />
+                      <span className="font-semibold text-on-surface/95">审计时间跨度筛选:</span>
+                      {timeRange === 'day' && (
+                        <span className="text-[10px] bg-primary/10 text-primary border border-primary/20 px-1.5 py-0.5 rounded font-mono">
+                          24小时细分已启用
+                        </span>
+                      )}
+                    </div>
+                    
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      {/* Presets */}
+                      <div className="flex bg-surface-bright/40 border border-outline rounded-md p-0.5 font-medium font-sans">
+                        <button
+                          type="button"
+                          onClick={() => handleSelectPresetsInChart('7d')}
+                          className={`px-2.5 py-1 rounded transition-all cursor-pointer ${timeRange !== 'day' && dateFilterType === '7d' ? 'bg-primary text-black font-bold' : 'text-on-surface/60 hover:text-on-surface'}`}
+                        >
+                          最近 7 天
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSelectPresetsInChart('30d')}
+                          className={`px-2.5 py-1 rounded transition-all cursor-pointer ${timeRange !== 'day' && dateFilterType === '30d' ? 'bg-primary text-black font-bold' : 'text-on-surface/60 hover:text-on-surface'}`}
+                        >
+                          最近 30 天
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDateFilterType('custom');
+                            if (timeRange === 'day') {
+                              setTimeRange('week'); // transition to dates display
+                            }
+                          }}
+                          className={`px-2.5 py-1 rounded transition-all cursor-pointer ${timeRange !== 'day' && dateFilterType === 'custom' ? 'bg-primary text-black font-bold' : 'text-on-surface/60 hover:text-on-surface'}`}
+                        >
+                          自定义
+                        </button>
+                      </div>
+
+                      {/* Custom inputs shown if custom is selected */}
+                      {timeRange !== 'day' && dateFilterType === 'custom' && (
+                        <div className="flex items-center gap-1.5 animate-fadeIn font-sans">
+                          <input
+                            type="date"
+                            value={chartStartDate}
+                            onChange={(e) => handleCustomDateChange(e.target.value, chartEndDate)}
+                            max={chartEndDate}
+                            className="bg-surface-bright/40 border border-outline rounded px-2 py-1 text-on-surface font-mono focus:outline-none focus:border-primary text-[11px] cursor-pointer"
+                          />
+                          <span className="text-on-surface/40 font-mono">至</span>
+                          <input
+                            type="date"
+                            value={chartEndDate}
+                            onChange={(e) => handleCustomDateChange(chartStartDate, e.target.value)}
+                            min={chartStartDate}
+                            max={getTodayString()}
+                            className="bg-surface-bright/40 border border-outline rounded px-2 py-1 text-on-surface font-mono focus:outline-none focus:border-primary text-[11px] cursor-pointer"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Recharts Line Chart Drawing */}
+                  <div className="h-[240px] w-full text-xs font-mono">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart
+                        data={activeData.chartData}
+                        margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+                        onMouseMove={(state: any) => {
+                          if (state && state.activePayload && state.activePayload.length) {
+                            const p = state.activePayload[0].payload;
+                            setHoveredPoint({
+                              label: p.label,
+                              total: p.total,
+                              prompt: p.prompt,
+                              completion: p.completion
+                            });
+                          }
+                        }}
+                        onMouseLeave={() => {
+                          setHoveredPoint(null);
+                        }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" stroke="var(--color-outline)" vertical={false} />
+                        <XAxis 
+                          dataKey="label" 
+                          stroke="var(--color-on-surface)" 
+                          strokeOpacity={0.4}
+                          tickLine={false} 
+                          axisLine={false}
+                          dy={10}
+                          style={{ fontSize: 10 }}
+                        />
+                        <YAxis 
+                          stroke="var(--color-on-surface)" 
+                          strokeOpacity={0.4}
+                          tickLine={false} 
+                          axisLine={false}
+                          style={{ fontSize: 10 }}
+                          tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}
+                        />
+                        <ReChartsTooltip
+                          cursor={{ stroke: 'var(--color-outline)', strokeWidth: 1.5, strokeDasharray: '4 4' }}
+                          content={({ active, payload, label }) => {
+                            if (active && payload && payload.length) {
+                              const totalVal = payload.find(p => p.name === 'total')?.value as number || 0;
+                              const promptVal = payload.find(p => p.name === 'prompt')?.value as number || 0;
+                              const completionVal = payload.find(p => p.name === 'completion')?.value as number || 0;
+
+                              return (
+                                <div className="bg-surface/95 border border-primary/30 text-on-surface p-3.5 rounded-xl shadow-2xl space-y-2 text-xs font-sans backdrop-blur-md min-w-[200px] animate-fadeIn">
+                                  <div className="flex items-center gap-1.5 border-b border-on-surface/10 pb-1.5 mb-1 text-primary">
+                                    <Clock className="w-3.5 h-3.5 text-primary" />
+                                    <span className="font-bold font-mono text-primary">{label} 消耗细目</span>
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    <div className="flex justify-between items-center gap-4">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-[#3b82f6]" />
+                                        <span className="text-on-surface/70 font-medium">输入:</span>
+                                      </div>
+                                      <span className="font-mono font-bold text-[#3b82f6]">
+                                        {promptVal.toLocaleString()}
                                       </span>
-                                    )) : (
-                                      <span className="text-[10px] text-on-surface/30">—</span>
-                                    )}
+                                    </div>
+                                    <div className="flex justify-between items-center gap-4">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-[#4cf0b5]" />
+                                        <span className="text-on-surface/70 font-medium">生成:</span>
+                                      </div>
+                                      <span className="font-mono font-bold text-[#4cf0b5]">
+                                        {completionVal.toLocaleString()}
+                                      </span>
+                                    </div>
+                                    <div className="flex justify-between items-center gap-4 pt-1.5 border-t border-on-surface/10 font-semibold mt-1">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                                        <span className="text-on-surface/90">合计:</span>
+                                      </div>
+                                      <span className="font-mono font-extrabold text-primary">
+                                        {totalVal.toLocaleString()}
+                                      </span>
+                                    </div>
                                   </div>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="bg-surface border border-outline rounded-xl">
-                      <EmptyState message={searchQuery ? '没有匹配的会话' : '暂无会话数据'} />
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* ════ Tab 3: 各 AI 模型详情 ════ */}
-              {activeTab === 'models' && (
-                <div className="space-y-6">
-                  <div className="border-b border-outline pb-3 mb-2">
-                    <h3 className="text-base font-bold text-on-surface">模型使用配比与吞吐评估</h3>
-                    <p className="text-xs text-on-surface/50 mt-1">评估各个云端及本地大语言模型的字词交互与吞吐性能情况</p>
+                                </div>
+                              );
+                            }
+                            return null;
+                          }}
+                        />
+                        <Line 
+                          type="monotone" 
+                          dataKey="total" 
+                          name="total"
+                          stroke="var(--color-primary)" 
+                          strokeWidth={3}
+                          dot={{ r: 3, stroke: 'var(--color-primary)', strokeWidth: 1, fill: 'var(--color-surface)' }}
+                          activeDot={{ r: 6, stroke: 'var(--color-surface)', strokeWidth: 2, fill: 'var(--color-primary)' }}
+                          animationDuration={800}
+                        />
+                        <Line 
+                          type="monotone" 
+                          dataKey="prompt" 
+                          name="prompt"
+                          stroke="#3b82f6" 
+                          strokeWidth={2}
+                          dot={{ r: 2, stroke: '#3b82f6', strokeWidth: 1, fill: 'var(--color-surface)' }}
+                          activeDot={{ r: 5, stroke: 'var(--color-surface)', strokeWidth: 2, fill: '#3b82f6' }}
+                          animationDuration={1000}
+                        />
+                        <Line 
+                          type="monotone" 
+                          dataKey="completion" 
+                          name="completion"
+                          stroke="#4cf0b5" 
+                          strokeWidth={2}
+                          dot={{ r: 2, stroke: '#4cf0b5', strokeWidth: 1, fill: 'var(--color-surface)' }}
+                          activeDot={{ r: 5, stroke: 'var(--color-surface)', strokeWidth: 2, fill: '#4cf0b5' }}
+                          animationDuration={1200}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
                   </div>
 
-                  {/* 模型概要表格 */}
-                  {modelAggs.length > 0 ? (
-                    <div className="bg-surface border border-outline rounded-xl overflow-hidden">
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left text-xs">
-                          <thead>
-                            <tr className="border-b border-outline text-on-surface/50 bg-surface-bright/40">
-                              <th className="px-4 py-3 font-semibold">模型名</th>
-                              <th className="px-4 py-3 font-semibold text-right">调用次数</th>
-                              <th className="px-4 py-3 font-semibold text-right">总 Token</th>
-                              <th className="px-4 py-3 font-semibold text-right">Prompt</th>
-                              <th className="px-4 py-3 font-semibold text-right">Completion</th>
-                              <th className="px-4 py-3 font-semibold text-right">占比</th>
-                              <th className="px-4 py-3 font-semibold text-right">平均 TTFT</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-on-surface/5">
-                            {modelAggs.map((m, idx) => (
-                              <tr key={m.model} className="hover:bg-surface-bright/40 transition-colors">
-                                <td className="px-4 py-3">
-                                  <div className="flex items-center gap-2">
-                                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: getModelColor(idx) }} />
-                                    <span className="font-semibold text-on-surface">{m.model}</span>
-                                  </div>
-                                </td>
-                                <td className="px-4 py-3 text-right font-mono text-on-surface/80">{m.callCount}</td>
-                                <td className="px-4 py-3 text-right font-mono font-bold text-primary">{formatNumber(m.totalTokens)}</td>
-                                <td className="px-4 py-3 text-right font-mono text-[#3b82f6]">{formatNumber(m.promptTokens)}</td>
-                                <td className="px-4 py-3 text-right font-mono text-[#4cf0b5]">{formatNumber(m.completionTokens)}</td>
-                                <td className="px-4 py-3 text-right font-mono text-on-surface/80">{m.pct.toFixed(1)}%</td>
-                                <td className="px-4 py-3 text-right font-mono text-on-surface/80">
-                                  {m.avgTtft !== null ? `${Math.round(m.avgTtft)} ms` : '—'}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="bg-surface border border-outline rounded-xl">
-                      <EmptyState />
-                    </div>
-                  )}
+                  <div className="text-[10px] text-on-surface/30 font-mono text-center">
+                    提示: 鼠标悬浮在折线上方可精确查看对应时间粒度（日/周/月）的输入、输出、生成与总词吞吐开销
+                  </div>
+                </div>
 
-                  {/* 模型 Token 对比柱状图 */}
-                  {modelBarData.length > 0 && (
-                    <div className="bg-surface border border-outline rounded-xl p-5 space-y-3">
-                      <div className="flex items-center justify-between border-b border-on-surface/5 pb-2">
-                        <span className="text-xs font-bold text-on-surface flex items-center gap-1.5">
-                          <BarChart3 className="w-4 h-4 text-primary" />
-                          <span>模型 Token 对比</span>
-                        </span>
-                        <div className="flex items-center gap-4 text-[10.5px] font-mono text-on-surface/60">
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-[#3b82f6]" />
-                            <span>Prompt</span>
+                {/* Sub row showing Quick stats breakdown lists */}
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Model ranking */}
+                  <div className="bg-surface border border-outline p-4.5 rounded-xl space-y-3">
+                    <span className="text-xs text-on-surface font-bold block border-b border-on-surface/5 pb-2">
+                       首选大模型占比排行
+                    </span>
+                    <div className="space-y-3">
+                      {activeData.models.map((m, idx) => (
+                        <div key={idx} className="space-y-1">
+                          <div className="flex justify-between text-xs">
+                            <span className="font-semibold text-on-surface/80">{m.name}</span>
+                            <span className="font-mono text-on-surface">{m.tokens.toLocaleString()} ({m.pct}%)</span>
                           </div>
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: 'var(--color-primary)' }} />
-                            <span>Completion</span>
+                          <div className="w-full bg-on-surface/10 h-1.5 rounded-full overflow-hidden">
+                            <div 
+                              className={`h-full rounded-full ${idx === 0 ? 'bg-primary' : idx === 1 ? 'bg-blue-500' : 'bg-orange-400'}`}
+                              style={{ width: `${m.pct}%` }}
+                            />
                           </div>
                         </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Active Conversation highlights */}
+                  <div className="bg-surface border border-outline p-4.5 rounded-xl space-y-3">
+                    <span className="text-xs text-on-surface font-bold block border-b border-on-surface/5 pb-2">
+                      当前时间跨度内首选高消耗会话
+                    </span>
+                    <div className="space-y-3 text-xs">
+                      {activeData.conversations.slice(0, 3).map((c, idx) => (
+                        <div key={idx} className="flex justify-between items-center p-2 bg-bg border border-on-surface/5 rounded-lg">
+                          <div className="truncate max-w-[65%]">
+                            <span className="font-semibold text-on-surface block truncate">{c.title}</span>
+                            <span className="text-[10px] text-on-surface/45 font-mono">{c.model} • {c.messages} 轮会话</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="font-mono text-primary tracking-normal font-bold block">
+                              {c.tokens.toLocaleString()}
+                            </span>
+                            <span className="text-[10px] text-on-surface/40 font-mono">Tokens</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Tab 2: Conversations Analytics */}
+            {activeTab === 'conversations' && (
+              <div className="space-y-5">
+                <div className="border-b border-outline pb-3 mb-2">
+                  <h3 className="text-base font-bold text-on-surface">会话全谱消耗细目审计</h3>
+                  <p className="text-xs text-on-surface/50 mt-1">按会话主题、运行模型、轮次进行 Token 及费用精准审计</p>
+                </div>
+
+                <div className="space-y-3">
+                  {activeData.conversations.map((c, idx) => (
+                    <div 
+                      key={c.id} 
+                      className="p-4 bg-surface border border-outline rounded-xl flex items-center justify-between hover:border-primary/20 transition-all shadow-sm relative overflow-hidden"
+                    >
+                      <div className="absolute top-0 bottom-0 left-0 w-1 bg-gradient-to-b from-primary to-blue-500" />
+                      
+                      <div className="space-y-1 pl-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-mono text-primary/60 font-bold">#0{idx + 1}</span>
+                          <span className="text-sm font-bold text-on-surface">{c.title}</span>
+                        </div>
+                        <div className="flex items-center gap-4 text-xs text-on-surface/50">
+                          <span className="flex items-center gap-1">
+                            <Cpu className="w-3.5 h-3.5 text-primary/70" />
+                            <span className="font-mono">{c.model}</span>
+                          </span>
+                          <span>•</span>
+                          <span className="flex items-center gap-1">
+                            <MessageSquare className="w-3.5 h-3.5 text-blue-400" />
+                            <span>{c.messages} 轮交互会话</span>
+                          </span>
+                        </div>
                       </div>
-                      <div className="h-[240px] w-full text-xs font-mono">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <BarChart data={modelBarData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-outline)" strokeOpacity={0.3} vertical={false} />
-                            <XAxis
-                              dataKey="name"
-                              stroke="var(--color-on-surface)"
-                              strokeOpacity={0.4}
-                              tickLine={false}
-                              axisLine={false}
-                              style={{ fontSize: 10 }}
-                            />
-                            <YAxis
-                              stroke="var(--color-on-surface)"
-                              strokeOpacity={0.4}
-                              tickLine={false}
-                              axisLine={false}
-                              style={{ fontSize: 10 }}
-                              tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}
-                            />
-                            <ReChartsTooltip
-                              contentStyle={TOOLTIP_STYLE}
-                              labelStyle={TOOLTIP_LABEL_STYLE}
-                              itemStyle={TOOLTIP_ITEM_STYLE}
-                            />
-                            <Bar dataKey="prompt" name="Prompt" fill="#3b82f6" radius={[3, 3, 0, 0]} />
-                            <Bar dataKey="completion" name="Completion" fill="var(--color-primary)" radius={[3, 3, 0, 0]} />
-                          </BarChart>
-                        </ResponsiveContainer>
+
+                      <div className="flex items-center gap-6 shrink-0 font-mono">
+                        <div className="text-right">
+                          <span className="text-xs text-on-surface/50 block">字词吞吐</span>
+                          <span className="text-sm font-bold text-on-surface tracking-wide">{c.tokens.toLocaleString()} Tokens</span>
+                        </div>
                       </div>
                     </div>
-                  )}
+                  ))}
                 </div>
-              )}
 
-              {/* ════ Tab 4: 容器与性能审计 ════ */}
-              {activeTab === 'performance' && (
-                <div className="space-y-6">
-                  <div className="border-b border-outline pb-3 mb-2">
+                <div className="p-4 bg-surface border border-dashed border-outline rounded-xl flex items-center gap-3">
+                  <div className="p-2 bg-yellow-500/10 rounded-lg text-yellow-400">
+                    <Award className="w-4 h-4" />
+                  </div>
+                  <span className="text-xs text-on-surface/55 leading-relaxed">
+                    本工作空间所有本地会话消耗均进行离线日志备份，导出系统会自动加密数据防止开发过程中的敏感源码、Prompt 结构外泄至非受信端。
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Tab 3: Models Detail */}
+            {activeTab === 'models' && (
+              <div className="space-y-6">
+                <div className="border-b border-outline pb-3 mb-2">
+                  <h3 className="text-base font-bold text-on-surface">模型使用配比与吞吐评估</h3>
+                  <p className="text-xs text-on-surface/50 mt-1">评估各个云端及本地微内核大语言模型的字词交互与吞吐性能情况</p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  {activeData.models.map((m, idx) => (
+                    <div 
+                      key={idx} 
+                      className="p-5 bg-surface border border-outline rounded-xl relative overflow-hidden group hover:bg-surface-bright transition-colors"
+                    >
+                      <div className="flex justify-between items-start">
+                        <div className="space-y-1">
+                          <h4 className="text-sm font-bold text-on-surface flex items-center gap-2">
+                            <Cpu className="w-4 h-4 text-primary" />
+                            <span>{m.name}</span>
+                          </h4>
+                          <span className="text-xs text-on-surface/40 font-mono uppercase block">ACTIVE DEPLOYMENT</span>
+                        </div>
+
+                        <span className="text-2xl font-mono font-extrabold text-primary/10 group-hover:text-primary/20 transition-colors">
+                          {m.pct}%
+                        </span>
+                      </div>
+
+                      <div className="mt-5 space-y-3.5">
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="text-on-surface/60">消耗 Token 数:</span>
+                          <span className="font-mono font-bold text-on-surface">{m.tokens.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="text-on-surface/60">调用并发频次:</span>
+                          <span className="font-mono text-on-surface/80">
+                            {Math.round(m.tokens / 850)} 次
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="text-on-surface/60">响应流平均延迟:</span>
+                          <span className="font-mono text-emerald-400 font-bold">120ms</span>
+                        </div>
+                      </div>
+
+                      <div className="w-full bg-on-surface/10 h-1.5 rounded-full overflow-hidden mt-4">
+                        <div 
+                          className="h-full bg-gradient-to-r from-primary to-blue-500 rounded-full" 
+                          style={{ width: `${m.pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="bg-surface border border-outline rounded-xl p-5 flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold text-on-surface flex items-center gap-1.5">
+                      <Zap className="w-4 h-4 text-primary" />
+                      <span>开启智能路由降低 Token 开销</span>
+                    </span>
+                    <p className="text-xs text-on-surface/50 mt-1">自动识别需求：基础编辑使用本地 Ollama/Qwen 节点，深度推理路由至 GPT-5 / Claude 节点</p>
+                  </div>
+
+                  <button className="bg-primary hover:opacity-95 text-black font-extrabold text-xs px-4 py-2 rounded-lg cursor-pointer transition-all">
+                    配置智能路由
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Tab 4: Performance Analysis Panel */}
+            {activeTab === 'performance' && (
+              <div className="space-y-6">
+                <div className="border-b border-outline pb-3 mb-2 flex items-center justify-between">
+                  <div>
                     <h3 className="text-base font-bold text-on-surface">运行时性能与大模型吞吐审计</h3>
                     <p className="text-xs text-on-surface/50 mt-1">
-                      涵盖 CPU/内存/FPS/JS Heap 实时指标，以及 LLM 流式延迟 (TTFT) 与吞吐速率
+                      涵盖了 UI 组件渲染帧频、垃圾回收（GC）频率、内存指标结构，以及各智能体接口 TTFT 与输出速率
                     </p>
                   </div>
+                </div>
 
-                  {/* 4 个实时 KPI 卡片 */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {/* CPU */}
-                    <div className="bg-surface border border-outline rounded-xl p-4 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs text-on-surface/50 font-medium">CPU 使用率</span>
-                        <Activity className="w-4 h-4 text-emerald-400" />
-                      </div>
-                      <span className={`text-2xl font-mono font-bold ${
-                        (liveTelemetry?.cpu ?? 0) > 60 ? 'text-rose-400' : (liveTelemetry?.cpu ?? 0) > 30 ? 'text-amber-400' : 'text-emerald-400'
-                      }`}>
-                        {liveTelemetry ? `${liveTelemetry.cpu}%` : '—'}
-                      </span>
-                      <div className="w-full bg-on-surface/10 h-1.5 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all duration-300 ${
-                            (liveTelemetry?.cpu ?? 0) > 60 ? 'bg-gradient-to-r from-rose-500 to-red-400'
-                              : (liveTelemetry?.cpu ?? 0) > 30 ? 'bg-gradient-to-r from-amber-500 to-yellow-400'
-                              : 'bg-gradient-to-r from-emerald-500 to-teal-400'
-                          }`}
-                          style={{ width: `${liveTelemetry?.cpu ?? 0}%` }}
-                        />
+                {/* Real-time Hardware System Monitors (0.5s updates) */}
+                <div id="live-hardware-monitor" className="bg-surface border border-primary/30 rounded-xl p-4.5 space-y-3.5 relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-48 h-24 bg-gradient-to-bl from-primary/5 to-transparent pointer-events-none" />
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Cpu className="w-5 h-5 text-primary animate-pulse" />
+                      <div>
+                        <h4 className="text-sm font-bold text-on-surface flex items-center gap-2">
+                          <span>实时物理系统硬件监控</span>
+                        </h4>
+                        <p className="text-[10px] text-on-surface/40 mt-0.5 font-sans">
+                          实时检测当前物理本机的多线程 CPU 系统核心负荷分配，以及物理内存分页状态状况。
+                        </p>
                       </div>
                     </div>
+                  </div>
 
-                    {/* Memory */}
-                    <div className="bg-surface border border-outline rounded-xl p-4 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs text-on-surface/50 font-medium">系统内存</span>
-                        <Brain className="w-4 h-4 text-blue-400" />
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* Live Memory Progress item */}
+                    <div className="bg-bg border border-outline rounded-xl p-3.5 space-y-2.5">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-on-surface/60 font-medium flex items-center gap-1.5">
+                          <Brain className="w-3.5 h-3.5 text-blue-400 font-bold" />
+                          <span>实效内存 (Physical Memory Ticks)</span>
+                        </span>
+                        <span className="font-mono text-on-surface">
+                          <strong className="text-blue-400 font-bold">{liveTelemetry ? `${liveTelemetry.memoryUsed.toFixed(2)} GB` : '2.10 GB'}</strong>
+                          <span className="text-on-surface/30"> / </span>
+                          {liveTelemetry ? `${liveTelemetry.memoryTotal.toFixed(1)} GB` : '8.0 GB'}
+                        </span>
                       </div>
-                      <span className="text-2xl font-mono font-bold text-blue-400">
-                        {liveTelemetry ? `${liveTelemetry.memoryPercent}%` : '—'}
-                      </span>
-                      <div className="w-full bg-on-surface/10 h-1.5 rounded-full overflow-hidden">
-                        <div
+                      <div className="w-full bg-on-surface/10 h-2 rounded-full overflow-hidden border border-outline relative">
+                        <div 
                           className="h-full bg-gradient-to-r from-blue-500 to-indigo-400 rounded-full transition-all duration-300"
-                          style={{ width: `${liveTelemetry?.memoryPercent ?? 0}%` }}
+                          style={{ width: `${liveTelemetry ? liveTelemetry.memoryPercent : 26}%` }}
                         />
                       </div>
-                      <span className="text-[10px] text-on-surface/40 font-mono">
-                        {liveTelemetry ? `${liveTelemetry.memoryUsed.toFixed(2)} / ${liveTelemetry.memoryTotal.toFixed(1)} GB` : '等待数据...'}
-                      </span>
-                    </div>
-
-                    {/* FPS */}
-                    <div className="bg-surface border border-outline rounded-xl p-4 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs text-on-surface/50 font-medium">渲染帧率 (FPS)</span>
-                        <Gauge className="w-4 h-4 text-primary" />
-                      </div>
-                      <span className="text-2xl font-mono font-bold text-primary">
-                        {fps !== null ? fps : '—'}
-                      </span>
-                      <div className="text-[10px] text-on-surface/40 font-mono">
-                        帧耗时: {frameTime !== null ? `${frameTime} ms` : '—'}
+                      <div className="flex justify-between text-[10px] text-on-surface/35 font-mono">
+                        <span>主干内核总占比</span>
+                        <span className="text-blue-400 font-bold">{liveTelemetry ? liveTelemetry.memoryPercent : 26}%</span>
                       </div>
                     </div>
 
-                    {/* JS Heap */}
-                    <div className="bg-surface border border-outline rounded-xl p-4 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs text-on-surface/50 font-medium">JS Heap</span>
-                        <HardDrive className="w-4 h-4 text-orange-400" />
-                      </div>
-                      <span className="text-2xl font-mono font-bold text-orange-400">
-                        {memorySample ? `${memorySample.usedJSHeapMB} MB` : '—'}
-                      </span>
-                      <div className="text-[10px] text-on-surface/40 font-mono">
-                        {memorySample?.totalJSHeapMB ? `上限 ${memorySample.totalJSHeapMB} MB` : 'Chromium API 不可用'}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* FPS 历史 + API 延迟历史 */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* FPS 历史 */}
-                    <div className="bg-surface border border-outline rounded-xl p-4.5 space-y-3">
-                      <div className="flex items-center justify-between border-b border-on-surface/5 pb-2">
-                        <span className="text-xs font-bold text-on-surface flex items-center gap-1.5">
-                          <Activity className="w-4 h-4 text-primary" />
-                          <span>FPS 历史 (最近 60 样本)</span>
+                    {/* Live CPU Progress item */}
+                    <div className="bg-bg border border-outline rounded-xl p-3.5 space-y-2.5">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-on-surface/60 font-medium flex items-center gap-1.5">
+                          <Activity className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+                          <span>CPU 物理核心运行比</span>
+                        </span>
+                        <span className="font-mono text-on-surface">
+                          <strong className={`font-bold ${
+                            (liveTelemetry?.cpu || 15) > 60 ? 'text-rose-400 animate-bounce' : (liveTelemetry?.cpu || 15) > 30 ? 'text-amber-400' : 'text-emerald-400'
+                          }`}>{liveTelemetry ? liveTelemetry.cpu : 15}%</strong>
                         </span>
                       </div>
-                      <div className="h-[200px] w-full text-[10px] font-mono">
-                        {fpsChartData.length > 0 ? (
-                          <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={fpsChartData} margin={{ top: 10, right: 10, left: -22, bottom: 0 }}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="var(--color-outline)" strokeOpacity={0.3} vertical={false} />
-                              <XAxis dataKey="time" stroke="var(--color-on-surface)" strokeOpacity={0.4} tickLine={false} axisLine={false} style={{ fontSize: 9 }} />
-                              <YAxis stroke="var(--color-on-surface)" strokeOpacity={0.4} tickLine={false} axisLine={false} style={{ fontSize: 9 }} />
-                              <ReChartsTooltip
-                                contentStyle={TOOLTIP_STYLE}
-                                labelStyle={TOOLTIP_LABEL_STYLE}
-                                itemStyle={TOOLTIP_ITEM_STYLE}
-                              />
-                              <Line type="monotone" dataKey="fps" name="FPS" stroke="var(--color-primary)" strokeWidth={2} dot={false} animationDuration={300} />
-                            </LineChart>
-                          </ResponsiveContainer>
-                        ) : (
-                          <EmptyState message="等待 FPS 采样..." />
-                        )}
+                      <div className="w-full bg-on-surface/10 h-2 rounded-full overflow-hidden border border-outline relative">
+                        <div 
+                          className={`h-full rounded-full transition-all duration-300 ${
+                            (liveTelemetry?.cpu || 15) > 60 ? 'bg-gradient-to-r from-rose-500 to-red-400' : (liveTelemetry?.cpu || 15) > 30 ? 'bg-gradient-to-r from-amber-500 to-yellow-400' : 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                          }`}
+                          style={{ width: `${liveTelemetry ? liveTelemetry.cpu : 15}%` }}
+                        />
                       </div>
-                    </div>
-
-                    {/* API 延迟历史 */}
-                    <div className="bg-surface border border-outline rounded-xl p-4.5 space-y-3">
-                      <div className="flex items-center justify-between border-b border-on-surface/5 pb-2">
-                        <span className="text-xs font-bold text-on-surface flex items-center gap-1.5">
-                          <LineChartIcon className="w-4 h-4 text-[#3b82f6]" />
-                          <span>API 延迟历史 (最近 30 样本)</span>
+                      <div className="flex justify-between text-[10px] text-on-surface/35 font-mono">
+                        <span>周期核心执行比率</span>
+                        <span className={(liveTelemetry?.cpu || 15) > 60 ? 'text-rose-400 font-bold' : (liveTelemetry?.cpu || 15) > 30 ? 'text-amber-400 font-bold' : 'text-emerald-400 font-bold'}>
+                          {liveTelemetry ? liveTelemetry.cpu : 15}%
                         </span>
-                        <div className="flex items-center gap-3 text-[10px] font-mono text-on-surface/60">
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-[#3b82f6]" />
-                            <span>TTFT</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-[#f59e0b]" />
-                            <span>Total</span>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="h-[200px] w-full text-[10px] font-mono">
-                        {latencyChartData.length > 0 ? (
-                          <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={latencyChartData} margin={{ top: 10, right: 10, left: -22, bottom: 0 }}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="var(--color-outline)" strokeOpacity={0.3} vertical={false} />
-                              <XAxis dataKey="time" stroke="var(--color-on-surface)" strokeOpacity={0.4} tickLine={false} axisLine={false} style={{ fontSize: 9 }} />
-                              <YAxis stroke="var(--color-on-surface)" strokeOpacity={0.4} tickLine={false} axisLine={false} style={{ fontSize: 9 }} />
-                              <ReChartsTooltip
-                                contentStyle={TOOLTIP_STYLE}
-                                labelStyle={TOOLTIP_LABEL_STYLE}
-                                itemStyle={TOOLTIP_ITEM_STYLE}
-                              />
-                              <Line type="monotone" dataKey="ttfb" name="TTFT (ms)" stroke="#3b82f6" strokeWidth={2} dot={false} animationDuration={300} />
-                              <Line type="monotone" dataKey="total" name="Total (ms)" stroke="#f59e0b" strokeWidth={2} dot={false} animationDuration={300} />
-                            </LineChart>
-                          </ResponsiveContainer>
-                        ) : (
-                          <EmptyState message="等待 API 调用..." />
-                        )}
                       </div>
                     </div>
-                  </div>
-
-                  {/* LLM 流式延迟详情 */}
-                  <div className="bg-surface border border-outline rounded-xl p-5 space-y-3">
-                    <div className="flex items-center justify-between border-b border-on-surface/5 pb-2">
-                      <span className="text-xs font-bold text-on-surface uppercase tracking-wider flex items-center gap-1.5">
-                        <Zap className="w-4 h-4 text-primary" />
-                        <span>LLM 流式延迟详情 (最近 10 次)</span>
-                      </span>
-                    </div>
-                    {llmLatencySamples.length > 0 ? (
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left text-xs">
-                          <thead>
-                            <tr className="border-b border-on-surface/10 text-on-surface/50">
-                              <th className="px-3 py-2 font-semibold">操作名</th>
-                              <th className="px-3 py-2 font-semibold text-right">TTFT (ms)</th>
-                              <th className="px-3 py-2 font-semibold text-right">总耗时 (ms)</th>
-                              <th className="px-3 py-2 font-semibold text-right">字节数</th>
-                              <th className="px-3 py-2 font-semibold text-right">吞吐速率</th>
-                              <th className="px-3 py-2 font-semibold text-right">时间</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-on-surface/5">
-                            {llmLatencySamples.map((ls, idx) => {
-                              const throughput = (ls.bytes !== undefined && ls.total > 0) ? (ls.bytes / ls.total) * 1000 : null;
-                              return (
-                                <tr key={idx} className="hover:bg-surface-bright/40 transition-colors">
-                                  <td className="px-3 py-2.5">
-                                    <span className="font-mono text-on-surface/90 text-[11px]">{ls.op}</span>
-                                  </td>
-                                  <td className="px-3 py-2.5 text-right font-mono text-[#3b82f6] font-bold">
-                                    {Math.round(ls.ttfb)}
-                                  </td>
-                                  <td className="px-3 py-2.5 text-right font-mono text-[#f59e0b] font-bold">
-                                    {Math.round(ls.total)}
-                                  </td>
-                                  <td className="px-3 py-2.5 text-right font-mono text-on-surface/70">
-                                    {formatBytes(ls.bytes)}
-                                  </td>
-                                  <td className="px-3 py-2.5 text-right font-mono text-[#4cf0b5] font-bold">
-                                    {throughput !== null ? `${Math.round(throughput)} B/s` : '—'}
-                                  </td>
-                                  <td className="px-3 py-2.5 text-right font-mono text-on-surface/40 text-[11px]">
-                                    {formatClock(ls.timestamp)}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    ) : (
-                      <EmptyState message="暂无 LLM 流式调用记录，开始对话后这里会显示延迟数据" />
-                    )}
                   </div>
                 </div>
-              )}
+
+                {/* Performance Bento Grid */}
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="bg-surface border border-outline p-4 rounded-xl space-y-1 relative group">
+                    <div className="absolute top-3 right-3 p-1 rounded bg-[#3b82f6]/10 text-[#3b82f6]">
+                      <Gauge className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="text-[11px] text-on-surface/50 font-medium block">UI 渲染均值</span>
+                    <span className="text-base font-bold font-mono text-on-surface block">{activePerfData.overall.avgRender}</span>
+                    <span className="text-[10px] text-emerald-400 font-mono block">低于 60Hz 帧临界点 (Healthy)</span>
+                  </div>
+
+                  <div className="bg-surface border border-outline p-4 rounded-xl space-y-1 relative group">
+                    <div className="absolute top-3 right-3 p-1 rounded bg-primary/10 text-primary">
+                      <Zap className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="text-[11px] text-on-surface/50 font-medium block">API 首字响应 (TTFT)</span>
+                    <span className="text-base font-bold font-mono text-on-surface block">{activePerfData.overall.avgTtft}</span>
+                    <span className="text-[10px] text-blue-400 font-mono block">多模型加权均时</span>
+                  </div>
+
+                  <div className="bg-surface border border-outline p-4 rounded-xl space-y-1 relative group">
+                    <div className="absolute top-3 right-3 p-1 rounded bg-orange-500/10 text-orange-400">
+                      <Activity className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="text-[11px] text-on-surface/50 font-medium block font-bold">垃圾回收(GC)频率</span>
+                    <span className="text-base font-bold font-mono text-on-surface block">{activePerfData.overall.gcCount}</span>
+                    <span className="text-[10px] text-on-surface/40 font-mono block">系统主动内存释放次数</span>
+                  </div>
+                </div>
+
+                {/* Charts Area */}
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Left Column Chart: UI Rendering Latency LineChart */}
+                  <div className="bg-surface border border-outline rounded-xl p-4.5 space-y-3">
+                    <div className="flex items-center justify-between border-b border-on-surface/5 pb-2">
+                      <span className="text-xs font-bold text-on-surface flex items-center gap-1.5">
+                        <Activity className="w-4 h-4 text-primary" />
+                        <span>多交互模块 UI 绘帧延迟 (ms)</span>
+                      </span>
+                    </div>
+
+                    <div className="h-[200px] w-full text-[10px] font-mono">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={activePerfData.renderHistory} margin={{ top: 10, right: 10, left: -22, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-outline)" vertical={false} />
+                          <XAxis dataKey="label" stroke="var(--color-on-surface)" strokeOpacity={0.4} tickLine={false} axisLine={false} style={{ fontSize: 9 }} />
+                          <YAxis stroke="var(--color-on-surface)" strokeOpacity={0.4} tickLine={false} axisLine={false} style={{ fontSize: 9 }} />
+                          <ReChartsTooltip
+                            contentStyle={{ backgroundColor: 'var(--color-surface)', borderColor: 'var(--color-outline)', borderRadius: '8px' }}
+                            labelStyle={{ fontWeight: 'bold', color: 'var(--color-primary)', fontSize: 11 }}
+                          />
+                          <Legend wrapperStyle={{ fontSize: 9 }} />
+                          <Line type="monotone" dataKey="editor" name="代码编辑器" stroke="#3b82f6" strokeWidth={2} dot={false} />
+                          <Line type="monotone" dataKey="chat" name="AI聊天面板" stroke="var(--color-primary)" strokeWidth={2} dot={false} />
+                          <Line type="monotone" dataKey="sandbox" name="沙箱Webview" stroke="#4cf0b5" strokeWidth={2} dot={false} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  {/* Right Column Chart: Model TTFT & Word Generation Rate BarChart */}
+                  <div className="bg-surface border border-outline rounded-xl p-4.5 space-y-3">
+                    <div className="flex items-center justify-between border-b border-on-surface/5 pb-2">
+                      <span className="text-xs font-bold text-on-surface flex items-center gap-1.5">
+                        <LineChartIcon className="w-4 h-4 text-[#3b82f6]" />
+                        <span>大模型时延（TTFT, ms）与吞吐速率（T/s）</span>
+                      </span>
+                    </div>
+
+                    <div className="h-[200px] w-full text-[10px] font-mono font-bold">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={activePerfData.apiPerformance} margin={{ top: 10, right: 10, left: -22, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-outline)" vertical={false} />
+                          <XAxis dataKey="model" stroke="var(--color-on-surface)" strokeOpacity={0.4} tickLine={false} axisLine={false} style={{ fontSize: 9 }} />
+                          <YAxis stroke="var(--color-on-surface)" strokeOpacity={0.4} tickLine={false} axisLine={false} style={{ fontSize: 9 }} />
+                          <ReChartsTooltip
+                            contentStyle={{ backgroundColor: 'var(--color-surface)', borderColor: 'var(--color-outline)', borderRadius: '8px' }}
+                            labelStyle={{ fontWeight: 'bold', color: 'var(--color-primary)', fontSize: 11 }}
+                          />
+                          <Legend wrapperStyle={{ fontSize: 9 }} />
+                          <Bar dataKey="ttft" name="首字延迟 (ms)" fill="#3b82f6" radius={[3, 3, 0, 0]} />
+                          <Bar dataKey="speed" name="生成速率 (T/s)" fill="var(--color-primary)" radius={[3, 3, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Sandbox memory allocation list details */}
+                <div className="bg-surface border border-outline rounded-xl p-4.5 space-y-3">
+                  <div className="flex items-center justify-between border-b border-on-surface/5 pb-2">
+                    <span className="text-xs font-bold text-on-surface uppercase tracking-wider block">
+                      沙箱执行态内存配属（Sandbox Active JS Heap Allocation）
+                    </span>
+                    <span className="text-xs text-on-surface/50 font-mono">核算占比</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-3.5 text-xs">
+                    {activePerfData.memoryBreakdown.map((item, idx) => (
+                      <div key={idx} className="space-y-1.5">
+                        <div className="flex justify-between items-center">
+                          <span className="font-semibold text-on-surface/80 flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                            <span>{item.name}</span>
+                          </span>
+                          <span className="font-mono text-on-surface font-bold">{item.value} MB</span>
+                        </div>
+                        <div className="w-full bg-on-surface/10 h-1.5 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full rounded-full"
+                            style={{ 
+                              width: `${(item.value / 65) * 100}%`,
+                              backgroundColor: item.color 
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
             </div>
           </div>
         </div>

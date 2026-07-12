@@ -334,12 +334,44 @@ class LineTracker {
 
     try {
       // ★ 2026-07-11: json DSL 直接解析推送, 不走翻译器
+      // ★ FIX 2026-07-12: 同时处理两种 JSON 格式:
+      //   1. 直接 DSL: {"type":"svg","props":{...}}
+      //   2. 工具调用: {"tool":"canvas_push_ui","args":{"dslJson":"{...}"}}
       if (this.translateLang === '__json_dsl__') {
         const parsed = JSON.parse(codeToTranslate);
+
+        // Case 1: 直接 DSL (有 type 字段)
         if (parsed && parsed.type) {
           this._pushed = true;
           this.pushRawDsl(parsed, codeToTranslate, isFinal);
+          return;
         }
+
+        // Case 2: 工具调用 JSON (有 tool + args 字段)
+        // LLM 用 canvas_push_ui 工具时返回的格式, 从 args.dslJson 提取真正的 DSL
+        if (parsed && parsed.tool === 'canvas_push_ui' && parsed.args) {
+          const dslJsonStr = parsed.args.dslJson || parsed.args.dsl;
+          if (dslJsonStr && typeof dslJsonStr === 'string') {
+            try {
+              const innerDsl = JSON.parse(dslJsonStr);
+              if (innerDsl && innerDsl.type) {
+                this._pushed = true;
+                this.pushRawDsl(innerDsl, dslJsonStr, isFinal);
+                return;
+              }
+            } catch {
+              // dslJson 解析失败, 静默跳过
+            }
+          }
+          // args 本身可能就是 DSL 对象 (非字符串)
+          if (parsed.args.type) {
+            this._pushed = true;
+            this.pushRawDsl(parsed.args, codeToTranslate, isFinal);
+            return;
+          }
+        }
+
+        // 不是已知的 JSON 格式, 不推送
         return;
       }
 

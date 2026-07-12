@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useMemo, useState } from 'react';
-import { Send, ChevronDown, ChevronUp, FileCode, X, SlidersHorizontal, Check, ShieldAlert, ThumbsUp, ThumbsDown } from '../utils/icons';
+import { Send, ChevronDown, ChevronUp, FileCode, X, SlidersHorizontal, Check, ShieldAlert, ThumbsUp, ThumbsDown, Lock, Copy } from '../utils/icons';
 import { MountTransition } from './MountTransition';
 import TerminalPanelWithWorkdir from './terminal/TerminalPanelWithWorkdir';
 // 2026-07-03 阶段3.1.C: DocsGeneratorModal 抽出为独立子应用, 状态收敛到 useDocsGeneratorStore
@@ -20,6 +20,7 @@ import { CollapsibleCodeBlock, FormatChatMessage } from './chatMessage';
 import { SuggestEnableView } from './streamViews';
 // 2026-07-03 阶段3.1.E: 12 个 state + 9 个 handler 收敛到 useChatStore
 import { useChatStore, fallbackActiveSettings } from '../state/useChatStore';
+import { useAppStore } from '../state/appStore';
 import { NormalIcon, PerformanceIcon, ExpertIcon, UltimateIcon } from './permissionModeIcons';
 
 // 4 个权限模式图标 (NormalIcon/PerformanceIcon/ExpertIcon/UltimateIcon) 已外移到
@@ -77,6 +78,11 @@ export default function ChatPanel({
   const inputValue = useChatStore(s => s.inputValue);
   const showModeDropdown = useChatStore(s => s.showModeDropdown);
   const workspaceApproval = useChatStore(s => s.workspaceApproval);
+
+  // ★ 直接从 appStore 取 setActiveSettingsChat, 不再走 CustomEvent 间接调用
+  //   原: button → window.dispatchEvent → useFileOperations useEffect → setActiveSettingsChat
+  //   新: button → setActiveSettingsChat (直接, 零中间层)
+  const setActiveSettingsChat = useAppStore(s => s.setActiveSettingsChat);
 
   // setters / actions (函数引用稳定, 不需 selector)
   const setInputValue = useChatStore(s => s.setInputValue);
@@ -270,6 +276,18 @@ export default function ChatPanel({
   // 触发阈值: soloforge.training.feedback.trigger-threshold (默认 5)
   const [feedbackMap, setFeedbackMap] = useState<Record<number, 'up' | 'down' | undefined>>({});
   const [feedbackBusy, setFeedbackBusy] = useState<Record<number, boolean>>({});
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+
+  // 复制当前消息内容到剪贴板, 显示短暂"已复制"反馈
+  const handleCopyMessage = async (index: number, content: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedIndex(index);
+      window.setTimeout(() => setCopiedIndex(prev => (prev === index ? null : prev)), 1500);
+    } catch (e) {
+      console.error('[ChatPanel] 复制失败:', e);
+    }
+  };
 
   const submitFeedback = async (index: number, positive: boolean) => {
     if (feedbackMap[index] || feedbackBusy[index]) return; // 已反馈 / 请求中
@@ -375,12 +393,12 @@ export default function ChatPanel({
             <div className="text-[10px] text-on-surface/50 mt-0.5 flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
               <button
-                onClick={() => window.dispatchEvent(new CustomEvent('soloforge-open-agent-settings', { detail: { id: activeChatId, title: activeChatTitle } }))}
+                onClick={() => setActiveSettingsChat({ id: activeChatId, title: activeChatTitle })}
                 className="truncate font-sans font-medium hover:text-primary hover:underline cursor-pointer flex items-center gap-0.5 group"
-                title="点击配置助理角色表情、状态、回复语调与性格"
+                title="点击配置智能体角色表情、状态、回复语调与性格"
                 id="agent-role-summary-btn"
               >
-                <span>助理角色：</span>
+                <span>智能体角色：</span>
                 <span className="text-primary font-semibold group-hover:text-primary/80">{getSettingsSummary(activeSettings)}</span>
                 <SlidersHorizontal className="w-2.5 h-2.5 ml-1 select-none text-primary opacity-60 group-hover:opacity-100 transition-opacity" />
               </button>
@@ -390,13 +408,13 @@ export default function ChatPanel({
 
         <div className="flex items-center gap-2 relative shrink-0">
           <button
-            onClick={() => window.dispatchEvent(new CustomEvent('soloforge-open-agent-settings', { detail: { id: activeChatId, title: activeChatTitle } }))}
+            onClick={() => setActiveSettingsChat({ id: activeChatId, title: activeChatTitle })}
             className="flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary hover:text-primary/90 transition-all duration-150 cursor-pointer border border-primary/20 hover:border-primary/35 shadow-sm"
-            title="定制助理性格、表情状态与回复语调"
+            title="配置当前对话的性格、表情、语调等设置"
             id="chat-header-agent-settings-btn"
           >
             <SlidersHorizontal className="w-3.5 h-3.5" />
-            <span>助理配置</span>
+            <span>当前对话设置</span>
           </button>
         </div>
       </div>
@@ -468,7 +486,7 @@ export default function ChatPanel({
 
                 {/* Content block: aligned on right or left */}
                 <div className={`flex flex-col gap-1 max-w-[88%] font-sans text-left ${isUser ? 'pr-3 pl-[58px] items-end' : 'pl-[58px] pr-3 items-start'}`}>
-                  <div className={`px-3.5 py-2.5 rounded-xl text-[12px] leading-relaxed select-text space-y-1.5 w-fit max-w-full overflow-hidden border ${isUser ? 'bg-primary/8 border-primary/30 text-on-surface' : 'bg-surface/50 border-outline/30 text-on-surface'}`}>
+                  <div className={`px-3.5 py-2.5 rounded-xl text-[12px] leading-relaxed select-text space-y-1.5 w-fit max-w-full overflow-hidden border ${isUser ? 'bg-primary/8 border-primary/40 text-on-surface' : 'bg-surface/50 border-primary/40 text-on-surface'}`}>
                     <FormatChatMessage content={msg.content} />
                     {msg.attachment && (
                       <CollapsibleCodeBlock
@@ -490,6 +508,19 @@ export default function ChatPanel({
                   {/* Phase 5: 👍/👎 反馈按钮 — 仅 assistant 消息, 累积 negative 触发 PromptOptimizer */}
                   {!isUser && !isGenerating && (
                     <div className="flex items-center gap-1.5 pl-1 pt-0.5">
+                      <button
+                        type="button"
+                        aria-label="复制此回复"
+                        title={copiedIndex === index ? '已复制' : '复制此回复'}
+                        onClick={() => handleCopyMessage(index, msg.content)}
+                        className={`p-1 rounded-md transition-all ${
+                          copiedIndex === index
+                            ? 'bg-primary/15 text-primary'
+                            : 'text-on-surface/35 hover:text-primary hover:bg-primary/10 cursor-pointer'
+                        }`}
+                      >
+                        {copiedIndex === index ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      </button>
                       <button
                         type="button"
                         aria-label="赞同此回复"
@@ -532,24 +563,25 @@ export default function ChatPanel({
             );
           })}
 
-          {isGenerating && (
-            <div className="sf-anim sf-anim-slide-up">
+          {isGenerating && streamState.suggestEnables.length > 0 && (
+            <div className="sf-anim sf-anim-slide-up flex flex-col gap-2 max-w-[95%] pl-[58px] text-left mb-2">
               {/* SuggestEnableView 保留: StreamPanel 未处理 suggest_enable 事件 */}
-              {streamState.suggestEnables.length > 0 && (
-                <div className="flex flex-col gap-2 max-w-[95%] pl-[58px] text-left mb-2">
-                  <SuggestEnableView items={streamState.suggestEnables} onAccept={handleAcceptEnable} />
-                </div>
-              )}
-
-              {/* StreamPanel: AI 行为流送区 */}
-              <StreamPanel
-                chatId={activeChatId}
-                mainModel={mainModel}
-                modelCount={1 + (secModels?.length || 0)}
-                permissionMode={permissionMode}
-              />
+              <SuggestEnableView items={streamState.suggestEnables} onAccept={handleAcceptEnable} />
             </div>
           )}
+
+          {/* StreamPanel: AI 行为流送区
+              ★ FIX 2026-07-12: 不再绑定 isGenerating, 否则 done 后立即卸载,
+              TaskExecutionCard 的 2 秒自动折叠逻辑来不及执行, 用户看不到任务总结。
+              StreamPanel 内部已通过 hasTask/promptCards 控制自身可见性, 无数据时返回 null。 */}
+          <div className="sf-anim sf-anim-slide-up">
+            <StreamPanel
+              chatId={activeChatId}
+              mainModel={mainModel}
+              modelCount={1 + (secModels?.length || 0)}
+              permissionMode={permissionMode}
+            />
+          </div>
 
         {/* 1:1 Static Agent Execution Process 已删除 (2026-07-03 阶段3.1.A)
             原 demo 卡硬编码 "3/5 步骤进行中" 假数据, 不随真实 streamState 变化,
@@ -567,8 +599,8 @@ export default function ChatPanel({
 
       {/* Input Area */}
       <div className="p-3 border-t border-outline bg-surface shrink-0">
-        <div className="max-w-5xl lg:max-w-[94%] xl:max-w-[90%] mx-auto w-full px-4 md:px-6">
-          <div className="bg-bg rounded-lg border border-outline focus-within:border-primary/50 transition-colors p-2 flex flex-col gap-2">
+        <div className="max-w-5xl lg:max-w-[94%] xl:max-w-[90%] mx-auto w-full px-4 md:px-6 flex items-end gap-2">
+          <div className="flex-1 min-w-0 bg-bg rounded-lg border border-outline focus-within:border-primary/50 transition-colors p-2 flex flex-col gap-2">
           {pendingAttachment && (
             <div className="bg-surface border border-outline rounded-md overflow-hidden transition-all duration-200">
               <div className="flex items-center justify-between p-2 bg-surface-bright/40">
@@ -751,13 +783,24 @@ export default function ChatPanel({
             {/* Submit Send Button */}
             <button
               onClick={handleSend}
-              className="bg-[#2563eb] hover:bg-blue-500 text-white rounded px-3 py-1 flex items-center gap-1 text-[10px] font-semibold tracking-wide active:scale-95 transition-all cursor-pointer shadow-md"
+              aria-label="发送"
+              title="发送"
+              className="bg-primary hover:bg-primary/85 text-white rounded-md p-1.5 flex items-center justify-center active:scale-95 transition-all cursor-pointer shadow-md shrink-0"
             >
-              <span>发送</span>
-              <Send className="w-3 h-3" />
+              <Send className="w-3.5 h-3.5" />
             </button>
           </div>
-        </div>
+          </div>
+
+          {/* Lock Button — 输入框外右侧, 与发送按钮垂直对齐 */}
+          <button
+            type="button"
+            aria-label="锁定"
+            title="锁定"
+            className="bg-primary hover:bg-primary/85 text-white rounded-md p-1.5 flex items-center justify-center active:scale-95 transition-all cursor-pointer shadow-md shrink-0 mb-[10px]"
+          >
+            <Lock className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
 

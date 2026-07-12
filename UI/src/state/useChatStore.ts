@@ -26,7 +26,6 @@ import { mapPhaseToStreamEvents, type PhaseMapperContext } from '../services/pha
 import type { StreamEventKind, StreamEvent, PermissionMode } from '../types/streaming';
 // P3 集成: Actor 系统 + Data Parts 模式
 import { createTaskWithActor, dispatchStreamEvent, clearChatAll } from '../services/actorIntegration';
-import { uiMessageStore } from '../services/uiMessageStore';
 // 2026-07-09: HTML 翻译器 — 本地解析 HTML 代码块为 Universal AST, 直接推画布, 省一次 LLM 调用
 import { translateCode, isLanguageSupported, detectLanguage } from '../translate';
 // 2026-07-11: 本地翻译成功后同步写入 previewStreamStore, 让 PreviewPanel 也能显示 WebAstPreview
@@ -36,111 +35,7 @@ import { classifyStreamError, mentionsOutsideWorkspace, detectPreviewTrigger } f
 // 2026-07-11: 实时增量代码翻译 — LLM 每输出一行代码, 立即翻译推送到画布
 import { IncrementalCanvasPusher, setCanvasSessionId, getCanvasSessionId, ensureCanvasAndPush } from '../services/incrementalCanvasPusher';
 
-// ════════════════════════════════════════════════════════════
-// [CANVAS PROBE — 临时诊断探针, 验证后删除]
-// 在 done 事件时注入一个带标记的 HTML 代码块, 追踪它经过:
-//   1. extractCodeBlock (代码块提取)
-//   2. translateCode (翻译器)
-//   3. previewStreamStore (状态存储)
-//   4. WebAstPreview / canvas.push (渲染)
-// 每一步打 [CANVAS_PROBE] 日志, 如果画布看不到东西就能定位断点
-// ════════════════════════════════════════════════════════════
-const CANVAS_PROBE_MARKER = '__CANVAS_PROBE_7F3A__';
-const CANVAS_PROBE_HTML = `<div style="padding:24px;background:#6366f1;border-radius:12px">
-<h1 style="color:white;font-size:24px">${CANVAS_PROBE_MARKER}</h1>
-<p style="color:white;opacity:0.8">如果你在画布上看到这个紫色卡片, 说明管线畅通</p>
-</div>`;
 
-async function runCanvasProbe(chatSessionId: string): Promise<void> {
-  const tag = '[CANVAS_PROBE]';
-  console.log(`${tag} ═══════ 开始管线探针 ═══════`);
-  console.log(`${tag} chatSessionId=${chatSessionId}`);
-
-  // ── Stage 1: 代码块提取 ──
-  const fakeText = '```html\n' + CANVAS_PROBE_HTML + '\n```';
-  const block = extractCodeBlock(fakeText);
-  if (!block) {
-    console.error(`${tag} ❌ Stage 1 FAIL: extractCodeBlock 未提取到代码块`);
-    return;
-  }
-  console.log(`${tag} ✅ Stage 1 PASS: extractCodeBlock → lang=${block.lang}, codeLen=${block.code.length}`);
-
-  // ── Stage 2: 翻译 ──
-  let ast;
-  try {
-    ast = translateCode(block.code, block.lang);
-    if (!ast) {
-      console.error(`${tag} ❌ Stage 2 FAIL: translateCode 返回 null`);
-      return;
-    }
-    console.log(`${tag} ✅ Stage 2 PASS: translateCode → type=${(ast as any).type}, children=${(ast as any).children?.length || 0}`);
-  } catch (err) {
-    console.error(`${tag} ❌ Stage 2 FAIL: translateCode 抛异常:`, err);
-    return;
-  }
-
-  // ── Stage 3: previewStreamStore 写入 ──
-  const canvasSessionId = getCanvasSessionId(chatSessionId);
-  const previewStore = usePreviewStreamStore.getState();
-  previewStore.initEntry(chatSessionId, { language: 'html', sessionId: canvasSessionId });
-  previewStore.updateStream(chatSessionId, {
-    raw: block.code,
-    payload: { language: 'html', framework: 'html', source_code: block.code, preview: { root: ast } } as any,
-    errors: [],
-    done: true,
-  });
-  previewStore.confirmPayload(chatSessionId, { language: 'html', framework: 'html', source_code: block.code, preview: { root: ast } } as any);
-  const entry = previewStore.getEntry(chatSessionId);
-  if (!entry?.payload) {
-    console.error(`${tag} ❌ Stage 3 FAIL: previewStreamStore 写入后 getEntry 返回空 payload`);
-    return;
-  }
-  console.log(`${tag} ✅ Stage 3 PASS: previewStreamStore payload confirmed, ast.type=${(entry.payload.preview?.root as any)?.type}`);
-
-  // ── Stage 4: Electron IPC / fetch relay ──
-  const dsl = { ...ast, platform: 'material' };
-  if (typeof window !== 'undefined' && (window as any).soloforge?.canvas) {
-    try {
-      const result = await ensureCanvasAndPush(canvasSessionId, dsl, chatSessionId);
-      if (result.ok) {
-        console.log(`${tag} ✅ Stage 4 PASS: ensureCanvasAndPush ok, sessionId=${canvasSessionId}`);
-      } else {
-        console.warn(`${tag} ⚠️ Stage 4 WARN: ensureCanvasAndPush failed:`, result.error, 'sessionId:', canvasSessionId);
-      }
-    } catch (err) {
-      console.warn(`${tag} ⚠️ Stage 4 WARN: ensureCanvasAndPush exception:`, err);
-    }
-  } else {
-    console.log(`${tag} ℹ️ Stage 4 SKIP: 非 Electron 环境, 跳过 IPC (WebAstPreview 降级渲染)`);
-    // 尝试 fetch relay
-    try {
-      const resp = await fetch('/api/canvas/relay/push-ui', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: chatSessionId, dsl: ast, language: 'html' }),
-      });
-      if (resp.ok) {
-        const data = await resp.json();
-        console.log(`${tag} ✅ Stage 4 PASS: fetch relay push-ui ok, success=${data.success}`);
-      } else {
-        console.warn(`${tag} ⚠️ Stage 4 WARN: fetch relay push-ui HTTP ${resp.status}`);
-      }
-    } catch (err) {
-      console.warn(`${tag} ⚠️ Stage 4 WARN: fetch relay push-ui 异常:`, err);
-    }
-  }
-
-  // ── Stage 5: 验证 PreviewPanel 能读到数据 ──
-  const finalEntry = usePreviewStreamStore.getState().getEntry(chatSessionId);
-  const finalAst = finalEntry?.payload?.preview?.root || finalEntry?.ast;
-  if (finalAst) {
-    console.log(`${tag} ✅ Stage 5 PASS: previewStreamStore 最终状态有 AST, type=${(finalAst as any).type}`);
-    console.log(`${tag} ═══════ 探针完成: 管线畅通, PreviewPanel 应显示紫色卡片 ═══════`);
-  } else {
-    console.error(`${tag} ❌ Stage 5 FAIL: previewStreamStore 最终状态无 AST — PreviewPanel 读不到数据`);
-  }
-}
-// ════════════════════════════════════════════════════════════
 
 // ==========================================
 // StreamPanel 桥接 — 把 aiBackend 事件喂给 streamingStore
@@ -151,8 +46,6 @@ interface StreamBridge {
   onAgent: (agentId: string, name: string, avatar: string | undefined, mainModel?: string, subModels?: string[], role?: string, domain?: string, subModel?: string) => void;
   onDone: (agentId?: string) => void;
   onError: (error: string) => void;
-  /** ★ Token 使用统计 (一轮对话结束时由 usage 事件触发) */
-  onUsage: (usage: { promptTokens: number; completionTokens: number; totalTokens: number; cachedTokens?: number }) => void;
 }
 
 function createStreamBridge(chatId: string, mainModel: string, userInput: string, mode: PermissionMode): StreamBridge {
@@ -226,22 +119,6 @@ function createStreamBridge(chatId: string, mainModel: string, userInput: string
       ctx.pushStreamEvent('phase_change', { content: 'DONE', detail: '生成完成', status: 'success' });
     },
     onError(error: string) { hasError = true; ctx.pushStreamEvent('phase_change', { content: 'ERROR', detail: error, status: 'error' }); },
-    onUsage(usage) {
-      // ★ 把 token 统计作为 usage part 追加到最后一条 assistant 消息
-      const lastMsg = uiMessageStore.getLastAssistantMessage(chatId);
-      if (!lastMsg) return;
-      // 实际生效模型: 优先用 java 副模型, 否则回退到主模型
-      const effectiveModel = javaSubModel ?? mainModel;
-      uiMessageStore.appendPart(chatId, lastMsg.id, {
-        type: 'usage',
-        promptTokens: usage.promptTokens,
-        completionTokens: usage.completionTokens,
-        totalTokens: usage.totalTokens,
-        cachedTokens: usage.cachedTokens,
-        model: effectiveModel,
-        timestamp: Date.now(),
-      });
-    },
   };
 }
 
@@ -534,6 +411,12 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
 
     startChat({ chatId: activeChatId, prompt: finalContent, mode: permissionMode, history: activeMessages.map(m => ({ sender: m.sender, content: m.rawContent || m.content })), fileContext: selectedFile ? { name: selectedFile, content: editorContent } : undefined, mainProvider: { baseUrl: mainEntry.baseUrl, apiKey: mainEntry.apiKey, model: mainEntry.model }, subProviders: subEntries.map(e => ({ baseUrl: e.baseUrl, apiKey: e.apiKey, model: e.model })), candidateProviders: candidateEntries.map((e: any) => ({ displayName: e.model, providerName: e.providerName, modelName: e.model, baseUrl: e.baseUrl })), ...(hashlineAgentEnabled ? { toolCallMode: 'hashline' } : {}), workspaceFolder: useChatsStore.getState().getChat(activeChatId)?.workspaceFolder, activeTools: activeTools.length > 0 ? activeTools : undefined, activeSkills: activeSkills.length > 0 ? activeSkills : undefined, activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined, activeSettings: configs[activeChatId] || fallbackActiveSettings, canvasId: `canvas-${activeChatId}` } as any, async (evt: ChatStreamEvent) => {
       switch (evt.kind) {
+        case 'reasoning': {
+          // ★ FIX 2026-07-12: reasoning_content 只进流送区, 不喂给 IncrementalCanvasPusher
+          //   避免思考过程中的 ``` 字符干扰代码块检测
+          streamBridge.onText(evt.text);
+          break;
+        }
         case 'text': {
           accumulatedText += evt.text;
           if (!canvasPusher) canvasPusher = new IncrementalCanvasPusher(activeChatId);
@@ -543,12 +426,11 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
           //   onText 从未被调用 → uiMessageStore 无 parts → StreamPanel 返回 null
           //   代码块文本也会推入流送区,让用户看到 LLM 的完整输出进度
           streamBridge.onText(evt.text);
-          set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') { lm.content = displayText; lm.rawContent = accumulatedText; nl[nl.length - 1] = lm; } return { conversations: { ...s.conversations, [activeChatId]: nl } }; });
+          set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') { lm.content = displayText; lm.rawContent = accumulatedText; } nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl } }; });
           break;
         }
         case 'phase': { streamBridge.onPhase(evt); get().handlePhase(evt, currentChatMsgs); break; }
         case 'agent': { streamBridge.onAgent(evt.agentId, evt.name, evt.avatar, evt.mainModel, evt.subModels, evt.role, evt.domain, evt.subModel); break; }
-        case 'usage': { streamBridge.onUsage(evt.usage); break; }
         case 'error': { streamBridge.onError(evt.error); const fm = classifyStreamError(evt.error || ''); set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return { isGenerating: false, streamState: { ...emptyStreamState } }; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.content = `\u274C **AI 调用失败**：${fm}`; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl }, isGenerating: false, streamState: { ...emptyStreamState } }; }); break; }
         case 'done': {
           streamBridge.onDone(evt.agentId); set({ isGenerating: false, streamState: { ...emptyStreamState } });
@@ -561,10 +443,8 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
           const pr = detectPreviewTrigger(accumulatedText, localPushed, detectPreviewFromResponse);
           const fdt = canvasPusher?.getDisplayText() ?? pr.cleanText;
           const cd = fdt.replace(/\s*<<<PREVIEW_NEEDED:\w+>>>\s*$/, '');
-          set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.content = cd; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl } }; });
+          set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') { lm.content = cd; lm.rawContent = accumulatedText; } nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl } }; });
           if (pr.shouldPreview && typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('soloforge-preview-trigger', { detail: { chatId: activeChatId, message: finalContent, language: pr.previewLang, provider: mainEntry ? { baseUrl: mainEntry.baseUrl, apiKey: mainEntry.apiKey, model: mainEntry.model } : undefined } }));
-          // [CANVAS PROBE] 每次 done 后自动运行探针
-          runCanvasProbe(activeChatId).catch(() => {});
           break;
         }
       }
@@ -580,15 +460,16 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     set({ streamState: { ...emptyStreamState }, isGenerating: true });
     const streamBridge = createStreamBridge(activeChatId, options.mainModel || '', '', lastReqBody.mode);
     let canvasPusher2: IncrementalCanvasPusher | null = null;
-    let accText2 = '';
     // ★ FIX 2026-07-12: handleAcceptEnable 也需要预注册 sessionId
     { const fallbackId = `canvas-${activeChatId}`; const existing = getCanvasSessionId(activeChatId); if (!existing || existing === fallbackId) setCanvasSessionId(activeChatId, fallbackId); }
-    startChat({ chatId: activeChatId, prompt: '', mode: lastReqBody.mode, history: [], mainProvider: (lastReqBody.mainProvider as any), subProviders: newSub ? [...(lastReqBody.subProviders as any[]), newSub] : (lastReqBody.subProviders as any[]), candidateProviders: (lastReqBody.candidateProviders as any[]).filter((c: any) => c.modelName !== candidateName), activeTools: lastReqBody.activeTools, activeSkills: lastReqBody.activeSkills, activeKnowledge: lastReqBody.activeKnowledge, activeSettings: configs[activeChatId] || fallbackActiveSettings } as any, (evt: ChatStreamEvent) => {
+    const currentHistory = (get().conversations[activeChatId] || []).map(m => ({ sender: m.sender, content: m.rawContent || m.content }));
+    startChat({ chatId: activeChatId, prompt: '', mode: lastReqBody.mode, history: currentHistory, mainProvider: (lastReqBody.mainProvider as any), subProviders: newSub ? [...(lastReqBody.subProviders as any[]), newSub] : (lastReqBody.subProviders as any[]), candidateProviders: (lastReqBody.candidateProviders as any[]).filter((c: any) => c.modelName !== candidateName), activeTools: lastReqBody.activeTools, activeSkills: lastReqBody.activeSkills, activeKnowledge: lastReqBody.activeKnowledge, activeSettings: configs[activeChatId] || fallbackActiveSettings } as any, (evt: ChatStreamEvent) => {
       switch (evt.kind) {
+        case 'reasoning': { streamBridge.onText(evt.text); break; }
         case 'phase': { streamBridge.onPhase(evt); get().handlePhase(evt, get().conversations[activeChatId] || []); break; }
         case 'error': streamBridge.onError(evt.error); break;
         case 'done': streamBridge.onDone(); if (canvasPusher2) canvasPusher2.flush().catch(() => {}); set({ isGenerating: false }); break;
-        case 'text': { accText2 += evt.text; if (!canvasPusher2) canvasPusher2 = new IncrementalCanvasPusher(activeChatId); const { displayText, inCodeBlock } = canvasPusher2.feedChunk(evt.text); streamBridge.onText(evt.text); set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') { lm.content = displayText; lm.rawContent = accText2; } nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl } }; }); break; }
+        case 'text': { if (!canvasPusher2) canvasPusher2 = new IncrementalCanvasPusher(activeChatId); const { displayText, inCodeBlock } = canvasPusher2.feedChunk(evt.text); streamBridge.onText(evt.text); set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') { lm.content = displayText; lm.rawContent = (lm.rawContent || '') + evt.text; } nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl } }; }); break; }
       }
     });
   },

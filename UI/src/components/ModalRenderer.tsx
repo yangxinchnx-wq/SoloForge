@@ -111,7 +111,7 @@ export const ModalRenderer: React.FC<ModalRendererProps> = ({
       </MountTransition>
 
       {/* Global Exclusive Agent Settings Customizer Overlay */}
-      <MountTransition show={!!activeSettingsChat} variant="fade-scale">
+      <MountTransition show={!!activeSettingsChat} variant="fade-scale" className="fixed inset-0 z-[9999]">
         <Suspense fallback={<ModalFallback />}>
           {activeSettingsChat && (
             <AgentSettingsModal

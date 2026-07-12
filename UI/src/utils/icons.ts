@@ -176,6 +176,7 @@ export const Pin = BookmarkIcon;                  // 固定 → 书签
 export const Plus = PlusIcon;
 export const PlusCircle = PlusCircleIcon;
 export const RefreshCw = ArrowPathIcon;           // 刷新 → 循环箭头
+export const RotateCcw = ArrowPathIcon;            // 恢复默认 → 循环箭头 (复用)
 export const Replace = ArrowsRightLeftIcon;       // 替换 → 左右交换
 export const Save = DocumentCheckIcon;            // 保存 → 文档打勾
 export const Scissors = ScissorsIcon;

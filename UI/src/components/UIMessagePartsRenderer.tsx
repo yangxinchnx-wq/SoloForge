@@ -225,8 +225,8 @@ const SubTaskCreatedPartView = memo(function SubTaskCreatedPartView({ part }: { 
         <ModelIcon modelName={part.assigneeModel} size={18} className="shrink-0" />
       </div>
       <div className="flex flex-col min-w-0">
-        <span className="text-[10px] font-bold text-primary break-words [text-wrap:pretty]">{part.assigneeModel}</span>
-        <span className="text-[10px] text-on-surface/50 break-words [text-wrap:pretty]">{part.description}</span>
+        <span className="text-[10px] font-bold text-primary truncate">{part.assigneeModel}</span>
+        <span className="text-[10px] text-on-surface/50 truncate">{part.description}</span>
       </div>
     </div>
   );
@@ -301,9 +301,9 @@ const SubTaskStepPartView = memo(function SubTaskStepPartView({ part }: { part: 
           )}
         </AnimatePresence>
       </div>
-      <span className="text-[10px] font-mono text-on-surface/60">{part.step}</span>
+      <span className="text-[10px] font-mono text-on-surface/60 shrink-0">{part.step}</span>
       {part.detail && (
-        <span className="text-[10px] text-on-surface/30 break-words [text-wrap:pretty]">{part.detail}</span>
+        <span className="text-[10px] text-on-surface/40 break-words [text-wrap:pretty]">{part.detail}</span>
       )}
     </div>
   );
@@ -327,11 +327,11 @@ const SubTaskDonePartView = memo(function SubTaskDonePartView({ part }: { part: 
           ? <CheckCircle2 className="w-3.5 h-3.5 text-green-400 shrink-0" />
           : <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />}
       </motion.div>
-      <span className={`text-[10px] font-medium ${isSuccess ? 'text-green-400' : 'text-red-400'}`}>
+      <span className={`text-[10px] font-medium shrink-0 ${isSuccess ? 'text-green-400' : 'text-red-400'}`}>
         {isSuccess ? '已完成' : '失败'}
       </span>
       {part.result && (
-        <span className="text-[10px] text-on-surface/40 break-words [text-wrap:pretty] flex-1">{part.result}</span>
+        <span className="text-[10px] text-on-surface/50 break-words [text-wrap:pretty] flex-1">{part.result}</span>
       )}
     </div>
   );
@@ -344,18 +344,18 @@ const ModelDelegationPartView = memo(function ModelDelegationPartView({ part, ch
   // 新格式: "副模型 → agent → 任务"
   // part.fromModel = 副模型名, part.detail = 任务描述
   return (
-    <div className="flex items-center gap-1.5 text-[10px] font-mono text-on-surface/50">
-      <span className="text-on-surface/40">{part.fromModel}</span>
-      <ArrowRight className="w-3 h-3 text-on-surface/30" />
+    <div className="flex items-start gap-1.5 text-[10px] font-mono text-on-surface/50">
+      <span className="text-on-surface/40 shrink-0">{part.fromModel}</span>
+      <ArrowRight className="w-3 h-3 text-on-surface/30 shrink-0 mt-0.5" />
       {agentAvatar && (
         agentAvatar.startsWith('http') || agentAvatar.startsWith('/') || agentAvatar.startsWith('data:')
-          ? <img src={agentAvatar} alt="" className="w-3.5 h-3.5 rounded-full object-cover" />
-          : <span className="text-xs leading-none">{agentAvatar}</span>
+          ? <img src={agentAvatar} alt="" className="w-3.5 h-3.5 rounded-full object-cover shrink-0" />
+          : <span className="text-xs leading-none shrink-0">{agentAvatar}</span>
       )}
       {agentName && (
-        <span className="text-primary font-bold">{agentName}</span>
+        <span className="text-primary font-bold shrink-0">{agentName}</span>
       )}
-      <ArrowRight className="w-3 h-3 text-on-surface/30" />
+      <ArrowRight className="w-3 h-3 text-on-surface/30 shrink-0 mt-0.5" />
       {part.detail && <span className="text-on-surface/70 font-medium break-words [text-wrap:pretty]">{part.detail}</span>}
     </div>
   );
@@ -365,11 +365,11 @@ const ModelDelegationPartView = memo(function ModelDelegationPartView({ part, ch
 
 const ModelActionPartView = memo(function ModelActionPartView({ part }: { part: UIModelActionPart }) {
   return (
-    <div className="flex items-center gap-1.5 pl-2 py-0.5 text-[10px] text-on-surface/50 font-mono">
-      <span className="text-on-surface/30">[动作]</span>
-      <span>{part.action}</span>
+    <div className="flex items-start gap-1.5 pl-2 py-0.5 text-[10px] text-on-surface/50 font-mono">
+      <span className="text-on-surface/30 shrink-0">[动作]</span>
+      <span className="shrink-0">{part.action}</span>
       {part.detail && (
-        <span className="text-on-surface/25 break-words [text-wrap:pretty]">{part.detail}</span>
+        <span className="text-on-surface/40 break-words [text-wrap:pretty]">{part.detail}</span>
       )}
     </div>
   );
@@ -427,7 +427,7 @@ const AuditFindingPartView = memo(function AuditFindingPartView({ part }: { part
         <div className="flex flex-col min-w-0 gap-0.5 flex-1">
           <div className="flex items-center gap-1">
             <span className={`text-[9px] font-bold px-1 py-0.5 rounded ${sevClass}`}>{sevLabel}</span>
-            <span className="text-[10px] text-on-surface/50 break-words [text-wrap:pretty]">{part.finding.target}</span>
+            <span className="text-[10px] text-on-surface/50 truncate">{part.finding.target}</span>
           </div>
         </div>
         {hasSuggestion && (
@@ -534,10 +534,10 @@ const ErrorPartView = memo(function ErrorPartView({ part }: { part: UIErrorPart 
 
 const BrowserStepPartView = memo(function BrowserStepPartView({ part }: { part: UIBrowserStepPart }) {
   return (
-    <div className="flex items-center gap-1.5 px-2.5 py-1">
-      <Globe className="w-3 h-3 text-indigo-400 shrink-0" />
-      <span className="text-[10px] font-mono text-on-surface/40 tabular-nums">#{part.stepIndex}</span>
-      <span className="text-[10px] text-on-surface/60 break-words [text-wrap:pretty]">{part.detail}</span>
+    <div className="flex items-start gap-1.5 px-2.5 py-1">
+      <Globe className="w-3 h-3 text-indigo-400 shrink-0 mt-0.5" />
+      <span className="text-[10px] font-mono text-on-surface/40 tabular-nums shrink-0">#{part.stepIndex}</span>
+      <span className="text-[10px] text-on-surface/60 break-words [text-wrap:pretty] flex-1">{part.detail}</span>
       {part.progress !== undefined && (
         <span className="text-[10px] font-mono text-on-surface/30 tabular-nums ml-auto">{part.progress}%</span>
       )}

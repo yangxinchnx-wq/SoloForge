@@ -75,11 +75,8 @@ public class SystemPromptBuilder {
         // [1] Identity — Agent 身份
         layers.add(buildIdentityLayer(agent));
 
-        // [1.5] Strategy — 推理策略 (direct / chain_of_thought)
-        layers.add(buildStrategyLayer(agent.getStrategy()));
-
-        // [2] Personality — 人格
-        layers.add(buildPersonalityLayer(settings.getPersonality()));
+        // [2] Personality — 人格 (内置走映射表, 自定义走前端透传的 personalityDesc)
+        layers.add(buildPersonalityLayer(settings.getPersonality(), settings.getPersonalityDesc()));
 
         // [3] Tone — 语气
         layers.add(buildToneLayer(settings.getTone()));
@@ -147,7 +144,7 @@ public class SystemPromptBuilder {
 
     private String buildIdentityLayer(AgentIdentityEntity agent) {
         StringBuilder sb = new StringBuilder();
-        sb.append("# 助理身份\n\n");
+        sb.append("# Agent 身份\n\n");
         sb.append("你是 SoloForge 的 ").append(agent.getName()).append("。\n");
         sb.append("角色: ").append(agent.getRole()).append("\n");
         sb.append("专业领域: ").append(agent.getDomain()).append("\n");
@@ -159,38 +156,21 @@ public class SystemPromptBuilder {
     }
 
     /**
-     * 推理策略层 — 根据 strategy 字段注入不同的推理指令
-     *
-     * direct: 直接执行, 不要求显式推理过程, 适合简单任务
-     * chain_of_thought: 强制分步推理, 先思考再执行, 适合复杂任务
+     * 构建人格层
+     * <p>- 内置 4 个性格 (professional/sarcastic/zen/geek) 走 PERSONALITY_MAP 映射表
+     * <p>- 自定义性格 (custom_*) 使用前端透传的 personalityDesc
+     * <p>- 若 personalityDesc 为空, 回退到 professional 默认值
      */
-    private String buildStrategyLayer(String strategy) {
-        if (strategy == null) strategy = "direct";
-        return switch (strategy) {
-            case "chain_of_thought" -> """
-                # 推理策略: 链式思考 (Chain of Thought)
-
-                你必须采用分步推理的方式处理任务:
-                1. **分析阶段**: 先分析用户请求, 明确任务目标、约束条件和潜在风险
-                2. **规划阶段**: 列出你打算执行的步骤, 说明每一步的目的
-                3. **执行阶段**: 按计划逐步执行, 每步执行后验证结果
-                4. **反思阶段**: 完成后回顾整个流程, 总结经验教训
-
-                在回复中, 用 **思考:** 标记开始推理过程, 用 **行动:** 标记开始执行。
-                不要跳过思考直接行动, 即使任务看起来简单。""";
-            default -> """
-                # 推理策略: 直接执行 (Direct)
-
-                你应该直接执行任务, 不需要显式的推理过程:
-                - 理解用户意图后立即行动
-                - 避免冗长的前置分析, 用工具查看真实代码而不是猜测
-                - 保持高效, 不做不必要的步骤
-                - 只在遇到错误或复杂决策时才停下来思考""";
-        };
-    }
-
-    private String buildPersonalityLayer(String personality) {
-        String text = PERSONALITY_MAP.getOrDefault(personality, PERSONALITY_MAP.get("professional"));
+    private String buildPersonalityLayer(String personality, String personalityDesc) {
+        String text;
+        if (PERSONALITY_MAP.containsKey(personality)) {
+            text = PERSONALITY_MAP.get(personality);
+        } else if (personalityDesc != null && !personalityDesc.isBlank()) {
+            // 自定义性格: 使用前端透传的描述
+            text = personalityDesc;
+        } else {
+            text = PERSONALITY_MAP.get("professional");
+        }
         return "# 人格设定\n\n" + text;
     }
 
@@ -223,7 +203,7 @@ public class SystemPromptBuilder {
 
     private String buildToolsLayer(List<String> toolDescriptions) {
         StringBuilder sb = new StringBuilder("# 可用工具\n\n");
-        sb.append("你是一个能使用工具的真实助理,不是文本生成器。\n\n");
+        sb.append("你是一个能使用工具的真实 Agent,不是文本生成器。\n\n");
         for (String desc : toolDescriptions) {
             sb.append("- ").append(desc).append("\n");
         }
@@ -280,7 +260,7 @@ public class SystemPromptBuilder {
         return """
             # 行为规则
 
-            1. 你是一个能使用工具的真实助理,不是单纯的文本生成器
+            1. 你是一个能使用工具的真实 Agent,不是单纯的文本生成器
             2. 不要猜测文件内容,用 read_file 或 search_code 查看
             3. 生成代码后,用 execute_cmd 运行验证
             4. 遇到错误时,分析原因并修复,不要重复相同的错误

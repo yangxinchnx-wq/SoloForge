@@ -264,6 +264,10 @@ public class LlmGateway {
 
     /**
      * 从 SSE data 字段中提取 delta content
+     *
+     * ★ FIX 2026-07-12: reasoning_content 用 \u0001 前缀标记, ChatController 据此发送 'reasoning' 事件。
+     * 前端收到 reasoning 事件后只在流送区显示, 不喂给 IncrementalCanvasPusher,
+     * 避免思考过程中的 ``` 字符干扰代码块检测。
      */
     @SuppressWarnings("unchecked")
     private String extractDeltaContent(String sseData) {
@@ -274,11 +278,11 @@ public class LlmGateway {
             Map<String, Object> delta = (Map<String, Object>) choices.get(0).get("delta");
             if (delta == null) return null;
             Object content = delta.get("content");
-            if (content == null) {
-                // reasoning model: 检查 reasoning_content
-                content = delta.get("reasoning_content");
-            }
-            return content != null ? content.toString() : null;
+            if (content != null) return content.toString();
+            // reasoning model: 用 \u0001 前缀标记 reasoning_content
+            Object reasoning = delta.get("reasoning_content");
+            if (reasoning != null) return "\u0001" + reasoning.toString();
+            return null;
         } catch (Exception e) {
             log.debug("Failed to parse SSE chunk: {}", e.getMessage());
             return null;

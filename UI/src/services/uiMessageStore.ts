@@ -88,11 +88,23 @@ class UIMessageStore {
     return () => this.listeners.delete(callback);
   };
 
-  /** 获取指定 chatId 的消息快照 (引用稳定) */
+  /**
+   * 获取指定 chatId 的消息快照
+   *
+   * ★ FIX 2026-07-12: 返回数组副本而非 Map 内部引用。
+   *   原代码返回 this.messages.get(chatId) 的直接引用,
+   *   appendPart 等方法 mutate 同一数组 → 引用不变 →
+   *   useSyncExternalStore 用 Object.is 比较旧新快照, 认为没变化 →
+   *   不触发重渲染 → StreamPanel 永远看到初始空 parts。
+   *
+   *   notify 清空 snapshots 缓存后, 下次 getSnapshot 创建新副本,
+   *   引用不同 → useSyncExternalStore 检测到变化 → 触发重渲染。
+   *   缓存保证同一 notify 周期内多次调用返回同一引用 (concurrent mode 安全)。
+   */
   getSnapshot = (chatId: string): UIMessage[] => {
     const cached = this.snapshots.get(chatId);
     if (cached) return cached;
-    const snapshot = this.messages.get(chatId) ?? [];
+    const snapshot = [...(this.messages.get(chatId) ?? [])];
     this.snapshots.set(chatId, snapshot);
     return snapshot;
   };
@@ -155,6 +167,9 @@ class UIMessageStore {
 
   /**
    * 创建新的 UIMessage (用户消息或 assistant 消息)
+   *
+   * ★ FIX 2026-07-12: 不可变更新 — 替换 Map 中的数组为新数组,
+   *   而非 push 到同一数组, 确保 useSyncExternalStore 检测到引用变化。
    */
   createMessage(
     chatId: string,
@@ -173,7 +188,7 @@ class UIMessageStore {
       rootTaskId,
       status: role === 'assistant' ? 'streaming' : 'done',
     };
-    msgs.push(msg);
+    this.messages.set(chatId, [...msgs, msg]);
     this.recordOp({ op: 'createMessage', chatId, messageId: msg.id, role, rootTaskId, initialParts });
     this.notify();
     return msg;
@@ -181,51 +196,56 @@ class UIMessageStore {
 
   /**
    * 向指定消息追加 part
+   *
+   * ★ FIX 2026-07-12: 不可变更新 — 创建新的 message 对象和新的 parts 数组,
+   *   而非 mutate 原对象。否则依赖 message 的 useMemo 不会重新计算。
    */
   appendPart(chatId: string, messageId: string, part: UIPart): void {
     const msgs = this.messages.get(chatId);
     if (!msgs) return;
-    const msg = msgs.find(m => m.id === messageId);
-    if (!msg) return;
-    msg.parts.push(part);
-    msg.updatedAt = Date.now();
+    const msgIndex = msgs.findIndex(m => m.id === messageId);
+    if (msgIndex === -1) return;
+    const msg = msgs[msgIndex];
+    const newMsg: UIMessage = { ...msg, parts: [...msg.parts, part], updatedAt: Date.now() };
+    this.messages.set(chatId, msgs.map((m, i) => i === msgIndex ? newMsg : m));
     this.recordOp({ op: 'appendPart', chatId, messageId, part });
     this.notify();
   }
 
   /**
    * 批量追加 parts (单次 notify, 减少高频场景的重渲染次数)
-   * P1低风险: 一次性写入多个 part 时用此入口替代多次 appendPart
    */
   appendParts(chatId: string, messageId: string, parts: UIPart[]): void {
     if (parts.length === 0) return;
     const msgs = this.messages.get(chatId);
     if (!msgs) return;
-    const msg = msgs.find(m => m.id === messageId);
-    if (!msg) return;
-    for (const p of parts) msg.parts.push(p);
-    msg.updatedAt = Date.now();
+    const msgIndex = msgs.findIndex(m => m.id === messageId);
+    if (msgIndex === -1) return;
+    const msg = msgs[msgIndex];
+    const newMsg: UIMessage = { ...msg, parts: [...msg.parts, ...parts], updatedAt: Date.now() };
+    this.messages.set(chatId, msgs.map((m, i) => i === msgIndex ? newMsg : m));
     this.recordOp({ op: 'appendParts', chatId, messageId, parts });
     this.notify();
   }
 
   /**
    * 更新指定消息的最后一个指定类型 part
-   * 用于流式 text 更新 (text part 累积而非追加)
    */
   updateLastPart(chatId: string, messageId: string, partType: UIPart['type'], updater: (part: UIPart) => UIPart): void {
     const msgs = this.messages.get(chatId);
     if (!msgs) return;
-    const msg = msgs.find(m => m.id === messageId);
-    if (!msg) return;
+    const msgIndex = msgs.findIndex(m => m.id === messageId);
+    if (msgIndex === -1) return;
+    const msg = msgs[msgIndex];
 
     // 从后往前找最后一个指定类型的 part
     for (let i = msg.parts.length - 1; i >= 0; i--) {
       if (msg.parts[i].type === partType) {
-        msg.parts[i] = updater(msg.parts[i]);
-        msg.updatedAt = Date.now();
-        // P2.5: 记录更新后的完整 part (updater 函数不可序列化, 记录结果)
-        this.recordOp({ op: 'updateLastPart', chatId, messageId, part: msg.parts[i] });
+        const newParts = [...msg.parts];
+        newParts[i] = updater(newParts[i]);
+        const newMsg: UIMessage = { ...msg, parts: newParts, updatedAt: Date.now() };
+        this.messages.set(chatId, msgs.map((m, idx) => idx === msgIndex ? newMsg : m));
+        this.recordOp({ op: 'updateLastPart', chatId, messageId, part: newParts[i] });
         this.notify();
         return;
       }
@@ -238,20 +258,26 @@ class UIMessageStore {
   appendTextChunk(chatId: string, messageId: string, text: string, streaming: boolean): void {
     const msgs = this.messages.get(chatId);
     if (!msgs) return;
-    const msg = msgs.find(m => m.id === messageId);
-    if (!msg) return;
+    const msgIndex = msgs.findIndex(m => m.id === messageId);
+    if (msgIndex === -1) return;
+    const msg = msgs[msgIndex];
 
     const lastPart = msg.parts[msg.parts.length - 1];
+    let newParts: UIPart[];
     if (lastPart && lastPart.type === 'text' && (lastPart as UITextPart).streaming) {
       // 追加到最后一个 streaming text part
-      (lastPart as UITextPart).text += text;
-      (lastPart as UITextPart).streaming = streaming;
+      const updatedPart: UITextPart = {
+        ...lastPart,
+        text: (lastPart as UITextPart).text + text,
+        streaming,
+      };
+      newParts = [...msg.parts.slice(0, -1), updatedPart];
     } else {
       // 新建 text part
-      msg.parts.push({ type: 'text', text, streaming } as UITextPart);
+      newParts = [...msg.parts, { type: 'text', text, streaming } as UITextPart];
     }
-    msg.updatedAt = Date.now();
-    // P2.5: 记录 text + streaming (回放时复用 appendTextChunk 累积逻辑)
+    const newMsg: UIMessage = { ...msg, parts: newParts, updatedAt: Date.now() };
+    this.messages.set(chatId, msgs.map((m, idx) => idx === msgIndex ? newMsg : m));
     this.recordOp({ op: 'appendTextChunk', chatId, messageId, text, streaming });
     this.notify();
   }
@@ -262,17 +288,19 @@ class UIMessageStore {
   completeMessage(chatId: string, messageId: string, status: UIMessage['status'] = 'done'): void {
     const msgs = this.messages.get(chatId);
     if (!msgs) return;
-    const msg = msgs.find(m => m.id === messageId);
-    if (!msg) return;
+    const msgIndex = msgs.findIndex(m => m.id === messageId);
+    if (msgIndex === -1) return;
+    const msg = msgs[msgIndex];
 
-    msg.status = status;
     // 将所有 streaming text parts 标记为非 streaming
-    for (const part of msg.parts) {
+    const newParts = msg.parts.map(part => {
       if (part.type === 'text' && (part as UITextPart).streaming) {
-        (part as UITextPart).streaming = false;
+        return { ...part, streaming: false } as UITextPart;
       }
-    }
-    msg.updatedAt = Date.now();
+      return part;
+    });
+    const newMsg: UIMessage = { ...msg, status, parts: newParts, updatedAt: Date.now() };
+    this.messages.set(chatId, msgs.map((m, idx) => idx === msgIndex ? newMsg : m));
     this.recordOp({ op: 'completeMessage', chatId, messageId, status });
     this.notify();
   }

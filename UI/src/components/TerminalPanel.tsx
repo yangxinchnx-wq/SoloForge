@@ -59,7 +59,7 @@ export default function TerminalPanel({ chatId, permissionMode = 'normal', workd
   const problemMsg = isLight ? PROBLEM_MSG_LIGHT : PROBLEM_MSG_DARK;
 
   const [activeTab, setActiveTab] = useState<'terminal' | 'problems' | 'output'>('terminal');
-  const [isTerminalCollapsed, setIsTerminalCollapsed] = useState(false);
+  const [isTerminalCollapsed, setIsTerminalCollapsed] = useState(true);
   const [sentLogMap, setSentLogMap] = useState<Record<number, boolean>>({});
   const [problemsSentMap, setProblemsSentMap] = useState<Record<number, boolean>>({});
 

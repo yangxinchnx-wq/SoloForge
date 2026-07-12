@@ -4,7 +4,7 @@ import {
   Bot, X, ShieldCheck, Hammer, Database, Shield,
   SlidersHorizontal, ChevronDown, Flame, Brain,
   Rocket, Workflow, FileText, Save, FolderOpen,
-  ZoomIn, ZoomOut, RefreshCw, Cpu
+  ZoomIn, ZoomOut, RefreshCw, Cpu, RotateCcw, Plus, Trash2
 } from '../utils/icons';
 import { useHotTheme } from '../context/ThemeContext';
 // 2026-07-03 阶段3.1.A: ChatSettingsItem + getSettingsSummary 复用 types/chat.ts (与 ChatPanel 共享)
@@ -39,7 +39,7 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
   const activeSettings = useMemo(() => {
     const defaultSettings: ChatSettingsItem = {
       enabledSkills: ['custom_rules'],
-      contextSize: 32000,
+      contextSize: 132000,
       personality: 'professional',
       tone: 'detailed',
       emojiEnabled: true,
@@ -68,7 +68,6 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
   // agent profile 编辑 (名称 + 头像)
   const [editingAvatar, setEditingAvatar] = useState('');
   const [editingName, setEditingName] = useState('');
-  const [isSavingProfile, setIsSavingProfile] = useState(false);
 
   const fetchAgentOptions = useCallback(async () => {
     setAgentLoading(true);
@@ -101,25 +100,30 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
     }
   }, [activeSettings.agentId, agentOptions]);
 
-  const saveAgentProfile = async () => {
-    const agentId = activeSettings.agentId || 'code_agent';
-    setIsSavingProfile(true);
-    try {
-      const res = await fetch(`/api/java-agent/api/agents/${agentId}/profile`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: editingName, avatar: editingAvatar }),
-      });
-      if (res.ok) {
-        // 更新本地 agentOptions
-        setAgentOptions(prev => prev.map(a => a.id === agentId ? { ...a, name: editingName, avatar: editingAvatar } : a));
-      }
-    } catch {
-      // 静默失败
-    } finally {
-      setIsSavingProfile(false);
-    }
-  };
+  // ★ 自动保存: editingName / editingAvatar 变化后 debounce 600ms 自动保存到 Java 后端
+  const autoSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!editingName.trim() || !activeSettings.agentId) return;
+    // 跳过初始同步 (agentOptions 加载时 setEditingName 触发)
+    const current = agentOptions.find(a => a.id === activeSettings.agentId);
+    if (current && current.name === editingName && current.avatar === editingAvatar) return;
+
+    if (autoSaveRef.current) clearTimeout(autoSaveRef.current);
+    autoSaveRef.current = setTimeout(async () => {
+      const agentId = activeSettings.agentId || 'code_agent';
+      try {
+        const res = await fetch(`/api/java-agent/api/agents/${agentId}/profile`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: editingName, avatar: editingAvatar }),
+        });
+        if (res.ok) {
+          setAgentOptions(prev => prev.map(a => a.id === agentId ? { ...a, name: editingName, avatar: editingAvatar } : a));
+        }
+      } catch { /* 静默失败 */ }
+    }, 600);
+    return () => { if (autoSaveRef.current) clearTimeout(autoSaveRef.current); };
+  }, [editingName, editingAvatar, activeSettings.agentId, agentOptions]);
 
   useEffect(() => {
     fetchAgentOptions();
@@ -132,6 +136,88 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
   const [skillRulesContent, setSkillRulesContent] = useState('');
   const [isSavingSkillRules, setIsSavingSkillRules] = useState(false);
 
+  // ★ 性格自定义编辑子面板 (仿照 Skills 子面板)
+  const [selectedPersonalityToEdit, setSelectedPersonalityToEdit] = useState<string | null>(null);
+  const [personalityRulesContent, setPersonalityRulesContent] = useState('');
+  const [isSavingPersonalityRules, setIsSavingPersonalityRules] = useState(false);
+
+  // ★ 自定义性格: 用户可添加任意数量的性格, 持久化到 localStorage
+  type CustomPersonality = { id: string; label: string; desc: string };
+  const [customPersonalities, setCustomPersonalities] = useState<CustomPersonality[]>(() => {
+    if (typeof localStorage === 'undefined') return [];
+    try {
+      const saved = localStorage.getItem('soloforge_custom_personalities');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+  // 创建新性格的子面板模式: 'edit' | 'create'
+  const [personalityPanelMode, setPersonalityPanelMode] = useState<'edit' | 'create'>('edit');
+  // 创建模式下的临时名称 / 描述
+  const [newPersonalityName, setNewPersonalityName] = useState('');
+  const [newPersonalityDesc, setNewPersonalityDesc] = useState('');
+
+  // ★ 自定义性格: 持久化到 localStorage (soloforge_custom_personalities)
+  const persistCustomPersonalities = (list: CustomPersonality[]) => {
+    try {
+      localStorage.setItem('soloforge_custom_personalities', JSON.stringify(list));
+    } catch { /* 静默失败 */ }
+  };
+
+  // 创建新性格: 生成 id, 写入列表 + 规则, 切换到 edit 模式
+  const handleCreateCustomPersonality = () => {
+    const name = newPersonalityName.trim();
+    if (!name) return;
+    const id = `custom_${Date.now()}`;
+    const desc = newPersonalityDesc.trim();
+    const newP: CustomPersonality = { id, label: name, desc };
+    const next = [...customPersonalities, newP];
+    setCustomPersonalities(next);
+    persistCustomPersonalities(next);
+    // 同步规则到 localStorage (buildLLMProxySystemPrompt 会读取)
+    localStorage.setItem(`soloforge_personality_${id}`, desc);
+    // 重置创建表单
+    setNewPersonalityName('');
+    setNewPersonalityDesc('');
+    // 切换到 edit 模式编辑新性格
+    setPersonalityPanelMode('edit');
+    setSelectedPersonalityToEdit(id);
+    setPersonalityRulesContent(desc);
+    // 激活新性格
+    handleUpdateSettings({ personality: id as any });
+  };
+
+  // 删除自定义性格: 移除列表 + 规则, 必要时回退激活项
+  const handleDeleteCustomPersonality = (id: string) => {
+    const next = customPersonalities.filter(p => p.id !== id);
+    setCustomPersonalities(next);
+    persistCustomPersonalities(next);
+    localStorage.removeItem(`soloforge_personality_${id}`);
+    if (activeSettings.personality === id) {
+      handleUpdateSettings({ personality: 'professional' });
+    }
+    if (selectedPersonalityToEdit === id) {
+      setSelectedPersonalityToEdit(null);
+    }
+  };
+
+  // ★ 重命名自定义性格 (debounce 500ms 持久化)
+  const personalityRenameRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [editingPersonalityName, setEditingPersonalityName] = useState('');
+  const handleRenameCustomPersonality = (id: string, newName: string) => {
+    const trimmed = newName.slice(0, 8); // 最大 8 字
+    setEditingPersonalityName(trimmed);
+    if (personalityRenameRef.current) clearTimeout(personalityRenameRef.current);
+    personalityRenameRef.current = setTimeout(() => {
+      const finalName = trimmed.trim();
+      if (!finalName) return;
+      setCustomPersonalities(prev => {
+        const next = prev.map(p => p.id === id ? { ...p, label: finalName } : p);
+        persistCustomPersonalities(next);
+        return next;
+      });
+    }, 500);
+  };
+
   const getRulesFileName = (skillId: string) => {
     if (skillId === 'custom_rules') return 'custom_rules.md';
     if (skillId === 'frontend_expert') return 'frontend_rules.md';
@@ -141,6 +227,56 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
     if (skillId === 'extreme_mode') return 'extreme_rules.md';
     return 'custom_rules.md';
   };
+
+  // ★ 性格自定义: 默认描述 + localStorage 持久化
+  const PERSONALITY_DEFAULTS: Record<string, string> = {
+    professional: '保持专业严谨的工程师风格，使用准确的技术术语',
+    sarcastic:    '可以适度毒舌，用反讽手法指出问题，但保持技术准确',
+    zen:          '用禅意、克制的语言，少废话，直击本质',
+    geek:         '用极客黑话和技术梗，展现黑客气质',
+  };
+  const getPersonalityLabel = (id: string) => {
+    const map: Record<string, string> = { professional: '专业严谨', sarcastic: '毒舌点评', zen: '禅意修行', geek: '中二极客' };
+    if (map[id]) return map[id];
+    // 自定义性格: 从 customPersonalities 读取 label
+    const custom = customPersonalities.find(p => p.id === id);
+    return custom?.label || id;
+  };
+  const getPersonalityFileName = (id: string) => `personality_${id}.md`;
+
+  const fetchPersonalityRules = useCallback((pid: string) => {
+    const key = `soloforge_personality_${pid}`;
+    const saved = localStorage.getItem(key);
+    // 内置性格读 PERSONALITY_DEFAULTS, 自定义性格读 customPersonalities 里的 desc
+    const def = PERSONALITY_DEFAULTS[pid]
+      ?? customPersonalities.find(p => p.id === pid)?.desc
+      ?? '';
+    setPersonalityRulesContent(saved ?? def ?? '');
+  }, [customPersonalities]);
+
+  // debounce 自动保存性格规则到 localStorage
+  const personalitySaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleSavePersonalityRules = (pid: string, content: string) => {
+    setPersonalityRulesContent(content);
+    setIsSavingPersonalityRules(true);
+    if (personalitySaveRef.current) clearTimeout(personalitySaveRef.current);
+    personalitySaveRef.current = setTimeout(() => {
+      localStorage.setItem(`soloforge_personality_${pid}`, content);
+      setIsSavingPersonalityRules(false);
+      // 通知其他组件 (如 aiBackend 的 buildLLMProxySystemPrompt) 性格规则已更新
+      window.dispatchEvent(new CustomEvent('soloforge-personality-rules-updated'));
+    }, 500);
+  };
+
+  useEffect(() => {
+    // 仅 edit 模式 + 非 __new__ 哨兵时才读取已存规则
+    if (selectedPersonalityToEdit && personalityPanelMode === 'edit' && selectedPersonalityToEdit !== '__new__') {
+      fetchPersonalityRules(selectedPersonalityToEdit);
+      // 同步自定义性格名称到编辑框
+      const cp = customPersonalities.find(p => p.id === selectedPersonalityToEdit);
+      setEditingPersonalityName(cp?.label || '');
+    }
+  }, [selectedPersonalityToEdit, personalityPanelMode, fetchPersonalityRules, customPersonalities]);
 
   const getSkillLabel = (skillId: string) => {
     if (skillId === 'custom_rules') return '自定义规范 (.md)';
@@ -302,9 +438,17 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
     }
   };
 
-  // Dragging states
+  // Dragging states — 初始位置直接居中, 避免 useEffect 延迟设置导致"从别处飞过来"
   const [size, setSize] = useState({ width: 380, height: 460 });
-  const [position, setPosition] = useState({ x: 120, y: 80 });
+  const [position, setPosition] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return {
+        x: Math.max(20, (window.innerWidth - 380) / 2),
+        y: Math.max(25, (window.innerHeight - 460) / 2),
+      };
+    }
+    return { x: 120, y: 80 };
+  });
   const [subSize, setSubSize] = useState({ width: 340, height: 460 });
 
   useEffect(() => {
@@ -410,14 +554,7 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
     document.addEventListener('mouseup', handleMouseUp);
   };
 
-  // Center window on mount
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const initX = Math.max(20, (window.innerWidth - 380) / 2);
-      const initY = Math.max(25, (window.innerHeight - 460) / 2);
-      setPosition({ x: initX, y: initY });
-    }
-  }, []);
+  // Center window on mount — 已移到 useState 初始化, 此 effect 不再需要
 
   const handleMouseDown = (e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
@@ -604,7 +741,7 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 pointer-events-none z-[9999] text-on-surface font-sans select-none overflow-hidden animate-fadeIn">
+    <div className="absolute inset-0 pointer-events-none text-on-surface font-sans select-none overflow-hidden">
       {/* Inject a non-invasive custom CSS tag to guarantee absolute zero scrollbars inside are visible and standard cursors override any hands */}
       <style>{`
         .no-scrollbar-now::-webkit-scrollbar,
@@ -652,7 +789,7 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
           backgroundColor: activeTheme.surface,
           borderColor: activeTheme.outline,
         }}
-        className="sf-anim sf-anim-fade-scale pointer-events-auto border rounded-2xl shadow-[0_16px_50px_rgba(0,0,0,0.85)] overflow-hidden flex flex-col cursor-default relative backdrop-blur-md bg-opacity-95"
+        className="sf-anim sf-anim-fade-scale pointer-events-auto border rounded-2xl shadow-[0_8px_24px_rgba(0,0,0,0.35)] overflow-hidden flex flex-col cursor-default relative backdrop-blur-md bg-opacity-95"
         onMouseDown={handleMouseDown}
       >
 
@@ -740,14 +877,6 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
                       : <span className="text-base leading-none shrink-0">{editingAvatar}</span>
                   )}
                 </div>
-                <button
-                  type="button"
-                  onClick={saveAgentProfile}
-                  disabled={isSavingProfile || !editingName.trim()}
-                  className="text-[9px] font-mono px-2 py-0.5 rounded bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  {isSavingProfile ? '保存中...' : '保存'}
-                </button>
               </div>
             )}
           </div>
@@ -811,10 +940,10 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
             />
             <div className="flex justify-between text-[8px] text-on-surface/30 font-mono mt-1 font-bold">
               <span>4k</span>
-              <span>32k (默认)</span>
+              <span>32k</span>
               <span>64k</span>
               <span>128k</span>
-              <span>无限制</span>
+              <span>无限制 (默认)</span>
             </div>
           </div>
 
@@ -822,6 +951,7 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
           <div>
             <span className="text-[10px] text-primary/80 font-bold uppercase tracking-wider block mb-1.5 font-mono">3. 助理性格 (Personality)</span>
             <div className="grid grid-cols-4 gap-1">
+              {/* 4 个内置性格 */}
               {[
                 { id: 'professional', label: '专业严谨', icon: ShieldCheck, color: 'text-blue-400 bg-blue-500/10' },
                 { id: 'sarcastic', label: '毒舌点评', icon: Flame, color: 'text-rose-400 bg-rose-500/10' },
@@ -829,21 +959,89 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
                 { id: 'geek', label: '中二极客', icon: Rocket, color: 'text-purple-400 bg-purple-500/10' },
               ].map(p => {
                 const isActive = activeSettings.personality === p.id;
+                const isEditingP = selectedPersonalityToEdit === p.id && personalityPanelMode === 'edit';
                 return (
                   <button
                     key={p.id}
-                    onClick={() => handleUpdateSettings({ personality: p.id as any })}
+                    onClick={() => {
+                      handleUpdateSettings({ personality: p.id as any });
+                      setPersonalityPanelMode('edit');
+                      setSelectedPersonalityToEdit(p.id);
+                      setSelectedSkillToEdit(null);
+                    }}
                     className={`flex flex-col items-center justify-center p-1.5 rounded-lg border text-center cursor-pointer transition-all gap-1 ${
                       isActive
                         ? `border-primary/40 bg-primary/10 text-primary font-bold ${p.color}`
                         : 'bg-surface-bright border-outline/35 text-on-surface/60 hover:text-on-surface hover:bg-bg/40'
-                    }`}
+                    } ${isEditingP ? 'ring-1 ring-primary/80 border-primary/60' : ''}`}
                   >
                     <p.icon className="w-3.5 h-3.5 shrink-0" />
                     <span className="text-[9px] truncate leading-none">{p.label}</span>
                   </button>
                 );
               })}
+              {/* 自定义性格: 仅显示名称, 无图标, 自适应换行 */}
+              {customPersonalities.map(p => {
+                const isActive = activeSettings.personality === p.id;
+                const isEditingP = selectedPersonalityToEdit === p.id && personalityPanelMode === 'edit';
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => {
+                      handleUpdateSettings({ personality: p.id as any });
+                      setPersonalityPanelMode('edit');
+                      setSelectedPersonalityToEdit(p.id);
+                      setSelectedSkillToEdit(null);
+                    }}
+                    className={`group/cp flex flex-col items-center justify-center p-1.5 rounded-lg border text-center cursor-pointer transition-all relative ${
+                      isActive
+                        ? 'border-primary/40 bg-primary/10 text-primary font-bold bg-emerald-500/10 text-emerald-400'
+                        : 'bg-surface-bright border-outline/35 text-on-surface/60 hover:text-on-surface hover:bg-bg/40'
+                    } ${isEditingP ? 'ring-1 ring-primary/80 border-primary/60' : ''}`}
+                    title={p.label}
+                  >
+                    <span className="text-[9px] leading-tight break-words w-full px-0.5 line-clamp-2">{p.label}</span>
+                    {/* 删除按钮 (hover 时显示) */}
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteCustomPersonality(p.id);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.stopPropagation();
+                          handleDeleteCustomPersonality(p.id);
+                        }
+                      }}
+                      className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-rose-500/90 text-white flex items-center justify-center opacity-0 group-hover/cp:opacity-100 transition-opacity cursor-pointer hover:scale-110 hover:bg-rose-500 z-10"
+                      title="删除该自定义性格"
+                    >
+                      <X className="w-2.5 h-2.5" />
+                    </span>
+                  </button>
+                );
+              })}
+              {/* + 添加自定义性格 (虚线框) */}
+              <button
+                onClick={() => {
+                  setPersonalityPanelMode('create');
+                  setSelectedPersonalityToEdit('__new__');
+                  setSelectedSkillToEdit(null);
+                  setNewPersonalityName('');
+                  setNewPersonalityDesc('');
+                }}
+                className={`flex flex-col items-center justify-center p-1.5 rounded-lg border-2 border-dashed text-center cursor-pointer transition-all gap-1 ${
+                  personalityPanelMode === 'create' && selectedPersonalityToEdit === '__new__'
+                    ? 'border-primary/60 text-primary bg-primary/10 ring-1 ring-primary/80'
+                    : 'border-outline/40 text-on-surface/40 hover:text-primary hover:border-primary/50 hover:bg-primary/5'
+                }`}
+                title="添加自定义性格"
+              >
+                <Plus className="w-3.5 h-3.5 shrink-0" />
+                <span className="text-[9px] truncate leading-none">添加性格</span>
+              </button>
             </div>
           </div>
 
@@ -937,7 +1135,7 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
               backgroundColor: activeTheme.surface,
               borderColor: activeTheme.outline,
             }}
-            className="pointer-events-auto border rounded-2xl shadow-[0_16px_50px_rgba(0,0,0,0.85)] overflow-hidden flex flex-col cursor-default backdrop-blur-md bg-opacity-95 relative"
+            className="pointer-events-auto border rounded-2xl shadow-[0_8px_24px_rgba(0,0,0,0.35)] overflow-hidden flex flex-col cursor-default backdrop-blur-md bg-opacity-95 relative"
             onMouseDown={handleSubMouseDown}
             onWheel={(e) => {
               // Zoom support on Wheel
@@ -1046,6 +1244,217 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
               <div className="absolute bottom-1.5 left-1.5 w-3 h-3 border-b-2 border-l-2 border-primary/45 group-hover/corner:border-primary group-hover/corner:scale-110 transition-all pointer-events-none rounded-bl-sm" />
             </div>
             <div 
+              onMouseDown={(e) => handleSubResizeStart('br', e)}
+              className="absolute bottom-0 right-0 w-6 h-6 cursor-nwse-resize z-[100] group/corner select-none"
+              title="拖拽右下角调整大小"
+            >
+              <div className="absolute bottom-1.5 right-1.5 w-3 h-3 border-b-2 border-r-2 border-primary/45 group-hover/corner:border-primary group-hover/corner:scale-110 transition-all pointer-events-none rounded-br-sm" />
+            </div>
+          </div>
+      </MountTransition>
+
+      {/* ★ 性格自定义编辑子面板 (结构与 Skills 子面板一致) */}
+      <MountTransition show={!!selectedPersonalityToEdit} variant="fade-scale" duration={150}>
+          <div
+            style={{
+              position: 'absolute',
+              left: `${subPanelAbsolute.x}px`,
+              top: `${subPanelAbsolute.y}px`,
+              width: `${subSize.width}px`,
+              height: `${subSize.height}px`,
+              backgroundColor: activeTheme.surface,
+              borderColor: activeTheme.outline,
+            }}
+            className="pointer-events-auto border rounded-2xl shadow-[0_8px_24px_rgba(0,0,0,0.35)] overflow-hidden flex flex-col cursor-default backdrop-blur-md bg-opacity-95 relative"
+            onMouseDown={handleSubMouseDown}
+            onWheel={(e) => {
+              if (e.ctrlKey) {
+                e.preventDefault();
+                const direction = e.deltaY < 0 ? 0.05 : -0.05;
+                handleSubScaleChange(Math.min(1.50, Math.max(0.60, subScaleFactor + direction)));
+              }
+            }}
+          >
+            {/* Sub-panel Header */}
+            <div className="flex items-center gap-3 p-4 border-b border-outline/35 shrink-0 select-none">
+              <div className={`p-1.5 rounded-lg shrink-0 ${personalityPanelMode === 'create' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-primary/10 text-primary'}`}>
+                {personalityPanelMode === 'create' ? <Plus className="w-4 h-4" /> : <Brain className="w-4 h-4 text-primary" />}
+              </div>
+              <div className="min-w-0">
+                <h4 className="text-xs font-bold text-on-surface truncate flex items-center gap-1.5">
+                  {personalityPanelMode === 'create' ? (
+                    <span>新建自定义性格</span>
+                  ) : (
+                    <span>性格配置: {selectedPersonalityToEdit ? getPersonalityLabel(selectedPersonalityToEdit) : ''}</span>
+                  )}
+                </h4>
+                <p className="text-[9px] text-on-surface/40 mt-0.5 truncate font-mono">
+                  {personalityPanelMode === 'create'
+                    ? '创建后将出现在性格列表中'
+                    : `文件: ${selectedPersonalityToEdit ? getPersonalityFileName(selectedPersonalityToEdit) : ''}`}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedPersonalityToEdit(null);
+                  setPersonalityPanelMode('edit');
+                }}
+                className="p-1 hover:bg-surface-bright rounded text-on-surface/30 hover:text-white shrink-0 ml-auto cursor-default animate-none"
+                title="关闭配置栏"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Sub-panel Body: create 模式 vs edit 模式 */}
+            {personalityPanelMode === 'create' ? (
+              /* ★ 创建模式: 名称输入 + 描述 textarea + 创建按钮 */
+              <div className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar-now">
+                <div className="space-y-2">
+                  <div className="text-[10px] text-primary font-bold font-mono select-none">
+                    性格名称 (显示在按钮上)
+                  </div>
+                  <input
+                    type="text"
+                    value={newPersonalityName}
+                    onChange={(e) => setNewPersonalityName(e.target.value)}
+                    placeholder="例如: 温柔知心"
+                    maxLength={8}
+                    className="w-full text-[11px] bg-bg border border-outline/30 rounded-lg p-2 focus:border-primary/50 text-on-surface font-mono outline-none cursor-default"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <div className="text-[10px] text-primary font-bold font-mono select-none">
+                    性格描述 (注入到 System Prompt)
+                  </div>
+                  <textarea
+                    value={newPersonalityDesc}
+                    onChange={(e) => setNewPersonalityDesc(e.target.value)}
+                    placeholder="# 在此输入该性格对应的 System Prompt 描述, 例如: 用温柔、关怀的语气, 主动关心用户情绪..."
+                    className="w-full h-40 text-[11px] bg-bg border border-outline/30 rounded-lg p-2 focus:border-primary/50 text-on-surface font-mono outline-none resize-none overflow-y-auto no-scrollbar-now cursor-default"
+                  />
+                </div>
+                {/* 创建按钮 */}
+                <div className="pt-2 select-none">
+                  <button
+                    type="button"
+                    onClick={handleCreateCustomPersonality}
+                    disabled={!newPersonalityName.trim()}
+                    className={`w-full flex items-center justify-center gap-2 p-2.5 rounded-lg border font-bold text-[11px] transition-all cursor-default ${
+                      newPersonalityName.trim()
+                        ? 'border-emerald-500/30 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400'
+                        : 'border-outline/20 bg-on-surface/5 text-on-surface/30 cursor-not-allowed'
+                    }`}
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>创建并激活该性格</span>
+                  </button>
+                  <p className="text-[9.5px] text-on-surface/40 mt-1.5 leading-relaxed">
+                    提示：创建后该性格会立即激活, 你可以在性格列表中悬停按钮删除它 (内置 4 个性格不可删除)。
+                  </p>
+                </div>
+              </div>
+            ) : (
+              /* ★ 编辑模式: 原有 textarea 自动保存 + 恢复默认 (仅内置性格) */
+              <div className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar-now">
+                {/* 自定义性格: 名称修改 (最大 8 字, debounce 自动保存) */}
+                {selectedPersonalityToEdit && selectedPersonalityToEdit !== '__new__' && !PERSONALITY_DEFAULTS[selectedPersonalityToEdit] && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-[10px] text-primary font-bold font-mono select-none">
+                      <span>性格名称 (最多 8 字)</span>
+                      <span className="text-[8px] font-mono text-on-surface/40">{editingPersonalityName.length}/8</span>
+                    </div>
+                    <input
+                      type="text"
+                      value={editingPersonalityName}
+                      onChange={(e) => selectedPersonalityToEdit && handleRenameCustomPersonality(selectedPersonalityToEdit, e.target.value)}
+                      maxLength={8}
+                      placeholder="输入性格名称"
+                      className="w-full text-[11px] bg-bg border border-outline/30 rounded-lg p-2 focus:border-primary/50 text-on-surface font-mono outline-none cursor-default"
+                    />
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-[10px] text-primary font-bold font-mono select-none">
+                    <span>编辑性格描述 (注入到 System Prompt)</span>
+                    {isSavingPersonalityRules ? (
+                      <span className="text-[8px] font-mono animate-pulse text-primary/70">自动保存中...</span>
+                    ) : (
+                      <span className="text-[8px] font-mono text-emerald-400">● 已同步</span>
+                    )}
+                  </div>
+                  <textarea
+                    value={personalityRulesContent}
+                    onChange={(e) => selectedPersonalityToEdit && selectedPersonalityToEdit !== '__new__' && handleSavePersonalityRules(selectedPersonalityToEdit, e.target.value)}
+                    placeholder="# 在此输入该性格对应的 System Prompt 描述"
+                    className="w-full h-44 text-[11px] bg-bg border border-outline/30 rounded-lg p-2 focus:border-primary/50 text-on-surface font-mono outline-none resize-none overflow-y-auto no-scrollbar-now cursor-default"
+                  />
+                </div>
+
+                {/* 重置为默认值 (仅内置 4 个性格显示) */}
+                {selectedPersonalityToEdit && PERSONALITY_DEFAULTS[selectedPersonalityToEdit] && (
+                  <div className="pt-2 select-none">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!selectedPersonalityToEdit) return;
+                        const def = PERSONALITY_DEFAULTS[selectedPersonalityToEdit] || '';
+                        handleSavePersonalityRules(selectedPersonalityToEdit, def);
+                      }}
+                      className="w-full flex items-center justify-center gap-2 p-2.5 rounded-lg border border-primary/20 bg-primary/10 hover:bg-primary/20 text-primary font-bold text-[11px] transition-all cursor-default"
+                    >
+                      <RotateCcw className="w-4 h-4 text-primary" />
+                      <span>恢复默认描述</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* 自定义性格: 显示删除按钮 */}
+                {selectedPersonalityToEdit && selectedPersonalityToEdit !== '__new__' && !PERSONALITY_DEFAULTS[selectedPersonalityToEdit] && (
+                  <div className="pt-2 select-none">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (selectedPersonalityToEdit) handleDeleteCustomPersonality(selectedPersonalityToEdit);
+                      }}
+                      className="w-full flex items-center justify-center gap-2 p-2.5 rounded-lg border border-rose-500/20 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 font-bold text-[11px] transition-all cursor-default"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>删除该自定义性格</span>
+                    </button>
+                  </div>
+                )}
+
+                <p className="text-[9.5px] text-on-surface/40 leading-relaxed select-none">
+                  提示：此处编辑的性格描述会实时注入到 LLM 的 System Prompt 中，影响 Java Agent 和 LLM 代理两条路径的输出风格。
+                </p>
+              </div>
+            )}
+
+            {/* 4 Corner Resizers */}
+            <div
+              onMouseDown={(e) => handleSubResizeStart('tl', e)}
+              className="absolute top-0 left-0 w-6 h-6 cursor-nwse-resize z-[100] group/corner select-none"
+              title="拖拽左上角调整大小"
+            >
+              <div className="absolute top-1.5 left-1.5 w-3 h-3 border-t-2 border-l-2 border-primary/45 group-hover/corner:border-primary group-hover/corner:scale-110 transition-all pointer-events-none rounded-tl-sm" />
+            </div>
+            <div
+              onMouseDown={(e) => handleSubResizeStart('tr', e)}
+              className="absolute top-0 right-0 w-6 h-6 cursor-nesw-resize z-[100] group/corner select-none"
+              title="拖拽右上角调整大小"
+            >
+              <div className="absolute top-1.5 right-1.5 w-3 h-3 border-t-2 border-r-2 border-primary/45 group-hover/corner:border-primary group-hover/corner:scale-110 transition-all pointer-events-none rounded-tr-sm" />
+            </div>
+            <div
+              onMouseDown={(e) => handleSubResizeStart('bl', e)}
+              className="absolute bottom-0 left-0 w-6 h-6 cursor-nesw-resize z-[100] group/corner select-none"
+              title="拖拽左下角调整大小"
+            >
+              <div className="absolute bottom-1.5 left-1.5 w-3 h-3 border-b-2 border-l-2 border-primary/45 group-hover/corner:border-primary group-hover/corner:scale-110 transition-all pointer-events-none rounded-bl-sm" />
+            </div>
+            <div
               onMouseDown={(e) => handleSubResizeStart('br', e)}
               className="absolute bottom-0 right-0 w-6 h-6 cursor-nwse-resize z-[100] group/corner select-none"
               title="拖拽右下角调整大小"

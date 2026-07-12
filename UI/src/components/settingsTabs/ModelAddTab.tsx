@@ -356,13 +356,12 @@ function mergeProviders(loaded: any[]): ModelProvider[] {
     return idxA - idxB;
   });
   return combined.map((p: any) => {
+    // 只匹配精确的占位假密钥字符串, 不使用前缀匹配 (sk-ds- / AIzaSyA4_ 等前缀
+    // 会误杀用户的真实 DeepSeek / Google API key, 导致密钥丢失)
     const hasFakeKey =
       p.apiKey === 'sk-proj-4jKls9XjLk9AsDFgHJKLaSDFgHJK' ||
       p.apiKey === 'sk-ds-3jPlkHskOlO8asR9AkjsSJdkOsa9' ||
-      p.apiKey === 'AIzaSyA4_PklshSjLkaO8skJdKsa9Ska' ||
-      (p.apiKey && p.apiKey.startsWith('sk-proj-4jKls9XjLk9As')) ||
-      (p.apiKey && p.apiKey.startsWith('sk-ds-')) ||
-      (p.apiKey && p.apiKey.startsWith('AIzaSyA4_'));
+      p.apiKey === 'AIzaSyA4_PklshSjLkaO8skJdKsa9Ska';
     const finalName = p.id === 'xiaomi' ? 'XIAOMIMIMO' : p.name;
     const cleanedModels = (p.scanned && p.models)
       ? p.models.filter((m: any) => {
@@ -395,7 +394,10 @@ function mergeProviders(loaded: any[]): ModelProvider[] {
 
 // 02. 云端大模型服务商配置
 export default function ModelAddTab() {
-  const serverLoadedRef = useRef(false);
+  // 标记是否已完成首次渲染: 首次渲染的 providers 来自 localStorage 初始化,
+  // 不需要再写回。后续任何 providers 变化都应立即持久化, 避免用户在
+  // 服务端加载期间输入的 apiKey 因组件卸载而丢失。
+  const isFirstRenderRef = useRef(true);
 
   const [providers, setProviders] = useState<ModelProvider[]>(() => {
     const saved = localStorage.getItem('cherry_providers_v2');
@@ -419,34 +421,50 @@ export default function ModelAddTab() {
         const data = await r.json();
         if (!cancelled && data?.success && Array.isArray(data.providers) && data.providers.length > 0) {
           setProviders(prev => {
-            // 服务端为权威源，但保留本地已有的 apiKey
+            // 服务端为权威源（baseUrl/models/enabled 等）。
+            // apiKey 合并策略:
+            //   1. 本地有值 → 优先用本地 (用户当前输入)
+            //   2. 本地为空 + 服务端是明文 → 用服务端 (跨设备同步场景)
+            //   3. 本地为空 + 服务端是 '__VAULT__:' 占位符 → 丢弃 (密钥在 OS 钥匙串, 前端拿不到)
             const serverMap = new Map(data.providers.map((p: any) => [p.id, p]));
             const merged = prev.map(localP => {
               const serverP = serverMap.get(localP.id);
               if (serverP) {
-                return { ...serverP, apiKey: localP.apiKey || serverP.apiKey || '' };
+                const { apiKey: serverApiKey, ...serverRest } = serverP;
+                const isVaultPlaceholder = !serverApiKey || serverApiKey.startsWith('__VAULT__');
+                return {
+                  ...serverRest,
+                  apiKey: localP.apiKey || (isVaultPlaceholder ? '' : serverApiKey),
+                };
               }
               return localP;
             });
             const existingIds = new Set(merged.map(p => p.id));
             for (const sp of data.providers) {
-              if (!existingIds.has(sp.id) && !String(sp.id).startsWith('custom_')) merged.push(sp);
+              if (!existingIds.has(sp.id) && !String(sp.id).startsWith('custom_')) {
+                const isVaultPlaceholder2 = !sp.apiKey || String(sp.apiKey).startsWith('__VAULT__');
+                merged.push({ ...sp, apiKey: isVaultPlaceholder2 ? '' : sp.apiKey });
+              }
             }
             return mergeProviders(merged);
           });
         }
       } catch {
         // 服务端不可用，继续使用 localStorage 数据
-      } finally {
-        serverLoadedRef.current = true;
       }
     })();
     return () => { cancelled = true; };
   }, []);
 
-  // 持久化：localStorage + 服务端（等服务端初始加载完成后才开始）
+  // 持久化：localStorage + 服务端
+  // 首次渲染的数据来自 localStorage 初始化, 不需要写回。
+  // 后续任何 providers 变化都立即持久化, 确保用户输入的 apiKey 不会因
+  // 服务端加载未完成或组件卸载而丢失。
   useEffect(() => {
-    if (!serverLoadedRef.current) return;
+    if (isFirstRenderRef.current) {
+      isFirstRenderRef.current = false;
+      return;
+    }
     const persisted = providers.map((p) => ({ ...p }));
     localStorage.setItem('cherry_providers_v2', JSON.stringify(persisted));
     window.dispatchEvent(new CustomEvent('providers_updated'));

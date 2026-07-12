@@ -19,9 +19,16 @@ import java.util.Map;
 @AllArgsConstructor
 public class ChatSettings {
 
-    /** 人格: professional / sarcastic / zen / geek */
+    /** 人格: professional / sarcastic / zen / geek, 或自定义 (custom_*) */
     @Builder.Default
     private String personality = "professional";
+
+    /**
+     * 自定义人格描述 (前端 localStorage 透传)
+     * <p>当 personality 不在内置 4 个之中时 (如 custom_xxx), 使用此描述注入 System Prompt。
+     * 内置人格时此字段可为 null, 由 SystemPromptBuilder 走内置映射表。
+     */
+    private String personalityDesc;
 
     /** 语气: detailed / concise / humorous */
     @Builder.Default
