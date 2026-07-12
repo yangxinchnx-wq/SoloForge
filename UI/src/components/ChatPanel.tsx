@@ -395,10 +395,10 @@ export default function ChatPanel({
               <button
                 onClick={() => setActiveSettingsChat({ id: activeChatId, title: activeChatTitle })}
                 className="truncate font-sans font-medium hover:text-primary hover:underline cursor-pointer flex items-center gap-0.5 group"
-                title="点击配置智能体角色表情、状态、回复语调与性格"
+                title="点击配置助理角色表情、状态、回复语调与性格"
                 id="agent-role-summary-btn"
               >
-                <span>智能体角色：</span>
+                <span>助理角色：</span>
                 <span className="text-primary font-semibold group-hover:text-primary/80">{getSettingsSummary(activeSettings)}</span>
                 <SlidersHorizontal className="w-2.5 h-2.5 ml-1 select-none text-primary opacity-60 group-hover:opacity-100 transition-opacity" />
               </button>
