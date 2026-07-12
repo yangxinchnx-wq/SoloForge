@@ -148,6 +148,14 @@ export default function PreviewPanel({
   const previewPushError = previewEntry?.pushError ?? null;
   const [showSourceCode, setShowSourceCode] = useState(false);
 
+  const [canvasState, setCanvasState] = useState<CanvasState>('idle');
+  const [canvasError, setCanvasError] = useState<string>('');
+  // P0: 优先使用 App.tsx 解析出的画布 ID (canvas_1 ... canvas_10)
+  //   - 解析期间 fallback 到旧派生 ID 保证不会白屏
+  //   - canvasReady 后再切到真实 ID (canvas.stop 老 + canvas.start 新)
+  const fallbackId = `canvas-${selectedChatId || 'default'}`;
+  const effectiveCanvasId = canvasId || fallbackId;
+
   // ★ 2026-07-13: 画布 DSL 恢复链路 (三级降级)
   //   1. previewStreamStore 已有数据 → 不做任何事
   //   2. GarnetStore 热存储 (24h TTL) → 快速恢复
@@ -211,14 +219,6 @@ export default function PreviewPanel({
 
     return () => { cancelled = true; };
   }, [selectedChatId, effectiveCanvasId]);
-
-  const [canvasState, setCanvasState] = useState<CanvasState>('idle');
-  const [canvasError, setCanvasError] = useState<string>('');
-  // P0: 优先使用 App.tsx 解析出的画布 ID (canvas_1 ... canvas_10)
-  //   - 解析期间 fallback 到旧派生 ID 保证不会白屏
-  //   - canvasReady 后再切到真实 ID (canvas.stop 老 + canvas.start 新)
-  const fallbackId = `canvas-${selectedChatId || 'default'}`;
-  const effectiveCanvasId = canvasId || fallbackId;
   // 待机状态已废弃: 始终显示工具栏 + 占位区, 用户可手动启动画布
   const noCanvas = false;
   const sessionIdRef = useRef<string>(effectiveCanvasId);

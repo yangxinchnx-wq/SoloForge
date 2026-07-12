@@ -254,6 +254,145 @@ async function invokeWindowsMcp(
   }
 }
 
+// ============================================================
+// 动态执行器: 从 endpointConfig 读取 url + toolMap, 不再硬编码
+//   invokeBrowserUseDynamic — transport=http, 按 toolMap 中的 path/method 调用
+//   invokeWindowsMcpDynamic — transport=mcp, 按 toolMap 映射工具名后调 MCP JSON-RPC
+// ============================================================
+
+/**
+ * HTTP transport 动态执行器
+ * endpointConfig 格式:
+ *   { transport: "http", url: "http://localhost:3000/api/browser-use",
+ *     toolMap: { "bu_run_task": { path: "/run", method: "POST" }, ... } }
+ * path 中的 {param} 占位符会用 args 中同名字段替换
+ */
+async function invokeBrowserUseDynamic(
+  toolName: string,
+  args: Record<string, any>,
+  signal: AbortSignal,
+  endpointConfig: any
+): Promise<{ success: boolean; output?: string; error?: string }> {
+  const baseUrl: string = endpointConfig.url;
+  const toolMap: Record<string, any> = endpointConfig.toolMap || {};
+  const mapping = toolMap[toolName];
+
+  if (!mapping) {
+    return { success: false, error: `工具 [${toolName}] 在 toolMap 中未找到路径映射` };
+  }
+
+  try {
+    // 健康检查
+    const healthResp = await fetch(`${baseUrl}/health`, { signal });
+    const healthData: any = await healthResp.json();
+    if (!healthData.success || !healthData.ready) {
+      return { success: false, error: `工具服务未就绪: ${healthData.error || "not ready"}` };
+    }
+
+    // 替换 path 中的 {param} 占位符
+    let endpoint: string = mapping.path || "";
+    for (const [key, value] of Object.entries(args)) {
+      endpoint = endpoint.replace(`{${key}}`, encodeURIComponent(String(value)));
+    }
+
+    const method = (mapping.method || "POST").toUpperCase();
+    const isGet = method === "GET";
+
+    // POST 请求体: 取 mapping.body 中声明的字段, 或直接传 args
+    let body: any = undefined;
+    if (!isGet) {
+      if (mapping.body && Array.isArray(mapping.body)) {
+        body = {};
+        for (const field of mapping.body) {
+          if (args[field] !== undefined) body[field] = args[field];
+        }
+      } else {
+        body = args;
+      }
+    }
+
+    const invokeResp = await fetch(`${baseUrl}${endpoint}`, {
+      signal,
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const invokeData: any = await invokeResp.json();
+
+    if (!invokeData.success) {
+      return { success: false, error: invokeData.error || "调用失败" };
+    }
+    return { success: true, output: JSON.stringify(invokeData.task || invokeData, null, 2) };
+  } catch (err: any) {
+    if (err.name === "AbortError") throw err;
+    return { success: false, error: `工具服务 [${endpointConfig.url}] 未启动或调用失败: ${err.message}` };
+  }
+}
+
+/**
+ * MCP transport 动态执行器
+ * endpointConfig 格式:
+ *   { transport: "mcp", url: "http://localhost:8000",
+ *     toolMap: { "win_powershell": "PowerShell", "win_reg_read": "Registry", ... } }
+ * toolMap 将前端工具 ID 映射为目标 MCP 服务的工具名
+ */
+async function invokeWindowsMcpDynamic(
+  toolName: string,
+  args: Record<string, any>,
+  signal: AbortSignal,
+  endpointConfig: any
+): Promise<{ success: boolean; output?: string; error?: string }> {
+  const baseUrl: string = endpointConfig.url;
+  const toolMap: Record<string, string> = endpointConfig.toolMap || {};
+  const targetToolName = toolMap[toolName];
+
+  if (!targetToolName) {
+    return { success: false, error: `工具 [${toolName}] 在 toolMap 中未找到 MCP 工具名映射` };
+  }
+
+  try {
+    // 健康检查
+    const probe = await fetch(baseUrl, { signal, method: "GET" }).catch(() => null);
+    if (!probe) {
+      return { success: false, error: `工具服务 [MCP ${baseUrl}] 未启动` };
+    }
+
+    // 通过 MCP JSON-RPC (streamable-http) 调用工具
+    const mcpResp = await fetch(`${baseUrl}/mcp`, {
+      signal,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: { name: targetToolName, arguments: args },
+        id: 1,
+      }),
+    });
+
+    if (!mcpResp.ok) {
+      return {
+        success: false,
+        error: `MCP 服务在线但调用失败 (${mcpResp.status})，请确认使用了 --transport streamable-http 启动`,
+      };
+    }
+
+    const mcpData: any = await mcpResp.json();
+    if (mcpData.error) {
+      return { success: false, error: `MCP 工具执行错误: ${mcpData.error.message || JSON.stringify(mcpData.error)}` };
+    }
+
+    // MCP tools/call 返回 { content: [{ type: "text", text: "..." }] }
+    const textParts = Array.isArray(mcpData.result?.content)
+      ? mcpData.result.content.filter((c: any) => c.type === "text").map((c: any) => c.text)
+      : [];
+    return { success: true, output: textParts.join("\n") || JSON.stringify(mcpData.result || mcpData) };
+  } catch (err: any) {
+    if (err.name === "AbortError") throw err;
+    return { success: false, error: `工具服务 [MCP ${baseUrl}] 未启动或调用失败: ${err.message}` };
+  }
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -849,26 +988,49 @@ async function startServer() {
       }
       const toolArgs = args && typeof args === "object" ? args : {};
 
+      // ── 动态路由: 从 manifest.json 读取服务组 endpoint 配置 ──
+      // 添加新服务组只需在 manifest.json 声明 endpoint, 无需改此代码
+      const manifestPath = path.join(process.cwd(), "resources", "tools", "manifest.json");
+      let endpointConfig: any = null;
+      let serviceGroupName = "";
+
+      if (fs.existsSync(manifestPath)) {
+        const manifestData = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+        for (const group of manifestData) {
+          if (!group?.endpoint || !Array.isArray(group.children)) continue;
+          if (group.children.some((c: any) => c?.id === name)) {
+            endpointConfig = group.endpoint;
+            serviceGroupName = group.name || group.id;
+            break;
+          }
+        }
+      }
+
+      if (!endpointConfig) {
+        return res.json({
+          success: false,
+          error: `工具 [${name}] 未在 manifest.json 中找到 endpoint 配置`,
+        });
+      }
+
       // 30 秒超时控制
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 30000);
 
       try {
         let result: { success: boolean; output?: string; error?: string };
+        const transport = endpointConfig.transport;
 
-        if (name.startsWith("browser_")) {
-          // Obscura 浏览器服务：检查 CDP 端口是否可用
+        if (transport === "cdp") {
           result = await invokeObscura(name, toolArgs, controller.signal);
-        } else if (name.startsWith("bu_")) {
-          // Browser-Use 服务：调用本机已注册的 /api/browser-use/* 端点
-          result = await invokeBrowserUse(name, toolArgs, controller.signal);
-        } else if (name.startsWith("win_")) {
-          // Windows-MCP 服务：检查 HTTP 端口并转发 MCP tools/call
-          result = await invokeWindowsMcp(name, toolArgs, controller.signal);
+        } else if (transport === "http") {
+          result = await invokeBrowserUseDynamic(name, toolArgs, controller.signal, endpointConfig);
+        } else if (transport === "mcp") {
+          result = await invokeWindowsMcpDynamic(name, toolArgs, controller.signal, endpointConfig);
         } else {
           result = {
             success: false,
-            error: `未知工具前缀: ${name}（支持 browser_* / bu_* / win_*）`,
+            error: `未知的 transport 类型: ${transport}（服务组 [${serviceGroupName}]，支持 cdp/http/mcp）`,
           };
         }
 

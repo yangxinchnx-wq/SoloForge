@@ -100,6 +100,7 @@ export default function ChatPanel({
   const handleSendFromStore = useChatStore(s => s.handleSend);
   const pauseChat = useChatStore(s => s.pauseChat);
   const resumeChat = useChatStore(s => s.resumeChat);
+  const discardPausedGeneration = useChatStore(s => s.discardPausedGeneration);
   const handleAcceptEnable = useChatStore(s => s.handleAcceptEnable);
 
   // DOM 引用保留组件本地 (transient imperative state, 不进 store)
@@ -297,6 +298,8 @@ export default function ChatPanel({
   const [feedbackMap, setFeedbackMap] = useState<Record<number, 'up' | 'down' | undefined>>({});
   const [feedbackBusy, setFeedbackBusy] = useState<Record<number, boolean>>({});
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  // ★ 暂停后输入框有内容时, 点击 Play 弹出确认: 合并继续 / 放弃重发
+  const [resumeConfirmOpen, setResumeConfirmOpen] = useState(false);
 
   // ★ 2026-07-13: 用户消息右键菜单 — 关闭显示名称/头像
   const [ctxMenu, setCtxMenu] = useState<{ index: number; x: number; y: number } | null>(null);
@@ -791,7 +794,7 @@ export default function ChatPanel({
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && e.ctrlKey) {
-                if (isPaused) { const v = inputValue.trim(); if (v) { setInputValue(''); resumeChat(v); } else { resumeChat(); } }
+                if (isPaused) { if (inputValue.trim()) setResumeConfirmOpen(true); else resumeChat(); }
                 else if (isGenerating) pauseChat();
                 else handleSend();
               }
@@ -935,14 +938,44 @@ export default function ChatPanel({
             </div>
 
             {/* Submit Send Button — 三态: 发送(Send) / 生成中暂停(Pause) / 已暂停恢复或合并指令(Play) */}
-            <button
-              onClick={isPaused ? () => { const v = inputValue.trim(); if (v) { setInputValue(''); resumeChat(v); } else { resumeChat(); } } : isGenerating ? pauseChat : handleSend}
-              aria-label={isPaused ? '恢复' : isGenerating ? '暂停' : '发送'}
-              title={isPaused ? (inputValue.trim() ? '合并指令并继续生成' : '恢复生成') : isGenerating ? '暂停生成' : '发送'}
-              className={`rounded-md p-1.5 flex items-center justify-center active:scale-95 transition-all cursor-pointer shadow-md shrink-0 ${isGenerating || isPaused ? 'bg-on-surface/15 hover:bg-on-surface/25 text-on-surface' : 'bg-primary hover:bg-primary/85 text-white'}`}
-            >
-              {isPaused ? <Play className="w-3.5 h-3.5" /> : isGenerating ? <Pause className="w-3.5 h-3.5" /> : <Send className="w-3.5 h-3.5" />}
-            </button>
+            <div className="relative shrink-0">
+              <button
+                onClick={isPaused ? () => { if (inputValue.trim()) setResumeConfirmOpen(true); else resumeChat(); } : isGenerating ? pauseChat : handleSend}
+                aria-label={isPaused ? '恢复' : isGenerating ? '暂停' : '发送'}
+                title={isPaused ? (inputValue.trim() ? '合并指令并继续生成' : '恢复生成') : isGenerating ? '暂停生成' : '发送'}
+                className={`rounded-md p-1.5 flex items-center justify-center active:scale-95 transition-all cursor-pointer shadow-md ${isGenerating || isPaused ? 'bg-on-surface/15 hover:bg-on-surface/25 text-on-surface' : 'bg-primary hover:bg-primary/85 text-white'}`}
+              >
+                {isPaused ? <Play className="w-3.5 h-3.5" /> : isGenerating ? <Pause className="w-3.5 h-3.5" /> : <Send className="w-3.5 h-3.5" />}
+              </button>
+              {/* ★ 暂停后输入框有内容时的确认弹窗: 合并继续 / 放弃重发 */}
+              <MountTransition show={resumeConfirmOpen} variant="fade-scale" duration={180} unmountOnExit>
+                <div className="absolute bottom-full right-0 mb-2 w-56 bg-surface border border-outline/40 rounded-lg shadow-xl z-50 overflow-hidden">
+                  <div className="px-3 py-2 text-[10px] text-on-surface/70 border-b border-outline/30 bg-surface/50">检测到输入框有新内容，请选择：</div>
+                  <button
+                    type="button"
+                    onClick={() => { const v = inputValue.trim(); setInputValue(''); setResumeConfirmOpen(false); resumeChat(v); }}
+                    className="w-full px-3 py-2 flex items-center gap-2 text-[11px] text-on-surface hover:bg-primary/10 transition-colors text-left"
+                  >
+                    <Play className="w-3.5 h-3.5 text-primary shrink-0" />
+                    <div>
+                      <div className="font-medium">合并继续</div>
+                      <div className="text-[9px] text-on-surface/50">把新内容作为追加指令，基于已生成内容继续</div>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setResumeConfirmOpen(false); discardPausedGeneration(); handleSend(); }}
+                    className="w-full px-3 py-2 flex items-center gap-2 text-[11px] text-on-surface hover:bg-red-500/10 transition-colors text-left border-t border-outline/30"
+                  >
+                    <Send className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                    <div>
+                      <div className="font-medium">放弃重发</div>
+                      <div className="text-[9px] text-on-surface/50">丢弃已生成内容，发送全新请求</div>
+                    </div>
+                  </button>
+                </div>
+              </MountTransition>
+            </div>
           </div>
           </div>
 

@@ -4,6 +4,10 @@
     "name": "Obscura",
     "description": "无头浏览器引擎，支持网页抓取、CDP协议、MCP工具调用",
     "group": "浏览器",
+    "endpoint": {
+      "transport": "cdp",
+      "url": "http://127.0.0.1:9222"
+    },
     "children": [
       {
         "id": "browser_devtools",
@@ -103,6 +107,18 @@
     "name": "Browser-Use",
     "description": "高层 LLM 浏览器任务编排，LLM 自动规划执行步骤，底层由 Obscura CDP 引擎驱动",
     "group": "浏览器",
+    "endpoint": {
+      "transport": "http",
+      "url": "http://localhost:3000/api/browser-use",
+      "toolMap": {
+        "bu_run_task": { "path": "/run", "method": "POST" },
+        "bu_pause": { "path": "/pause/{task_id}", "method": "POST" },
+        "bu_resume": { "path": "/resume/{task_id}", "method": "POST" },
+        "bu_state": { "path": "/state/{task_id}", "method": "GET" },
+        "bu_screenshot": { "path": "/state/{task_id}", "method": "GET" },
+        "bu_history": { "path": "/state/{task_id}", "method": "GET" }
+      }
+    },
     "children": [
       {
         "id": "bu_run_task",
@@ -184,6 +200,19 @@
     "name": "Windows-MCP",
     "description": "Windows系统自动化MCP服务器，支持UI交互、应用控制、文件导航",
     "group": "Windows",
+    "endpoint": {
+      "transport": "mcp",
+      "url": "http://localhost:8000",
+      "toolMap": {
+        "win_powershell": "PowerShell",
+        "win_reg_read": "Registry",
+        "win_service_ctrl": "PowerShell",
+        "win_event_log": "PowerShell",
+        "win_firewall": "PowerShell",
+        "win_task_scheduler": "PowerShell",
+        "win_perfmon": "PowerShell"
+      }
+    },
     "children": [
       {
         "id": "win_reg_read",

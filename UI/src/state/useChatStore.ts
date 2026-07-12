@@ -389,6 +389,7 @@ interface ChatStoreState {
   handleSend: (inputRef?: React.RefObject<HTMLTextAreaElement | null>) => void;
   pauseChat: () => void;
   resumeChat: (additionalInstruction?: string) => void;
+  discardPausedGeneration: () => void;
   handleAcceptEnable: (candidateName: string) => void;
   handlePhase: (evt: any, currentChatMsgs: ChatMessage[]) => void;
 }
@@ -490,6 +491,19 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
       }
     });
     set({ activeChatHandle: { taskId: chatHandle.taskId, abort: () => { chatHandle.abort(); if (!streamFinalized) { streamFinalized = true; streamBridge.onDone(); } } } });
+  },
+  // ★ 丢弃暂停的生成: 清除上下文 + 移除残留的部分 assistant 消息, 回到空闲态
+  discardPausedGeneration: () => {
+    activeStreamContext = null;
+    set((s) => {
+      const chatId = s.options.selectedChatId || '1';
+      const cl = s.conversations[chatId] || [];
+      // 移除最后一条 assistant 消息 (被放弃的部分生成内容)
+      if (cl.length > 0 && cl[cl.length - 1].sender === 'assistant') {
+        return { conversations: { ...s.conversations, [chatId]: cl.slice(0, -1) }, isPaused: false, isGenerating: false, activeChatHandle: null, streamState: { ...emptyStreamState } };
+      }
+      return { isPaused: false, isGenerating: false, activeChatHandle: null, streamState: { ...emptyStreamState } };
+    });
   },
   setLastReqBody: (v) => set({ lastReqBody: v }),
   setHashlineAgentEnabled: (v) => set({ hashlineAgentEnabled: v }),
