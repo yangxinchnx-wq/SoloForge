@@ -412,7 +412,10 @@ export default function ModelAddTab() {
     }
   });
 
-  // 挂载时从服务端加载 providers_db.json（权威数据源）+ 从 OS 钥匙串 reveal 明文密钥
+  // 挂载时从服务端加载 providers_db.json（权威元信息）+ 从 OS 钥匙串 reveal 明文密钥
+  // providers_db.json 不存 apiKey (永远为空), 密钥明文只在:
+  //   - localStorage (本机快速加载)
+  //   - OS 钥匙串 (安全备份, 清缓存/换浏览器可恢复)
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -422,46 +425,48 @@ export default function ModelAddTab() {
         if (!cancelled && data?.success && Array.isArray(data.providers) && data.providers.length > 0) {
           const serverProviders = data.providers;
 
-          // 找出服务端有 __VAULT__: 占位符的 provider, 从 OS 钥匙串获取明文
-          const vaultIds = serverProviders
-            .filter((sp: any) => !sp.apiKey || String(sp.apiKey).startsWith('__VAULT__'))
-            .map((sp: any) => sp.id);
-
+          // 一次性 GET /api/vault/keys 获取钥匙串里所有有密钥的 provider 列表
+          // 不依赖 providers_db.json 里的占位符, 不会漏掉任何已存的密钥
           const vaultKeys = new Map<string, string>();
-          if (vaultIds.length > 0) {
-            const reveals = await Promise.all(
-              vaultIds.map(async (id: string) => {
-                try {
-                  const rr = await fetch(`/api/vault/keys/${encodeURIComponent(id)}/reveal`);
-                  if (!rr.ok) return null;
-                  const d = await rr.json();
-                  return { id, key: d?.apiKey || '' };
-                } catch {
-                  return null;
-                }
-              })
-            );
-            for (const rv of reveals) {
-              if (rv && rv.key) vaultKeys.set(rv.id, rv.key);
+          try {
+            const vr = await fetch('/api/vault/keys');
+            if (vr.ok) {
+              const vd = await vr.json();
+              const items: Array<{ id: string; hasKey: boolean }> = vd?.items || [];
+              const reveals = await Promise.all(
+                items.filter(i => i.hasKey).map(async (i) => {
+                  try {
+                    const rr = await fetch(`/api/vault/keys/${encodeURIComponent(i.id)}/reveal`);
+                    if (!rr.ok) return null;
+                    const d = await rr.json();
+                    return { id: i.id, key: d?.apiKey || '' };
+                  } catch {
+                    return null;
+                  }
+                })
+              );
+              for (const rv of reveals) {
+                if (rv && rv.key) vaultKeys.set(rv.id, rv.key);
+              }
             }
+          } catch {
+            // 钥匙串不可用, 继续只用 localStorage + 服务端数据
           }
 
           if (cancelled) return;
 
           setProviders(prev => {
-            // 服务端为权威源（baseUrl/models/enabled 等）。
+            // 服务端为权威源（baseUrl/models/enabled 等, apiKey 永远为空）。
             // apiKey 合并优先级:
             //   1. 本地有值 → 优先用本地 (用户当前输入)
-            //   2. 本地为空 + 服务端是 '__VAULT__:' 占位符 → 从钥匙串 reveal 的明文
-            //   3. 本地为空 + 服务端是明文 → 用服务端 (跨设备同步场景)
+            //   2. 本地为空 → 从钥匙串 reveal 的明文
+            //   3. 都没有 → 空字符串
             const serverMap = new Map(serverProviders.map((p: any) => [p.id, p]));
             const merged = prev.map(localP => {
               const serverP = serverMap.get(localP.id);
               if (serverP) {
-                const { apiKey: serverApiKey, ...serverRest } = serverP;
-                const isVaultPlaceholder = !serverApiKey || String(serverApiKey).startsWith('__VAULT__');
-                const finalApiKey = localP.apiKey
-                  || (isVaultPlaceholder ? (vaultKeys.get(localP.id) || '') : serverApiKey);
+                const { apiKey: _drop, ...serverRest } = serverP;
+                const finalApiKey = localP.apiKey || vaultKeys.get(localP.id) || '';
                 return { ...serverRest, apiKey: finalApiKey };
               }
               return localP;
@@ -469,10 +474,7 @@ export default function ModelAddTab() {
             const existingIds = new Set(merged.map(p => p.id));
             for (const sp of serverProviders) {
               if (!existingIds.has(sp.id) && !String(sp.id).startsWith('custom_')) {
-                const isVaultPlaceholder2 = !sp.apiKey || String(sp.apiKey).startsWith('__VAULT__');
-                const finalApiKey2 = isVaultPlaceholder2
-                  ? (vaultKeys.get(sp.id) || '')
-                  : sp.apiKey;
+                const finalApiKey2 = vaultKeys.get(sp.id) || '';
                 merged.push({ ...sp, apiKey: finalApiKey2 });
               }
             }
@@ -486,15 +488,15 @@ export default function ModelAddTab() {
     return () => { cancelled = true; };
   }, []);
 
-  // 持久化：localStorage(明文) + OS 钥匙串(明文) + 服务端(占位符)
+  // 持久化：localStorage(明文) + OS 钥匙串(明文)
   // 首次渲染的数据来自 localStorage 初始化, 不需要写回。
   // 后续任何 providers 变化都立即持久化, 确保用户输入的 apiKey 不会因
   // 服务端加载未完成或组件卸载而丢失。
   //
-  // 三层存储策略:
+  // 存储策略 (无占位符):
   //   - localStorage: 明文, 本机快速加载 (首屏即有, 无需网络)
   //   - OS 钥匙串:    明文, 安全备份 (清缓存/换浏览器仍可恢复)
-  //   - providers_db.json: __VAULT__: 占位符, 不含明文 (服务端只存元信息)
+  //   - providers_db.json: apiKey 永远为空字符串 (只存元信息, 不存密钥)
   useEffect(() => {
     if (isFirstRenderRef.current) {
       isFirstRenderRef.current = false;
@@ -505,7 +507,7 @@ export default function ModelAddTab() {
     localStorage.setItem('cherry_providers_v2', JSON.stringify(persisted));
     window.dispatchEvent(new CustomEvent('providers_updated'));
 
-    // 有 apiKey 的 → 写入 OS 钥匙串; POST 时用 __VAULT__: 占位符 (明文不落盘)
+    // 有 apiKey 的 → 写入 OS 钥匙串; POST 时 apiKey 永远为空 (明文不落盘)
     const forServer = persisted.map(p => {
       if (p.apiKey && p.apiKey.trim()) {
         fetch(`/api/vault/keys/${encodeURIComponent(p.id)}`, {
@@ -513,9 +515,9 @@ export default function ModelAddTab() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ apiKey: p.apiKey, baseUrl: p.baseUrl || p.defaultUrl || '' }),
         }).catch(() => {});
-        return { ...p, apiKey: '__VAULT__:' };
+        return { ...p, apiKey: '' };
       }
-      return { ...p };
+      return { ...p, apiKey: '' };
     });
 
     fetch('/api/providers/config', {

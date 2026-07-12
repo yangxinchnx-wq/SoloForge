@@ -139,7 +139,7 @@
     "color": "#ff6700",
     "scanned": true,
     "delay": 570,
-    "apiKey": "tp-c387doyj702b8xop903eltrskb8hk1mk0mvogo5nwf4hkozd"
+    "apiKey": ""
   },
   {
     "id": "openai",
@@ -153,7 +153,7 @@
     "status": "idle",
     "color": "#10a37f",
     "scanned": false,
-    "apiKey": "__VAULT__:"
+    "apiKey": ""
   },
   {
     "id": "deepseek",
