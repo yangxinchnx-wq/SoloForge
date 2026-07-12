@@ -159,7 +159,7 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
         </div>
       </div>
 
-      <div className="max-w-[90%] pl-[58px]">
+      <div className="w-full pl-[58px] pr-3">
         <div className="bg-surface border border-primary/40 p-3.5 rounded-xl text-on-surface text-[12px] leading-relaxed space-y-3">
           {/* 摘要 */}
           <p className="text-on-surface/90">{userInput}</p>
@@ -222,7 +222,9 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
             </MountTransition>
           </div>
 
-          {/* 任务总结 — 移到外层卡片最下方, 与折叠区平级; 折叠后淡入显示, 用户展开时隐藏 */}
+          {/* 任务总结 — 移到外层卡片最下方, 与折叠区平级; 折叠后淡入显示, 用户展开时隐藏
+              ★ 2026-07-13: subCount === 0 时不显示, 避免空总结 */}
+          {subCount > 0 && (
           <MountTransition show={collapsed && !userExpanded} variant="fade" duration={220}>
             <div className="border border-outline/30 rounded-lg bg-bg/50 p-3 space-y-1">
               <div className="flex items-center gap-1.5 text-on-surface/80 mb-1.5">
@@ -258,6 +260,7 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
               </button>
             </div>
           </MountTransition>
+          )}
         </div>
       </div>
     </>

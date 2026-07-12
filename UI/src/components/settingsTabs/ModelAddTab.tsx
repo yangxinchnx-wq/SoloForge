@@ -358,10 +358,13 @@ function mergeProviders(loaded: any[]): ModelProvider[] {
   return combined.map((p: any) => {
     // 只匹配精确的占位假密钥字符串, 不使用前缀匹配 (sk-ds- / AIzaSyA4_ 等前缀
     // 会误杀用户的真实 DeepSeek / Google API key, 导致密钥丢失)
+    // __VAULT__: 是旧版占位符, 重构后 providers_db.json 已清除此值,
+    // 但 OS 钥匙串中可能仍有残留, 需要在此拦截并视为空
     const hasFakeKey =
       p.apiKey === 'sk-proj-4jKls9XjLk9AsDFgHJKLaSDFgHJK' ||
       p.apiKey === 'sk-ds-3jPlkHskOlO8asR9AkjsSJdkOsa9' ||
-      p.apiKey === 'AIzaSyA4_PklshSjLkaO8skJdKsa9Ska';
+      p.apiKey === 'AIzaSyA4_PklshSjLkaO8skJdKsa9Ska' ||
+      p.apiKey === '__VAULT__:';
     const finalName = p.id === 'xiaomi' ? 'XIAOMIMIMO' : p.name;
     const cleanedModels = (p.scanned && p.models)
       ? p.models.filter((m: any) => {
@@ -508,7 +511,16 @@ export default function ModelAddTab() {
     window.dispatchEvent(new CustomEvent('providers_updated'));
 
     // 有 apiKey 的 → 写入 OS 钥匙串; POST 时 apiKey 永远为空 (明文不落盘)
+    // 守卫: __VAULT__: 是旧版占位符残留, 绝不写入钥匙串 (否则会死循环)
     const forServer = persisted.map(p => {
+      const isFakeVault = p.apiKey === '__VAULT__:';
+      if (isFakeVault) {
+        // 钥匙串里残留的占位符 → 删除它, 清除脏数据
+        fetch(`/api/vault/keys/${encodeURIComponent(p.id)}`, {
+          method: 'DELETE',
+        }).catch(() => {});
+        return { ...p, apiKey: '' };
+      }
       if (p.apiKey && p.apiKey.trim()) {
         fetch(`/api/vault/keys/${encodeURIComponent(p.id)}`, {
           method: 'PUT',

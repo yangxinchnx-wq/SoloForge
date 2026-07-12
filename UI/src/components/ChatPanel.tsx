@@ -465,7 +465,7 @@ export default function ChatPanel({
             // ★ 2026-07-13: 空的 assistant 占位消息在生成中时不再完全隐藏,
             //   而是隐藏气泡内容, 保留 header + process parts (loading → 实时过程)
             //   确保发送瞬间流送区立即出现
-            const isEmptyGenerating = !isUser && isGenerating && !msg.content.trim() && index === activeMessages.length - 1;
+            const isEmptyGenerating = !isUser && !msg.content.trim() && index === activeMessages.length - 1;
             // ★ 2026-07-13: 计算当前 assistant 消息是第几个 assistant
             //   用于关联 uiMessageStore 中对应索引的 UIMessage.id
             //   conversations 中 assistant 消息按顺序与 uiMessageStore 的 assistant UIMessage 一一对应
@@ -516,9 +516,10 @@ export default function ChatPanel({
                 {/* ★ 2026-07-13: 流送过程在 LLM 文本气泡上方
                     过程信息 (phase-change / subtask / model-action / audit / delivery 等)
                     + StreamPanel (TaskExecutionCard + 任务总结, 仅最后一个 assistant 消息)
-                    都在 LLM 文本气泡上方, 让用户先看到过程再看结果 */}
+                    都在 LLM 文本气泡上方, 让用户先看到过程再看结果
+                    宽度自适应整个中间流送区 */}
                 {!isUser && uiMessageId && (
-                  <div className="w-full max-w-[90%] pl-[58px]">
+                  <div className="w-full pl-[58px] pr-3">
                     <UIMessagePartsRenderer chatId={activeChatId} messageId={uiMessageId} />
                   </div>
                 )}
@@ -533,10 +534,11 @@ export default function ChatPanel({
 
                 {/* Content block: aligned on right or left
                     ★ 2026-07-13: 空的 assistant 占位消息在生成中时隐藏气泡,
-                    只保留 header + process parts, 确保流送区立即出现 */}
+                    只保留 header + process parts, 确保流送区立即出现
+                    ★ 2026-07-13: assistant 气泡宽度自适应整个流送区, user 气泡保持 w-fit */}
                 {!isEmptyGenerating && (
-                <div className={`flex flex-col gap-1 max-w-[88%] font-sans text-left ${isUser ? 'pr-3 pl-[58px] items-end' : 'pl-[58px] pr-3 items-start'}`}>
-                  <div className={`px-3.5 py-2.5 rounded-xl text-[12px] leading-relaxed select-text space-y-1.5 w-fit max-w-full overflow-hidden border ${isUser ? 'bg-primary/8 border-primary/40 text-on-surface' : 'bg-surface/50 border-primary/40 text-on-surface'}`}>
+                <div className={`flex flex-col gap-1 font-sans text-left ${isUser ? 'pr-3 pl-[58px] items-end max-w-[88%]' : 'pl-[58px] pr-3 items-start w-full'}`}>
+                  <div className={`px-3.5 py-2.5 rounded-xl text-[12px] leading-relaxed select-text space-y-1.5 overflow-hidden border ${isUser ? 'w-fit max-w-full bg-primary/8 border-primary/40 text-on-surface' : 'w-full bg-surface/50 border-primary/40 text-on-surface'}`}>
                     <FormatChatMessage content={msg.content} />
                     {msg.attachment && (
                       <CollapsibleCodeBlock
