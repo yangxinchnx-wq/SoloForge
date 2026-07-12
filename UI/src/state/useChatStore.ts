@@ -563,8 +563,6 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
           const cd = fdt.replace(/\s*<<<PREVIEW_NEEDED:\w+>>>\s*$/, '');
           set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.content = cd; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl } }; });
           if (pr.shouldPreview && typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('soloforge-preview-trigger', { detail: { chatId: activeChatId, message: finalContent, language: pr.previewLang, provider: mainEntry ? { baseUrl: mainEntry.baseUrl, apiKey: mainEntry.apiKey, model: mainEntry.model } : undefined } }));
-          // [CANVAS PROBE] 每次 done 后自动运行探针
-          runCanvasProbe(activeChatId).catch(() => {});
           break;
         }
       }
