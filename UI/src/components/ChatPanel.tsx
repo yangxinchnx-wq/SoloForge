@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useMemo, useState } from 'react';
-import { Send, ChevronDown, ChevronUp, FileCode, X, SlidersHorizontal, Check, ShieldAlert, ThumbsUp, ThumbsDown, Copy, Loader2 } from '../utils/icons';
+import { Send, ChevronDown, ChevronUp, FileCode, X, SlidersHorizontal, Check, ShieldAlert, ThumbsUp, ThumbsDown, Copy, Loader2, RefreshCw } from '../utils/icons';
 import { MountTransition } from './MountTransition';
 import TerminalPanelWithWorkdir from './terminal/TerminalPanelWithWorkdir';
 // 2026-07-03 阶段3.1.C: DocsGeneratorModal 抽出为独立子应用, 状态收敛到 useDocsGeneratorStore
@@ -97,6 +97,7 @@ export default function ChatPanel({
   const loadChatsList = useChatStore(s => s.loadChatsList);
   const loadChatConfigs = useChatStore(s => s.loadChatConfigs);
   const handleSendFromStore = useChatStore(s => s.handleSend);
+  const pauseChat = useChatStore(s => s.pauseChat);
   const handleAcceptEnable = useChatStore(s => s.handleAcceptEnable);
 
   // DOM 引用保留组件本地 (transient imperative state, 不进 store)
@@ -295,6 +296,36 @@ export default function ChatPanel({
   const [feedbackBusy, setFeedbackBusy] = useState<Record<number, boolean>>({});
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
+  // ★ 2026-07-13: 用户消息右键菜单 — 关闭显示名称/头像
+  const [ctxMenu, setCtxMenu] = useState<{ index: number; x: number; y: number } | null>(null);
+  const [hideUserName, setHideUserName] = useState(false);
+  const [hideUserAvatar, setHideUserAvatar] = useState(false);
+
+  // ★ 2026-07-13: 重新生成 — 以当前用户消息重新发送
+  const handleRegenerate = (index: number) => {
+    const userMsg = activeMessages[index];
+    if (!userMsg || userMsg.sender !== 'user') return;
+    handleSendFromStore(userMsg.content);
+  };
+
+  // ★ 2026-07-13: 右键菜单处理
+  const handleUserContextMenu = (e: React.MouseEvent, index: number) => {
+    e.preventDefault();
+    setCtxMenu({ index, x: e.clientX, y: e.clientY });
+  };
+
+  // 点击任意位置关闭右键菜单
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    window.addEventListener('click', close);
+    window.addEventListener('contextmenu', close);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('contextmenu', close);
+    };
+  }, [ctxMenu]);
+
   // 复制当前消息内容到剪贴板, 显示短暂"已复制"反馈
   const handleCopyMessage = async (index: number, content: string) => {
     try {
@@ -484,16 +515,20 @@ export default function ChatPanel({
                 key={index}
                 className={`sf-anim sf-anim-slide-up flex flex-col gap-2.5 ${isUser ? 'items-end' : 'items-start'}`}
               >
-                {/* Header Row: Avatar + Info */}
+                {/* Header Row: Avatar + Info
+                    ★ 2026-07-13: 用户名称可隐藏, 头像可隐藏 (右键菜单控制)
+                    时间移到气泡右下角, 这里不再显示 */}
                 <div className={`flex gap-3 items-center mb-1 ${isUser ? 'flex-row-reverse' : ''}`}>
-                  {/* Avatar block — 始终使用本地兜底，不加载外链头像 (CSP 安全) */}
+                  {/* Avatar block */}
                   {isUser ? (
-                    <img
-                      src={`/头像/avatar${userAvatarIdx + 1}.svg`}
-                      alt="用户头像"
-                      className="w-11 h-11 rounded-full shrink-0 object-cover pointer-events-none border border-primary/25 shadow-sm"
-                      draggable={false}
-                    />
+                    !hideUserAvatar && (
+                      <img
+                        src={`/头像/avatar${userAvatarIdx + 1}.svg`}
+                        alt="用户头像"
+                        className="w-11 h-11 rounded-full shrink-0 object-cover pointer-events-none border border-primary/25 shadow-sm"
+                        draggable={false}
+                      />
+                    )
                   ) : (
                     <div className="w-11 h-11 rounded-full bg-on-surface/5 border border-on-surface/10 flex items-center justify-center shrink-0">
                       {mainModel ? (
@@ -504,13 +539,18 @@ export default function ChatPanel({
                     </div>
                   )}
 
-                  {/* Info block (Username/Model + Time) */}
-                  <div className={`flex items-center gap-2 ${isUser ? 'flex-row-reverse' : ''}`}>
-                    <span className={`text-[11px] font-bold ${isUser ? 'text-primary/95 text-right' : 'text-[#3b82f6]'}`}>
-                      {isUser ? (userName || '你') : (mainModel || '未选择')}
+                  {/* Info block (Username/Model only — 时间移到气泡右下角) */}
+                  {isUser ? (
+                    !hideUserName && (
+                      <span className="text-[12px] font-bold text-primary/95 text-right">
+                        {userName || '你'}
+                      </span>
+                    )
+                  ) : (
+                    <span className="text-[12px] font-bold text-[#3b82f6]">
+                      {mainModel || '未选择'}
                     </span>
-                    <span className="text-[9px] text-on-surface/30 font-mono tracking-wide">{msg.time}</span>
-                  </div>
+                  )}
                 </div>
 
                 {/* ★ 2026-07-13: 流送过程在 LLM 文本气泡上方
@@ -541,12 +581,14 @@ export default function ChatPanel({
                 )}
 
                 {/* Content block: aligned on right or left
-                    ★ 2026-07-13: 空的 assistant 占位消息在生成中时隐藏气泡,
-                    只保留 header + process parts, 确保流送区立即出现
-                    ★ 2026-07-13: assistant 气泡宽度自适应整个流送区, user 气泡保持 w-fit */}
+                    ★ 2026-07-13: 用户气泡去底色 (透明), 加右键菜单, 时间放右下角
+                    用户消息下方加复制 + 重新生成按钮 */}
                 {!isEmptyGenerating && (
                 <div className={`flex flex-col gap-1 font-sans text-left ${isUser ? 'pr-3 pl-[58px] items-end max-w-[88%]' : 'pl-[58px] pr-3 items-start w-full'}`}>
-                  <div className={`px-3.5 py-2.5 rounded-xl text-[12px] leading-relaxed select-text space-y-1.5 overflow-hidden border ${isUser ? 'w-fit max-w-full bg-primary/8 border-primary/40 text-on-surface' : 'w-full bg-surface/50 border-primary/40 text-on-surface'}`}>
+                  <div
+                    onContextMenu={isUser ? (e) => handleUserContextMenu(e, index) : undefined}
+                    className={`relative px-3.5 py-2.5 rounded-xl text-[12px] leading-relaxed select-text space-y-1.5 overflow-hidden border ${isUser ? 'w-fit max-w-full bg-transparent border-primary/30 text-on-surface' : 'w-full bg-surface/50 border-primary/40 text-on-surface'}`}
+                  >
                     <FormatChatMessage content={msg.content} />
                     {msg.attachment && (
                       <CollapsibleCodeBlock
@@ -564,7 +606,40 @@ export default function ChatPanel({
                         ))}
                       </div>
                     )}
+                    {/* ★ 2026-07-13: 时间放在气泡右下角 */}
+                    <div className={`text-[10px] text-on-surface/35 font-mono mt-1 ${isUser ? 'text-right' : 'text-left'}`}>
+                      {msg.time}
+                    </div>
                   </div>
+
+                  {/* 用户消息: 复制 + 重新生成按钮 */}
+                  {isUser && (
+                    <div className="flex items-center gap-1.5 pl-1 pt-0.5">
+                      <button
+                        type="button"
+                        aria-label="复制消息"
+                        title={copiedIndex === index ? '已复制' : '复制消息'}
+                        onClick={() => handleCopyMessage(index, msg.content)}
+                        className={`p-1 rounded-md transition-all ${
+                          copiedIndex === index
+                            ? 'bg-primary/15 text-primary'
+                            : 'text-on-surface/35 hover:text-primary hover:bg-primary/10 cursor-pointer'
+                        }`}
+                      >
+                        {copiedIndex === index ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="重新生成"
+                        title="以当前消息重新生成"
+                        onClick={() => handleRegenerate(index)}
+                        className="p-1 rounded-md transition-all text-on-surface/35 hover:text-primary hover:bg-primary/10 cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+
                   {/* Phase 5: 👍/👎 反馈按钮 — 仅 assistant 消息, 累积 negative 触发 PromptOptimizer */}
                   {!isUser && !isGenerating && (
                     <div className="flex items-center gap-1.5 pl-1 pt-0.5">
@@ -623,6 +698,32 @@ export default function ChatPanel({
               </div>
             );
           })}
+
+          {/* ★ 2026-07-13: 用户消息右键菜单 — 关闭显示名称/头像 */}
+          {ctxMenu && (
+            <div
+              className="fixed z-50 min-w-[160px] py-1 rounded-lg bg-surface border border-outline/30 shadow-[0_8px_24px_rgba(0,0,0,0.35)] text-[11px]"
+              style={{ left: ctxMenu.x, top: ctxMenu.y }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={() => { setHideUserName(v => !v); setCtxMenu(null); }}
+                className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-left text-on-surface/80 hover:bg-primary/10 hover:text-primary transition-colors"
+              >
+                <span>关闭显示名称</span>
+                {hideUserName && <Check className="w-3 h-3 text-primary" />}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setHideUserAvatar(v => !v); setCtxMenu(null); }}
+                className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-left text-on-surface/80 hover:bg-primary/10 hover:text-primary transition-colors"
+              >
+                <span>关闭显示头像</span>
+                {hideUserAvatar && <Check className="w-3 h-3 text-primary" />}
+              </button>
+            </div>
+          )}
 
           {isGenerating && streamState.suggestEnables.length > 0 && (
             <div className="sf-anim sf-anim-slide-up flex flex-col gap-2 max-w-[95%] pl-[58px] text-left mb-2">
@@ -688,7 +789,8 @@ export default function ChatPanel({
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && e.ctrlKey) {
-                handleSend();
+                if (isGenerating) pauseChat();
+                else handleSend();
               }
             }}
             placeholder="请输入您的需求... (Ctrl + Enter 发送)"
@@ -829,14 +931,14 @@ export default function ChatPanel({
               </MountTransition>
             </div>
 
-            {/* Submit Send Button */}
+            {/* Submit Send Button — 生成中自动变形为暂停按钮 */}
             <button
-              onClick={handleSend}
-              aria-label="发送"
-              title="发送"
-              className="bg-primary hover:bg-primary/85 text-white rounded-md p-1.5 flex items-center justify-center active:scale-95 transition-all cursor-pointer shadow-md shrink-0"
+              onClick={isGenerating ? pauseChat : handleSend}
+              aria-label={isGenerating ? '暂停' : '发送'}
+              title={isGenerating ? '暂停生成' : '发送'}
+              className={`rounded-md p-1.5 flex items-center justify-center active:scale-95 transition-all cursor-pointer shadow-md shrink-0 ${isGenerating ? 'bg-on-surface/15 hover:bg-on-surface/25 text-on-surface' : 'bg-primary hover:bg-primary/85 text-white'}`}
             >
-              <Send className="w-3.5 h-3.5" />
+              {isGenerating ? <Pause className="w-3.5 h-3.5" /> : <Send className="w-3.5 h-3.5" />}
             </button>
           </div>
           </div>

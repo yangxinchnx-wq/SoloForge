@@ -85,12 +85,14 @@ export const UIMessagePartsRenderer = memo(function UIMessagePartsRenderer({
 
   const deferredParts = useDeferredValue(message?.parts ?? EMPTY_PARTS);
 
-  // ★ FIX 2026-07-13: 过滤掉 text 和 delivery parts
-  //   text: LLM 文本已在主对话气泡显示 (conversations[chatId] 中 assistant 消息的 content)
-  //   delivery: useChatStore.ts:225 把 LLM 累积文本同时作为 delivery 事件发送,
-  //            内容与 text 完全相同, 会导致"交付结果"块和 LLM 气泡重复显示
-  //   流送区只显示过程信息 (phase-change / subtask / model-action / audit 等)
-  const processParts = deferredParts.filter(p => p.type !== 'text' && p.type !== 'delivery');
+  // ★ FIX 2026-07-13: 过滤掉 text / delivery / subtask-step parts
+  //   text: LLM 文本已在主对话气泡显示
+  //   delivery: useChatStore.ts:225 把 LLM 累积文本同时作为 delivery 事件发送, 内容重复
+  //   subtask-step: "EXECUTE" 与 phase-change (AGENT_EXEC) 重复, 信息量低, 默认不显示
+  //   流送区只显示过程信息 (phase-change / subtask-created / model-action / audit 等)
+  const processParts = deferredParts.filter(
+    p => p.type !== 'text' && p.type !== 'delivery' && p.type !== 'subtask-step'
+  );
 
   const isStreaming = message?.status === 'streaming';
 
