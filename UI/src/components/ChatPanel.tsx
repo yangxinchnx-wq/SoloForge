@@ -10,6 +10,9 @@ import ResourceManagerBar from './ResourceManagerBar';
 import { ModelIcon } from './ModelIcon';
 import { ToolCallCard } from './ToolCallCard';
 import StreamPanel from './StreamPanel';
+// ★ 2026-07-13: 多轮对话独立气泡 — 每轮 assistant 消息渲染自己的过程 parts
+import { UIMessagePartsRenderer } from './UIMessagePartsRenderer';
+import { useUIMessages } from '../services/uiMessageStore';
 import type { ChatPanelProps, ChatSettingsItem } from '../types/chat';
 import { getSettingsSummary } from '../types/chat';
 // 2026-07-03 阶段3.1.B 子组件抽出:
@@ -243,6 +246,17 @@ export default function ChatPanel({
       || useChatStore.getState().getFallbackMessages(localChatInfo);
   }, [conversations, localChatInfo, activeChatId]);
 
+  // ★ 2026-07-13: 多轮对话独立气泡
+  //   uiMessageStore 中只存 assistant UIMessage (每轮一个), 按 chatId 隔离
+  //   conversations 中 assistant ChatMessage 与 UIMessage 按"第 N 个 assistant"顺序一一对应
+  //   这里构建映射: conversations 中每个 assistant 消息的 index → 对应 UIMessage.id
+  //   用于在 map 中渲染每轮独立的 UIMessagePartsRenderer
+  const uiMessages = useUIMessages(activeChatId);
+  const assistantUiMessageIds = useMemo(
+    () => uiMessages.filter(m => m.role === 'assistant').map(m => m.id),
+    [uiMessages],
+  );
+
   const activeSettings = useMemo<ChatSettingsItem>(
     () => configs[activeChatId] || fallbackActiveSettings,
     [configs, activeChatId]
@@ -450,6 +464,16 @@ export default function ChatPanel({
             if (!isUser && isGenerating && !msg.content.trim() && index === activeMessages.length - 1) {
               return null;
             }
+            // ★ 2026-07-13: 计算当前 assistant 消息是第几个 assistant
+            //   用于关联 uiMessageStore 中对应索引的 UIMessage.id
+            //   conversations 中 assistant 消息按顺序与 uiMessageStore 的 assistant UIMessage 一一对应
+            let assistantOrdinal = -1;
+            if (!isUser) {
+              for (let i = 0; i <= index; i++) {
+                if (activeMessages[i].sender === 'assistant') assistantOrdinal++;
+              }
+            }
+            const uiMessageId = assistantOrdinal >= 0 ? assistantUiMessageIds[assistantOrdinal] : undefined;
             return (
               <div
                 key={index}

@@ -163,14 +163,13 @@ export default function TerminalPanel({ chatId, permissionMode = 'normal', workd
       } ${isTerminalCollapsed ? 'h-7' : 'h-72'}`}
       style={{ backgroundColor: activeTheme.surface }}
     >
-      {/* Title bar — single text row */}
+      {/* Title bar — single text row (折叠态仅由 chevron 按钮控制展开) */}
       <div
-        onClick={() => isTerminalCollapsed && setIsTerminalCollapsed(false)}
         className={`h-7 px-3 flex items-center justify-between text-[12px] border-b ${
           isLight
             ? 'border-black/[0.08]'
             : 'border-white/[0.06]'
-        } ${isTerminalCollapsed ? (isLight ? 'cursor-pointer hover:bg-black/[0.04]' : 'cursor-pointer hover:bg-white/[0.03]') : ''}`}
+        }`}
       >
         <div className="flex items-center gap-3 min-w-0">
           {!isTerminalCollapsed && (

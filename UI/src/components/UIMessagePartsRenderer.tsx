@@ -32,7 +32,7 @@ import {
   ChevronDown,
   Globe,
 } from '../utils/icons';
-import { useLastAssistantMessage } from '../services/uiMessageStore';
+import { useLastAssistantMessage, useUIMessages } from '../services/uiMessageStore';
 import { useAgentName, useAgentAvatar } from '../state/streamingStore';
 import type {
   UIPart,
@@ -66,22 +66,40 @@ const EASE = [0.2, 0, 0, 1] as const;
 
 interface UIMessagePartsRendererProps {
   chatId: string;
+  /** 指定要渲染的 UIMessage id。
+   *  ★ 2026-07-13: 支持多轮对话独立气泡 — 每轮 assistant 消息渲染自己的 parts。
+   *  不传则回退到最后一条 assistant 消息 (兼容旧调用方)。 */
+  messageId?: string;
 }
 
 export const UIMessagePartsRenderer = memo(function UIMessagePartsRenderer({
   chatId,
+  messageId,
 }: UIMessagePartsRendererProps) {
-  const message = useLastAssistantMessage(chatId);
+  // ★ 优先按 messageId 取对应消息; 未指定时回退到最后一条 assistant 消息
+  const allMessages = useUIMessages(chatId);
+  const lastAssistant = useLastAssistantMessage(chatId);
+  const message = messageId
+    ? allMessages.find(m => m.id === messageId)
+    : lastAssistant;
 
   const deferredParts = useDeferredValue(message?.parts ?? EMPTY_PARTS);
 
-  if (!message || deferredParts.length === 0) return null;
+  // ★ FIX 2026-07-13: 过滤掉 text parts — LLM 文本已在主对话气泡显示
+  //   (conversations[chatId] 中 assistant 消息的 content)
+  //   流送区只显示过程信息 (phase-change / subtask / model-action / audit / delivery 等)
+  //   原代码同时渲染 text part 导致 LLM 回复在两处重复显示
+  const processParts = deferredParts.filter(p => p.type !== 'text');
+
+  if (!message || processParts.length === 0) return null;
 
   const isStreaming = message.status === 'streaming';
 
   return (
     <div className="flex flex-col gap-1.5">
-      {deferredParts.map((part, index) => (
+      {processParts.map((part, index) => {
+        const isLast = index === processParts.length - 1;
+        return (
         <motion.div
           key={`${part.type}-${index}`}
           initial={{ opacity: 0, y: 6 }}
@@ -90,12 +108,13 @@ export const UIMessagePartsRenderer = memo(function UIMessagePartsRenderer({
         >
           <PartRenderer
             part={part}
-            isStreaming={isStreaming}
-            isLast={index === deferredParts.length - 1}
+            isStreaming={isStreaming && isLast}
+            isLast={isLast}
             chatId={chatId}
           />
         </motion.div>
-      ))}
+        );
+      })}
     </div>
   );
 });

@@ -222,44 +222,44 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
                 </div>
               </div>
             </MountTransition>
+          </div>
 
-            {/* 任务总结 — 折叠后淡入显示, 用户展开时隐藏 */}
-            <MountTransition show={collapsed && !userExpanded} variant="fade" duration={220}>
-              <div className="p-3 space-y-1">
-                <div className="flex items-center gap-1.5 text-on-surface/80 mb-1.5">
-                  {isError
-                    ? <AlertCircle className="w-3.5 h-3.5 text-red-400" />
-                    : <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />
+          {/* 任务总结 — 移到外层卡片最下方, 与折叠区平级; 折叠后淡入显示, 用户展开时隐藏 */}
+          <MountTransition show={collapsed && !userExpanded} variant="fade" duration={220}>
+            <div className="border border-outline/30 rounded-lg bg-bg/50 p-3 space-y-1">
+              <div className="flex items-center gap-1.5 text-on-surface/80 mb-1.5">
+                {isError
+                  ? <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+                  : <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />
+                }
+                <span className="font-semibold text-[11px]">任务总结</span>
+                <span className="text-[10px] text-on-surface/40 ml-auto font-mono">
+                  {doneCount}/{subCount} 完成
+                </span>
+              </div>
+              {task?.subTasks.map(st => (
+                <div key={st.id} className="flex items-start gap-2 text-[11px] py-0.5">
+                  {st.status === 'done'
+                    ? <CheckCircle2 className="w-3 h-3 text-green-400 shrink-0 mt-0.5" />
+                    : st.status === 'error'
+                    ? <AlertCircle className="w-3 h-3 text-red-400 shrink-0 mt-0.5" />
+                    : <Clock className="w-3 h-3 text-on-surface/30 shrink-0 mt-0.5" />
                   }
-                  <span className="font-semibold text-[11px]">任务总结</span>
-                  <span className="text-[10px] text-on-surface/40 ml-auto font-mono">
-                    {doneCount}/{subCount} 完成
+                  <span className={`break-words [text-wrap:pretty] ${st.status === 'done' ? 'text-on-surface/50 line-through' : 'text-on-surface/80'}`}>
+                    {st.description}
                   </span>
                 </div>
-                {task?.subTasks.map(st => (
-                  <div key={st.id} className="flex items-start gap-2 text-[11px] py-0.5">
-                    {st.status === 'done'
-                      ? <CheckCircle2 className="w-3 h-3 text-green-400 shrink-0 mt-0.5" />
-                      : st.status === 'error'
-                      ? <AlertCircle className="w-3 h-3 text-red-400 shrink-0 mt-0.5" />
-                      : <Clock className="w-3 h-3 text-on-surface/30 shrink-0 mt-0.5" />
-                    }
-                    <span className={`break-words [text-wrap:pretty] ${st.status === 'done' ? 'text-on-surface/50 line-through' : 'text-on-surface/80'}`}>
-                      {st.description}
-                    </span>
-                  </div>
-                ))}
-                {/* ★ 开关: 点击展开查看完整过程 */}
-                <button
-                  onClick={() => setUserExpanded(true)}
-                  className="w-full flex items-center justify-center gap-1.5 py-1 mt-1 text-[10px] text-on-surface/50 hover:text-primary border border-outline/20 hover:border-primary/30 rounded-md transition-colors cursor-default"
-                >
-                  <ChevronDown className="w-3 h-3" />
-                  <span>查看完整过程</span>
-                </button>
-              </div>
-            </MountTransition>
-          </div>
+              ))}
+              {/* ★ 开关: 点击展开查看完整过程 */}
+              <button
+                onClick={() => setUserExpanded(true)}
+                className="w-full flex items-center justify-center gap-1.5 py-1 mt-1 text-[10px] text-on-surface/50 hover:text-primary border border-outline/20 hover:border-primary/30 rounded-md transition-colors cursor-default"
+              >
+                <ChevronDown className="w-3 h-3" />
+                <span>查看完整过程</span>
+              </button>
+            </div>
+          </MountTransition>
         </div>
       </div>
     </>
