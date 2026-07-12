@@ -628,24 +628,7 @@ export default function PreviewPanel({
           />
         )}
 
-        {/* TOP BAR — 流式信息 (无内容时隐藏) */}
-        {!noCanvas && (previewIsStreaming || previewPayload) && (
-        <div className="px-3 py-1 border-b border-outline/40 flex items-center bg-surface shrink-0">
-          <div className="flex items-center gap-1.5">
-            {previewIsStreaming && (
-              <span className="text-[9px] font-mono text-blue-500/70">
-                {previewLanguage} · {previewRawBytes}B
-              </span>
-            )}
-            {previewPayload && !previewIsStreaming && (
-              <span className="text-[9px] font-mono text-emerald-500/70 flex items-center gap-0.5">
-                <Code2 className="w-2.5 h-2.5" />
-                {previewPayload.framework || previewPayload.language}
-              </span>
-            )}
-          </div>
-        </div>
-        )}
+
 
         {/* TOOLBAR — 无画布待机时隐藏 */}
         {!noCanvas && (

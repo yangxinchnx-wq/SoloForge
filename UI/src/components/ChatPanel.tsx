@@ -274,6 +274,9 @@ export default function ChatPanel({
 
   const activeChatIDPrefix = activeChatId.length > 5 ? activeChatId.slice(-4) : activeChatId;
 
+  // 流送区滚动锁定: false=自动滚动(锁打开), true=已锁定(锁住)
+  const [isScrollLocked, setIsScrollLocked] = useState(false);
+
   // 2026-07-03 阶段3.1.E: 滚动到底 (依赖 activeMessages) — 仅在未锁定时自动滚动
   useEffect(() => {
     if (scrollRef.current && !isScrollLocked) {
@@ -291,8 +294,6 @@ export default function ChatPanel({
   const [feedbackMap, setFeedbackMap] = useState<Record<number, 'up' | 'down' | undefined>>({});
   const [feedbackBusy, setFeedbackBusy] = useState<Record<number, boolean>>({});
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
-  // 流送区滚动锁定: false=自动滚动(锁打开), true=已锁定(锁住)
-  const [isScrollLocked, setIsScrollLocked] = useState(false);
 
   // 复制当前消息内容到剪贴板, 显示短暂"已复制"反馈
   const handleCopyMessage = async (index: number, content: string) => {
@@ -609,17 +610,6 @@ export default function ChatPanel({
                   )}
                 </div>
                 )}
-
-                {/* ★ 2026-07-13: 每轮 assistant 消息独立渲染自己的过程 parts
-                    (phase-change / subtask / model-action / audit / delivery 等)
-                    替代原来底部共用一个 StreamPanel 的设计。
-                    LLM 文本已在上方气泡显示, 这里只显示过程信息。
-                    StreamPanel 仍保留在底部, 仅显示最后一轮的 TaskTree + 任务总结。 */}
-                {!isUser && uiMessageId && (
-                  <div className="w-full max-w-[90%] pl-[58px]">
-                    <UIMessagePartsRenderer chatId={activeChatId} messageId={uiMessageId} />
-                  </div>
-                )}
               </div>
             );
           })}
@@ -631,18 +621,6 @@ export default function ChatPanel({
             </div>
           )}
 
-          {/* StreamPanel: AI 行为流送区
-              ★ FIX 2026-07-12: 不再绑定 isGenerating, 否则 done 后立即卸载,
-              TaskExecutionCard 的 2 秒自动折叠逻辑来不及执行, 用户看不到任务总结。
-              StreamPanel 内部已通过 hasTask/promptCards 控制自身可见性, 无数据时返回 null。 */}
-          <div className="sf-anim sf-anim-slide-up">
-            <StreamPanel
-              chatId={activeChatId}
-              mainModel={mainModel}
-              modelCount={1 + (secModels?.length || 0)}
-              permissionMode={permissionMode}
-            />
-          </div>
 
         {/* 1:1 Static Agent Execution Process 已删除 (2026-07-03 阶段3.1.A)
             原 demo 卡硬编码 "3/5 步骤进行中" 假数据, 不随真实 streamState 变化,
