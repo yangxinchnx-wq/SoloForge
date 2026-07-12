@@ -3,12 +3,14 @@ import {
   RefreshCw, Play, Square, Loader2,
   CircleDot, AlertCircle, Monitor, Smartphone, Tablet, Watch,
   Palette, MonitorSmartphone, Info, ChevronDown, Check, Maximize2,
-  Code2, Box
+  Code2, Box, Sparkles
 } from '../utils/icons';
 import { MountTransition } from './MountTransition';
 import { CanvasNotificationStack } from './CanvasNotificationBubble';
 import { usePreviewStreamStore } from '../state/previewStreamStore';
 import WebAstPreview from './WebAstPreview';
+import CanvasStudioPanel from './CanvasStudioPanel';
+import { useChatStore } from '../state/useChatStore';
 import {
   drainCanvasNotifications,
   type CanvasNotification,
@@ -484,12 +486,15 @@ export default function PreviewPanel({
 
   // 占位渲染
   const renderPlaceholder = () => {
-    // 2026-07-11 关键修复: canvas running 时 Flutter 嵌入窗口在底层渲染,
-    //   绝不能用 WebAstPreview 覆盖 — 否则用户看不到 Flutter 画布
-    //   WebAstPreview 仅作为非 Electron / canvas 未启动时的降级方案
-    //
-    // ★ 2026-07-11 v2: 如果 canvas push 失败 (sessionId 不匹配 / 进程崩溃),
-    //   回退到 WebAstPreview — 否则用户看到空白
+    // ★ FIX 2026-07-12: 有 AST 预览数据时优先显示 WebAstPreview,
+    //   即使 canvasState === 'running'。Flutter 嵌入窗口可能不可见。
+    if (previewAst || previewPayload) {
+      const root = previewPayload?.preview?.root || previewAst;
+      if (root) {
+        return <WebAstPreview root={root} bgColor={bgColor} />;
+      }
+    }
+    // canvas running 且无预览数据: Flutter 嵌入窗口在底层渲染
     if (canvasState === 'running' && !previewPushError) {
       // Flutter 画布在底层渲染, 这里只放透明占位
       // 流式状态信息已由 top bar 的 previewIsStreaming / previewLanguage 显示
@@ -499,13 +504,6 @@ export default function PreviewPanel({
           style={{ background: 'transparent' }}
         />
       );
-    }
-    // 非 running 状态: 如果有 AST 预览流数据, 用 Web AST 预览 (降级方案)
-    if (previewAst || previewPayload) {
-      const root = previewPayload?.preview?.root || previewAst;
-      if (root) {
-        return <WebAstPreview root={root} bgColor={bgColor} />;
-      }
     }
     // 流式中 (还没有 AST 但正在生成)
     if (previewIsStreaming && !previewAst) {
@@ -772,42 +770,37 @@ export default function PreviewPanel({
         <div className="flex-1 relative overflow-hidden">
           {noCanvas ? renderStandby() : renderPlaceholder()}
 
-          {/* 2026-07-06 阶段3: AST 源码查看 toggle — 左下角悬浮 */}
-          {(previewSourceCode || previewPayload?.source_code) && (
+          {/* ★ 2026-07-12: Canvas Studio toggle — 纯预览 + AI 指令修改 */}
+          {(previewAst || previewPayload) && (
             <div className="absolute bottom-2 left-2 z-40">
               <button
                 onClick={() => setShowSourceCode(s => !s)}
-                title="查看/隐藏源码"
-                className={`flex items-center gap-1.5 px-2 py-1 rounded-md backdrop-blur-md text-[10px] font-mono transition-colors border ${
+                title="打开 Studio 面板"
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md backdrop-blur-md text-[10px] font-mono font-semibold transition-colors border ${
                   showSourceCode
                     ? 'bg-primary/80 border-primary text-white'
                     : 'bg-black/50 hover:bg-black/65 border-white/15 text-white'
                 }`}
               >
-                <Code2 className="w-3 h-3" />
-                <span>源码</span>
+                <Sparkles className="w-3 h-3" />
+                <span>Studio</span>
               </button>
             </div>
           )}
 
-          {/* 源码查看覆盖层 */}
-          {showSourceCode && (previewSourceCode || previewPayload?.source_code) && (
-            <div className="absolute inset-0 z-45 bg-bg/95 backdrop-blur-sm overflow-auto p-3">
-              <div className="flex items-center justify-between mb-2 sticky top-0 bg-bg/90 backdrop-blur py-1">
-                <span className="text-[10px] font-mono text-on-surface/60">
-                  {previewLanguage} · {previewPayload?.framework || ''}
-                </span>
-                <button
-                  onClick={() => setShowSourceCode(false)}
-                  className="text-on-surface/50 hover:text-on-surface text-[10px] px-1.5 py-0.5 rounded hover:bg-surface-bright"
-                >
-                  ✕ 关闭
-                </button>
-              </div>
-              <pre className="text-[10px] font-mono text-on-surface/80 whitespace-pre-wrap break-all leading-relaxed">
-                {previewPayload?.source_code || previewSourceCode}
-              </pre>
-            </div>
+          {/* ★ 2026-07-12: Canvas Studio Panel — 纯预览 + 自然语言指令 */}
+          {showSourceCode && (previewAst || previewPayload) && (
+            <CanvasStudioPanel
+              dsl={previewPayload?.preview?.root || previewAst}
+              bgColor={bgColor}
+              isGenerating={previewIsStreaming}
+              onClose={() => setShowSourceCode(false)}
+              onSendToLLM={(instruction) => {
+                const store = useChatStore.getState();
+                store.setInputValue(() => instruction);
+                store.handleSend();
+              }}
+            />
           )}
         </div>
       </div>

@@ -12,6 +12,7 @@ import com.soloforge.agent.tools.ToolRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.scheduler.Schedulers;
@@ -70,10 +71,10 @@ public class AgentExecutor {
                           Map<String, Object> fileContext) {
         // 1. 加载 Agent 配置
         AgentIdentityEntity agent = agentRepo.findById(settings.getAgentId())
-            .orElseThrow(() -> new RuntimeException("Agent not found: " + settings.getAgentId()));
+            .orElseThrow(() -> new RuntimeException("助理未找到: " + settings.getAgentId()));
 
         if (agent.getEnabled() == null || agent.getEnabled() != 1) {
-            throw new RuntimeException("Agent is disabled: " + settings.getAgentId());
+            throw new RuntimeException("助理已禁用: " + settings.getAgentId());
         }
 
         log.info("AgentExecutor: agent={} taskCount={} message='{}'",
@@ -88,7 +89,7 @@ public class AgentExecutor {
         List<Map<String, Object>> violations = lawClient.checkViolation(agent.getId(), lawContext);
         if (!violations.isEmpty()) {
             String consequence = (String) violations.get(0).get("consequence");
-            log.warn("Agent {} blocked by law: {}", agent.getId(), consequence);
+            log.warn("助理 {} 被法律阻止: {}", agent.getId(), consequence);
             return "拒绝执行: 违反法律 - " + consequence;
         }
 
@@ -119,8 +120,8 @@ return String.format("信用分耗尽: 当前 %.1f, 请通过 👍 反馈恢复"
             cases,
             culturePrinciples);
 
-        // 5. 构建 Function Calling 工具 schema
-        List<Map<String, Object>> tools = buildToolSchemas();
+        // 5. 构建 Function Calling 工具 schema (根据 capabilities 过滤)
+        List<Map<String, Object>> tools = buildToolSchemas(capabilities);
 
         // 6. Function Calling 循环
         List<Map<String, String>> history = convertHistory(requestHistory);
@@ -133,6 +134,7 @@ return String.format("信用分耗尽: 当前 %.1f, 请通过 👍 反馈恢复"
         }
         
         int maxRounds = agent.getMaxRounds() != null ? agent.getMaxRounds() : 8;
+        double temperature = agent.getTemperature() != null ? agent.getTemperature() : 0.3;
 
         String currentMessage = userMessage;
         String finalResponse = null;
@@ -144,7 +146,7 @@ return String.format("信用分耗尽: 当前 %.1f, 请通过 👍 反馈恢复"
             log.info("Round {}: calling LLM", round + 1);
 
             String response = llmGateway.chatCompletion(
-                systemPrompt, currentMessage, history, provider, tools);
+                systemPrompt, currentMessage, history, provider, tools, temperature);
 
             ToolCallResult toolCall = tryParseToolCall(response);
             if (toolCall != null) {
@@ -176,7 +178,7 @@ return String.format("信用分耗尽: 当前 %.1f, 请通过 👍 反馈恢复"
 
         postExecuteSideEffects(agent, finalResponse, userMessage, toolCallCount, toolErrors);
 
-        return finalResponse != null ? finalResponse : "(Agent 达到最大循环次数,未给出最终答案)";
+        return finalResponse != null ? finalResponse : "(助理达到最大循环次数,未给出最终答案)";
     }
 
     /**
@@ -191,14 +193,26 @@ return String.format("信用分耗尽: 当前 %.1f, 请通过 👍 反馈恢复"
                                        ChatRequest.LlmProvider provider,
                                        List<Map<String, Object>> requestHistory,
                                        Map<String, Object> fileContext) {
+        return executeStream(userMessage, settings, provider, requestHistory, fileContext, null);
+    }
+
+    /**
+     * ★ 流式执行 (带 SseEmitter, 用于发送 usage 事件)
+     */
+    public Flux<String> executeStream(String userMessage,
+                                       ChatSettings settings,
+                                       ChatRequest.LlmProvider provider,
+                                       List<Map<String, Object>> requestHistory,
+                                       Map<String, Object> fileContext,
+                                       SseEmitter emitter) {
         return Flux.<String>create(sink -> {
             try {
                 // 1. 加载 Agent 配置
                 AgentIdentityEntity agent = agentRepo.findById(settings.getAgentId())
-                    .orElseThrow(() -> new RuntimeException("Agent not found: " + settings.getAgentId()));
+                    .orElseThrow(() -> new RuntimeException("助理未找到: " + settings.getAgentId()));
 
                 if (agent.getEnabled() == null || agent.getEnabled() != 1) {
-                    throw new RuntimeException("Agent is disabled: " + settings.getAgentId());
+                    throw new RuntimeException("助理已禁用: " + settings.getAgentId());
                 }
 
                 log.info("AgentExecutor[stream]: agent={} message='{}'",
@@ -240,8 +254,8 @@ return;
                     List.of(), // experiences — 不再注入自动记忆
                     cases, culturePrinciples);
 
-                // 5. 工具 schema
-                List<Map<String, Object>> tools = buildToolSchemas();
+                // 5. 工具 schema (根据 capabilities 过滤)
+                List<Map<String, Object>> tools = buildToolSchemas(capabilities);
 
                 // 6. 准备历史
                 List<Map<String, String>> history = convertHistory(requestHistory);
@@ -253,10 +267,14 @@ return;
                 }
 
                 int maxRounds = agent.getMaxRounds() != null ? agent.getMaxRounds() : 8;
+                double temperature = agent.getTemperature() != null ? agent.getTemperature() : 0.3;
+
+                // ★ Token 累加器: 累加多轮 LLM 调用的 usage
+                int[] usageAcc = {0, 0, 0, 0}; // prompt, completion, total, cached
 
                 // 7. 启动流式 Function Calling 循环
                 streamRound(sink, systemPrompt, userMessage, history, provider, tools,
-                    0, maxRounds, agent, userMessage);
+                    0, maxRounds, agent, userMessage, usageAcc, emitter, temperature);
 
             } catch (Exception e) {
                 log.error("executeStream setup error: {}", e.getMessage(), e);
@@ -278,10 +296,14 @@ return;
                               int round,
                               int maxRounds,
                               AgentIdentityEntity agent,
-                              String originalUserMessage) {
+                              String originalUserMessage,
+                              int[] usageAcc,
+                              SseEmitter emitter,
+                              double temperature) {
 
         if (round >= maxRounds) {
-            sink.next("(Agent 达到最大循环次数,未给出最终答案)");
+            sendUsageEvent(emitter, usageAcc);
+            sink.next("(助理达到最大循环次数,未给出最终答案)");
             sink.complete();
             return;
         }
@@ -289,7 +311,13 @@ return;
         log.info("Round {}: streaming LLM", round + 1);
         StringBuilder buffer = new StringBuilder();
 
-        llmGateway.chatCompletionStream(systemPrompt, currentMessage, history, provider, tools)
+        llmGateway.chatCompletionStream(systemPrompt, currentMessage, history, provider, tools, usage -> {
+            // ★ 累加本轮 usage
+            usageAcc[0] += usage.promptTokens();
+            usageAcc[1] += usage.completionTokens();
+            usageAcc[2] += usage.totalTokens();
+            usageAcc[3] += usage.cachedTokens();
+        }, temperature)
             .publishOn(Schedulers.boundedElastic())
             .subscribe(
                 chunk -> {
@@ -323,17 +351,42 @@ return;
                         streamRound(sink, systemPrompt,
                             "根据工具返回结果继续处理。如果信息足够,给出最终答案;如果还需要更多工具调用,继续调用。",
                             history, provider, tools, round + 1, maxRounds,
-                            agent, originalUserMessage);
+                            agent, originalUserMessage, usageAcc, emitter, temperature);
                     } else {
                         // 最终响应, 执行 side effects
                         log.info("Round {}: final response ({} chars)", round + 1, response.length());
                         int toolCallCount = round;
                         int toolErrors = 0;
                         postExecuteSideEffects(agent, response, originalUserMessage, toolCallCount, toolErrors);
+                        // ★ 发送累加的 usage 事件
+                        sendUsageEvent(emitter, usageAcc);
                         sink.complete();
                     }
                 }
             );
+    }
+
+    /**
+     * ★ 发送 usage SSE 事件 (如 emitter 可用)
+     * 格式: event: usage\ndata: {"promptTokens":123,"completionTokens":456,"totalTokens":579,"cachedTokens":80}
+     */
+    private void sendUsageEvent(SseEmitter emitter, int[] usageAcc) {
+        if (emitter == null) return;
+        if (usageAcc[2] == 0) return; // 无 token 数据则不发
+        try {
+            Map<String, Object> usageData = new LinkedHashMap<>();
+            usageData.put("promptTokens", usageAcc[0]);
+            usageData.put("completionTokens", usageAcc[1]);
+            usageData.put("totalTokens", usageAcc[2]);
+            if (usageAcc[3] > 0) {
+                usageData.put("cachedTokens", usageAcc[3]);
+            }
+            String json = objectMapper.writeValueAsString(usageData);
+            emitter.send(SseEmitter.event().name("usage").data(json).build());
+            log.info("Usage sent: prompt={} completion={} total={} cached={}", usageAcc[0], usageAcc[1], usageAcc[2], usageAcc[3]);
+        } catch (Exception e) {
+            log.debug("Failed to send usage event: {}", e.getMessage());
+        }
     }
 
     /**
@@ -390,13 +443,57 @@ return;
     }
 
     private List<Map<String, Object>> buildToolSchemas() {
+        return buildToolSchemas(null);
+    }
+
+    /**
+     * 根据能力构建工具 schema
+     * capabilities 为 null 时返回全部工具 (向后兼容)
+     * capabilities 非空时只返回能力对应的工具
+     *
+     * 能力到工具的映射:
+     *   read    → read_file, list_files, search_code
+     *   write   → write_file
+     *   search  → search_code, list_files
+     *   execute → execute_cmd
+     *   analyze → (无工具, 仅 prompt 提示)
+     *   canvas_push_ui 始终可用 (画布推送是通用能力)
+     */
+    private List<Map<String, Object>> buildToolSchemas(List<String> capabilities) {
         List<Map<String, Object>> tools = new ArrayList<>();
         Map<String, Object> schemas = toolRegistry.getToolSchemas();
         List<String> names = toolRegistry.getToolNames();
         List<String> descs = toolRegistry.getToolDescriptions();
 
+        // 能力 → 工具名映射
+        Map<String, List<String>> capabilityToTools = Map.of(
+            "read",    List.of("read_file", "list_files", "search_code"),
+            "write",   List.of("write_file"),
+            "search",  List.of("search_code", "list_files"),
+            "execute", List.of("execute_cmd")
+        );
+
+        // 收集允许的工具名
+        java.util.Set<String> allowedTools = new java.util.HashSet<>();
+        allowedTools.add("canvas_push_ui"); // 画布工具始终可用
+
+        if (capabilities != null && !capabilities.isEmpty()) {
+            for (String cap : capabilities) {
+                List<String> mapped = capabilityToTools.get(cap);
+                if (mapped != null) {
+                    allowedTools.addAll(mapped);
+                }
+            }
+        } else {
+            // 无 capabilities 限制时, 全部工具可用
+            allowedTools.addAll(names);
+        }
+
         for (int i = 0; i < names.size(); i++) {
             String toolName = names.get(i);
+            if (!allowedTools.contains(toolName)) {
+                continue;
+            }
             Map<String, Object> tool = new LinkedHashMap<>();
             tool.put("type", "function");
             tool.put("function", Map.of(

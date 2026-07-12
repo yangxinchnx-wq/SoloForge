@@ -74,7 +74,7 @@ const BASE_PROVIDERS: ModelProvider[] = [
   {
     id: 'gemini',
     name: 'Google Gemini',
-    desc: 'Google 顶尖多模态智能体基础模型系列',
+    desc: 'Google 顶尖多模态基础模型系列',
     enabled: false,
     apiKey: '',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta',

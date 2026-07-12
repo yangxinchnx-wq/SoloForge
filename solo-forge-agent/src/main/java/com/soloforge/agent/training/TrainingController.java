@@ -162,11 +162,11 @@ public class TrainingController {
     @ConditionalOnProperty(name = "soloforge.training.scheduler.enabled",
                            havingValue = "true", matchIfMissing = true)
     public void scheduledOptimize() {
-        log.info("=== 定时训练调度触发: 开始全量 Agent Prompt 优化 ===");
+        log.info("=== 定时训练调度触发: 开始全量助理 Prompt 优化 ===");
         try {
             List<OptimizeResult> results = optimizer.optimizeAllAgents();
             int adopted = (int) results.stream().filter(OptimizeResult::isAdopted).count();
-            log.info("=== 定时训练完成: {}/{} Agent prompt 优化采纳 ===", adopted, results.size());
+            log.info("=== 定时训练完成: {}/{} 助理 prompt 优化采纳 ===", adopted, results.size());
         } catch (Exception e) {
             log.error("定时训练调度失败", e);
         }

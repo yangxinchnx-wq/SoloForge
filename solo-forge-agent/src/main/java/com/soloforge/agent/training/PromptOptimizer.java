@@ -81,7 +81,7 @@ public class PromptOptimizer {
         // 防重入
         AtomicBoolean flag = runningFlags.computeIfAbsent(agentId, k -> new AtomicBoolean(false));
         if (!flag.compareAndSet(false, true)) {
-            log.warn("Agent {} is already being optimized, skip", agentId);
+            log.warn("助理 {} 正在优化中, 跳过", agentId);
             return OptimizeResult.skipped(agentId, "正在训练中, 跳过");
         }
 
@@ -98,7 +98,7 @@ public class PromptOptimizer {
     public List<OptimizeResult> optimizeAllAgents() {
         List<AgentIdentityEntity> agents = agentRepo.findAllEnabled();
         List<OptimizeResult> results = new ArrayList<>();
-        log.info("PromptOptimizer: 开始批量优化 {} 个 Agent", agents.size());
+        log.info("PromptOptimizer: 开始批量优化 {} 个助理", agents.size());
         for (AgentIdentityEntity agent : agents) {
             try {
                 results.add(optimizeAgent(agent.getId()));
@@ -116,7 +116,7 @@ public class PromptOptimizer {
     private OptimizeResult doOptimize(String agentId, ChatRequest.LlmProvider overrideProvider) {
         Optional<AgentIdentityEntity> opt = agentRepo.findById(agentId);
         if (opt.isEmpty()) {
-            return OptimizeResult.failed(agentId, "Agent 不存在");
+            return OptimizeResult.failed(agentId, "助理不存在");
         }
         AgentIdentityEntity agent = opt.get();
         String currentPrompt = agent.getSystemPrompt() != null ? agent.getSystemPrompt() : "";
@@ -124,16 +124,16 @@ public class PromptOptimizer {
 
         List<TrainingTask> tasks = taskLoader.getTasksByDomain(agent.getDomain());
         if (tasks.isEmpty()) {
-            log.warn("Agent {} domain={} 无标准任务, 跳过", agentId, agent.getDomain());
+            log.warn("助理 {} domain={} 无标准任务, 跳过", agentId, agent.getDomain());
             return OptimizeResult.skipped(agentId, "domain=" + agent.getDomain() + " 无标准任务");
         }
 
-        log.info("=== PromptOptimizer: Agent {} (v{}, domain={}, {} tasks) ===",
+        log.info("=== PromptOptimizer: 助理 {} (v{}, domain={}, {} tasks) ===",
                 agentId, currentVersion, agent.getDomain(), tasks.size());
 
         // Step 1: 用当前 prompt 跑 baseline
         double rewardBefore = evaluatePrompt(currentPrompt, tasks, agent);
-        log.info("Agent {} baseline reward = {:.4}", agentId, rewardBefore);
+        log.info("助理 {} baseline reward = {:.4}", agentId, rewardBefore);
 
         // Step 2: 用 LLM 分析弱点 + 生成改进版 prompt
         String improvedPrompt = generateImprovedPrompt(agent, currentPrompt, tasks, rewardBefore, overrideProvider);
@@ -145,7 +145,7 @@ public class PromptOptimizer {
 
         // Step 3: 用新 prompt 跑评估
         double rewardAfter = evaluatePrompt(improvedPrompt, tasks, agent);
-        log.info("Agent {} new reward = {:.4} (threshold = {:.4})",
+        log.info("助理 {} new reward = {:.4} (threshold = {:.4})",
                 agentId, rewardAfter, rewardBefore * (1 + improvementThreshold));
 
         // Step 4: 判断是否采纳
@@ -159,14 +159,14 @@ public class PromptOptimizer {
                     (rewardAfter - rewardBefore) / Math.max(rewardBefore, 0.001) * 100);
             recordHistory(agentId, currentVersion, newVersion, rewardBefore, rewardAfter,
                     tasks.size(), notes, true);
-            log.info("Agent {} prompt 优化采纳: {}", agentId, notes);
+            log.info("助理 {} prompt 优化采纳: {}", agentId, notes);
         } else {
             notes = String.format("v%d (未变), reward %.4f→%.4f (%.1f%%), 未达阈值, 回滚",
                     currentVersion, rewardBefore, rewardAfter,
                     (rewardAfter - rewardBefore) / Math.max(rewardBefore, 0.001) * 100);
             recordHistory(agentId, currentVersion, currentVersion, rewardBefore, rewardAfter,
                     tasks.size(), notes, false);
-            log.info("Agent {} prompt 优化未采纳: {}", agentId, notes);
+            log.info("助理 {} prompt 优化未采纳: {}", agentId, notes);
         }
 
         return OptimizeResult.builder()

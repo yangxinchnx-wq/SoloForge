@@ -26,6 +26,7 @@ import { mapPhaseToStreamEvents, type PhaseMapperContext } from '../services/pha
 import type { StreamEventKind, StreamEvent, PermissionMode } from '../types/streaming';
 // P3 集成: Actor 系统 + Data Parts 模式
 import { createTaskWithActor, dispatchStreamEvent, clearChatAll } from '../services/actorIntegration';
+import { uiMessageStore } from '../services/uiMessageStore';
 // 2026-07-09: HTML 翻译器 — 本地解析 HTML 代码块为 Universal AST, 直接推画布, 省一次 LLM 调用
 import { translateCode, isLanguageSupported, detectLanguage } from '../translate';
 // 2026-07-11: 本地翻译成功后同步写入 previewStreamStore, 让 PreviewPanel 也能显示 WebAstPreview
@@ -150,6 +151,8 @@ interface StreamBridge {
   onAgent: (agentId: string, name: string, avatar: string | undefined, mainModel?: string, subModels?: string[], role?: string, domain?: string, subModel?: string) => void;
   onDone: (agentId?: string) => void;
   onError: (error: string) => void;
+  /** ★ Token 使用统计 (一轮对话结束时由 usage 事件触发) */
+  onUsage: (usage: { promptTokens: number; completionTokens: number; totalTokens: number; cachedTokens?: number }) => void;
 }
 
 function createStreamBridge(chatId: string, mainModel: string, userInput: string, mode: PermissionMode): StreamBridge {
@@ -223,6 +226,22 @@ function createStreamBridge(chatId: string, mainModel: string, userInput: string
       ctx.pushStreamEvent('phase_change', { content: 'DONE', detail: '生成完成', status: 'success' });
     },
     onError(error: string) { hasError = true; ctx.pushStreamEvent('phase_change', { content: 'ERROR', detail: error, status: 'error' }); },
+    onUsage(usage) {
+      // ★ 把 token 统计作为 usage part 追加到最后一条 assistant 消息
+      const lastMsg = uiMessageStore.getLastAssistantMessage(chatId);
+      if (!lastMsg) return;
+      // 实际生效模型: 优先用 java 副模型, 否则回退到主模型
+      const effectiveModel = javaSubModel ?? mainModel;
+      uiMessageStore.appendPart(chatId, lastMsg.id, {
+        type: 'usage',
+        promptTokens: usage.promptTokens,
+        completionTokens: usage.completionTokens,
+        totalTokens: usage.totalTokens,
+        cachedTokens: usage.cachedTokens,
+        model: effectiveModel,
+        timestamp: Date.now(),
+      });
+    },
   };
 }
 
@@ -499,7 +518,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     const rmState = useResourceManagerStore.getState();
     const activeTools = Array.from(rmState.activeTools); const activeSkills = Array.from(rmState.activeSkills); const activeKnowledge = Array.from(rmState.activeKnowledge);
 
-    const reqBody = { mode: permissionMode, query: finalContent, history: activeMessages.map(m => ({ sender: m.sender, content: m.content })), fileContext: selectedFile ? { name: selectedFile, content: editorContent } : undefined, toolCallMode: hashlineAgentEnabled ? 'hashline' : undefined, mainProvider: { baseUrl: mainEntry.baseUrl, apiKey: mainEntry.apiKey, model: mainEntry.model }, subProviders: subEntries.map(e => ({ baseUrl: e.baseUrl, apiKey: e.apiKey, model: e.model })), candidateProviders: candidateEntries.map((e: any) => ({ displayName: e.model, providerName: e.providerName, modelName: e.model, baseUrl: e.baseUrl })), activeTools: activeTools.length > 0 ? activeTools : undefined, activeSkills: activeSkills.length > 0 ? activeSkills : undefined, activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined };
+    const reqBody = { mode: permissionMode, query: finalContent, history: activeMessages.map(m => ({ sender: m.sender, content: m.rawContent || m.content })), fileContext: selectedFile ? { name: selectedFile, content: editorContent } : undefined, toolCallMode: hashlineAgentEnabled ? 'hashline' : undefined, mainProvider: { baseUrl: mainEntry.baseUrl, apiKey: mainEntry.apiKey, model: mainEntry.model }, subProviders: subEntries.map(e => ({ baseUrl: e.baseUrl, apiKey: e.apiKey, model: e.model })), candidateProviders: candidateEntries.map((e: any) => ({ displayName: e.model, providerName: e.providerName, modelName: e.model, baseUrl: e.baseUrl })), activeTools: activeTools.length > 0 ? activeTools : undefined, activeSkills: activeSkills.length > 0 ? activeSkills : undefined, activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined };
     set({ lastReqBody: reqBody });
 
     const assistantMsg: ChatMessage = { sender: 'assistant', content: '', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), avatar: '' };
@@ -513,7 +532,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
 
     const streamBridge = createStreamBridge(activeChatId, mainModel, finalContent, permissionMode);
 
-    startChat({ chatId: activeChatId, prompt: finalContent, mode: permissionMode, history: activeMessages.map(m => ({ sender: m.sender, content: m.content })), fileContext: selectedFile ? { name: selectedFile, content: editorContent } : undefined, mainProvider: { baseUrl: mainEntry.baseUrl, apiKey: mainEntry.apiKey, model: mainEntry.model }, subProviders: subEntries.map(e => ({ baseUrl: e.baseUrl, apiKey: e.apiKey, model: e.model })), candidateProviders: candidateEntries.map((e: any) => ({ displayName: e.model, providerName: e.providerName, modelName: e.model, baseUrl: e.baseUrl })), ...(hashlineAgentEnabled ? { toolCallMode: 'hashline' } : {}), workspaceFolder: useChatsStore.getState().getChat(activeChatId)?.workspaceFolder, activeTools: activeTools.length > 0 ? activeTools : undefined, activeSkills: activeSkills.length > 0 ? activeSkills : undefined, activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined, activeSettings: configs[activeChatId] || fallbackActiveSettings, canvasId: `canvas-${activeChatId}` } as any, async (evt: ChatStreamEvent) => {
+    startChat({ chatId: activeChatId, prompt: finalContent, mode: permissionMode, history: activeMessages.map(m => ({ sender: m.sender, content: m.rawContent || m.content })), fileContext: selectedFile ? { name: selectedFile, content: editorContent } : undefined, mainProvider: { baseUrl: mainEntry.baseUrl, apiKey: mainEntry.apiKey, model: mainEntry.model }, subProviders: subEntries.map(e => ({ baseUrl: e.baseUrl, apiKey: e.apiKey, model: e.model })), candidateProviders: candidateEntries.map((e: any) => ({ displayName: e.model, providerName: e.providerName, modelName: e.model, baseUrl: e.baseUrl })), ...(hashlineAgentEnabled ? { toolCallMode: 'hashline' } : {}), workspaceFolder: useChatsStore.getState().getChat(activeChatId)?.workspaceFolder, activeTools: activeTools.length > 0 ? activeTools : undefined, activeSkills: activeSkills.length > 0 ? activeSkills : undefined, activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined, activeSettings: configs[activeChatId] || fallbackActiveSettings, canvasId: `canvas-${activeChatId}` } as any, async (evt: ChatStreamEvent) => {
       switch (evt.kind) {
         case 'text': {
           accumulatedText += evt.text;
@@ -524,11 +543,12 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
           //   onText 从未被调用 → uiMessageStore 无 parts → StreamPanel 返回 null
           //   代码块文本也会推入流送区,让用户看到 LLM 的完整输出进度
           streamBridge.onText(evt.text);
-          set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') { lm.content = displayText; nl[nl.length - 1] = lm; } return { conversations: { ...s.conversations, [activeChatId]: nl } }; });
+          set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') { lm.content = displayText; lm.rawContent = accumulatedText; nl[nl.length - 1] = lm; } return { conversations: { ...s.conversations, [activeChatId]: nl } }; });
           break;
         }
         case 'phase': { streamBridge.onPhase(evt); get().handlePhase(evt, currentChatMsgs); break; }
         case 'agent': { streamBridge.onAgent(evt.agentId, evt.name, evt.avatar, evt.mainModel, evt.subModels, evt.role, evt.domain, evt.subModel); break; }
+        case 'usage': { streamBridge.onUsage(evt.usage); break; }
         case 'error': { streamBridge.onError(evt.error); const fm = classifyStreamError(evt.error || ''); set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return { isGenerating: false, streamState: { ...emptyStreamState } }; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.content = `\u274C **AI 调用失败**：${fm}`; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl }, isGenerating: false, streamState: { ...emptyStreamState } }; }); break; }
         case 'done': {
           streamBridge.onDone(evt.agentId); set({ isGenerating: false, streamState: { ...emptyStreamState } });
@@ -560,6 +580,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     set({ streamState: { ...emptyStreamState }, isGenerating: true });
     const streamBridge = createStreamBridge(activeChatId, options.mainModel || '', '', lastReqBody.mode);
     let canvasPusher2: IncrementalCanvasPusher | null = null;
+    let accText2 = '';
     // ★ FIX 2026-07-12: handleAcceptEnable 也需要预注册 sessionId
     { const fallbackId = `canvas-${activeChatId}`; const existing = getCanvasSessionId(activeChatId); if (!existing || existing === fallbackId) setCanvasSessionId(activeChatId, fallbackId); }
     startChat({ chatId: activeChatId, prompt: '', mode: lastReqBody.mode, history: [], mainProvider: (lastReqBody.mainProvider as any), subProviders: newSub ? [...(lastReqBody.subProviders as any[]), newSub] : (lastReqBody.subProviders as any[]), candidateProviders: (lastReqBody.candidateProviders as any[]).filter((c: any) => c.modelName !== candidateName), activeTools: lastReqBody.activeTools, activeSkills: lastReqBody.activeSkills, activeKnowledge: lastReqBody.activeKnowledge, activeSettings: configs[activeChatId] || fallbackActiveSettings } as any, (evt: ChatStreamEvent) => {
@@ -567,7 +588,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
         case 'phase': { streamBridge.onPhase(evt); get().handlePhase(evt, get().conversations[activeChatId] || []); break; }
         case 'error': streamBridge.onError(evt.error); break;
         case 'done': streamBridge.onDone(); if (canvasPusher2) canvasPusher2.flush().catch(() => {}); set({ isGenerating: false }); break;
-        case 'text': { if (!canvasPusher2) canvasPusher2 = new IncrementalCanvasPusher(activeChatId); const { displayText, inCodeBlock } = canvasPusher2.feedChunk(evt.text); streamBridge.onText(evt.text); set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.content = displayText; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl } }; }); break; }
+        case 'text': { accText2 += evt.text; if (!canvasPusher2) canvasPusher2 = new IncrementalCanvasPusher(activeChatId); const { displayText, inCodeBlock } = canvasPusher2.feedChunk(evt.text); streamBridge.onText(evt.text); set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') { lm.content = displayText; lm.rawContent = accText2; } nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl } }; }); break; }
       }
     });
   },

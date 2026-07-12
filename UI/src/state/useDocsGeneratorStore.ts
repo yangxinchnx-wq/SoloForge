@@ -139,7 +139,7 @@ export const useDocsGeneratorStore = create<DocsGeneratorState>((set, get) => ({
 
       if (!response.ok || !response.body) {
         const errText = await response.text().catch(() => '');
-        set({ errorMsg: `AI 智能体文档生成失败: HTTP ${response.status} ${errText}` });
+        set({ errorMsg: `AI 助理文档生成失败: HTTP ${response.status} ${errText}` });
         return;
       }
 

@@ -339,7 +339,7 @@ public class ChatController {
             if (enabled == null) return badRequest("enabled 不能为空");
 
             agentRepo.toggleEnabled(id, enabled ? 1 : 0);
-            log.info("Agent {} {}", id, enabled ? "enabled" : "disabled");
+            log.info("助理 {} {}", id, enabled ? "已启用" : "已禁用");
             return ResponseEntity.ok(Map.of("success", true, "agentId", id, "enabled", enabled));
         }).orElse(ResponseEntity.notFound().build());
     }

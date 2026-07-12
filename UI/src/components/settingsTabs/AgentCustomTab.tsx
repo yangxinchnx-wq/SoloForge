@@ -184,14 +184,14 @@ export default function AgentCustomTab() {
       <div className="border-b border-[var(--color-outline)]/20 pb-3 mb-2">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-base font-bold text-[var(--color-on-surface)]">Agent 池管理</h3>
+            <h3 className="text-base font-bold text-[var(--color-on-surface)]">助理池管理</h3>
           </div>
           <div className="flex items-center gap-2">
             <ServiceStatusBadge alive={serviceAlive} loading={loading} />
             <button
               onClick={handleOpenCreate}
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-primary/30 bg-primary/10 text-primary text-[10px] font-bold hover:bg-primary/20 transition-colors"
-              title="新建 Agent"
+              title="新建助理"
             >
               <Plus className="w-3 h-3" />
               新建
@@ -199,7 +199,7 @@ export default function AgentCustomTab() {
             <button
               onClick={fetchAgents}
               className="p-1.5 rounded-lg border border-[var(--color-outline)]/30 hover:bg-[var(--color-surface-bright)]/40 text-on-surface/70 hover:text-[var(--color-on-surface)] transition-colors"
-              title="刷新 Agent 列表"
+              title="刷新助理列表"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             </button>
@@ -209,7 +209,7 @@ export default function AgentCustomTab() {
 
       {error && (
         <div className="p-3 rounded-lg border border-rose-500/30 bg-rose-500/10 text-rose-400 text-xs">
-          <div className="font-bold mb-1">⚠️ 无法连接 Java Agent 服务</div>
+          <div className="font-bold mb-1">⚠️ 无法连接 Java 助理服务</div>
           <div className="font-mono opacity-80">{error}</div>
           <div className="mt-2 opacity-70">
             请确认: <code className="font-mono">node start-all.mjs</code> 已启动 8770 端口, 或单独运行{' '}
@@ -219,10 +219,10 @@ export default function AgentCustomTab() {
       )}
 
       <div className="grid grid-cols-12 gap-4">
-        {/* Left: Agent List */}
+        {/* Left: 助理列表 */}
         <div className="col-span-5 space-y-2">
           <div className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono">
-            Agent 列表 ({agents.length})
+            助理列表 ({agents.length})
           </div>
           {loading && agents.length === 0 ? (
             <div className="space-y-2">
@@ -232,7 +232,7 @@ export default function AgentCustomTab() {
             </div>
           ) : agents.length === 0 ? (
             <div className="p-6 rounded-xl border border-dashed border-[var(--color-outline)]/30 text-center text-on-surface/40 text-xs">
-              {serviceAlive === false ? '服务未启动' : '暂无 Agent'}
+              {serviceAlive === false ? '服务未启动' : '暂无助理'}
             </div>
           ) : (
             <div className="space-y-1.5">
@@ -306,14 +306,14 @@ export default function AgentCustomTab() {
           )}
         </div>
 
-        {/* Right: Agent Detail + Feed Training */}
+        {/* Right: 助理详情 + 反馈训练 */}
         <div className="col-span-7 space-y-3 overflow-y-auto max-h-[calc(85vh-220px)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <div className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-2">
-            Agent 详情
+            助理详情
           </div>
           {!selectedId ? (
             <div className="p-8 rounded-xl border border-dashed border-[var(--color-outline)]/30 text-center text-on-surface/40 text-xs">
-              ← 点击左侧 Agent 查看详情
+              ← 点击左侧助理查看详情
             </div>
           ) : loadingDetail ? (
             <div className="h-64 rounded-xl bg-[var(--color-surface-bright)]/30 animate-pulse" />
@@ -401,7 +401,7 @@ function AgentDetailPanel({ detail, onClose, onEdit, onDelete, onToggle, confirm
           <button
             onClick={onEdit}
             className="p-1.5 hover:bg-primary/10 rounded text-on-surface/40 hover:text-primary transition-colors cursor-pointer"
-            title="编辑 Agent"
+            title="编辑助理"
           >
             <Pencil className="w-3.5 h-3.5" />
           </button>
@@ -433,7 +433,7 @@ function AgentDetailPanel({ detail, onClose, onEdit, onDelete, onToggle, confirm
             <button
               onClick={() => onConfirmDelete(detail.id)}
               className="p-1.5 hover:bg-rose-500/10 rounded text-on-surface/30 hover:text-rose-400 transition-colors cursor-pointer"
-              title="删除 Agent"
+              title="删除助理"
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
@@ -858,10 +858,10 @@ function FeedTrainingPanel({ agentId, agentName }: { agentId: string; agentName:
             </div>
             <div>
               <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">
-                理想回复 (期望 Agent 这样回答)
+                理想回复 (期望助理这样回答)
               </label>
               <textarea value={textResp} onChange={(e) => setTextResp(e.target.value)}
-                placeholder="粘贴期望的 Agent 回复内容..."
+                placeholder="粘贴期望的助理回复内容..."
                 className="w-full h-24 px-3 py-2 text-[11px] rounded-lg bg-[var(--color-bg)] border border-[var(--color-outline)]/20 text-on-surface placeholder:text-on-surface/25 resize-none focus:outline-none focus:border-primary/40 transition-colors" />
             </div>
           </div>
@@ -1111,7 +1111,7 @@ function FeedTrainingPanel({ agentId, agentName }: { agentId: string; agentName:
         )}
 
         <p className="text-[9px] text-on-surface/30 leading-relaxed">
-          「仅入库」将案例写入经验库，Agent 下次执行时自动检索作为 few-shot 参考。
+          「仅入库」将案例写入经验库，助理下次执行时自动检索作为 few-shot 参考。
           「入库并触发优化」使用所选模型分析当前 prompt 弱点并尝试改进。
         </p>
       </div>
@@ -1197,7 +1197,7 @@ function AgentEditorModal({ agent, onClose, onSave }: {
         onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-[var(--color-outline)]/20">
-          <h3 className="text-sm font-bold text-[var(--color-on-surface)]">{isCreate ? '新建 Agent' : `编辑 ${agent?.name}`}</h3>
+          <h3 className="text-sm font-bold text-[var(--color-on-surface)]">{isCreate ? '新建助理' : `编辑 ${agent?.name}`}</h3>
           <button onClick={onClose} className="p-1 hover:bg-[var(--color-surface-bright)]/40 rounded text-on-surface/40 hover:text-[var(--color-on-surface)]">
             <X className="w-4 h-4" />
           </button>
@@ -1211,7 +1211,7 @@ function AgentEditorModal({ agent, onClose, onSave }: {
           {/* ID + Name */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">Agent ID</label>
+              <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">助理 ID</label>
               <input value={form.id} onChange={e => update('id', e.target.value)} disabled={!isCreate}
                 placeholder="code_agent"
                 className={`w-full px-3 py-1.5 text-[11px] rounded-lg bg-[var(--color-bg)] border border-[var(--color-outline)]/20 text-on-surface placeholder:text-on-surface/25 focus:outline-none focus:border-primary/40 ${!isCreate ? 'opacity-50' : ''}`} />
@@ -1294,7 +1294,7 @@ function AgentEditorModal({ agent, onClose, onSave }: {
           <div>
             <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">System Prompt</label>
             <textarea value={form.systemPrompt} onChange={e => update('systemPrompt', e.target.value)}
-              placeholder="你是 SoloForge 的 AI Agent。..."
+              placeholder="你是 SoloForge 的 AI 助理。..."
               className="w-full h-28 px-3 py-2 text-[11px] rounded-lg bg-[var(--color-bg)] border border-[var(--color-outline)]/20 text-on-surface placeholder:text-on-surface/25 resize-none focus:outline-none focus:border-primary/40" />
           </div>
         </div>

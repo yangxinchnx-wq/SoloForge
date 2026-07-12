@@ -81,7 +81,7 @@ export const BOOT_ERROR_REGISTRY: Record<string, { title: string; hint: string }
   B503: { title: 'SurrealDB 不可用', hint: '嵌入式 rocksdb 路径权限 / 锁文件残留' },
   B504: { title: 'Garnet 6379 不可用', hint: '缓存层挂了, 不影响主流程但状态可能被重置' },
   B505: { title: 'go-git-service 3002 不可用', hint: 'git 操作会降级到本地' },
-  B506: { title: 'MARL 8765 不可用', hint: '多智能体强化学习服务挂了, 主流程不依赖' },
+  B506: { title: 'MARL 8765 不可用', hint: '多助理强化学习服务挂了, 主流程不依赖' },
   B507: { title: 'API token 鉴权失败', hint: '环境变量 SOLOFORGE_API_TOKENS 缺失, 看后端 admin /api/security' },
 
   // B6xx — IPC 桥

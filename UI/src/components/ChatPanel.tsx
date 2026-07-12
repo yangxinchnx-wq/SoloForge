@@ -377,10 +377,10 @@ export default function ChatPanel({
               <button
                 onClick={() => window.dispatchEvent(new CustomEvent('soloforge-open-agent-settings', { detail: { id: activeChatId, title: activeChatTitle } }))}
                 className="truncate font-sans font-medium hover:text-primary hover:underline cursor-pointer flex items-center gap-0.5 group"
-                title="点击配置智能体角色表情、状态、回复语调与性格"
+                title="点击配置助理角色表情、状态、回复语调与性格"
                 id="agent-role-summary-btn"
               >
-                <span>智能体角色：</span>
+                <span>助理角色：</span>
                 <span className="text-primary font-semibold group-hover:text-primary/80">{getSettingsSummary(activeSettings)}</span>
                 <SlidersHorizontal className="w-2.5 h-2.5 ml-1 select-none text-primary opacity-60 group-hover:opacity-100 transition-opacity" />
               </button>
@@ -392,11 +392,11 @@ export default function ChatPanel({
           <button
             onClick={() => window.dispatchEvent(new CustomEvent('soloforge-open-agent-settings', { detail: { id: activeChatId, title: activeChatTitle } }))}
             className="flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary hover:text-primary/90 transition-all duration-150 cursor-pointer border border-primary/20 hover:border-primary/35 shadow-sm"
-            title="定制智能体性格、表情状态与回复语调"
+            title="定制助理性格、表情状态与回复语调"
             id="chat-header-agent-settings-btn"
           >
             <SlidersHorizontal className="w-3.5 h-3.5" />
-            <span>智能体配置</span>
+            <span>助理配置</span>
           </button>
         </div>
       </div>

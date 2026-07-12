@@ -29,6 +29,9 @@ import { MountTransition } from './MountTransition';
 import { useStreamSummary } from '../services/useStreamSummary';
 // P0 迁移: 从 parts 派生完整 RootTask, 替代 streamingStore.tasks[chatId]
 import { useRootTaskFromParts } from '../services/usePartsDerived';
+// ★ Token 统计: 从 uiMessageStore 读取最后一条 assistant 消息的 usage part
+import { useLastAssistantMessage } from '../services/uiMessageStore';
+import type { UIUsagePart } from '../types/messages';
 
 interface StreamPanelProps {
   chatId: string;
@@ -125,6 +128,12 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
   const rootTaskId = streamMeta?.rootTaskId;
   const task = useRootTaskFromParts(chatId, userInput, rootTaskId);
   const [isExpanded, setIsExpanded] = useState(true);
+
+  // ★ Token 统计: 从最后一条 assistant 消息的 parts 中提取 usage part
+  const lastAssistantMsg = useLastAssistantMessage(chatId);
+  const usagePart = lastAssistantMsg?.parts.find(
+    (p): p is UIUsagePart => p.type === 'usage'
+  );
 
   // 任务完成后2秒自动折叠具体信息, 显示总结
   const [collapsed, setCollapsed] = useState(false);
@@ -224,23 +233,76 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
                   </span>
                 </div>
                 {task?.subTasks.map(st => (
-                  <div key={st.id} className="flex items-center gap-2 text-[11px] py-0.5">
+                  <div key={st.id} className="flex items-start gap-2 text-[11px] py-0.5">
                     {st.status === 'done'
-                      ? <CheckCircle2 className="w-3 h-3 text-green-400 shrink-0" />
+                      ? <CheckCircle2 className="w-3 h-3 text-green-400 shrink-0 mt-0.5" />
                       : st.status === 'error'
-                      ? <AlertCircle className="w-3 h-3 text-red-400 shrink-0" />
-                      : <Clock className="w-3 h-3 text-on-surface/30 shrink-0" />
+                      ? <AlertCircle className="w-3 h-3 text-red-400 shrink-0 mt-0.5" />
+                      : <Clock className="w-3 h-3 text-on-surface/30 shrink-0 mt-0.5" />
                     }
-                    <span className={`truncate ${st.status === 'done' ? 'text-on-surface/50 line-through' : 'text-on-surface/80'}`}>
+                    <span className={`break-words [text-wrap:pretty] ${st.status === 'done' ? 'text-on-surface/50 line-through' : 'text-on-surface/80'}`}>
                       {st.description}
                     </span>
                   </div>
                 ))}
+                {/* ★ Token 使用统计 (含缓存命中 + hover tooltip) */}
+                {usagePart && (
+                  <div className="mt-2 pt-2 border-t border-outline/15 flex items-center gap-3 text-[10px] font-mono text-on-surface/50">
+                    <span className="text-on-surface/40">Token:</span>
+
+                    {/* 输入 token */}
+                    <span className="group relative cursor-help">
+                      <span className="text-on-surface/30">↑</span> {usagePart.promptTokens.toLocaleString()}
+                      <TokenTooltip>
+                        输入 Token：发送给模型的 prompt 总量
+                        {usagePart.cachedTokens ? `（含缓存命中 ${usagePart.cachedTokens.toLocaleString()}）` : ''}
+                      </TokenTooltip>
+                    </span>
+
+                    {/* 输出 token */}
+                    <span className="group relative cursor-help">
+                      <span className="text-on-surface/30">↓</span> {usagePart.completionTokens.toLocaleString()}
+                      <TokenTooltip>输出 Token：模型生成的回复内容总量</TokenTooltip>
+                    </span>
+
+                    {/* 缓存命中 (仅当存在且 > 0 时显示) */}
+                    {usagePart.cachedTokens && usagePart.cachedTokens > 0 ? (
+                      <span className="group relative cursor-help text-primary/70">
+                        ⚡ {usagePart.cachedTokens.toLocaleString()}
+                        <TokenTooltip>
+                          缓存命中：无需重新计算的 prompt token，节省费用与延迟
+                          {usagePart.promptTokens > 0
+                            ? `（占输入 ${(usagePart.cachedTokens / usagePart.promptTokens * 100).toFixed(1)}%）`
+                            : ''}
+                        </TokenTooltip>
+                      </span>
+                    ) : null}
+
+                    {/* 总 token */}
+                    <span className="group relative cursor-help text-primary/70 font-bold">
+                      ∑ {usagePart.totalTokens.toLocaleString()}
+                      <TokenTooltip>
+                        总 Token = 输入 + 输出
+                        {usagePart.model ? ` · 模型：${usagePart.model}` : ''}
+                      </TokenTooltip>
+                    </span>
+                  </div>
+                )}
               </div>
             </MountTransition>
           </div>
         </div>
       </div>
     </>
+  );
+}
+
+// ★ Token tooltip — 轻量级 hover 提示 (CSS group-hover 实现, 无额外依赖)
+// 淡入 + 微缩放, 符合 iOS 风格的平滑过渡
+function TokenTooltip({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="pointer-events-none absolute left-1/2 bottom-full mb-1.5 -translate-x-1/2 opacity-0 scale-95 group-hover:opacity-100 group-hover:scale-100 transition-all duration-150 ease-out text-[10px] bg-on-surface/90 text-surface px-2 py-1 rounded font-sans z-10 max-w-[240px] break-words [text-wrap:pretty]">
+      {children}
+    </span>
   );
 }

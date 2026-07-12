@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /**
  * LLM Gateway
@@ -44,12 +45,25 @@ public class LlmGateway {
                                   List<Map<String, String>> history,
                                   ChatRequest.LlmProvider provider,
                                   List<Map<String, Object>> tools) {
+        return chatCompletion(systemPrompt, userMessage, history, provider, tools, 0.3);
+    }
+
+    /**
+     * 同步调用 LLM (非流式, 指定 temperature)
+     * temperature 由 agent 配置决定, 默认 0.3
+     */
+    public String chatCompletion(String systemPrompt,
+                                  String userMessage,
+                                  List<Map<String, String>> history,
+                                  ChatRequest.LlmProvider provider,
+                                  List<Map<String, Object>> tools,
+                                  double temperature) {
         ChatRequest.LlmProvider resolved = resolveProvider(provider);
-        log.info("LLM call: baseUrl={} model={}", resolved.getBaseUrl(), resolved.getModel());
+        log.info("LLM call: baseUrl={} model={} temperature={}", resolved.getBaseUrl(), resolved.getModel(), temperature);
 
         try {
             WebClient client = buildClient(resolved);
-            Map<String, Object> body = buildRequestBody(systemPrompt, userMessage, history, resolved, tools, false);
+            Map<String, Object> body = buildRequestBody(systemPrompt, userMessage, history, resolved, tools, false, temperature);
 
             Map<String, Object> response = client.post()
                 .uri("/chat/completions")
@@ -64,7 +78,7 @@ public class LlmGateway {
             // 如果带 tools 调用返回空内容, 去掉 tools 重试
             if ((content == null || content.isBlank()) && tools != null && !tools.isEmpty()) {
                 log.warn("LLM returned empty content with tools, retrying without tools...");
-                Map<String, Object> bodyNoTools = buildRequestBody(systemPrompt, userMessage, history, resolved, null, false);
+                Map<String, Object> bodyNoTools = buildRequestBody(systemPrompt, userMessage, history, resolved, null, false, temperature);
                 response = client.post()
                     .uri("/chat/completions")
                     .bodyValue(bodyNoTools)
@@ -86,7 +100,7 @@ public class LlmGateway {
                     .apiKey(resolved.getApiKey())
                     .model(resolved.getFallbackModels()[0])
                     .build();
-                return chatCompletion(systemPrompt, userMessage, history, fallback, tools);
+                return chatCompletion(systemPrompt, userMessage, history, fallback, tools, temperature);
             }
             throw new RuntimeException("LLM 调用失败: " + formatLlmError(e, resolved), e);
         }
@@ -103,11 +117,40 @@ public class LlmGateway {
                                               List<Map<String, String>> history,
                                               ChatRequest.LlmProvider provider,
                                               List<Map<String, Object>> tools) {
+        return chatCompletionStream(systemPrompt, userMessage, history, provider, tools, null, 0.3);
+    }
+
+    /**
+     * ★ 流式调用 LLM (带 usage 回调)
+     *
+     * usageConsumer 在流式结束时被调用一次, 携带本轮 LLM 调用的 token 统计
+     * (需要 provider 支持 stream_options.include_usage, OpenAI 兼容协议均支持)
+     */
+    public Flux<String> chatCompletionStream(String systemPrompt,
+                                              String userMessage,
+                                              List<Map<String, String>> history,
+                                              ChatRequest.LlmProvider provider,
+                                              List<Map<String, Object>> tools,
+                                              Consumer<Usage> usageConsumer) {
+        return chatCompletionStream(systemPrompt, userMessage, history, provider, tools, usageConsumer, 0.3);
+    }
+
+    /**
+     * ★ 流式调用 LLM (带 usage 回调 + 指定 temperature)
+     * temperature 由 agent 配置决定, 默认 0.3
+     */
+    public Flux<String> chatCompletionStream(String systemPrompt,
+                                              String userMessage,
+                                              List<Map<String, String>> history,
+                                              ChatRequest.LlmProvider provider,
+                                              List<Map<String, Object>> tools,
+                                              Consumer<Usage> usageConsumer,
+                                              double temperature) {
         ChatRequest.LlmProvider resolved = resolveProvider(provider);
-        log.info("LLM stream call: baseUrl={} model={}", resolved.getBaseUrl(), resolved.getModel());
+        log.info("LLM stream call: baseUrl={} model={} temperature={}", resolved.getBaseUrl(), resolved.getModel(), temperature);
 
         WebClient client = buildClient(resolved);
-        Map<String, Object> body = buildRequestBody(systemPrompt, userMessage, history, resolved, tools, true);
+        Map<String, Object> body = buildRequestBody(systemPrompt, userMessage, history, resolved, tools, true, temperature);
 
         // 累积原生 tool_calls 分片 (流式 mode 下 arguments 分片到达)
         StringBuilder toolCallName = new StringBuilder();
@@ -125,6 +168,31 @@ public class LlmGateway {
                 // 1. 先检查 delta.tool_calls (原生 function calling)
                 try {
                     Map<String, Object> chunk = objectMapper.readValue(sseData, Map.class);
+                    // ★ 检查 usage (流式最后一帧携带, 需 stream_options.include_usage=true)
+                    if (usageConsumer != null && chunk.get("usage") != null) {
+                        try {
+                            Map<String, Object> u = (Map<String, Object>) chunk.get("usage");
+                            // ★ 兼容 3 种 provider 的缓存命中字段:
+                            //   OpenAI:    usage.prompt_tokens_details.cached_tokens
+                            //   DeepSeek:  usage.prompt_cache_hit_tokens
+                            //   Anthropic: usage.cache_read_input_tokens
+                            int cached = 0;
+                            Object ptd = u.get("prompt_tokens_details");
+                            if (ptd instanceof Map) {
+                                cached = toInt(((Map<String, Object>) ptd).get("cached_tokens"));
+                            }
+                            if (cached == 0) cached = toInt(u.get("prompt_cache_hit_tokens"));
+                            if (cached == 0) cached = toInt(u.get("cache_read_input_tokens"));
+                            Usage usage = new Usage(
+                                toInt(u.get("prompt_tokens")),
+                                toInt(u.get("completion_tokens")),
+                                toInt(u.get("total_tokens")),
+                                cached);
+                            usageConsumer.accept(usage);
+                        } catch (Exception ue) {
+                            log.debug("Failed to parse usage: {}", ue.getMessage());
+                        }
+                    }
                     List<Map<String, Object>> choices = (List<Map<String, Object>>) chunk.get("choices");
                     if (choices != null && !choices.isEmpty()) {
                         Map<String, Object> delta = (Map<String, Object>) choices.get(0).get("delta");
@@ -159,7 +227,7 @@ public class LlmGateway {
             })
             .doOnComplete(() -> {
                 if (hasToolCall[0] && toolCallName.length() > 0) {
-                    log.info("Stream accumulated native tool_call: {} args_len={}", 
+                    log.info("Stream accumulated native tool_call: {} args_len={}",
                         toolCallName, toolCallArgs.length());
                 }
             })
@@ -183,6 +251,15 @@ public class LlmGateway {
                 ? new RuntimeException(formatLlmError(e, resolved), e)
                 : e)
             .timeout(TIMEOUT);
+    }
+
+    /** ★ Token 使用统计 (cachedTokens: 缓存命中的 prompt token 数) */
+    public record Usage(int promptTokens, int completionTokens, int totalTokens, int cachedTokens) {}
+
+    private static int toInt(Object v) {
+        if (v instanceof Number n) return n.intValue();
+        if (v instanceof String s) { try { return Integer.parseInt(s); } catch (Exception e) { return 0; } }
+        return 0;
     }
 
     /**
@@ -221,7 +298,8 @@ public class LlmGateway {
                                                    List<Map<String, String>> history,
                                                    ChatRequest.LlmProvider provider,
                                                    List<Map<String, Object>> tools,
-                                                   boolean stream) {
+                                                   boolean stream,
+                                                   double temperature) {
         List<Map<String, String>> messages = new ArrayList<>();
 
         // System prompt
@@ -241,7 +319,12 @@ public class LlmGateway {
         body.put("model", provider.getModel());
         body.put("messages", messages);
         body.put("stream", stream);
-        body.put("temperature", 0.3);
+        body.put("temperature", temperature);
+
+        // ★ 流式时请求 usage 统计 (OpenAI 兼容协议: stream_options.include_usage)
+        if (stream) {
+            body.put("stream_options", Map.of("include_usage", true));
+        }
 
         if (tools != null && !tools.isEmpty()) {
             body.put("tools", tools);

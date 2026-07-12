@@ -10,6 +10,7 @@ com\soloforge\agent\advisor\SystemPromptBuilder.class
 com\soloforge\agent\controller\ChatController.class
 com\soloforge\agent\aisociety\CaseRetriever.class
 com\soloforge\agent\orchestrator\AgentOrchestrator.class
+com\soloforge\agent\llm\LlmGateway$Usage.class
 com\soloforge\agent\aisociety\MarlTrainingClient.class
 com\soloforge\agent\dto\ChatSettings$ChatSettingsBuilder.class
 com\soloforge\agent\llm\LlmGateway.class

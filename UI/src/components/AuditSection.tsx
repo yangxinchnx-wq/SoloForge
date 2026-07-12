@@ -77,7 +77,7 @@ export function AuditSection({ auditTask, result, mode, modelCount }: AuditSecti
                   <span className="text-[10px] font-bold text-on-surface/50 uppercase">裁决结果</span>
                   <div className="grid grid-cols-3 gap-2 text-[10px]">
                     <div className="bg-on-surface/5 rounded p-1.5 text-center">
-                      <div className="text-on-surface/40">子Agent</div>
+                      <div className="text-on-surface/40">子助理</div>
                       <div className="font-mono font-bold text-on-surface">{result.layerScores.subAgent}</div>
                     </div>
                     <div className="bg-on-surface/5 rounded p-1.5 text-center">

@@ -83,7 +83,7 @@ export default function McpTab() {
       <div className="bg-[var(--color-surface)]/60 border border-dashed border-[var(--color-outline)]/30 rounded-xl p-4.5 space-y-2">
         <span className="text-xs text-[var(--color-primary)]/80 font-mono font-semibold block">优质 MCP 数据源推荐</span>
         <p className="text-xs text-on-surface/50 leading-relaxed font-sans">
-          建议通过拉取以下公共开源插件扩展智能体环境控制边界：<br/>
+          建议通过拉取以下公共开源插件扩展助理环境控制边界：<br/>
           • Tencent Cloud Developer Tools Server: <span className="text-[var(--color-primary)] hover:underline cursor-pointer font-mono">github.com/tencent-mcp/studio-server</span><br/>
           • Ali Alibaba Qwen RAG Search: <span className="text-[var(--color-primary)] hover:underline cursor-pointer font-mono">github.com/alibaba/qwen-mcp</span>
         </p>

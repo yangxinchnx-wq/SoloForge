@@ -170,6 +170,7 @@ export async function handleLLMStreamProxy(
   try {
     let chunkCount = 0;
     let totalChars = 0;
+    let lastUsage: { promptTokens: number; completionTokens: number; totalTokens: number; cachedTokens?: number } | null = null;
     for await (const chunk of streamOpenAIChat({
       baseUrl: resolvedBaseUrl,
       apiKey: resolvedApiKey,
@@ -185,8 +186,14 @@ export async function handleLLMStreamProxy(
         break;
       }
       if (chunk.done) {
-        res.write(`data: ${JSON.stringify({ delta: '', done: true })}\n\n`);
+        // ★ done 帧合并 usage (如有)
+        res.write(`data: ${JSON.stringify({ delta: '', done: true, ...(lastUsage ? { usage: lastUsage } : {}) })}\n\n`);
         break;
+      }
+      // ★ 捕获 usage 帧 (不写给前端, 等到 done 帧一起发)
+      if (chunk.usage) {
+        lastUsage = chunk.usage;
+        continue;
       }
       chunkCount++;
       totalChars += chunk.delta.length;

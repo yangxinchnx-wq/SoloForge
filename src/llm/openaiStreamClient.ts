@@ -50,6 +50,8 @@ export interface StreamChunk {
   done: boolean;
   /** 原始 JSON（如果需要） */
   raw?: unknown;
+  /** ★ usage 统计 (仅流式最后一帧携带, 需 stream_options.include_usage=true) */
+  usage?: { promptTokens: number; completionTokens: number; totalTokens: number; cachedTokens?: number };
 }
 
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -75,6 +77,8 @@ export async function* streamOpenAIChat(opts: StreamChatOptions): AsyncGenerator
     stream: true,
     temperature: opts.temperature ?? 0.7,
     max_tokens: opts.maxTokens ?? 4096,
+    // ★ 请求流式最后一帧携带 usage (OpenAI 兼容协议: stream_options.include_usage)
+    stream_options: { include_usage: true },
     ...(opts.jsonMode ? { response_format: { type: 'json_object' } } : {}),
   };
 
@@ -135,6 +139,30 @@ export async function* streamOpenAIChat(opts: StreamChatOptions): AsyncGenerator
           const delta = json?.choices?.[0]?.delta?.content;
           if (typeof delta === 'string' && delta.length > 0) {
             yield { delta, done: false, raw: json };
+          }
+          // ★ 流式最后一帧携带 usage (stream_options.include_usage=true 时)
+          if (json?.usage) {
+            const u = json.usage;
+            // ★ 兼容 3 种 provider 的缓存命中字段:
+            //   OpenAI:    usage.prompt_tokens_details.cached_tokens
+            //   DeepSeek:  usage.prompt_cache_hit_tokens
+            //   Anthropic: usage.cache_read_input_tokens
+            const cachedTokens =
+              u.prompt_tokens_details?.cached_tokens ??
+              u.prompt_cache_hit_tokens ??
+              u.cache_read_input_tokens ??
+              0;
+            yield {
+              delta: '',
+              done: false,
+              raw: json,
+              usage: {
+                promptTokens: u.prompt_tokens ?? 0,
+                completionTokens: u.completion_tokens ?? 0,
+                totalTokens: u.total_tokens ?? 0,
+                cachedTokens: cachedTokens > 0 ? cachedTokens : undefined,
+              },
+            };
           }
         } catch {
           // 忽略单行解析失败

@@ -207,7 +207,7 @@ const PhaseChangePartView = memo(function PhaseChangePartView({ part }: { part: 
         {part.to}
       </motion.span>
       {part.detail && (
-        <span className="text-on-surface/40 truncate">{part.detail}</span>
+        <span className="text-on-surface/40 break-words [text-wrap:pretty]">{part.detail}</span>
       )}
     </div>
   );
@@ -225,8 +225,8 @@ const SubTaskCreatedPartView = memo(function SubTaskCreatedPartView({ part }: { 
         <ModelIcon modelName={part.assigneeModel} size={18} className="shrink-0" />
       </div>
       <div className="flex flex-col min-w-0">
-        <span className="text-[10px] font-bold text-primary truncate">{part.assigneeModel}</span>
-        <span className="text-[10px] text-on-surface/50 truncate">{part.description}</span>
+        <span className="text-[10px] font-bold text-primary break-words [text-wrap:pretty]">{part.assigneeModel}</span>
+        <span className="text-[10px] text-on-surface/50 break-words [text-wrap:pretty]">{part.description}</span>
       </div>
     </div>
   );
@@ -303,7 +303,7 @@ const SubTaskStepPartView = memo(function SubTaskStepPartView({ part }: { part: 
       </div>
       <span className="text-[10px] font-mono text-on-surface/60">{part.step}</span>
       {part.detail && (
-        <span className="text-[10px] text-on-surface/30 truncate">{part.detail}</span>
+        <span className="text-[10px] text-on-surface/30 break-words [text-wrap:pretty]">{part.detail}</span>
       )}
     </div>
   );
@@ -331,7 +331,7 @@ const SubTaskDonePartView = memo(function SubTaskDonePartView({ part }: { part: 
         {isSuccess ? '已完成' : '失败'}
       </span>
       {part.result && (
-        <span className="text-[10px] text-on-surface/40 truncate flex-1">{part.result}</span>
+        <span className="text-[10px] text-on-surface/40 break-words [text-wrap:pretty] flex-1">{part.result}</span>
       )}
     </div>
   );
@@ -356,7 +356,7 @@ const ModelDelegationPartView = memo(function ModelDelegationPartView({ part, ch
         <span className="text-primary font-bold">{agentName}</span>
       )}
       <ArrowRight className="w-3 h-3 text-on-surface/30" />
-      {part.detail && <span className="text-on-surface/70 font-medium truncate max-w-[120px]">{part.detail}</span>}
+      {part.detail && <span className="text-on-surface/70 font-medium break-words [text-wrap:pretty]">{part.detail}</span>}
     </div>
   );
 });
@@ -369,7 +369,7 @@ const ModelActionPartView = memo(function ModelActionPartView({ part }: { part: 
       <span className="text-on-surface/30">[动作]</span>
       <span>{part.action}</span>
       {part.detail && (
-        <span className="text-on-surface/25 truncate max-w-[240px]">{part.detail}</span>
+        <span className="text-on-surface/25 break-words [text-wrap:pretty]">{part.detail}</span>
       )}
     </div>
   );
@@ -427,7 +427,7 @@ const AuditFindingPartView = memo(function AuditFindingPartView({ part }: { part
         <div className="flex flex-col min-w-0 gap-0.5 flex-1">
           <div className="flex items-center gap-1">
             <span className={`text-[9px] font-bold px-1 py-0.5 rounded ${sevClass}`}>{sevLabel}</span>
-            <span className="text-[10px] text-on-surface/50 truncate">{part.finding.target}</span>
+            <span className="text-[10px] text-on-surface/50 break-words [text-wrap:pretty]">{part.finding.target}</span>
           </div>
         </div>
         {hasSuggestion && (
@@ -537,7 +537,7 @@ const BrowserStepPartView = memo(function BrowserStepPartView({ part }: { part: 
     <div className="flex items-center gap-1.5 px-2.5 py-1">
       <Globe className="w-3 h-3 text-indigo-400 shrink-0" />
       <span className="text-[10px] font-mono text-on-surface/40 tabular-nums">#{part.stepIndex}</span>
-      <span className="text-[10px] text-on-surface/60 truncate">{part.detail}</span>
+      <span className="text-[10px] text-on-surface/60 break-words [text-wrap:pretty]">{part.detail}</span>
       {part.progress !== undefined && (
         <span className="text-[10px] font-mono text-on-surface/30 tabular-nums ml-auto">{part.progress}%</span>
       )}

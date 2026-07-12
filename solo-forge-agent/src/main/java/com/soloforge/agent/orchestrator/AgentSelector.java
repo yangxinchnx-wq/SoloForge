@@ -52,14 +52,14 @@ public class AgentSelector {
                 String.join(", ", agentRepo.parseCapabilities(a))))
             .collect(Collectors.joining("\n"));
 
-        String systemPrompt = "你是一个任务分配器。根据用户任务,从下列 agent 列表里选一个最适合的 agent。\n" +
-            "只返回 agent 的 id (一行字符串),不要返回任何其他内容、不要加引号或解释。\n\n" +
-            "可用 agent 列表:\n" + agentList;
+        String systemPrompt = "你是一个任务分配器。根据用户任务,从下列助理列表里选一个最适合的助理。\n" +
+            "只返回助理的 id (一行字符串),不要返回任何其他内容、不要加引号或解释。\n\n" +
+            "可用助理列表:\n" + agentList;
 
         try {
             String result = llmGateway.chatCompletion(systemPrompt, task, List.of(), subProvider, null);
             if (result == null || result.isBlank()) {
-                log.warn("Agent selector returned empty, fallback to first agent");
+                log.warn("助理选择器返回为空, 回退到第一个助理");
                 return agents.get(0).getId();
             }
             String agentId = result.trim().replaceAll("[\"'`\\n\\r]", "").trim();
@@ -78,10 +78,10 @@ public class AgentSelector {
                     return a.getId();
                 }
             }
-            log.warn("Agent selector returned unknown id '{}', fallback to first agent", agentId);
+            log.warn("助理选择器返回未知 id '{}', 回退到第一个助理", agentId);
             return agents.get(0).getId();
         } catch (Exception e) {
-            log.warn("Agent selector LLM call failed: {}, fallback to first agent", e.getMessage());
+            log.warn("助理选择器 LLM 调用失败: {}, 回退到第一个助理", e.getMessage());
             return agents.get(0).getId();
         }
     }

@@ -473,7 +473,7 @@ export default function KnowledgeBaseTab() {
 
             {/* 描述 */}
             <div className="px-4 pt-2 shrink-0">
-              <p className="text-[10px] text-on-surface/40">案例库自动收集 👍/👎 反馈供 Agent 检索参考</p>
+              <p className="text-[10px] text-on-surface/40">案例库自动收集 👍/👎 反馈供助理检索参考</p>
             </div>
 
             {/* 过滤 */}

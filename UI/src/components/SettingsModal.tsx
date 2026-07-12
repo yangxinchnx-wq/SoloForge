@@ -37,7 +37,7 @@ const TABS: TabItem[] = [
   { id: 'mcp', label: '04. MCP 工具', icon: Cpu },
   { id: 'environment', label: '05. 运行环境', icon: Code2 },
   { id: 'skills-rules', label: '06. 智能规则', icon: ShieldCheck },
-  { id: 'memory', label: '07. Agent', icon: Bot },
+  { id: 'memory', label: '07. 助理', icon: Bot },
   { id: 'proxy', label: '08. 网络代理', icon: Navigation },
   { id: 'knowledge-base', label: '09. 知识库', icon: Database },
   { id: 'channels', label: '10. 消息连接', icon: Share2 },

@@ -48860,7 +48860,7 @@ var DataArchiverService = class {
       archivedThisRun: 0,
       deletedThisRun: 0
     };
-    const tables = ["conversation", "message", "decision", "courtSubmission", "courtVerdict", "eventLog"];
+    const tables = ["conversation", "message", "chat_config", "chat_meta", "decision", "courtSubmission", "courtVerdict", "eventLog"];
     for (const table of tables) {
       try {
         const tableStats = await this.checkTable(table);
@@ -49293,6 +49293,8 @@ async function* streamOpenAIChat(opts) {
     stream: true,
     temperature: opts.temperature ?? 0.7,
     max_tokens: opts.maxTokens ?? 4096,
+    // ★ 请求流式最后一帧携带 usage (OpenAI 兼容协议: stream_options.include_usage)
+    stream_options: { include_usage: true },
     ...opts.jsonMode ? { response_format: { type: "json_object" } } : {}
   };
   const controller = new AbortController();
@@ -49345,6 +49347,21 @@ async function* streamOpenAIChat(opts) {
           const delta = json?.choices?.[0]?.delta?.content;
           if (typeof delta === "string" && delta.length > 0) {
             yield { delta, done: false, raw: json };
+          }
+          if (json?.usage) {
+            const u = json.usage;
+            const cachedTokens = u.prompt_tokens_details?.cached_tokens ?? u.prompt_cache_hit_tokens ?? u.cache_read_input_tokens ?? 0;
+            yield {
+              delta: "",
+              done: false,
+              raw: json,
+              usage: {
+                promptTokens: u.prompt_tokens ?? 0,
+                completionTokens: u.completion_tokens ?? 0,
+                totalTokens: u.total_tokens ?? 0,
+                cachedTokens: cachedTokens > 0 ? cachedTokens : void 0
+              }
+            };
           }
         } catch {
         }
@@ -49859,6 +49876,7 @@ async function handleLLMStreamProxy(req, res, body) {
   try {
     let chunkCount = 0;
     let totalChars = 0;
+    let lastUsage = null;
     for await (const chunk of streamOpenAIChat({
       baseUrl: resolvedBaseUrl,
       apiKey: resolvedApiKey,
@@ -49874,10 +49892,14 @@ async function handleLLMStreamProxy(req, res, body) {
         break;
       }
       if (chunk.done) {
-        res.write(`data: ${JSON.stringify({ delta: "", done: true })}
+        res.write(`data: ${JSON.stringify({ delta: "", done: true, ...lastUsage ? { usage: lastUsage } : {} })}
 
 `);
         break;
+      }
+      if (chunk.usage) {
+        lastUsage = chunk.usage;
+        continue;
       }
       chunkCount++;
       totalChars += chunk.delta.length;
@@ -50218,7 +50240,7 @@ async function runMiddleware(req, res, deps) {
     };
   }
   let body = null;
-  if (method === "POST" || method === "PUT" || method === "DELETE") {
+  if (method === "POST" || method === "PUT" || method === "PATCH" || method === "DELETE") {
     const ct = String(req.headers["content-type"] || "").toLowerCase();
     if (ct.length > 0 && !ct.includes("application/json")) {
       return { done: true, response: { status: 415, headers: { "Content-Type": "application/json" }, body: { error: "Unsupported Media Type" } } };
@@ -51161,6 +51183,71 @@ async function handleJavaAgentProxy(reqPath, method, body) {
     return { status: javaRes.status, headers: { "Content-Type": "application/json" }, body: javaBody };
   } catch (err) {
     return { status: 502, headers: { "Content-Type": "application/json" }, body: { success: false, error: `Java Agent service not started: ${err.message}` } };
+  }
+}
+async function handleJavaAgentSSE(req, res, body) {
+  const javaUrl = "http://127.0.0.1:8770/api/chat/stream";
+  try {
+    const javaRes = await fetch(javaUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
+      body: typeof body === "string" ? body : JSON.stringify(body)
+    });
+    if (!javaRes.ok) {
+      const errText = await javaRes.text();
+      res.writeHead(javaRes.status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ success: false, error: errText }));
+      return;
+    }
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no"
+    });
+    const reader = javaRes.body?.getReader();
+    if (!reader) {
+      res.write('event: error\ndata: {"error":"No response body from Java Agent"}\n\n');
+      res.end();
+      return;
+    }
+    const decoder = new TextDecoder();
+    let buffer = "";
+    req.on("close", () => {
+      try {
+        reader.cancel();
+      } catch {
+      }
+    });
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (line.startsWith("event:") || line.startsWith("data:") || line === "") {
+          res.write(line + "\n");
+        }
+      }
+      if (buffer === "" || buffer === "\n") {
+        res.write("\n");
+      }
+    }
+    if (buffer.trim()) {
+      res.write(buffer + "\n\n");
+    }
+    res.end();
+  } catch (err) {
+    try {
+      res.writeHead(502, { "Content-Type": "text/event-stream; charset=utf-8" });
+      res.write(`event: error
+data: ${JSON.stringify({ error: `Java Agent service not started: ${err.message}` })}
+
+`);
+      res.end();
+    } catch {
+    }
   }
 }
 var ANALYTICS_QUERIES = {
@@ -52255,6 +52342,13 @@ var SoloForgeApiServer = class {
           return;
         }
       }
+      if (reqPath === "/api/java-agent/api/chat/stream" && method === "POST") {
+        const acceptHeader = String(req.headers["accept"] || "");
+        if (acceptHeader.includes("text/event-stream")) {
+          await handleJavaAgentSSE(req, res, apiReq.body);
+          return;
+        }
+      }
       const apiRes = await this.route(apiReq);
       const responseBody = typeof apiRes.body === "string" ? apiRes.body : JSON.stringify(apiRes.body);
       this.networkMetrics.sent += Buffer.byteLength(responseBody, "utf8");
@@ -52345,7 +52439,9 @@ var SoloForgeApiServer = class {
       observationState: this.observationState,
       broadcastEvent: (event, payload) => this.sseManager.broadcast(event, payload)
     };
-    if (reqPath.startsWith("/api/java-agent/")) return handleJavaAgentProxy(reqPath, method, req.body);
+    if (reqPath.startsWith("/api/java-agent/")) {
+      return handleJavaAgentProxy(reqPath, method, req.body);
+    }
     if (reqPath === "/api/canvas/relay/push-ui" && method === "POST") {
       return handleCanvasRelayPushUi(req.body);
     }

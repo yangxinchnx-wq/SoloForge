@@ -59,7 +59,8 @@ export type UIPartType =
   | 'browser-step'      // 浏览器步骤
   | 'browser-screenshot'// 浏览器截图
   | 'error'             // 错误
-  | 'metadata';         // 元数据
+  | 'metadata'          // 元数据
+  | 'usage';            // ★ Token 使用统计
 
 // ==================== UIMessage Part 联合类型 ====================
 
@@ -201,6 +202,19 @@ export interface UIMetadataPart {
   value: unknown;
 }
 
+/** ★ Token 使用统计 part (一轮对话结束时由 usage 事件生成) */
+export interface UIUsagePart {
+  type: 'usage';
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  /** 缓存命中的 prompt token 数 (OpenAI/DeepSeek/Anthropic 三种格式自动兼容) */
+  cachedTokens?: number;
+  /** 关联的模型名 (可选, 用于多模型场景区分) */
+  model?: string;
+  timestamp: number;
+}
+
 export type UIPart =
   | UITextPart
   | UITaskSummaryPart
@@ -220,7 +234,8 @@ export type UIPart =
   | UIBrowserStepPart
   | UIBrowserScreenshotPart
   | UIErrorPart
-  | UIMetadataPart;
+  | UIMetadataPart
+  | UIUsagePart;
 
 // ==================== UIMessage (UI 渲染层) ====================
 
@@ -281,6 +296,7 @@ export function uiMessageToModelMessage(msg: UIMessage): ModelMessage {
       case 'browser-screenshot':
       case 'error':
       case 'metadata':
+      case 'usage':
         // 跳过 — 这些是 UI 专用 part
         break;
     }

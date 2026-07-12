@@ -15,12 +15,15 @@
  *            每个 text 事件携带 LLM delta 文本片段, 前端逐字追加渲染
  */
 
+import { StreamingLatencyTracker } from './perfMonitor';
+
 export type ChatStreamEvent =
   | { kind: 'text'; text: string; taskId?: string }
   | { kind: 'phase'; phase: string; taskId?: string; [k: string]: any }
   | { kind: 'agent'; agentId: string; name: string; avatar?: string; role?: string; domain?: string; modelBinding?: string; mainModel?: string; subModels?: string[]; subModel?: string; taskId?: string }
   | { kind: 'error'; error: string; taskId?: string }
-  | { kind: 'done'; taskId?: string; agentId?: string; experienceFingerprint?: string; strategy?: string };
+  | { kind: 'done'; taskId?: string; agentId?: string; experienceFingerprint?: string; strategy?: string }
+  | { kind: 'usage'; usage: { promptTokens: number; completionTokens: number; totalTokens: number; cachedTokens?: number }; taskId?: string };
 
 export interface ChatRequest {
   prompt: string;
@@ -261,10 +264,14 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
   let currentData = '';
   let doneSent = false;
   let sseDebugLineCount = 0;
+  // ★ 启动 LLM 流式延迟追踪 (TTFT / 总时延 / 字节数)
+  const latencyTracker = new StreamingLatencyTracker();
+  latencyTracker.start(`llm-stream:${req.mainModel || 'java-agent'}`);
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
+    if (value) latencyTracker.recordChunk(value.byteLength);
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n');
     buffer = lines.pop() || '';
@@ -289,6 +296,9 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
               onEvent({ kind: 'phase', phase: data.phase, taskId, ...data });
             } else if (currentEvent === 'agent') {
               onEvent({ kind: 'agent', agentId: data.agentId, name: data.name, avatar: data.avatar, role: data.role, domain: data.domain, modelBinding: data.modelBinding, mainModel: data.mainModel, subModels: data.subModels, subModel: data.subModel, taskId });
+            } else if (currentEvent === 'usage') {
+              // ★ Java Agent 发送的 token 统计事件
+              onEvent({ kind: 'usage', usage: { promptTokens: data.promptTokens ?? 0, completionTokens: data.completionTokens ?? 0, totalTokens: data.totalTokens ?? 0, cachedTokens: data.cachedTokens }, taskId });
             } else if (currentEvent === 'error') {
               onEvent({ kind: 'error', error: data.error || 'Unknown error', taskId });
             } else if (currentEvent === 'done') {
@@ -315,6 +325,8 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
         onEvent({ kind: 'phase', phase: data.phase, taskId, ...data });
       } else if (currentEvent === 'agent') {
         onEvent({ kind: 'agent', agentId: data.agentId, name: data.name, avatar: data.avatar, role: data.role, domain: data.domain, modelBinding: data.modelBinding, mainModel: data.mainModel, subModels: data.subModels, subModel: data.subModel, taskId });
+      } else if (currentEvent === 'usage') {
+        onEvent({ kind: 'usage', usage: { promptTokens: data.promptTokens ?? 0, completionTokens: data.completionTokens ?? 0, totalTokens: data.totalTokens ?? 0, cachedTokens: data.cachedTokens }, taskId });
       } else if (currentEvent === 'done') {
         doneSent = true;
         onEvent({ kind: 'done', taskId, agentId: data.agentId });
@@ -327,6 +339,8 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
     console.log('[aiBackend] Java SSE 流结束, 后端未发 done 事件 → 合成 done');
     onEvent({ kind: 'done', taskId });
   }
+  // ★ 结束延迟追踪, emit LatencySample
+  latencyTracker.finish();
 }
 
 /**
@@ -457,10 +471,14 @@ async function executeLLMProxyPath(req: ChatRequest, signal: AbortSignal, taskId
   const decoder = new TextDecoder();
   let buffer = '';
   let doneSent = false;
+  // ★ 启动 LLM 流式延迟追踪
+  const latencyTracker = new StreamingLatencyTracker();
+  latencyTracker.start(`llm-proxy:${req.mainProvider?.model || 'unknown'}`);
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
+    if (value) latencyTracker.recordChunk(value.byteLength);
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n');
     buffer = lines.pop() || '';
@@ -478,6 +496,10 @@ async function executeLLMProxyPath(req: ChatRequest, signal: AbortSignal, taskId
         }
         if (chunk.done) {
           doneSent = true;
+          // ★ done 帧可能携带 usage (Node LLM 代理在流式最后一帧合并)
+          if (chunk.usage) {
+            onEvent({ kind: 'usage', usage: chunk.usage, taskId });
+          }
           onEvent({ kind: 'done', taskId });
           return;
         }
@@ -491,6 +513,8 @@ async function executeLLMProxyPath(req: ChatRequest, signal: AbortSignal, taskId
   if (!doneSent && !signal.aborted) {
     onEvent({ kind: 'done', taskId });
   }
+  // ★ 结束延迟追踪
+  latencyTracker.finish();
 }
 
 /**

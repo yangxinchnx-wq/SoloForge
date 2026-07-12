@@ -10,6 +10,9 @@ import type { ToolCall } from '../types';
 export interface ChatMessage {
   sender: 'user' | 'assistant';
   content: string;
+  /** ★ FIX 2026-07-12: 保留 LLM 原始输出 (含代码块), 供 history 构建使用
+   *  content 字段会被 buildDisplayText 替换代码块为占位符, 导致 LLM 上下文丢失 */
+  rawContent?: string;
   time: string;
   avatar: string;
   attachment?: {
