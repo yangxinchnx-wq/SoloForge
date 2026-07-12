@@ -207,7 +207,7 @@ function universalNodeToFlutterDSL(node: UniversalNode): any {
 }
 
 // ── 代码块解析 ──
-interface CodeBlockInfo {
+export interface CodeBlockInfo {
   lang: string;
   translatorLang: string | null;
   code: string;
@@ -217,7 +217,7 @@ interface CodeBlockInfo {
   closeFenceEnd: number;
 }
 
-function parseCodeBlocks(text: string): CodeBlockInfo[] {
+export function parseCodeBlocks(text: string): CodeBlockInfo[] {
   const blocks: CodeBlockInfo[] = [];
   const openRe = /```(\w*)\s*\n/g;
   let searchFrom = 0;

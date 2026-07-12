@@ -17,6 +17,8 @@
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import type { PreviewPayload, StreamState, UniversalNode } from '../services/canvas/UniversalAST';
+import { parseCodeBlocks } from '../services/incrementalCanvasPusher';
+import { translateCode } from '../translate';
 
 export interface PreviewStreamEntry {
   /** AST 流状态（流中持续更新） */
@@ -212,4 +214,64 @@ export async function restoreDslFromHotStore(chatId: string, sessionId?: string)
   } catch {
     return null;
   }
+}
+
+/**
+ * ★ 2026-07-13: 从聊天历史降级恢复画布 DSL
+ *
+ * 场景: GarnetStore 24h TTL 到期后热数据消失, 但聊天记录里的 rawContent (含代码块) 还在.
+ * 从最后一条 assistant 消息的 rawContent 中提取最后的完整代码块,
+ * 用 translateCode 翻译为 UniversalNode, 恢复到 previewStreamStore.
+ *
+ * @param messages 当前 chat 的消息列表
+ * @returns 恢复的 DSL 数据, 或 null 表示无法恢复
+ */
+export function restoreDslFromChatHistory(
+  messages: Array<{ sender: string; rawContent?: string; content: string }>,
+): { dsl: any; language: string; sourceCode: string } | null {
+  if (!messages || messages.length === 0) return null;
+
+  // 从后往前找最后一条 assistant 消息
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.sender !== 'assistant') continue;
+
+    // 优先用 rawContent (含原始代码块), 其次用 content
+    const text = msg.rawContent || msg.content;
+    if (!text) continue;
+
+    // 用 parseCodeBlocks 提取代码块
+    const blocks = parseCodeBlocks(text);
+    // 找最后一个完整的、有 translatorLang 的代码块
+    for (let j = blocks.length - 1; j >= 0; j--) {
+      const block = blocks[j];
+      if (!block.complete || !block.translatorLang) continue;
+      if (!block.code.trim()) continue;
+
+      try {
+        if (block.translatorLang === '__json_dsl__') {
+          // JSON DSL — 直接解析
+          const dsl = JSON.parse(block.code);
+          return {
+            dsl,
+            language: 'json',
+            sourceCode: block.code,
+          };
+        } else {
+          // 其他语言 — 走翻译器
+          const ast = translateCode(block.code, block.translatorLang);
+          return {
+            dsl: ast,
+            language: block.translatorLang,
+            sourceCode: block.code,
+          };
+        }
+      } catch (e) {
+        console.warn(`[restoreDslFromChatHistory] translate failed for lang=${block.translatorLang}:`, (e as Error).message);
+        continue; // 尝试前一个代码块
+      }
+    }
+  }
+
+  return null;
 }

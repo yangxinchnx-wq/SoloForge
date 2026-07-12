@@ -367,7 +367,7 @@ interface ChatStoreState {
   conversations: Record<string, ChatMessage[]>; configs: Record<string, ChatSettingsItem>;
   showSettingsPopup: boolean; chatsList: any[];
   pendingAttachment: { fileName: string; text: string } | null; isPendingAttachmentExpanded: boolean;
-  isGenerating: boolean; activeChatHandle: { taskId: string; abort: () => void } | null; lastReqBody: any; hashlineAgentEnabled: boolean;
+  isGenerating: boolean; isPaused: boolean; activeChatHandle: { taskId: string; abort: () => void } | null; lastReqBody: any; hashlineAgentEnabled: boolean;
   streamState: StreamState; inputValue: string; showModeDropdown: boolean;
   workspaceApproval: { chatId: string; message: string } | null;
   options: ChatRuntimeOptions;
@@ -388,6 +388,7 @@ interface ChatStoreState {
   getFallbackMessages: (localChatInfo: any) => ChatMessage[];
   handleSend: (inputRef?: React.RefObject<HTMLTextAreaElement | null>) => void;
   pauseChat: () => void;
+  resumeChat: (additionalInstruction?: string) => void;
   handleAcceptEnable: (candidateName: string) => void;
   handlePhase: (evt: any, currentChatMsgs: ChatMessage[]) => void;
 }
@@ -424,14 +425,72 @@ const initialConfigs: Record<string, ChatSettingsItem> = {};
 export const useChatStore = create<ChatStoreState>((set, get) => ({
   conversations: initialConversations, configs: initialConfigs,
   showSettingsPopup: false, chatsList: [], pendingAttachment: null, isPendingAttachmentExpanded: false,
-  isGenerating: false, activeChatHandle: null, lastReqBody: null, hashlineAgentEnabled: false, streamState: emptyStreamState,
+  isGenerating: false, isPaused: false, activeChatHandle: null, lastReqBody: null, hashlineAgentEnabled: false, streamState: emptyStreamState,
   inputValue: '', showModeDropdown: false, workspaceApproval: null, options: {},
   setConversations: (updater) => set((state) => ({ conversations: typeof updater === 'function' ? (updater as any)(state.conversations) : updater })),
   setConfigs: (updater) => set((state) => ({ configs: typeof updater === 'function' ? (updater as any)(state.configs) : updater })),
   setShowSettingsPopup: (v) => set({ showSettingsPopup: v }), setChatsList: (v) => set({ chatsList: v }),
   setPendingAttachment: (v) => set({ pendingAttachment: v }), setIsPendingAttachmentExpanded: (v) => set({ isPendingAttachmentExpanded: v }),
   setIsGenerating: (v) => set({ isGenerating: v }),
-  pauseChat: () => { const h = get().activeChatHandle; if (h) h.abort(); set({ isGenerating: false, activeChatHandle: null }); },
+  // ★ 暂停: 中止 fetch, 但保留 activeStreamContext (含已生成文本) 供恢复使用
+  pauseChat: () => { const h = get().activeChatHandle; if (h) h.abort(); set({ isGenerating: false, isPaused: true, activeChatHandle: null }); },
+  // ★ 恢复: 无参数=纯继续; 有参数=把"已生成内容+新指令"合并发给 LLM 一起算
+  resumeChat: async (additionalInstruction?: string) => {
+    const ctx = activeStreamContext;
+    if (!ctx) { set({ isPaused: false }); return; }
+    const hasInstruction = !!(additionalInstruction && additionalInstruction.trim());
+    set({ isPaused: false, isGenerating: true, activeChatHandle: null, streamState: { ...emptyStreamState } });
+
+    let continuePrompt: string;
+    if (hasInstruction) {
+      // 用户追加了新指令: 让 LLM 基于已生成内容 + 新指令综合处理
+      continuePrompt = ctx.accumulatedText.trim()
+        ? `以下是之前已生成的内容：\n\n${ctx.accumulatedText}\n\n---\n用户追加指令：${additionalInstruction}\n\n请基于已有内容并根据追加指令继续生成，直接输出，不要重复已有内容。`
+        : additionalInstruction!;
+    } else {
+      // 纯恢复: 让 LLM 接续已有内容
+      continuePrompt = ctx.accumulatedText.trim()
+        ? `请继续以下内容的生成，直接接续，不要重复已有内容：\n\n${ctx.accumulatedText}`
+        : ctx.finalContent;
+    }
+    // 历史包含原始消息 + 已有部分回复, 让 LLM 知道上下文
+    const resumeHistory = [...ctx.currentChatMsgs, { sender: 'assistant' as const, content: ctx.accumulatedText }];
+
+    const streamBridge = createStreamBridge(ctx.activeChatId, ctx.mainModel, continuePrompt, ctx.permissionMode);
+    let streamFinalized = false;
+    let canvasPusher: IncrementalCanvasPusher | null = null;
+    // 从已生成文本开始累积, 新 chunk 追加到后面
+    let resumeAccumulated = ctx.accumulatedText;
+    // 预创建 canvasPusher 并喂入已有文本, 让 displayText 包含完整内容
+    if (ctx.accumulatedText) { canvasPusher = new IncrementalCanvasPusher(ctx.activeChatId); canvasPusher.feedChunk(ctx.accumulatedText); }
+
+    { const fallbackId = `canvas-${ctx.activeChatId}`; const existing = getCanvasSessionId(ctx.activeChatId); if (!existing || existing === fallbackId) setCanvasSessionId(ctx.activeChatId, fallbackId); }
+
+    const chatHandle = await startChat({ chatId: ctx.activeChatId, prompt: continuePrompt, mode: ctx.permissionMode, history: resumeHistory.map(m => ({ sender: m.sender, content: m.rawContent || m.content })), fileContext: ctx.selectedFile ? { name: ctx.selectedFile, content: ctx.editorContent } : undefined, mainProvider: { baseUrl: ctx.mainEntry.baseUrl, apiKey: ctx.mainEntry.apiKey, model: ctx.mainEntry.model }, subProviders: ctx.reqBody.subProviders, candidateProviders: ctx.reqBody.candidateProviders, ...(ctx.hashlineAgentEnabled ? { toolCallMode: 'hashline' } : {}), workspaceFolder: useChatsStore.getState().getChat(ctx.activeChatId)?.workspaceFolder, activeTools: ctx.activeTools, activeSkills: ctx.activeSkills, activeKnowledge: ctx.activeKnowledge, activeSettings: ctx.activeSettings, canvasId: `canvas-${ctx.activeChatId}` } as any, async (evt: ChatStreamEvent) => {
+      switch (evt.kind) {
+        case 'text': {
+          resumeAccumulated += evt.text;
+          if (!canvasPusher) canvasPusher = new IncrementalCanvasPusher(ctx.activeChatId);
+          const { displayText } = canvasPusher.feedChunk(evt.text);
+          streamBridge.onText(evt.text);
+          if (activeStreamContext) activeStreamContext.accumulatedText = resumeAccumulated;
+          set((s) => { const cl = s.conversations[ctx.activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') { lm.content = displayText; lm.rawContent = resumeAccumulated; nl[nl.length - 1] = lm; } return { conversations: { ...s.conversations, [ctx.activeChatId]: nl } }; });
+          break;
+        }
+        case 'phase': { streamBridge.onPhase(evt); get().handlePhase(evt, ctx.currentChatMsgs); break; }
+        case 'agent': { streamBridge.onAgent(evt.agentId, evt.name, evt.avatar, evt.mainModel, evt.subModels, evt.role, evt.domain, evt.subModel); break; }
+        case 'usage': { streamBridge.onUsage(evt.usage); break; }
+        case 'error': { if (!streamFinalized) { streamFinalized = true; streamBridge.onError(evt.error); } activeStreamContext = null; const fm = classifyStreamError(evt.error || ''); set((s) => { const cl = s.conversations[ctx.activeChatId] || []; if (cl.length === 0) return { isGenerating: false, isPaused: false, activeChatHandle: null, streamState: { ...emptyStreamState } }; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.content = `${lm.content}\n\n\u274C **生成中断**：${fm}`; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [ctx.activeChatId]: nl }, isGenerating: false, isPaused: false, activeChatHandle: null, streamState: { ...emptyStreamState } }; }); break; }
+        case 'done': {
+          if (!streamFinalized) { streamFinalized = true; streamBridge.onDone(evt.agentId); } activeStreamContext = null;
+          set({ isGenerating: false, isPaused: false, activeChatHandle: null, streamState: { ...emptyStreamState } });
+          if (canvasPusher) await canvasPusher.flush();
+          break;
+        }
+      }
+    });
+    set({ activeChatHandle: { taskId: chatHandle.taskId, abort: () => { chatHandle.abort(); if (!streamFinalized) { streamFinalized = true; streamBridge.onDone(); } } } });
+  },
   setLastReqBody: (v) => set({ lastReqBody: v }),
   setHashlineAgentEnabled: (v) => set({ hashlineAgentEnabled: v }),
   setStreamState: (updater) => set((state) => ({ streamState: typeof updater === 'function' ? (updater as any)(state.streamState) : updater })),
@@ -516,7 +575,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     const userMsg: ChatMessage = { sender: 'user', content: finalContent, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), avatar: '' };
     if (pendingAttachment) userMsg.attachment = { fileName: pendingAttachment.fileName, text: pendingAttachment.text };
     const activeChatId = selectedChatId || '1'; const activeMessages = conversations[activeChatId] || []; const currentChatMsgs = [...activeMessages, userMsg];
-    set({ conversations: { ...conversations, [activeChatId]: currentChatMsgs }, inputValue: '', pendingAttachment: null, isGenerating: true, activeChatHandle: null, streamState: { ...emptyStreamState } });
+    set({ conversations: { ...conversations, [activeChatId]: currentChatMsgs }, inputValue: '', pendingAttachment: null, isGenerating: true, isPaused: false, activeChatHandle: null, streamState: { ...emptyStreamState } });
 
     const mainEntry = modelProviderMap[mainModel];
     if (!mainEntry || !mainEntry.apiKey) {
@@ -545,10 +604,14 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     const streamBridge = createStreamBridge(activeChatId, mainModel, finalContent, permissionMode);
     let streamFinalized = false;
 
+    // ★ 保存流式上下文, 供 pauseChat/resumeChat 使用
+    activeStreamContext = { activeChatId, accumulatedText: '', mainEntry, mainModel, finalContent, permissionMode, currentChatMsgs, reqBody, hashlineAgentEnabled, selectedFile, editorContent, activeTools: activeTools.length > 0 ? activeTools : undefined, activeSkills: activeSkills.length > 0 ? activeSkills : undefined, activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined, activeSettings: configs[activeChatId] || fallbackActiveSettings };
+
     const chatHandle = await startChat({ chatId: activeChatId, prompt: finalContent, mode: permissionMode, history: activeMessages.map(m => ({ sender: m.sender, content: m.rawContent || m.content })), fileContext: selectedFile ? { name: selectedFile, content: editorContent } : undefined, mainProvider: { baseUrl: mainEntry.baseUrl, apiKey: mainEntry.apiKey, model: mainEntry.model }, subProviders: subEntries.map(e => ({ baseUrl: e.baseUrl, apiKey: e.apiKey, model: e.model })), candidateProviders: candidateEntries.map((e: any) => ({ displayName: e.model, providerName: e.providerName, modelName: e.model, baseUrl: e.baseUrl })), ...(hashlineAgentEnabled ? { toolCallMode: 'hashline' } : {}), workspaceFolder: useChatsStore.getState().getChat(activeChatId)?.workspaceFolder, activeTools: activeTools.length > 0 ? activeTools : undefined, activeSkills: activeSkills.length > 0 ? activeSkills : undefined, activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined, activeSettings: configs[activeChatId] || fallbackActiveSettings, canvasId: `canvas-${activeChatId}` } as any, async (evt: ChatStreamEvent) => {
       switch (evt.kind) {
         case 'text': {
           accumulatedText += evt.text;
+          if (activeStreamContext) activeStreamContext.accumulatedText = accumulatedText;
           if (!canvasPusher) canvasPusher = new IncrementalCanvasPusher(activeChatId);
           const { displayText, inCodeBlock } = canvasPusher.feedChunk(evt.text);
           // ★ FIX 2026-07-12: 始终调用 streamBridge.onText, 即使在代码块内
@@ -562,9 +625,9 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
         case 'phase': { streamBridge.onPhase(evt); get().handlePhase(evt, currentChatMsgs); break; }
         case 'agent': { streamBridge.onAgent(evt.agentId, evt.name, evt.avatar, evt.mainModel, evt.subModels, evt.role, evt.domain, evt.subModel); break; }
         case 'usage': { streamBridge.onUsage(evt.usage); break; }
-        case 'error': { if (!streamFinalized) { streamFinalized = true; streamBridge.onError(evt.error); } const fm = classifyStreamError(evt.error || ''); set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return { isGenerating: false, activeChatHandle: null, streamState: { ...emptyStreamState } }; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.content = `\u274C **AI 调用失败**：${fm}`; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl }, isGenerating: false, activeChatHandle: null, streamState: { ...emptyStreamState } }; }); break; }
+        case 'error': { if (!streamFinalized) { streamFinalized = true; streamBridge.onError(evt.error); } activeStreamContext = null; const fm = classifyStreamError(evt.error || ''); set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return { isGenerating: false, isPaused: false, activeChatHandle: null, streamState: { ...emptyStreamState } }; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.content = `\u274C **AI 调用失败**：${fm}`; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl }, isGenerating: false, isPaused: false, activeChatHandle: null, streamState: { ...emptyStreamState } }; }); break; }
         case 'done': {
-          if (!streamFinalized) { streamFinalized = true; streamBridge.onDone(evt.agentId); } set({ isGenerating: false, activeChatHandle: null, streamState: { ...emptyStreamState } });
+          if (!streamFinalized) { streamFinalized = true; streamBridge.onDone(evt.agentId); } activeStreamContext = null; set({ isGenerating: false, isPaused: false, activeChatHandle: null, streamState: { ...emptyStreamState } });
           const expFp = (evt as any).experienceFingerprint as string | undefined;
           if (expFp) set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.experienceFingerprint = expFp; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl } }; });
           if (canvasPusher) await canvasPusher.flush();
@@ -642,5 +705,10 @@ useChatStore.subscribe((state, prevState) => {
   if (cfgChanged) lastPersistedConfigs = state.configs;
   if (convChanged || cfgChanged) schedulePersistToBackend(state.conversations, state.configs);
 });
+
+// ★ 2026-07-13: 挂到 window 上, 供 PreviewPanel 等模块无循环依赖地读取 conversations
+if (typeof window !== 'undefined') {
+  (window as any).__chatStoreGetState = () => useChatStore.getState();
+}
 
 export { defaultChatDetails, defaultConversations, defaultConfigs, fallbackActiveSettings };

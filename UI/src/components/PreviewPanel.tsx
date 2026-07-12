@@ -7,7 +7,7 @@ import {
 } from '../utils/icons';
 import { MountTransition } from './MountTransition';
 import { CanvasNotificationStack } from './CanvasNotificationBubble';
-import { usePreviewStreamStore, restoreDslFromHotStore } from '../state/previewStreamStore';
+import { usePreviewStreamStore, restoreDslFromHotStore, restoreDslFromChatHistory } from '../state/previewStreamStore';
 import WebAstPreview from './WebAstPreview';
 import {
   drainCanvasNotifications,
@@ -148,16 +148,19 @@ export default function PreviewPanel({
   const previewPushError = previewEntry?.pushError ?? null;
   const [showSourceCode, setShowSourceCode] = useState(false);
 
-  // ★ 2026-07-13: 从 Garnet 热存储恢复画布 DSL
-  //   PreviewPanel 挂载 / chatId 切换时, 如果 previewStreamStore 没有当前 chat 的数据,
-  //   异步从 Garnet 拉取上次保存的 DSL, 恢复到 previewStreamStore
+  // ★ 2026-07-13: 画布 DSL 恢复链路 (三级降级)
+  //   1. previewStreamStore 已有数据 → 不做任何事
+  //   2. GarnetStore 热存储 (24h TTL) → 快速恢复
+  //   3. 聊天历史 rawContent (持久) → 从最后一条 assistant 消息提取代码块重新翻译
   useEffect(() => {
     if (!selectedChatId) return;
     const existing = usePreviewStreamStore.getState().entries[selectedChatId];
     if (existing?.ast || existing?.payload) return; // 已有数据, 不覆盖
     let cancelled = false;
-    restoreDslFromHotStore(selectedChatId, effectiveCanvasId).then((restored) => {
-      if (cancelled || !restored) return;
+
+    // 公共: 将恢复的 DSL 写入 previewStreamStore
+    const applyRestored = (restored: { dsl: any; language: string; sourceCode: string }) => {
+      if (cancelled) return;
       const ps = usePreviewStreamStore.getState();
       ps.initEntry(selectedChatId, { language: restored.language, sessionId: effectiveCanvasId });
       ps.updateStream(selectedChatId, {
@@ -177,7 +180,35 @@ export default function PreviewPanel({
         source_code: restored.sourceCode,
         preview: { root: restored.dsl },
       } as any);
+      console.log(`[PreviewPanel] DSL restored from ${restored.language}, sourceLen=${restored.sourceCode.length}`);
+    };
+
+    // Step 1: 尝试 GarnetStore 热存储
+    restoreDslFromHotStore(selectedChatId, effectiveCanvasId).then((hotResult) => {
+      if (cancelled) return;
+      if (hotResult) {
+        applyRestored(hotResult);
+        return;
+      }
+      // Step 2: 热存储没有 → 从聊天历史降级恢复
+      //   通过 window 全局引用获取 useChatStore.getState (避免循环依赖)
+      let messages: Array<{ sender: string; rawContent?: string; content: string }> = [];
+      const chatGetState = (window as any).__chatStoreGetState;
+      if (typeof chatGetState === 'function') {
+        const store = chatGetState();
+        if (store?.conversations?.[selectedChatId]) {
+          messages = store.conversations[selectedChatId];
+        }
+      }
+      if (messages.length === 0) return; // 没有聊天记录, 无法降级
+
+      const chatResult = restoreDslFromChatHistory(messages);
+      if (chatResult) {
+        console.log('[PreviewPanel] hot store empty, restoring from chat history fallback');
+        applyRestored(chatResult);
+      }
     });
+
     return () => { cancelled = true; };
   }, [selectedChatId, effectiveCanvasId]);
 

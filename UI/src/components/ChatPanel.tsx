@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useMemo, useState } from 'react';
-import { Send, ChevronDown, ChevronUp, FileCode, X, SlidersHorizontal, Check, ShieldAlert, ThumbsUp, ThumbsDown, Copy, Loader2, RefreshCw } from '../utils/icons';
+import { Send, ChevronDown, ChevronUp, FileCode, X, SlidersHorizontal, Check, ShieldAlert, ThumbsUp, ThumbsDown, Copy, Loader2, Pause, Play } from '../utils/icons';
 import { MountTransition } from './MountTransition';
 import TerminalPanelWithWorkdir from './terminal/TerminalPanelWithWorkdir';
 // 2026-07-03 阶段3.1.C: DocsGeneratorModal 抽出为独立子应用, 状态收敛到 useDocsGeneratorStore
@@ -77,6 +77,7 @@ export default function ChatPanel({
   const pendingAttachment = useChatStore(s => s.pendingAttachment);
   const isPendingAttachmentExpanded = useChatStore(s => s.isPendingAttachmentExpanded);
   const isGenerating = useChatStore(s => s.isGenerating);
+  const isPaused = useChatStore(s => s.isPaused);
   const streamState = useChatStore(s => s.streamState);
   const inputValue = useChatStore(s => s.inputValue);
   const showModeDropdown = useChatStore(s => s.showModeDropdown);
@@ -98,6 +99,7 @@ export default function ChatPanel({
   const loadChatConfigs = useChatStore(s => s.loadChatConfigs);
   const handleSendFromStore = useChatStore(s => s.handleSend);
   const pauseChat = useChatStore(s => s.pauseChat);
+  const resumeChat = useChatStore(s => s.resumeChat);
   const handleAcceptEnable = useChatStore(s => s.handleAcceptEnable);
 
   // DOM 引用保留组件本地 (transient imperative state, 不进 store)
@@ -789,7 +791,8 @@ export default function ChatPanel({
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && e.ctrlKey) {
-                if (isGenerating) pauseChat();
+                if (isPaused) { const v = inputValue.trim(); if (v) { setInputValue(''); resumeChat(v); } else { resumeChat(); } }
+                else if (isGenerating) pauseChat();
                 else handleSend();
               }
             }}
@@ -931,14 +934,14 @@ export default function ChatPanel({
               </MountTransition>
             </div>
 
-            {/* Submit Send Button — 生成中自动变形为暂停按钮 */}
+            {/* Submit Send Button — 三态: 发送(Send) / 生成中暂停(Pause) / 已暂停恢复或合并指令(Play) */}
             <button
-              onClick={isGenerating ? pauseChat : handleSend}
-              aria-label={isGenerating ? '暂停' : '发送'}
-              title={isGenerating ? '暂停生成' : '发送'}
-              className={`rounded-md p-1.5 flex items-center justify-center active:scale-95 transition-all cursor-pointer shadow-md shrink-0 ${isGenerating ? 'bg-on-surface/15 hover:bg-on-surface/25 text-on-surface' : 'bg-primary hover:bg-primary/85 text-white'}`}
+              onClick={isPaused ? () => { const v = inputValue.trim(); if (v) { setInputValue(''); resumeChat(v); } else { resumeChat(); } } : isGenerating ? pauseChat : handleSend}
+              aria-label={isPaused ? '恢复' : isGenerating ? '暂停' : '发送'}
+              title={isPaused ? (inputValue.trim() ? '合并指令并继续生成' : '恢复生成') : isGenerating ? '暂停生成' : '发送'}
+              className={`rounded-md p-1.5 flex items-center justify-center active:scale-95 transition-all cursor-pointer shadow-md shrink-0 ${isGenerating || isPaused ? 'bg-on-surface/15 hover:bg-on-surface/25 text-on-surface' : 'bg-primary hover:bg-primary/85 text-white'}`}
             >
-              {isGenerating ? <Pause className="w-3.5 h-3.5" /> : <Send className="w-3.5 h-3.5" />}
+              {isPaused ? <Play className="w-3.5 h-3.5" /> : isGenerating ? <Pause className="w-3.5 h-3.5" /> : <Send className="w-3.5 h-3.5" />}
             </button>
           </div>
           </div>
