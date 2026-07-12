@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useMemo, useState } from 'react';
-import { Send, ChevronDown, ChevronUp, FileCode, X, SlidersHorizontal, Check, ShieldAlert, ThumbsUp, ThumbsDown, Lock, Copy } from '../utils/icons';
+import { Send, ChevronDown, ChevronUp, FileCode, X, SlidersHorizontal, Check, ShieldAlert, ThumbsUp, ThumbsDown, Copy } from '../utils/icons';
 import { MountTransition } from './MountTransition';
 import TerminalPanelWithWorkdir from './terminal/TerminalPanelWithWorkdir';
 // 2026-07-03 阶段3.1.C: DocsGeneratorModal 抽出为独立子应用, 状态收敛到 useDocsGeneratorStore
@@ -274,12 +274,12 @@ export default function ChatPanel({
 
   const activeChatIDPrefix = activeChatId.length > 5 ? activeChatId.slice(-4) : activeChatId;
 
-  // 2026-07-03 阶段3.1.E: 滚动到底 (依赖 activeMessages)
+  // 2026-07-03 阶段3.1.E: 滚动到底 (依赖 activeMessages) — 仅在未锁定时自动滚动
   useEffect(() => {
-    if (scrollRef.current) {
+    if (scrollRef.current && !isScrollLocked) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [activeMessages]);
+  }, [activeMessages, isScrollLocked]);
 
   // 2026-07-03 阶段3.1.E: 发送时把 inputRef 传给 store action, 让 store 也能 focus 输入框
   const handleSend = () => handleSendFromStore(inputRef);
@@ -291,6 +291,8 @@ export default function ChatPanel({
   const [feedbackMap, setFeedbackMap] = useState<Record<number, 'up' | 'down' | undefined>>({});
   const [feedbackBusy, setFeedbackBusy] = useState<Record<number, boolean>>({});
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  // 流送区滚动锁定: false=自动滚动(锁打开), true=已锁定(锁住)
+  const [isScrollLocked, setIsScrollLocked] = useState(false);
 
   // 复制当前消息内容到剪贴板, 显示短暂"已复制"反馈
   const handleCopyMessage = async (index: number, content: string) => {
@@ -459,11 +461,10 @@ export default function ChatPanel({
           )}
           {activeMessages.map((msg, index) => {
             const isUser = msg.sender === 'user';
-            // 隐藏空的 assistant 占位消息: 当 isGenerating 时, 空的 assistant
-            // 气泡 + 流式 UI 看起来像"两个模型对话"。跳过它, 只显示流式 UI。
-            if (!isUser && isGenerating && !msg.content.trim() && index === activeMessages.length - 1) {
-              return null;
-            }
+            // ★ 2026-07-13: 空的 assistant 占位消息在生成中时不再完全隐藏,
+            //   而是隐藏气泡内容, 保留 header + process parts (loading → 实时过程)
+            //   确保发送瞬间流送区立即出现
+            const isEmptyGenerating = !isUser && isGenerating && !msg.content.trim() && index === activeMessages.length - 1;
             // ★ 2026-07-13: 计算当前 assistant 消息是第几个 assistant
             //   用于关联 uiMessageStore 中对应索引的 UIMessage.id
             //   conversations 中 assistant 消息按顺序与 uiMessageStore 的 assistant UIMessage 一一对应
@@ -508,7 +509,10 @@ export default function ChatPanel({
                   </div>
                 </div>
 
-                {/* Content block: aligned on right or left */}
+                {/* Content block: aligned on right or left
+                    ★ 2026-07-13: 空的 assistant 占位消息在生成中时隐藏气泡,
+                    只保留 header + process parts, 确保流送区立即出现 */}
+                {!isEmptyGenerating && (
                 <div className={`flex flex-col gap-1 max-w-[88%] font-sans text-left ${isUser ? 'pr-3 pl-[58px] items-end' : 'pl-[58px] pr-3 items-start'}`}>
                   <div className={`px-3.5 py-2.5 rounded-xl text-[12px] leading-relaxed select-text space-y-1.5 w-fit max-w-full overflow-hidden border ${isUser ? 'bg-primary/8 border-primary/40 text-on-surface' : 'bg-surface/50 border-primary/40 text-on-surface'}`}>
                     <FormatChatMessage content={msg.content} />
@@ -583,6 +587,7 @@ export default function ChatPanel({
                     </div>
                   )}
                 </div>
+                )}
 
                 {/* ★ 2026-07-13: 每轮 assistant 消息独立渲染自己的过程 parts
                     (phase-change / subtask / model-action / audit / delivery 等)
@@ -827,14 +832,25 @@ export default function ChatPanel({
           </div>
           </div>
 
-          {/* Lock Button — 输入框外右侧, 与发送按钮垂直对齐 */}
+          {/* Lock Button — 流送区滚动锁定, 点击切换锁住/锁打开 */}
           <button
             type="button"
-            aria-label="锁定"
-            title="锁定"
-            className="bg-primary hover:bg-primary/85 text-white rounded-md p-1.5 flex items-center justify-center active:scale-95 transition-all cursor-pointer shadow-md shrink-0 mb-[10px]"
+            onClick={() => setIsScrollLocked(prev => !prev)}
+            aria-label={isScrollLocked ? '解锁滚动' : '锁定滚动'}
+            title={isScrollLocked ? '已锁定滚动 (点击解锁)' : '自动滚动中 (点击锁定)'}
+            className="flex items-center justify-center p-1.5 active:scale-95 transition-transform cursor-pointer shrink-0 mb-[10px] text-primary hover:opacity-70"
           >
-            <Lock className="w-3.5 h-3.5" />
+            {isScrollLocked ? (
+              // 锁住 (滚动已暂停)
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-3.5 h-3.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
+              </svg>
+            ) : (
+              // 锁打开 (自动滚动中)
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-3.5 h-3.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 0 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
+              </svg>
+            )}
           </button>
         </div>
       </div>

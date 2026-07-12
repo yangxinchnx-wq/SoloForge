@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import {
-  Trash2, Lock, Unlock, ChevronDown, ChevronUp,
+  Trash2, ChevronDown, ChevronUp,
   MessageSquarePlus, Check, X,
 } from '../utils/icons';
 import { useHotTheme } from '../context/ThemeContext';
@@ -228,14 +228,21 @@ export default function TerminalPanel({ chatId, permissionMode = 'normal', workd
             <>
               <button
                 onClick={() => activeInstance && setAutoScrollStore(chatId, activeInstance.id, !autoScroll)}
-                className={`w-6 h-6 rounded flex items-center justify-center transition-colors ${
-                  isLight ? 'hover:text-zinc-900' : 'hover:text-white'
-                }`}
-                title={autoScroll ? '已锁定滚动 (点击解锁)' : '已暂停滚动 (点击开启)'}
+                className="w-6 h-6 flex items-center justify-center transition-transform duration-150 hover:scale-110"
+                title={autoScroll ? '自动滚动中 (点击暂停)' : '已暂停滚动 (点击开启)'}
+                style={{ color: accent }}
               >
-                {autoScroll
-                  ? <Lock className="w-3.5 h-3.5" style={{ color: accent }} />
-                  : <Unlock className="w-3.5 h-3.5" />}
+                {autoScroll ? (
+                  // 锁打开 (自动滚动中)
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-3.5 h-3.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 0 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
+                  </svg>
+                ) : (
+                  // 锁住 (滚动已暂停)
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-3.5 h-3.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
+                  </svg>
+                )}
               </button>
               <button
                 onClick={clearTerminal}
