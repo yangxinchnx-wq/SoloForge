@@ -36,6 +36,7 @@ export const MountTransition: React.FC<MountTransitionProps> = ({
   const [shouldRender, setShouldRender] = useState(show);
   const [isExiting, setIsExiting] = useState(false);
   const timerRef = useRef<number | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (show) {
@@ -49,6 +50,14 @@ export const MountTransition: React.FC<MountTransitionProps> = ({
     }
 
     if (!shouldRender) return;
+
+    // ★ 2026-07-13: 退出动画前 blur 焦点, 避免 aria-hidden + focused 警告
+    if (containerRef.current) {
+      const focused = containerRef.current.contains(document.activeElement)
+        ? document.activeElement as HTMLElement
+        : null;
+      focused?.blur();
+    }
 
     setIsExiting(true);
     timerRef.current = window.setTimeout(() => {
@@ -83,6 +92,7 @@ export const MountTransition: React.FC<MountTransitionProps> = ({
 
   return (
     <div
+      ref={containerRef}
       className={`${variantClass} ${isExiting ? 'sf-exit' : ''} ${className}`}
       style={containerStyle}
       aria-hidden={isExiting || undefined}

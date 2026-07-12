@@ -939,6 +939,8 @@ export default function ChatPanel({
 
             {/* Submit Send Button — 三态: 发送(Send) / 生成中暂停(Pause) / 已暂停恢复或合并指令(Play) */}
             <div className="relative shrink-0">
+              {/* ★ 弹窗打开时的全屏透明遮罩, 点击空白处关闭 */}
+              {resumeConfirmOpen && <div className="fixed inset-0 z-40" onClick={() => setResumeConfirmOpen(false)} />}
               <button
                 onClick={isPaused ? () => { if (inputValue.trim()) setResumeConfirmOpen(true); else resumeChat(); } : isGenerating ? pauseChat : handleSend}
                 aria-label={isPaused ? '恢复' : isGenerating ? '暂停' : '发送'}
@@ -949,7 +951,9 @@ export default function ChatPanel({
               </button>
               {/* ★ 暂停后输入框有内容时的确认弹窗: 合并继续 / 放弃重发 */}
               <MountTransition show={resumeConfirmOpen} variant="fade-scale" duration={180} unmountOnExit>
-                <div className="absolute bottom-full right-0 mb-2 w-56 bg-surface border border-outline/40 rounded-lg shadow-xl z-50 overflow-hidden">
+                <div className="absolute bottom-full right-0 mb-2 w-56 bg-surface border border-outline/40 rounded-lg shadow-xl z-50 overflow-hidden"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   <div className="px-3 py-2 text-[10px] text-on-surface/70 border-b border-outline/30 bg-surface/50">检测到输入框有新内容，请选择：</div>
                   <button
                     type="button"

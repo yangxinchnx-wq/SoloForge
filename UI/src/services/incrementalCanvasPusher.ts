@@ -31,15 +31,21 @@ export function setCanvasSessionId(chatId: string, canvasSessionId: string): voi
   canvasSessionIdMap.set(chatId, canvasSessionId);
 }
 
+/**
+ * 静默检查: 已注册的真实 sessionId (不含 fallback)
+ * 用于预注册逻辑, 避免 getCanvasSessionId 的 fallback 警告
+ */
+export function peekCanvasSessionId(chatId: string): string | undefined {
+  return canvasSessionIdMap.get(chatId);
+}
+
 // ★ FIX 2026-07-12: 添加 fallback 警告日志, 方便排查 Session ID 不匹配问题
 export function getCanvasSessionId(chatId: string): string {
   const id = canvasSessionIdMap.get(chatId);
   if (!id) {
-    console.warn(
-      `[IncrementalCanvasPusher] ⚠️ getCanvasSessionId("${chatId}") 返回回退值 — ` +
-      `映射表中无此 chatId。这通常意味着 PreviewPanel 还未注册真实 canvas session ID。` +
-      `\n  回退使用: canvas-${chatId}` +
-      `\n  当前已注册的 keys: ${[...canvasSessionIdMap.keys()].join(', ') || '(空)'}`
+    // ★ 2026-07-13: 降级为 console.debug, 避免正常预注册流程中触发噪音
+    console.debug(
+      `[IncrementalCanvasPusher] getCanvasSessionId("${chatId}") 返回回退值 canvas-${chatId}`
     );
     return `canvas-${chatId}`;
   }
