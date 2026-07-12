@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useMemo, useState } from 'react';
-import { Send, ChevronDown, ChevronUp, FileCode, X, SlidersHorizontal, Check, ShieldAlert, ThumbsUp, ThumbsDown, Copy, Loader2, Pause, Play } from '../utils/icons';
+import { Send, ChevronDown, ChevronUp, FileCode, X, SlidersHorizontal, Check, ShieldAlert, ThumbsUp, ThumbsDown, Copy, Loader2, Pause, Play, RefreshCw } from '../utils/icons';
 import { MountTransition } from './MountTransition';
 import TerminalPanelWithWorkdir from './terminal/TerminalPanelWithWorkdir';
 // 2026-07-03 阶段3.1.C: DocsGeneratorModal 抽出为独立子应用, 状态收敛到 useDocsGeneratorStore
