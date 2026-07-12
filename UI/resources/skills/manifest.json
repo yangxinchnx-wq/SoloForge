@@ -1,0 +1,44 @@
+[
+  {
+    "id": "bug-fix",
+    "name": "Bug 修复",
+    "description": "定位并修复代码中的 Bug。基于堆栈、上下文与最小复现策略系统性排查。",
+    "group": "调试",
+    "contentPath": "bug-fix/SKILL.md"
+  },
+  {
+    "id": "code-review",
+    "name": "代码审查",
+    "description": "对代码进行系统性审查,识别缺陷、安全风险、性能问题与可维护性改进。",
+    "group": "编程",
+    "contentPath": "code-review/SKILL.md"
+  },
+  {
+    "id": "doc-write",
+    "name": "文档撰写",
+    "description": "为代码、API、模块、流程生成结构化文档。",
+    "group": "工程",
+    "contentPath": "doc-write/SKILL.md"
+  },
+  {
+    "id": "feature-implement",
+    "name": "功能实现",
+    "description": "从需求到实现的完整功能开发流程。",
+    "group": "工程",
+    "contentPath": "feature-implement/SKILL.md"
+  },
+  {
+    "id": "refactor",
+    "name": "重构",
+    "description": "在不改变外部行为的前提下改善代码内部结构。",
+    "group": "编程",
+    "contentPath": "refactor/SKILL.md"
+  },
+  {
+    "id": "test-coverage",
+    "name": "测试覆盖",
+    "description": "为已有代码补充单元测试与集成测试。",
+    "group": "编程",
+    "contentPath": "test-coverage/SKILL.md"
+  }
+]

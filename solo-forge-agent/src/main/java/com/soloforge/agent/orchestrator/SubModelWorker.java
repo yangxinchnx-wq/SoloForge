@@ -231,6 +231,7 @@ public class SubModelWorker {
             .emojiEnabled(src.getEmojiEnabled())
             .emojiType(src.getEmojiType())
             .enabledSkills(src.getEnabledSkills())
+            .enabledTools(src.getEnabledTools())
             .enabledKnowledge(src.getEnabledKnowledge())
             .workspaceFolder(src.getWorkspaceFolder())
             .canvasId(src.getCanvasId())

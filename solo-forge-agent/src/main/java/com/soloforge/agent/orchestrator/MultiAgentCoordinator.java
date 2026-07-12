@@ -167,6 +167,7 @@ public class MultiAgentCoordinator {
             .emojiEnabled(original.getEmojiEnabled())
             .emojiType(original.getEmojiType())
             .enabledSkills(original.getEnabledSkills())
+            .enabledTools(original.getEnabledTools())
             .enabledKnowledge(original.getEnabledKnowledge())
             .agentId(agentId)
             .workspaceFolder(original.getWorkspaceFolder())

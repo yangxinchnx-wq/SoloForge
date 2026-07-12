@@ -14,6 +14,7 @@
  * 成功格式: { success: true, payload: <data> } 或 { success: true }
  */
 
+import { getGarnetStore } from '../services/persistence/GarnetStore';
 import type { Request, Response } from 'express';
 import type { DeviceInstance, SessionState } from '../services/canvas/types';
 import { displayCanvasName, parseCanvasName } from '../services/canvas/types';
@@ -528,6 +529,59 @@ export function handleSetDeviceUiSession(req: Request, res: Response): Response 
 }
 
 /**
+ * ★ 2026-07-13: 画布 DSL 热数据存储
+ * PUT /api/canvas/sessions/:id/dsl  — 写入 LLM 生成的 DSL/AST
+ * GET /api/canvas/sessions/:id/dsl  — 读取最后保存的 DSL/AST
+ *
+ * 存储层: GarnetStore (Redis 兼容, 24h TTL)
+ * Key 规范: hot:sf:session:{id}:dsl
+ */
+async function handleSaveDsl(req: Request, res: Response): Promise<Response> {
+  const sessionId = req.params.id;
+  if (!sessionId) return err(res, 400, 'sessionId required');
+  const { dsl, language, sourceCode } = req.body || {};
+  if (!dsl) return err(res, 400, 'dsl required in body');
+  try {
+    const garnet = getGarnetStore();
+    // 直接用 GarnetStore 的底层 client 写一个独立的 dsl key
+    const key = `hot:sf:session:${sessionId}:dsl`;
+    const value = JSON.stringify({
+      dsl,
+      language: language || 'json',
+      sourceCode: sourceCode || '',
+      savedAt: Date.now(),
+    });
+    // @ts-ignore — GarnetStore.client is private but we need raw access
+    await garnet.client.set(key, value, 'EX', 86400); // 24h TTL
+    return ok(res, { savedAt: Date.now() });
+  } catch (e) {
+    console.warn('[canvasSession] saveDsl failed:', (e as Error).message);
+    return err(res, 500, `saveDsl failed: ${(e as Error).message}`);
+  }
+}
+
+async function handleGetDsl(req: Request, res: Response): Promise<Response> {
+  const sessionId = req.params.id;
+  if (!sessionId) return err(res, 400, 'sessionId required');
+  try {
+    const garnet = getGarnetStore();
+    const key = `hot:sf:session:${sessionId}:dsl`;
+    // @ts-ignore
+    const value = await garnet.client.get(key);
+    if (!value) return ok(res, null); // 没有热数据
+    try {
+      const parsed = JSON.parse(value);
+      return ok(res, parsed);
+    } catch {
+      return ok(res, null); // 损坏数据当没存
+    }
+  } catch (e) {
+    console.warn('[canvasSession] getDsl failed:', (e as Error).message);
+    return err(res, 500, `getDsl failed: ${(e as Error).message}`);
+  }
+}
+
+/*
  * 路由注册(挂到 Express app)
  *
  * 注意顺序:
@@ -557,6 +611,8 @@ export function registerCanvasSessionRoutes(app: import('express').Express): voi
   app.put('/api/canvas/sessions/:id/devices/:deviceId/transform', handleUpdateTransform);
   app.put('/api/canvas/sessions/:id/devices/:deviceId/ui-session', handleSetDeviceUiSession);
   app.post('/api/canvas/sessions/:id/flush', handleFlush);
+  app.get('/api/canvas/sessions/:id/dsl', handleGetDsl);
+  app.put('/api/canvas/sessions/:id/dsl', handleSaveDsl);
   app.get('/api/canvas/persistence/status', handleGetPersistenceStatus);
   app.post('/api/canvas/persistence/force-flush', handleForceFlush);
   app.post('/api/canvas/persistence/restore-all', handleRestoreAll);

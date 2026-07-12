@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Agent 执行器 (单 Agent + Function Calling 循环 + AI Society 约束)
@@ -120,8 +121,8 @@ return String.format("信用分耗尽: 当前 %.1f, 请通过 👍 反馈恢复"
             cases,
             culturePrinciples);
 
-        // 5. 构建 Function Calling 工具 schema (根据 capabilities 过滤)
-        List<Map<String, Object>> tools = buildToolSchemas(capabilities);
+        // 5. 构建 Function Calling 工具 schema (核心工具按 capabilities 过滤 + 扩展工具按 enabledTools 合并)
+        List<Map<String, Object>> tools = buildToolSchemas(capabilities, settings.getEnabledTools());
 
         // 6. Function Calling 循环
         List<Map<String, String>> history = convertHistory(requestHistory);
@@ -247,15 +248,18 @@ return;
 
                 String canvasCtx = buildCanvasContext(settings);
 
+                // ★ 2026-07-13: 从 Node.js 后端动态加载技能内容 (SKILL.md), 注入系统提示第 9 层
+                List<String> skillContents = toolRegistry.getSkillContents(settings.getEnabledSkills());
+
                 String systemPrompt = promptBuilder.build(
                     agent, settings, capabilities, toolDescs,
                     settings.getWorkspaceFolder(),
-                    canvasCtx, List.of(), settings.getEnabledKnowledge(),
+                    canvasCtx, skillContents, settings.getEnabledKnowledge(),
                     List.of(), // experiences — 不再注入自动记忆
                     cases, culturePrinciples);
 
-                // 5. 工具 schema (根据 capabilities 过滤)
-                List<Map<String, Object>> tools = buildToolSchemas(capabilities);
+                // 5. 工具 schema (核心工具按 capabilities 过滤 + 扩展工具按 enabledTools 合并)
+                List<Map<String, Object>> tools = buildToolSchemas(capabilities, settings.getEnabledTools());
 
                 // 6. 准备历史
                 List<Map<String, String>> history = convertHistory(requestHistory);
@@ -273,8 +277,9 @@ return;
                 int[] usageAcc = {0, 0, 0, 0}; // prompt, completion, total, cached
 
                 // 7. 启动流式 Function Calling 循环
+                String chatId = settings.getChatSessionId();
                 streamRound(sink, systemPrompt, userMessage, history, provider, tools,
-                    0, maxRounds, agent, userMessage, usageAcc, emitter, temperature);
+                    0, maxRounds, agent, userMessage, usageAcc, emitter, temperature, chatId);
 
             } catch (Exception e) {
                 log.error("executeStream setup error: {}", e.getMessage(), e);
@@ -286,6 +291,9 @@ return;
 
     /**
      * 流式执行单轮 LLM 调用 — 递归处理 Function Calling 循环
+     *
+     * 2026-07-13: 工具调用前后发送 SSE 事件 (tool_started / tool_completed),
+     * 让前端流送区能实时显示工具调用过程, 避免用户看到"断流"或"调用显示不出来"
      */
     private void streamRound(FluxSink<String> sink,
                               String systemPrompt,
@@ -299,7 +307,8 @@ return;
                               String originalUserMessage,
                               int[] usageAcc,
                               SseEmitter emitter,
-                              double temperature) {
+                              double temperature,
+                              String chatId) {
 
         if (round >= maxRounds) {
             sendUsageEvent(emitter, usageAcc);
@@ -340,8 +349,17 @@ return;
                         marlTrainingClient.pushTrace(agent.getId(),
                             buildObservation(agent, originalUserMessage, round), action, 0.3);
 
+                        // ★ 发送 tool_started SSE 事件 — 让前端流送区显示工具调用开始
+                        String toolCallId = UUID.randomUUID().toString();
+                        long toolStartMs = System.currentTimeMillis();
+                        sendToolStartedEvent(emitter, chatId, toolCallId, toolCall.toolName, toolCall.args);
+
                         String toolResult = toolRegistry.invoke(toolCall.toolName, toolCall.args);
                         boolean toolError = toolResult.startsWith("工具调用失败") || toolResult.contains("失败");
+
+                        // ★ 发送 tool_completed SSE 事件 — 让前端流送区显示工具调用结束
+                        long toolDurationMs = System.currentTimeMillis() - toolStartMs;
+                        sendToolCompletedEvent(emitter, chatId, toolCallId, !toolError, toolDurationMs);
 
                         history.add(Map.of("role", "assistant", "content", response));
                         history.add(Map.of("role", "user", "content",
@@ -351,7 +369,7 @@ return;
                         streamRound(sink, systemPrompt,
                             "根据工具返回结果继续处理。如果信息足够,给出最终答案;如果还需要更多工具调用,继续调用。",
                             history, provider, tools, round + 1, maxRounds,
-                            agent, originalUserMessage, usageAcc, emitter, temperature);
+                            agent, originalUserMessage, usageAcc, emitter, temperature, chatId);
                     } else {
                         // 最终响应, 执行 side effects
                         log.info("Round {}: final response ({} chars)", round + 1, response.length());
@@ -386,6 +404,58 @@ return;
             log.info("Usage sent: prompt={} completion={} total={} cached={}", usageAcc[0], usageAcc[1], usageAcc[2], usageAcc[3]);
         } catch (Exception e) {
             log.debug("Failed to send usage event: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * ★ 发送 tool_started SSE 事件 — 通知前端工具调用开始
+     * 格式: event: tool_started\ndata: {"chatId":"...","toolCallId":"...","tool":"read_file","command":"...","ts":123}
+     *
+     * 前端 sseBackend.ts 会将此事件路由到 terminalLogStore, 在流送区显示工具调用过程
+     */
+    private void sendToolStartedEvent(SseEmitter emitter, String chatId, String toolCallId,
+                                       String toolName, Map<String, Object> args) {
+        if (emitter == null) return;
+        try {
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("chatId", chatId != null ? chatId : "");
+            data.put("toolCallId", toolCallId);
+            data.put("tool", toolName);
+            // command 字段: 对 execute_cmd / win_powershell 等命令类工具, 提取命令文本便于前端展示
+            if (args != null) {
+                Object cmd = args.get("command");
+                if (cmd == null) cmd = args.get("script");
+                if (cmd == null) cmd = args.get("path");
+                if (cmd != null) data.put("command", String.valueOf(cmd));
+            }
+            data.put("ts", System.currentTimeMillis());
+            String json = objectMapper.writeValueAsString(data);
+            emitter.send(SseEmitter.event().name("tool_started").data(json).build());
+            log.info("tool_started sent: tool={} toolCallId={}", toolName, toolCallId);
+        } catch (Exception e) {
+            log.debug("Failed to send tool_started event: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * ★ 发送 tool_completed SSE 事件 — 通知前端工具调用结束
+     * 格式: event: tool_completed\ndata: {"chatId":"...","toolCallId":"...","success":true,"durationMs":123,"ts":123}
+     */
+    private void sendToolCompletedEvent(SseEmitter emitter, String chatId, String toolCallId,
+                                         boolean success, long durationMs) {
+        if (emitter == null) return;
+        try {
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("chatId", chatId != null ? chatId : "");
+            data.put("toolCallId", toolCallId);
+            data.put("success", success);
+            data.put("durationMs", durationMs);
+            data.put("ts", System.currentTimeMillis());
+            String json = objectMapper.writeValueAsString(data);
+            emitter.send(SseEmitter.event().name("tool_completed").data(json).build());
+            log.info("tool_completed sent: toolCallId={} success={} durationMs={}", toolCallId, success, durationMs);
+        } catch (Exception e) {
+            log.debug("Failed to send tool_completed event: {}", e.getMessage());
         }
     }
 
@@ -443,23 +513,27 @@ return;
     }
 
     private List<Map<String, Object>> buildToolSchemas() {
-        return buildToolSchemas(null);
+        return buildToolSchemas(null, null);
     }
 
     /**
-     * 根据能力构建工具 schema
-     * capabilities 为 null 时返回全部工具 (向后兼容)
-     * capabilities 非空时只返回能力对应的工具
+     * 根据能力 + 启用的扩展工具构建工具 schema
      *
-     * 能力到工具的映射:
+     * capabilities 为 null 时返回全部核心工具 (向后兼容)
+     * capabilities 非空时只返回能力对应的核心工具
+     * enabledTools 非空时额外合并从 Node.js 后端拉取的扩展工具 schema
+     *
+     * 核心工具能力到工具的映射:
      *   read    → read_file, list_files, search_code
      *   write   → write_file
      *   search  → search_code, list_files
      *   execute → execute_cmd
      *   analyze → (无工具, 仅 prompt 提示)
      *   canvas_push_ui 始终可用 (画布推送是通用能力)
+     *
+     * 2026-07-13: 新增 enabledTools 参数 — 扩展工具 schema 从 Node.js 后端动态拉取并合并
      */
-    private List<Map<String, Object>> buildToolSchemas(List<String> capabilities) {
+    private List<Map<String, Object>> buildToolSchemas(List<String> capabilities, List<String> enabledTools) {
         List<Map<String, Object>> tools = new ArrayList<>();
         Map<String, Object> schemas = toolRegistry.getToolSchemas();
         List<String> names = toolRegistry.getToolNames();
@@ -485,10 +559,11 @@ return;
                 }
             }
         } else {
-            // 无 capabilities 限制时, 全部工具可用
+            // 无 capabilities 限制时, 全部核心工具可用
             allowedTools.addAll(names);
         }
 
+        // 构建核心工具 schema (本地硬编码)
         for (int i = 0; i < names.size(); i++) {
             String toolName = names.get(i);
             if (!allowedTools.contains(toolName)) {
@@ -503,6 +578,18 @@ return;
             ));
             tools.add(tool);
         }
+
+        // 合并扩展工具 schema (从 Node.js 后端动态拉取)
+        // 扩展工具 (browser_*/bu_*/win_* 等) 不受 capabilities 限制, 由前端 enabledTools 决定
+        if (enabledTools != null && !enabledTools.isEmpty()) {
+            List<Map<String, Object>> extendedSchemas = toolRegistry.getExtendedToolSchemas(enabledTools);
+            if (!extendedSchemas.isEmpty()) {
+                tools.addAll(extendedSchemas);
+                log.info("buildToolSchemas: 合并 {} 个扩展工具 (核心 {} 个, 总计 {} 个)",
+                    extendedSchemas.size(), tools.size() - extendedSchemas.size(), tools.size());
+            }
+        }
+
         return tools;
     }
 

@@ -7,7 +7,7 @@ import {
 } from '../utils/icons';
 import { MountTransition } from './MountTransition';
 import { CanvasNotificationStack } from './CanvasNotificationBubble';
-import { usePreviewStreamStore } from '../state/previewStreamStore';
+import { usePreviewStreamStore, restoreDslFromHotStore } from '../state/previewStreamStore';
 import WebAstPreview from './WebAstPreview';
 import {
   drainCanvasNotifications,
@@ -147,6 +147,39 @@ export default function PreviewPanel({
   const previewRawBytes = previewEntry?.rawBytes ?? 0;
   const previewPushError = previewEntry?.pushError ?? null;
   const [showSourceCode, setShowSourceCode] = useState(false);
+
+  // ★ 2026-07-13: 从 Garnet 热存储恢复画布 DSL
+  //   PreviewPanel 挂载 / chatId 切换时, 如果 previewStreamStore 没有当前 chat 的数据,
+  //   异步从 Garnet 拉取上次保存的 DSL, 恢复到 previewStreamStore
+  useEffect(() => {
+    if (!selectedChatId) return;
+    const existing = usePreviewStreamStore.getState().entries[selectedChatId];
+    if (existing?.ast || existing?.payload) return; // 已有数据, 不覆盖
+    let cancelled = false;
+    restoreDslFromHotStore(selectedChatId, effectiveCanvasId).then((restored) => {
+      if (cancelled || !restored) return;
+      const ps = usePreviewStreamStore.getState();
+      ps.initEntry(selectedChatId, { language: restored.language, sessionId: effectiveCanvasId });
+      ps.updateStream(selectedChatId, {
+        raw: restored.sourceCode,
+        payload: {
+          language: restored.language,
+          framework: restored.language,
+          source_code: restored.sourceCode,
+          preview: { root: restored.dsl },
+        } as any,
+        errors: [],
+        done: true,
+      });
+      ps.confirmPayload(selectedChatId, {
+        language: restored.language,
+        framework: restored.language,
+        source_code: restored.sourceCode,
+        preview: { root: restored.dsl },
+      } as any);
+    });
+    return () => { cancelled = true; };
+  }, [selectedChatId, effectiveCanvasId]);
 
   const [canvasState, setCanvasState] = useState<CanvasState>('idle');
   const [canvasError, setCanvasError] = useState<string>('');

@@ -197,7 +197,9 @@ class SseBackend {
 
     // 2.5) tool_* 流式事件直接桥接到 terminalLogStore (不依赖 subscriber)
     //      — terminalLogStore 用 zustand 订阅, 状态变化自动触发 TerminalPanel 重渲染
-    //      — 不入 batchQueue, 因为这些事件高频且不需要 phase handler 处理
+    //      — tool_stdout/tool_stderr/tool_exit: 高频事件, 只路由到 terminalLogStore, 不入 batchQueue
+    //      — tool_started/tool_completed: 低频事件, 路由到 terminalLogStore + 入 batchQueue
+    //        (useChatStore 需要这两个事件更新 streamState.toolCalls, 驱动流送区 ToolCallCard 显示)
     if (eventName === 'tool_started' || eventName === 'tool_stdout' ||
         eventName === 'tool_stderr' || eventName === 'tool_exit' ||
         eventName === 'tool_completed') {
@@ -206,7 +208,11 @@ class SseBackend {
       } catch (err) {
         console.error('[sseBackend] routeToolEventToTerminalStore threw', err);
       }
-      return;
+      // 高频 tool 事件 (stdout/stderr/exit) 不入队, 避免 LLM 流式高峰时长任务
+      if (eventName === 'tool_stdout' || eventName === 'tool_stderr' || eventName === 'tool_exit') {
+        return;
+      }
+      // tool_started / tool_completed 继续往下走入队逻辑, 让 useChatStore 更新 streamState.toolCalls
     }
 
     // 3) 入队批处理

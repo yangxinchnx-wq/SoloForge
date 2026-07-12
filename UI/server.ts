@@ -69,6 +69,191 @@ metricsWorker.on("error", (err: Error) => {
 // 启动时预触发一次采样,让首次请求有数据
 metricsWorker.postMessage({ type: "sample-and-get" });
 
+// ============================================================
+// 动态工具系统：工具服务调用辅助函数
+//   invokeObscura     — browser_* 工具 → Obscura CDP 服务 (端口 9222)
+//   invokeBrowserUse  — bu_*      工具 → Browser-Use 本机端点 (/api/browser-use/*)
+//   invokeWindowsMcp  — win_*     工具 → Windows-MCP HTTP 服务 (端口 8000)
+// 所有函数在服务不可用时返回友好错误，不抛异常
+// ============================================================
+
+// Obscura 浏览器服务：检查 CDP discovery 端点是否可用
+async function invokeObscura(
+  toolName: string,
+  args: Record<string, any>,
+  signal: AbortSignal
+): Promise<{ success: boolean; output?: string; error?: string }> {
+  const OBSCURA_URL = process.env.OBSCURA_URL || "http://127.0.0.1:9222";
+  try {
+    const resp = await fetch(`${OBSCURA_URL}/json/version`, { signal, method: "GET" });
+    if (!resp.ok) {
+      return { success: false, error: `工具服务 [Obscura] 健康检查失败 (${resp.status})` };
+    }
+    const info: any = await resp.json();
+    // Obscura CDP 服务可用；完整 CDP 工具调用 (截图/DOM检查等) 需 CDP 客户端驱动
+    return {
+      success: true,
+      output: `Obscura 服务已就绪 (${info.product || info.Browser || "CDP server"})。已接收工具 ${toolName} 调用，参数: ${JSON.stringify(args)}`,
+    };
+  } catch {
+    return {
+      success: false,
+      error: "工具服务 [Obscura] 未启动，请先启动对应服务 (obscura serve)",
+    };
+  }
+}
+
+// Browser-Use 服务：通过本机 /api/browser-use/* 端点调用
+async function invokeBrowserUse(
+  toolName: string,
+  args: Record<string, any>,
+  signal: AbortSignal
+): Promise<{ success: boolean; output?: string; error?: string }> {
+  const BASE = `http://localhost:3000`;
+  try {
+    // 健康检查
+    const healthResp = await fetch(`${BASE}/api/browser-use/health`, { signal });
+    const healthData: any = await healthResp.json();
+    if (!healthData.success || !healthData.ready) {
+      return {
+        success: false,
+        error: `工具服务 [Browser-Use] 未就绪: ${healthData.error || "not ready"}`,
+      };
+    }
+
+    // 根据工具名路由到对应 browser-use 端点
+    let endpoint = "";
+    let method = "POST";
+    let body: any = undefined;
+
+    switch (toolName) {
+      case "bu_run_task":
+        endpoint = "/api/browser-use/run";
+        body = { task: args.task, url: args.url };
+        break;
+      case "bu_pause":
+        endpoint = `/api/browser-use/pause/${encodeURIComponent(args.task_id)}`;
+        break;
+      case "bu_resume":
+        endpoint = `/api/browser-use/resume/${encodeURIComponent(args.task_id)}`;
+        break;
+      case "bu_state":
+      case "bu_screenshot":
+      case "bu_history":
+        endpoint = `/api/browser-use/state/${encodeURIComponent(args.task_id)}`;
+        method = "GET";
+        break;
+      default:
+        return { success: false, error: `未知的 Browser-Use 工具: ${toolName}` };
+    }
+
+    const invokeResp = await fetch(`${BASE}${endpoint}`, {
+      signal,
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const invokeData: any = await invokeResp.json();
+
+    if (!invokeData.success) {
+      return { success: false, error: invokeData.error || "Browser-Use 调用失败" };
+    }
+    return { success: true, output: JSON.stringify(invokeData.task || invokeData, null, 2) };
+  } catch {
+    return {
+      success: false,
+      error: "工具服务 [Browser-Use] 未启动，请先启动对应服务",
+    };
+  }
+}
+
+// Windows-MCP 服务：检查 HTTP 端口并转发 MCP tools/call 调用
+async function invokeWindowsMcp(
+  toolName: string,
+  args: Record<string, any>,
+  signal: AbortSignal
+): Promise<{ success: boolean; output?: string; error?: string }> {
+  const WIN_MCP_URL = process.env.WINDOWS_MCP_URL || "http://localhost:8000";
+  try {
+    // 健康检查：尝试访问 Windows-MCP HTTP 端点
+    const probe = await fetch(WIN_MCP_URL, { signal, method: "GET" }).catch(() => null);
+    if (!probe) {
+      return {
+        success: false,
+        error: "工具服务 [Windows-MCP] 未启动，请先启动对应服务 (uv run windows-mcp serve --transport streamable-http --host localhost --port 8000)",
+      };
+    }
+
+    // win_* ID → Windows-MCP 工具名映射
+    const toolMap: Record<string, { name: string; args: Record<string, any> }> = {
+      win_powershell: { name: "PowerShell", args: { command: args.script } },
+      win_reg_read: { name: "Registry", args: { mode: "get", path: args.path, name: args.name } },
+      win_service_ctrl: {
+        name: "PowerShell",
+        args: { command: args.action === "list" ? "Get-Service" : `Get-Service -Name '${args.name}'` },
+      },
+      win_event_log: {
+        name: "PowerShell",
+        args: { command: `Get-EventLog -LogName '${args.source}' -Newest ${args.count || 20}` },
+      },
+      win_firewall: {
+        name: "PowerShell",
+        args: { command: args.action === "list" ? "netsh advfirewall firewall show rule name=all" : `netsh advfirewall firewall show rule name='${args.name}'` },
+      },
+      win_task_scheduler: {
+        name: "PowerShell",
+        args: { command: args.action === "list" ? "schtasks /query" : `schtasks /${args.action} /tn '${args.name}'` },
+      },
+      win_perfmon: {
+        name: "PowerShell",
+        args: { command: args.counter ? `Get-Counter -Counter '${args.counter}'` : "Get-Counter" },
+      },
+    };
+
+    const mapped = toolMap[toolName];
+    if (!mapped) {
+      return { success: false, error: `未知的 Windows-MCP 工具: ${toolName}` };
+    }
+
+    // 通过 MCP JSON-RPC (streamable-http) 调用工具
+    const mcpResp = await fetch(`${WIN_MCP_URL}/mcp`, {
+      signal,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: { name: mapped.name, arguments: mapped.args },
+        id: 1,
+      }),
+    });
+
+    if (!mcpResp.ok) {
+      // 服务在线但 MCP 调用失败（可能使用了 SSE 传输而非 streamable-http）
+      return {
+        success: false,
+        error: `工具服务 [Windows-MCP] 在线但调用失败 (${mcpResp.status})，请确认使用了 --transport streamable-http 启动`,
+      };
+    }
+
+    const mcpData: any = await mcpResp.json();
+    if (mcpData.error) {
+      return { success: false, error: `Windows-MCP 工具执行错误: ${mcpData.error.message || JSON.stringify(mcpData.error)}` };
+    }
+    // MCP tools/call 返回 { content: [{ type: "text", text: "..." }] }
+    const textParts = Array.isArray(mcpData.result?.content)
+      ? mcpData.result.content.filter((c: any) => c.type === "text").map((c: any) => c.text)
+      : [];
+    return { success: true, output: textParts.join("\n") || JSON.stringify(mcpData.result || mcpData) };
+  } catch (err: any) {
+    if (err.name === "AbortError") throw err;
+    return {
+      success: false,
+      error: "工具服务 [Windows-MCP] 未启动，请先启动对应服务 (uv run windows-mcp serve --transport streamable-http --host localhost --port 8000)",
+    };
+  }
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -539,6 +724,165 @@ async function startServer() {
       res.json({ success: true, items: parsed });
     } catch (err: any) {
       console.error(`[Get Resource ${req.params.type} Manifest] Error:`, err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ============================================================
+  // 动态工具系统：根据工具 ID 列表返回 OpenAI Function Calling 格式的 schema
+  // 用于 LLM 函数调用前的 schema 注入
+  // 查询参数: ids=browser_devtools,win_powershell (逗号分隔)
+  // ============================================================
+  app.get("/api/tools/schemas", (req, res) => {
+    try {
+      const idsParam = (req.query.ids as string) || "";
+      const ids = idsParam
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean);
+
+      // ids 为空或未传时直接返回空数组
+      if (ids.length === 0) {
+        return res.json({ success: true, tools: [] });
+      }
+
+      const filePath = path.join(process.cwd(), "resources", "tools", "manifest.json");
+      if (!fs.existsSync(filePath)) {
+        return res.json({ success: true, tools: [] });
+      }
+
+      const data = fs.readFileSync(filePath, "utf-8");
+      const parsed = JSON.parse(data);
+
+      // 递归遍历 parent → children 结构，按 id 收集匹配的工具 schema
+      const tools: any[] = [];
+      const collect = (nodes: any[]) => {
+        if (!Array.isArray(nodes)) return;
+        for (const node of nodes) {
+          if (!node || typeof node !== "object") continue;
+          // 叶子工具：有 id 和 schema 字段的节点
+          if (node.id && node.schema && ids.includes(node.id)) {
+            tools.push({
+              type: "function",
+              function: {
+                name: node.id,
+                description: node.description || node.name || node.id,
+                parameters: node.schema,
+              },
+            });
+          }
+          // 递归处理 children
+          if (Array.isArray(node.children)) {
+            collect(node.children);
+          }
+        }
+      };
+      collect(parsed);
+
+      res.json({ success: true, tools });
+    } catch (err: any) {
+      console.error("[Get Tools Schemas] Error:", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ============================================================
+  // 动态技能系统：根据技能 ID 列表返回 SKILL.md 文本内容
+  // 用于 Java SystemPromptBuilder 注入到系统提示第 9 层 (Skills)
+  // 查询参数: ids=bug-fix,code-review (逗号分隔)
+  // 返回: { success: true, skills: [{ id, name, content }] }
+  // ============================================================
+  app.get("/api/skills/content", (req, res) => {
+    try {
+      const idsParam = (req.query.ids as string) || "";
+      const ids = idsParam
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean);
+
+      if (ids.length === 0) {
+        return res.json({ success: true, skills: [] });
+      }
+
+      const manifestPath = path.join(process.cwd(), "resources", "skills", "manifest.json");
+      if (!fs.existsSync(manifestPath)) {
+        return res.json({ success: true, skills: [] });
+      }
+
+      const manifestData = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+      const skillsDir = path.join(process.cwd(), "resources", "skills");
+
+      const skills: Array<{ id: string; name: string; content: string }> = [];
+      for (const item of manifestData) {
+        if (!item || !item.id || !ids.includes(item.id)) continue;
+        const contentPath = item.contentPath;
+        if (!contentPath) continue;
+        const fullPath = path.join(skillsDir, contentPath);
+        if (!fs.existsSync(fullPath)) {
+          console.warn(`[Get Skills Content] SKILL.md not found: ${fullPath}`);
+          continue;
+        }
+        const content = fs.readFileSync(fullPath, "utf-8");
+        skills.push({ id: item.id, name: item.name || item.id, content });
+      }
+
+      res.json({ success: true, skills });
+    } catch (err: any) {
+      console.error("[Get Skills Content] Error:", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // ============================================================
+  // 动态工具系统：根据工具名前缀路由到对应服务并执行
+  //   browser_* → Obscura 浏览器服务 (CDP 端口 9222)
+  //   bu_*      → Browser-Use 服务 (本机 /api/browser-use/*)
+  //   win_*     → Windows-MCP 服务 (HTTP 端口 8000)
+  // 请求体: { "name": "win_powershell", "arguments": { "script": "Get-Process" } }
+  // 30 秒超时；服务不可用时返回友好错误
+  // ============================================================
+  app.post("/api/tools/invoke", async (req, res) => {
+    try {
+      const { name, arguments: args } = req.body || {};
+      if (!name || typeof name !== "string") {
+        return res.status(400).json({ success: false, error: "工具名 (name) 必填" });
+      }
+      const toolArgs = args && typeof args === "object" ? args : {};
+
+      // 30 秒超时控制
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000);
+
+      try {
+        let result: { success: boolean; output?: string; error?: string };
+
+        if (name.startsWith("browser_")) {
+          // Obscura 浏览器服务：检查 CDP 端口是否可用
+          result = await invokeObscura(name, toolArgs, controller.signal);
+        } else if (name.startsWith("bu_")) {
+          // Browser-Use 服务：调用本机已注册的 /api/browser-use/* 端点
+          result = await invokeBrowserUse(name, toolArgs, controller.signal);
+        } else if (name.startsWith("win_")) {
+          // Windows-MCP 服务：检查 HTTP 端口并转发 MCP tools/call
+          result = await invokeWindowsMcp(name, toolArgs, controller.signal);
+        } else {
+          result = {
+            success: false,
+            error: `未知工具前缀: ${name}（支持 browser_* / bu_* / win_*）`,
+          };
+        }
+
+        clearTimeout(timeout);
+        return res.json(result);
+      } catch (err: any) {
+        clearTimeout(timeout);
+        if (err.name === "AbortError") {
+          return res.json({ success: false, error: `工具 [${name}] 执行超时 (30s)` });
+        }
+        throw err;
+      }
+    } catch (err: any) {
+      console.error("[Invoke Tool] Error:", err);
       res.status(500).json({ success: false, error: err.message });
     }
   });

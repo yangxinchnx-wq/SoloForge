@@ -367,7 +367,7 @@ interface ChatStoreState {
   conversations: Record<string, ChatMessage[]>; configs: Record<string, ChatSettingsItem>;
   showSettingsPopup: boolean; chatsList: any[];
   pendingAttachment: { fileName: string; text: string } | null; isPendingAttachmentExpanded: boolean;
-  isGenerating: boolean; lastReqBody: any; hashlineAgentEnabled: boolean;
+  isGenerating: boolean; activeChatHandle: { taskId: string; abort: () => void } | null; lastReqBody: any; hashlineAgentEnabled: boolean;
   streamState: StreamState; inputValue: string; showModeDropdown: boolean;
   workspaceApproval: { chatId: string; message: string } | null;
   options: ChatRuntimeOptions;
@@ -387,6 +387,7 @@ interface ChatStoreState {
   getActiveChatIcon: (localChatInfo: any, activeChatId: string) => any;
   getFallbackMessages: (localChatInfo: any) => ChatMessage[];
   handleSend: (inputRef?: React.RefObject<HTMLTextAreaElement | null>) => void;
+  pauseChat: () => void;
   handleAcceptEnable: (candidateName: string) => void;
   handlePhase: (evt: any, currentChatMsgs: ChatMessage[]) => void;
 }
@@ -394,6 +395,15 @@ interface ChatStoreState {
 let persistIdleHandle: any = null;
 let lastPersistedConversations: Record<string, ChatMessage[]> | null = null;
 let lastPersistedConfigs: Record<string, ChatSettingsItem> | null = null;
+
+// ★ 暂停/恢复: 保存流式上下文,让 pauseChat 保存已生成文本, resumeChat 据此发"继续"请求
+let activeStreamContext: {
+  activeChatId: string; accumulatedText: string; mainEntry: any; mainModel: string;
+  finalContent: string; permissionMode: PermissionMode; currentChatMsgs: ChatMessage[];
+  reqBody: any; hashlineAgentEnabled: boolean; selectedFile?: string; editorContent?: string;
+  activeTools?: string[]; activeSkills?: string[]; activeKnowledge?: string[];
+  activeSettings: ChatSettingsItem;
+} | null = null;
 
 function schedulePersistToBackend(conversations: Record<string, ChatMessage[]>, configs: Record<string, ChatSettingsItem>) {
   if (typeof window === 'undefined') return;
@@ -414,13 +424,15 @@ const initialConfigs: Record<string, ChatSettingsItem> = {};
 export const useChatStore = create<ChatStoreState>((set, get) => ({
   conversations: initialConversations, configs: initialConfigs,
   showSettingsPopup: false, chatsList: [], pendingAttachment: null, isPendingAttachmentExpanded: false,
-  isGenerating: false, lastReqBody: null, hashlineAgentEnabled: false, streamState: emptyStreamState,
+  isGenerating: false, activeChatHandle: null, lastReqBody: null, hashlineAgentEnabled: false, streamState: emptyStreamState,
   inputValue: '', showModeDropdown: false, workspaceApproval: null, options: {},
   setConversations: (updater) => set((state) => ({ conversations: typeof updater === 'function' ? (updater as any)(state.conversations) : updater })),
   setConfigs: (updater) => set((state) => ({ configs: typeof updater === 'function' ? (updater as any)(state.configs) : updater })),
   setShowSettingsPopup: (v) => set({ showSettingsPopup: v }), setChatsList: (v) => set({ chatsList: v }),
   setPendingAttachment: (v) => set({ pendingAttachment: v }), setIsPendingAttachmentExpanded: (v) => set({ isPendingAttachmentExpanded: v }),
-  setIsGenerating: (v) => set({ isGenerating: v }), setLastReqBody: (v) => set({ lastReqBody: v }),
+  setIsGenerating: (v) => set({ isGenerating: v }),
+  pauseChat: () => { const h = get().activeChatHandle; if (h) h.abort(); set({ isGenerating: false, activeChatHandle: null }); },
+  setLastReqBody: (v) => set({ lastReqBody: v }),
   setHashlineAgentEnabled: (v) => set({ hashlineAgentEnabled: v }),
   setStreamState: (updater) => set((state) => ({ streamState: typeof updater === 'function' ? (updater as any)(state.streamState) : updater })),
   setInputValue: (updater) => set((state) => ({ inputValue: typeof updater === 'function' ? (updater as any)(state.inputValue) : updater })),
@@ -504,11 +516,11 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     const userMsg: ChatMessage = { sender: 'user', content: finalContent, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), avatar: '' };
     if (pendingAttachment) userMsg.attachment = { fileName: pendingAttachment.fileName, text: pendingAttachment.text };
     const activeChatId = selectedChatId || '1'; const activeMessages = conversations[activeChatId] || []; const currentChatMsgs = [...activeMessages, userMsg];
-    set({ conversations: { ...conversations, [activeChatId]: currentChatMsgs }, inputValue: '', pendingAttachment: null, isGenerating: true, streamState: { ...emptyStreamState } });
+    set({ conversations: { ...conversations, [activeChatId]: currentChatMsgs }, inputValue: '', pendingAttachment: null, isGenerating: true, activeChatHandle: null, streamState: { ...emptyStreamState } });
 
     const mainEntry = modelProviderMap[mainModel];
     if (!mainEntry || !mainEntry.apiKey) {
-      set((s) => ({ conversations: { ...s.conversations, [activeChatId]: [...currentChatMsgs, { sender: 'assistant', content: `\u274C **主模型未配置**：请在「设置 → 模型」中测试通过主模型「${mainModel}」后再试。`, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), avatar: '' }] }, isGenerating: false }));
+      set((s) => ({ conversations: { ...s.conversations, [activeChatId]: [...currentChatMsgs, { sender: 'assistant', content: `\u274C **主模型未配置**：请在「设置 → 模型」中测试通过主模型「${mainModel}」后再试。`, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), avatar: '' }] }, isGenerating: false, activeChatHandle: null }));
       return;
     }
 
@@ -531,8 +543,9 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     { const fallbackId = `canvas-${activeChatId}`; const existing = getCanvasSessionId(activeChatId); if (!existing || existing === fallbackId) { setCanvasSessionId(activeChatId, fallbackId); console.log(`[handleSend] ✅ 预注册 canvas sessionId: ${fallbackId} for chat ${activeChatId}`); } }
 
     const streamBridge = createStreamBridge(activeChatId, mainModel, finalContent, permissionMode);
+    let streamFinalized = false;
 
-    startChat({ chatId: activeChatId, prompt: finalContent, mode: permissionMode, history: activeMessages.map(m => ({ sender: m.sender, content: m.rawContent || m.content })), fileContext: selectedFile ? { name: selectedFile, content: editorContent } : undefined, mainProvider: { baseUrl: mainEntry.baseUrl, apiKey: mainEntry.apiKey, model: mainEntry.model }, subProviders: subEntries.map(e => ({ baseUrl: e.baseUrl, apiKey: e.apiKey, model: e.model })), candidateProviders: candidateEntries.map((e: any) => ({ displayName: e.model, providerName: e.providerName, modelName: e.model, baseUrl: e.baseUrl })), ...(hashlineAgentEnabled ? { toolCallMode: 'hashline' } : {}), workspaceFolder: useChatsStore.getState().getChat(activeChatId)?.workspaceFolder, activeTools: activeTools.length > 0 ? activeTools : undefined, activeSkills: activeSkills.length > 0 ? activeSkills : undefined, activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined, activeSettings: configs[activeChatId] || fallbackActiveSettings, canvasId: `canvas-${activeChatId}` } as any, async (evt: ChatStreamEvent) => {
+    const chatHandle = await startChat({ chatId: activeChatId, prompt: finalContent, mode: permissionMode, history: activeMessages.map(m => ({ sender: m.sender, content: m.rawContent || m.content })), fileContext: selectedFile ? { name: selectedFile, content: editorContent } : undefined, mainProvider: { baseUrl: mainEntry.baseUrl, apiKey: mainEntry.apiKey, model: mainEntry.model }, subProviders: subEntries.map(e => ({ baseUrl: e.baseUrl, apiKey: e.apiKey, model: e.model })), candidateProviders: candidateEntries.map((e: any) => ({ displayName: e.model, providerName: e.providerName, modelName: e.model, baseUrl: e.baseUrl })), ...(hashlineAgentEnabled ? { toolCallMode: 'hashline' } : {}), workspaceFolder: useChatsStore.getState().getChat(activeChatId)?.workspaceFolder, activeTools: activeTools.length > 0 ? activeTools : undefined, activeSkills: activeSkills.length > 0 ? activeSkills : undefined, activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined, activeSettings: configs[activeChatId] || fallbackActiveSettings, canvasId: `canvas-${activeChatId}` } as any, async (evt: ChatStreamEvent) => {
       switch (evt.kind) {
         case 'text': {
           accumulatedText += evt.text;
@@ -549,9 +562,9 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
         case 'phase': { streamBridge.onPhase(evt); get().handlePhase(evt, currentChatMsgs); break; }
         case 'agent': { streamBridge.onAgent(evt.agentId, evt.name, evt.avatar, evt.mainModel, evt.subModels, evt.role, evt.domain, evt.subModel); break; }
         case 'usage': { streamBridge.onUsage(evt.usage); break; }
-        case 'error': { streamBridge.onError(evt.error); const fm = classifyStreamError(evt.error || ''); set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return { isGenerating: false, streamState: { ...emptyStreamState } }; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.content = `\u274C **AI 调用失败**：${fm}`; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl }, isGenerating: false, streamState: { ...emptyStreamState } }; }); break; }
+        case 'error': { if (!streamFinalized) { streamFinalized = true; streamBridge.onError(evt.error); } const fm = classifyStreamError(evt.error || ''); set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return { isGenerating: false, activeChatHandle: null, streamState: { ...emptyStreamState } }; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.content = `\u274C **AI 调用失败**：${fm}`; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl }, isGenerating: false, activeChatHandle: null, streamState: { ...emptyStreamState } }; }); break; }
         case 'done': {
-          streamBridge.onDone(evt.agentId); set({ isGenerating: false, streamState: { ...emptyStreamState } });
+          if (!streamFinalized) { streamFinalized = true; streamBridge.onDone(evt.agentId); } set({ isGenerating: false, activeChatHandle: null, streamState: { ...emptyStreamState } });
           const expFp = (evt as any).experienceFingerprint as string | undefined;
           if (expFp) set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.experienceFingerprint = expFp; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl } }; });
           if (canvasPusher) await canvasPusher.flush();
@@ -567,6 +580,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
         }
       }
     });
+    set({ activeChatHandle: { taskId: chatHandle.taskId, abort: () => { chatHandle.abort(); if (!streamFinalized) { streamFinalized = true; streamBridge.onDone(); } } } });
   },
 
   handleAcceptEnable: (candidateName) => {

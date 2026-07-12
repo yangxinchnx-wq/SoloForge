@@ -128,13 +128,27 @@ export const usePreviewStreamStore = create<PreviewStreamState>()(
       set((s) => {
         const prev = s.entries[chatId];
         if (!prev) return s;
+        const newAst = payload?.preview.root ?? prev.ast;
+        // ★ 2026-07-13: confirmPayload 时异步写入 Garnet 热存储
+        if (payload && newAst) {
+          const sessionId = prev.sessionId || `canvas-${chatId}`;
+          fetch(`/api/canvas/sessions/${encodeURIComponent(sessionId)}/dsl`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              dsl: newAst,
+              language: payload.language || prev.language,
+              sourceCode: payload.source_code || prev.sourceCode,
+            }),
+          }).catch(() => {}); // 火后即忘, 不阻塞 UI
+        }
         return {
           entries: {
             ...s.entries,
             [chatId]: {
               ...prev,
               payload,
-              ast: payload?.preview.root ?? prev.ast,
+              ast: newAst,
               isStreaming: false,
               sourceCode: payload?.source_code ?? prev.sourceCode,
             },
@@ -173,4 +187,29 @@ export const usePreviewStreamStore = create<PreviewStreamState>()(
 /** 便捷 hook：订阅某个 chat 的 AST 流 */
 export function usePreviewAst(chatId: string) {
   return usePreviewStreamStore((s) => s.entries[chatId]);
+}
+
+/**
+ * ★ 2026-07-13: 从 Garnet 热存储恢复画布 DSL
+ * 在 PreviewPanel 挂载时调用, 异步拉取上次保存的 DSL
+ */
+export async function restoreDslFromHotStore(chatId: string, sessionId?: string): Promise<{
+  dsl: any;
+  language: string;
+  sourceCode: string;
+} | null> {
+  const sid = sessionId || `canvas-${chatId}`;
+  try {
+    const resp = await fetch(`/api/canvas/sessions/${encodeURIComponent(sid)}/dsl`);
+    if (!resp.ok) return null;
+    const json = await resp.json();
+    if (!json?.success || !json?.payload?.dsl) return null;
+    return {
+      dsl: json.payload.dsl,
+      language: json.payload.language || 'json',
+      sourceCode: json.payload.sourceCode || '',
+    };
+  } catch {
+    return null;
+  }
 }

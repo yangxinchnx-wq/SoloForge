@@ -50,6 +50,10 @@ public class ChatSettings {
     @Builder.Default
     private List<String> enabledSkills = List.of();
 
+    /** 启用的工具 ID 列表 (前端资源管理器选中, 如 browser_devtools, win_powershell) */
+    @Builder.Default
+    private List<String> enabledTools = List.of();
+
     /** 启用的知识库 ID 列表 */
     @Builder.Default
     private List<String> enabledKnowledge = List.of();
