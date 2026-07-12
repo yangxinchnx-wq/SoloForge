@@ -583,6 +583,17 @@ export default function ChatPanel({
                     </div>
                   )}
                 </div>
+
+                {/* ★ 2026-07-13: 每轮 assistant 消息独立渲染自己的过程 parts
+                    (phase-change / subtask / model-action / audit / delivery 等)
+                    替代原来底部共用一个 StreamPanel 的设计。
+                    LLM 文本已在上方气泡显示, 这里只显示过程信息。
+                    StreamPanel 仍保留在底部, 仅显示最后一轮的 TaskTree + 任务总结。 */}
+                {!isUser && uiMessageId && (
+                  <div className="w-full max-w-[90%] pl-[58px]">
+                    <UIMessagePartsRenderer chatId={activeChatId} messageId={uiMessageId} />
+                  </div>
+                )}
               </div>
             );
           })}

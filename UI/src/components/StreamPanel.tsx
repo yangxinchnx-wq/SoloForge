@@ -216,10 +216,9 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
                   mode={permissionMode}
                   chatId={chatId}
                 />
-                {/* P0: Data Parts 时间线 — TaskTree 和 UIMessagePartsRenderer 均从 uiMessageStore 派生 */}
-                <div className="border-t border-outline/15 pt-2">
-                  <UIMessagePartsRenderer chatId={chatId} />
-                </div>
+                {/* ★ 2026-07-13: UIMessagePartsRenderer 已移至 ChatPanel map 内,
+                    每轮 assistant 消息独立渲染自己的过程 parts。
+                    此处不再重复渲染, 避免最后一轮过程 parts 显示两次。 */}
               </div>
             </MountTransition>
           </div>
