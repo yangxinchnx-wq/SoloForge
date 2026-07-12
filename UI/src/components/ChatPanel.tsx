@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useMemo, useState } from 'react';
-import { Send, ChevronDown, ChevronUp, FileCode, X, SlidersHorizontal, Check, ShieldAlert, ThumbsUp, ThumbsDown, Copy } from '../utils/icons';
+import { Send, ChevronDown, ChevronUp, FileCode, X, SlidersHorizontal, Check, ShieldAlert, ThumbsUp, ThumbsDown, Copy, Loader2 } from '../utils/icons';
 import { MountTransition } from './MountTransition';
 import TerminalPanelWithWorkdir from './terminal/TerminalPanelWithWorkdir';
 // 2026-07-03 阶段3.1.C: DocsGeneratorModal 抽出为独立子应用, 状态收敛到 useDocsGeneratorStore
@@ -514,22 +514,30 @@ export default function ChatPanel({
                 </div>
 
                 {/* ★ 2026-07-13: 流送过程在 LLM 文本气泡上方
-                    过程信息 (phase-change / subtask / model-action / audit / delivery 等)
-                    + StreamPanel (TaskExecutionCard + 任务总结, 仅最后一个 assistant 消息)
-                    都在 LLM 文本气泡上方, 让用户先看到过程再看结果
-                    宽度自适应整个中间流送区 */}
-                {!isUser && uiMessageId && (
+                    最后一个 assistant 消息由 StreamPanel (TaskExecutionCard + 任务总结) 渲染,
+                    历史消息由 UIMessagePartsRenderer 渲染各自的过程 parts
+                    两者互斥, 避免内容重复
+                    发送瞬间 (isEmptyGenerating) StreamPanel 还无 task, 显示 loading 占位 */}
+                {!isUser && isEmptyGenerating && (
                   <div className="w-full pl-[58px] pr-3">
-                    <UIMessagePartsRenderer chatId={activeChatId} messageId={uiMessageId} />
+                    <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] text-on-surface/50 font-mono">
+                      <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
+                      <span>正在准备…</span>
+                    </div>
                   </div>
                 )}
-                {!isUser && isLastAssistant && (
+                {!isUser && isLastAssistant && !isEmptyGenerating && (
                   <StreamPanel
                     chatId={activeChatId}
                     mainModel={mainModel}
                     modelCount={1 + (secModels?.length || 0)}
                     permissionMode={permissionMode}
                   />
+                )}
+                {!isUser && !isLastAssistant && uiMessageId && (
+                  <div className="w-full pl-[58px] pr-3">
+                    <UIMessagePartsRenderer chatId={activeChatId} messageId={uiMessageId} />
+                  </div>
                 )}
 
                 {/* Content block: aligned on right or left

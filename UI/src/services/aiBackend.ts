@@ -203,6 +203,7 @@ function buildJavaRequestBody(req: ChatRequest): any {
       emojiMode: settings.emojiMode || (settings.emojiEnabled ? settings.emojiType || 'standard' : 'off'),
       emojiEnabled: settings.emojiEnabled ?? false,
       emojiType: settings.emojiType || 'standard',
+      enabledTools: req.activeTools || [],
       enabledSkills: req.activeSkills || settings.enabledSkills || [],
       enabledKnowledge: req.activeKnowledge || [],
       workspaceFolder: req.workspaceFolder || null,

@@ -5,13 +5,97 @@
     "description": "无头浏览器引擎，支持网页抓取、CDP协议、MCP工具调用",
     "group": "浏览器",
     "children": [
-      { "id": "browser_devtools", "name": "DevTools 调试器", "description": "Chrome 开发者工具集成" },
-      { "id": "browser_console", "name": "Console 日志捕获", "description": "实时捕获浏览器控制台" },
-      { "id": "browser_network", "name": "Network 网络监控", "description": "拦截与分析网络请求" },
-      { "id": "browser_dom_inspect", "name": "DOM 元素检查器", "description": "页面 DOM 树实时浏览" },
-      { "id": "browser_screenshot", "name": "页面截图工具", "description": "对页面进行高清截图" },
-      { "id": "browser_perf_trace", "name": "Performance 性能追踪", "description": "页面加载与渲染性能分析" },
-      { "id": "browser_cookies", "name": "Cookie 管理器", "description": "读写浏览器 Cookie 存储" }
+      {
+        "id": "browser_devtools",
+        "name": "DevTools 调试器",
+        "description": "打开 Chrome DevTools 调试指定网页。返回页面概要信息。",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": { "type": "string", "description": "要调试的网页 URL" }
+          },
+          "required": ["url"]
+        }
+      },
+      {
+        "id": "browser_console",
+        "name": "Console 日志捕获",
+        "description": "实时捕获指定网页的浏览器控制台日志。返回最近的日志条目。",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": { "type": "string", "description": "目标网页 URL" },
+            "lines": { "type": "number", "description": "返回最近多少条日志 (可选, 默认 50)" }
+          },
+          "required": ["url"]
+        }
+      },
+      {
+        "id": "browser_network",
+        "name": "Network 网络监控",
+        "description": "拦截并分析指定网页的网络请求。返回请求列表 (URL/方法/状态码/耗时)。",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": { "type": "string", "description": "目标网页 URL" },
+            "filter": { "type": "string", "description": "URL 过滤关键词 (可选)" }
+          },
+          "required": ["url"]
+        }
+      },
+      {
+        "id": "browser_dom_inspect",
+        "name": "DOM 元素检查器",
+        "description": "检查指定网页的 DOM 树结构。返回简化版的 DOM 树。",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": { "type": "string", "description": "目标网页 URL" },
+            "selector": { "type": "string", "description": "CSS 选择器, 仅检查匹配的元素 (可选)" }
+          },
+          "required": ["url"]
+        }
+      },
+      {
+        "id": "browser_screenshot",
+        "name": "页面截图工具",
+        "description": "对指定 URL 的网页进行高清截图。返回截图保存路径。",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": { "type": "string", "description": "要截图的网页 URL" },
+            "selector": { "type": "string", "description": "CSS 选择器, 仅截取匹配元素 (可选)" }
+          },
+          "required": ["url"]
+        }
+      },
+      {
+        "id": "browser_perf_trace",
+        "name": "Performance 性能追踪",
+        "description": "对指定网页进行性能追踪分析。返回页面加载与渲染性能报告。",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": { "type": "string", "description": "目标网页 URL" }
+          },
+          "required": ["url"]
+        }
+      },
+      {
+        "id": "browser_cookies",
+        "name": "Cookie 管理器",
+        "description": "读取或写入指定域名的浏览器 Cookie。",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "url": { "type": "string", "description": "目标网页 URL" },
+            "action": { "type": "string", "description": "操作类型: get (读取) 或 set (写入)" },
+            "name": { "type": "string", "description": "Cookie 名称 (set 时必填)" },
+            "value": { "type": "string", "description": "Cookie 值 (set 时必填)" }
+          },
+          "required": ["url", "action"]
+        }
+      }
     ]
   },
   {
@@ -20,12 +104,79 @@
     "description": "高层 LLM 浏览器任务编排，LLM 自动规划执行步骤，底层由 Obscura CDP 引擎驱动",
     "group": "浏览器",
     "children": [
-      { "id": "bu_run_task", "name": "运行浏览器任务", "description": "自然语言描述任务, LLM 自动规划执行步骤" },
-      { "id": "bu_pause", "name": "暂停任务", "description": "暂停正在执行的浏览器任务" },
-      { "id": "bu_resume", "name": "恢复任务", "description": "恢复已暂停的浏览器任务" },
-      { "id": "bu_state", "name": "任务状态查询", "description": "查看浏览器任务执行进度与轨迹" },
-      { "id": "bu_screenshot", "name": "任务截图", "description": "对当前浏览器页面截图" },
-      { "id": "bu_history", "name": "历史轨迹", "description": "查看任务 ReAct 推理历史与结果" }
+      {
+        "id": "bu_run_task",
+        "name": "运行浏览器任务",
+        "description": "用自然语言描述一个浏览器任务, LLM 自动规划并执行步骤。返回任务 ID 和执行结果。",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "task": { "type": "string", "description": "自然语言任务描述 (如 \"打开 GitHub 并搜索 SoloForge\")" },
+            "url": { "type": "string", "description": "起始页面 URL (可选)" }
+          },
+          "required": ["task"]
+        }
+      },
+      {
+        "id": "bu_pause",
+        "name": "暂停任务",
+        "description": "暂停正在执行的浏览器任务。",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "task_id": { "type": "string", "description": "任务 ID" }
+          },
+          "required": ["task_id"]
+        }
+      },
+      {
+        "id": "bu_resume",
+        "name": "恢复任务",
+        "description": "恢复已暂停的浏览器任务。",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "task_id": { "type": "string", "description": "任务 ID" }
+          },
+          "required": ["task_id"]
+        }
+      },
+      {
+        "id": "bu_state",
+        "name": "任务状态查询",
+        "description": "查询浏览器任务的执行状态与进度。",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "task_id": { "type": "string", "description": "任务 ID" }
+          },
+          "required": ["task_id"]
+        }
+      },
+      {
+        "id": "bu_screenshot",
+        "name": "任务截图",
+        "description": "对浏览器任务当前页面进行截图。",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "task_id": { "type": "string", "description": "任务 ID" }
+          },
+          "required": ["task_id"]
+        }
+      },
+      {
+        "id": "bu_history",
+        "name": "历史轨迹",
+        "description": "查看浏览器任务的 ReAct 推理历史与执行轨迹。",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "task_id": { "type": "string", "description": "任务 ID" }
+          },
+          "required": ["task_id"]
+        }
+      }
     ]
   },
   {
@@ -34,13 +185,97 @@
     "description": "Windows系统自动化MCP服务器，支持UI交互、应用控制、文件导航",
     "group": "Windows",
     "children": [
-      { "id": "win_reg_read", "name": "注册表读取器", "description": "读取 Windows 注册表键值" },
-      { "id": "win_service_ctrl", "name": "服务控制器", "description": "管理 Windows 系统服务启停" },
-      { "id": "win_task_scheduler", "name": "任务计划程序", "description": "创建与管理系统定时任务" },
-      { "id": "win_event_log", "name": "事件日志查看器", "description": "读取 Windows 事件日志" },
-      { "id": "win_powershell", "name": "PowerShell 执行器", "description": "执行 PowerShell 脚本命令" },
-      { "id": "win_firewall", "name": "防火墙规则管理", "description": "查看与修改防火墙规则" },
-      { "id": "win_perfmon", "name": "性能监视器", "description": "CPU、内存、磁盘实时监控" }
+      {
+        "id": "win_reg_read",
+        "name": "注册表读取器",
+        "description": "读取 Windows 注册表键值。返回键值数据。",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "path": { "type": "string", "description": "注册表路径 (如 HKLM\\Software\\Microsoft\\Windows\\CurrentVersion)" },
+            "name": { "type": "string", "description": "键值名称 (可选, 不传则返回所有子键)" }
+          },
+          "required": ["path"]
+        }
+      },
+      {
+        "id": "win_service_ctrl",
+        "name": "服务控制器",
+        "description": "管理 Windows 系统服务 (启动/停止/查询状态)。",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "description": "操作: start / stop / status / list" },
+            "name": { "type": "string", "description": "服务名称 (list 操作可不传)" }
+          },
+          "required": ["action"]
+        }
+      },
+      {
+        "id": "win_task_scheduler",
+        "name": "任务计划程序",
+        "description": "创建或管理 Windows 系统定时任务。",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "description": "操作: create / delete / list / run" },
+            "name": { "type": "string", "description": "任务名称" },
+            "command": { "type": "string", "description": "要执行的命令 (create 时必填)" },
+            "trigger": { "type": "string", "description": "触发条件 (如 daily, onstart)" }
+          },
+          "required": ["action"]
+        }
+      },
+      {
+        "id": "win_event_log",
+        "name": "事件日志查看器",
+        "description": "读取 Windows 事件日志。",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "source": { "type": "string", "description": "日志源 (如 Application, System, Security)" },
+            "count": { "type": "number", "description": "返回最近多少条 (可选, 默认 20)" }
+          },
+          "required": ["source"]
+        }
+      },
+      {
+        "id": "win_powershell",
+        "name": "PowerShell 执行器",
+        "description": "执行 PowerShell 脚本命令。比 execute_cmd 更适合 Windows 系统管理操作。",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "script": { "type": "string", "description": "PowerShell 脚本内容" }
+          },
+          "required": ["script"]
+        }
+      },
+      {
+        "id": "win_firewall",
+        "name": "防火墙规则管理",
+        "description": "查看或修改 Windows 防火墙规则。",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "action": { "type": "string", "description": "操作: list / add / delete / enable / disable" },
+            "name": { "type": "string", "description": "规则名称 (list 操作可不传)" }
+          },
+          "required": ["action"]
+        }
+      },
+      {
+        "id": "win_perfmon",
+        "name": "性能监视器",
+        "description": "获取 Windows 性能监视器数据 (CPU、内存、磁盘实时监控)。",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "counter": { "type": "string", "description": "性能计数器路径 (可选, 不传则返回常用指标)" }
+          },
+          "required": []
+        }
+      }
     ]
   }
 ]

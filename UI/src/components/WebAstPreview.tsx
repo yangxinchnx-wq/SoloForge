@@ -301,10 +301,16 @@ export default function WebAstPreview({ root, bgColor = '#ffffff' }: WebAstPrevi
   const normalizedRoot = normalizeNode(root);
   return (
     <div
-      className="absolute inset-0 overflow-auto"
+      className="absolute inset-0 overflow-auto flex flex-col items-center"
       style={{ background: bgColor }}
     >
-      <div style={{ padding: '12px', minHeight: '100%' }}>
+      <div style={{
+        padding: '16px',
+        width: '100%',
+        maxWidth: '480px',
+        minHeight: '100%',
+        margin: '0 auto',
+      }}>
         {renderNode(normalizedRoot, 'root')}
       </div>
     </div>
