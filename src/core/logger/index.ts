@@ -15,6 +15,40 @@ interface LogMeta {
   [key: string]: any;
 }
 
+/** OTel trace context cache — 同步快速路径，避免每条日志都 await */
+let _otelTraceId: string | undefined = undefined;
+let _otelSpanId: string | undefined = undefined;
+let _otelCtxChecked = false;
+
+/**
+ * 刷新 OTel trace context（在 otel-init.ts 启动后调用，之后每条日志自动携带）
+ * 使用同步缓存 + 异步更新策略：
+ *   - formatLog 走同步路径，直接读 _otelTraceId/_otelSpanId
+ *   - withSpan 中的 OTel SDK 会通过 context.active() 更新这些值
+ */
+export function refreshOtelTraceContext(traceId?: string, spanId?: string): void {
+  _otelTraceId = traceId;
+  _otelSpanId = spanId;
+  _otelCtxChecked = true;
+}
+
+/** 异步拉取一次 OTel context（用于非 withSpan 路径的日志） */
+export async function syncOtelTraceContext(): Promise<void> {
+  if (_otelCtxChecked) return; // 只拉取一次
+  try {
+    const { trace, context } = await import('@opentelemetry/api');
+    const span = trace.getSpan(context.active());
+    if (span) {
+      const ctx = span.spanContext();
+      refreshOtelTraceContext(ctx.traceId, ctx.spanId);
+    } else {
+      _otelCtxChecked = true;
+    }
+  } catch {
+    _otelCtxChecked = true;
+  }
+}
+
 class SoloForgeLogger {
   private minLevel: LogLevel = LogLevel.INFO;
   private levelOrder = {
@@ -47,7 +81,9 @@ class SoloForgeLogger {
       level,
       module,
       message,
-      traceId: (global as any).__CURRENT_TRACE_ID || undefined,
+      // Phase 2: 优先使用 OTel context 注入的 traceId/spanId
+      traceId: _otelTraceId || (global as any).__CURRENT_TRACE_ID || undefined,
+      spanId: _otelSpanId || undefined,
       ...cleanMeta
     };
 
@@ -60,6 +96,14 @@ class SoloForgeLogger {
     } else {
       console.log(consoleStr + metaStr);
     }
+
+    // Phase 2: 异步转发到 OTel Logs Pipeline（不阻塞主路径）
+    if (_otelCtxChecked) {
+      import('../../observability/otel-logger-bridge')
+        .then(bridge => bridge.forwardLogToOtel(entry, level))
+        .catch(() => { /* silent */ });
+    }
+
     return entry;
   }
 

@@ -48,6 +48,15 @@ async function mainSystemIgnitionEngine(): Promise<void> {
     // bootstrapSystemNetwork 完成全部模块初始化，index.ts 不再重复内联 any 桩代码
     await bootstrapSystemNetwork(kernel, null);
 
+    // Phase 3: bootstrap 完成后，将 TelemetryMetricExporter 注入 Metric Bridge
+    try {
+      const { initMetricBridge } = await import('./observability/otel-metric-bridge');
+      await initMetricBridge(kernel.globalTelemetryExporterProxy);
+      logger.info('SYSTEM_MAIN', '🛰️ [OTel Metric Bridge] TelemetryMetricExporter linked to Prometheus /metrics');
+    } catch (e) {
+      logger.warn('SYSTEM_MAIN', '⚠️ Metric Bridge late-init failed (non-fatal)');
+    }
+
     // Step 3: 初始化 bootstrap.ts 未覆盖的消费者与引擎
     initializeSocietyEvolutionConsumer(kernel);
 

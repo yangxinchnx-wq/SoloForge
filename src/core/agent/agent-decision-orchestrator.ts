@@ -20,6 +20,8 @@ import type { RuntimeKernel } from '../../kernel/runtime-kernel';
 import { callLLMWithTools, type LLMMessage } from './tools/function-calling-client';
 import { getLLMProxyConfig } from '../../llm/llmConfig';
 import { ExperienceCache, type ExperienceLookup } from './evolution/experience-cache';
+// Phase 4: OTel Span 埋点
+import { withSpan } from '../../observability/tracing';
 // P3: 对话历史智能裁剪
 import { selectRelevantHistory, formatHistoryAsText } from './utils/history-selector';
 // P4: 文件内容增量压缩
@@ -56,6 +58,13 @@ export class AgentDecisionOrchestrator {
     if (!prompt) {
       throw new Error('DISPATCH_ERROR: prompt is required');
     }
+
+    return withSpan(
+      'soloforge.agent.decision',
+      async (span) => {
+        span.setAttribute('agent.chatId', chatId);
+        span.setAttribute('agent.packetUuid', packetUuid);
+        span.setAttribute('agent.promptLength', prompt.length);
 
     // ── 经验缓存优先 (2026-07-09 "不断进化"核心) ──────────────────
     // 用户原话: "这次的agent解决了问题，下次就不请求那么多次了，直接把经验翻出来让llm照着做就行了"
@@ -279,6 +288,8 @@ export class AgentDecisionOrchestrator {
     }
 
     return result;
+    },
+    );
   }
 
   private isLowConfidence(req: AgentDispatchRequest, candidates: ModelStrategyCandidate[]): boolean {

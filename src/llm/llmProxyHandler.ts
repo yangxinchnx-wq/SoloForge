@@ -42,6 +42,8 @@ import {
   llmStreamChars,
 } from '../observability/metrics';
 import { getDefaultSentry } from '../observability/sentryAdapter';
+// Phase 4: OTel Span 埋点
+import { withSpan } from '../observability/tracing';
 
 export interface LLMProxyRequest {
   providerId?: string;
@@ -72,6 +74,12 @@ export async function handleLLMStreamProxy(
   res: ServerResponse,
   body: any,
 ): Promise<HandleResult> {
+  // Phase 4: OTel Span — 包裹整个 LLM stream 请求
+  return withSpan(
+    'soloforge.llm.stream',
+    async (span) => {
+      span.setAttribute('llm.hasProviderId', !!body?.providerId);
+      span.setAttribute('llm.model', body?.model || 'default');
   // 简易 token 校验 (优先, 即使 provider 未配置也要校验)
   const cfg = getLLMProxyConfig();
   if (cfg.apiToken.length > 0) {
@@ -223,6 +231,8 @@ export async function handleLLMStreamProxy(
     llmActiveStreams.dec({ provider: resolvedProvider });
   }
   return { status: 200, headers: {}, body: null, stream: true };
+    },
+  );
 }
 
 function parseRequestBody(body: any): LLMProxyRequest | { error: string } {

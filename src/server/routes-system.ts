@@ -340,9 +340,22 @@ export async function handleDbSchema(): Promise<ApiResponse> {
 // ============================================================
 
 export function handlePrometheusMetrics(deps: SystemRouteDeps): ApiResponse {
-  const uptime = Date.now() - deps.startedAt;
-  const eventCount = deps.kernel.eventBus.getEventLog().length;
-  const text = `# HELP soloforge_uptime_seconds Uptime in seconds
+const uptime = Date.now() - deps.startedAt;
+const eventCount = deps.kernel.eventBus.getEventLog().length;
+
+// Phase 3: 合并三套指标源 — 基础系统指标 + MetricsRegistry + TelemetryMetricExporter
+try {
+  const { renderMergedPrometheusText, isMetricBridgeReady } = require('../observability/otel-metric-bridge');
+  if (isMetricBridgeReady()) {
+    const text = renderMergedPrometheusText(uptime, eventCount, deps.kernel.version || 1);
+    return { status: 200, headers: { 'Content-Type': 'text/plain' }, body: text };
+  }
+} catch {
+  // Metric bridge not available — fall through to basic metrics
+}
+
+// Fallback: basic metrics only
+const text = `# HELP soloforge_uptime_seconds Uptime in seconds
 # TYPE soloforge_uptime_seconds gauge
 soloforge_uptime_seconds ${(uptime / 1000).toFixed(0)}
 
@@ -354,7 +367,7 @@ soloforge_events_total ${eventCount}
 # TYPE soloforge_kernel_version gauge
 soloforge_kernel_version{state="${deps.kernel['state'] || 'READY'}"} ${deps.kernel.version || 1}
 `;
-  return { status: 200, headers: { 'Content-Type': 'text/plain' }, body: text };
+return { status: 200, headers: { 'Content-Type': 'text/plain' }, body: text };
 }
 
 // ============================================================

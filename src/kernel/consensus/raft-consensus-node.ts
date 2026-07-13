@@ -3,6 +3,8 @@ import crypto from 'crypto';
 import { RuntimeKernel } from '../runtime-kernel';
 import { RuntimeEvent } from '../../core/events/runtime-events'; // 🔒 严格静态锚定附录 B 全局事件枚举
 import { logger } from '../../core/logger';
+// Phase 4: OTel Span 埋点
+import { withSpan } from '../../observability/tracing';
 
 export type RaftRole = 'LEADER' | 'FOLLOWER' | 'CANDIDATE';
 
@@ -70,6 +72,12 @@ export class RaftConsensusNode {
   public async bootConsensusRegistry(): Promise<void> {
     if (this.isOperational) return;
 
+    return withSpan(
+      'soloforge.raft.consensus',
+      async (span) => {
+        span.setAttribute('raft.nodeId', this.nodeId);
+        span.setAttribute('raft.peers', this.clusterPeers.length);
+
     const cc = this.kernel.configCenter;
     this.clusterPeers = cc.get('governor.cluster.peers_nodes', []);
 
@@ -97,6 +105,8 @@ export class RaftConsensusNode {
     }
 
     logger.warn(this.moduleName, `🧱 [OS Phase 7 Consensus] Active Raft node initialized live. NodeId: ${this.nodeId} | Role: ${this.currentRole} | Term: ${this.currentTerm} | Peers: ${this.clusterPeers.length}`);
+      },
+    );
   }
 
   /**

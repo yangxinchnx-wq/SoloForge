@@ -3,6 +3,8 @@ import crypto from 'crypto';
 import { RuntimeKernel } from '../../kernel/runtime-kernel';
 import { CourtEvent } from '../events/court-events'; // ð Static anchored enum system
 import { logger } from '../logger';
+// Phase 4: OTel Span 埋点
+import { withSpan } from '../../observability/tracing';
 
 export interface LegalEvidenceNode {
   id: string;
@@ -90,10 +92,16 @@ export class ConsensAgentCourtRoom {
   /**
    * ðï¸ Command Handler: Two-Phase Version Checked Arbitrator Pipeline
    */
-  private async handleArbitrationTransaction(command: any): Promise<any> {
-    const { traceId, argumentsList, evidenceSnapshotMap } = command.payload;
+private async handleArbitrationTransaction(command: any): Promise<any> {
+const { traceId, argumentsList, evidenceSnapshotMap } = command.payload;
 
-    if (!this.isPhase1Locked) {
+return withSpan(
+  'soloforge.court.adjudication',
+  async (span) => {
+    span.setAttribute('court.traceId', traceId || '');
+    span.setAttribute('court.argCount', argumentsList?.length ?? 0);
+
+if (!this.isPhase1Locked) {
       throw new Error("ERR_COURT_FLOW_VIOLATION: Adjudication loop must be strictly isolated inside Phase 1 locked barriers.");
     }
 
@@ -192,7 +200,9 @@ export class ConsensAgentCourtRoom {
       this.pushMetrics('society.court.failures_count', 1);
       throw panic;
     }
-  }
+  },
+  );
+}
 
   private pushMetrics(metricName: string, value: number) {
     if (this.kernel?.metricsCollector?.counter) {
