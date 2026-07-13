@@ -317,6 +317,16 @@ export default function ChatPanel({
     [uiMessages],
   );
 
+  // ★ FIX 2026-07-14: 检测最后一条 assistant UIMessage 是否已有 parts (流送数据已到达)
+  //   当 LLM 只发送 phase 事件 (无文本) 时, msg.content 为空但 uiMessageStore 已有 parts。
+  //   此标志用于: 1) 解除 isEmptyGenerating 对 StreamPanel 的屏蔽  2) 隐藏加载占位
+  const hasStreamData = useMemo(() => {
+    if (assistantUiMessageIds.length === 0) return false;
+    const lastId = assistantUiMessageIds[assistantUiMessageIds.length - 1];
+    const lastMsg = uiMessages.find(m => m.id === lastId);
+    return !!lastMsg && lastMsg.parts.length > 0;
+  }, [assistantUiMessageIds, uiMessages]);
+
   const activeSettings = useMemo<ChatSettingsItem>(
     () => configs[activeChatId] || fallbackActiveSettings,
     [configs, activeChatId]
@@ -570,7 +580,11 @@ export default function ChatPanel({
             const uiMessageId = assistantOrdinal >= 0 ? assistantUiMessageIds[assistantOrdinal] : undefined;
             // ★ 2026-07-13: 判断是否是最后一个 assistant 消息
             //   StreamPanel (TaskExecutionCard + 任务总结) 只在最后一个 assistant 消息上方渲染
-            const isLastAssistant = !isUser && assistantOrdinal === assistantUiMessageIds.length - 1;
+            // ★ FIX 2026-07-14: isLastAssistant 改用 index 判断, 不再依赖 assistantOrdinal 映射
+            //   原因: assistantOrdinal (来自 conversations) 与 assistantUiMessageIds.length (来自 uiMessageStore)
+            //   可能不同步 (历史对话 uiMessageStore 为空 / 模型未配置错误消息无对应 UIMessage)
+            //   导致 isLastAssistant 永远为 false, StreamPanel 不渲染
+            const isLastAssistant = !isUser && index === activeMessages.length - 1;
             return (
               <div
                 key={index}
@@ -586,7 +600,7 @@ export default function ChatPanel({
                       <img
                         src={`/头像/avatar${userAvatarIdx + 1}.svg`}
                         alt="用户头像"
-                        className="w-11 h-11 rounded-full shrink-0 object-cover pointer-events-none border border-primary/25 shadow-sm"
+                        className="w-11 h-11 shrink-0 object-cover pointer-events-none"
                         draggable={false}
                       />
                     )
@@ -619,7 +633,9 @@ export default function ChatPanel({
                     历史消息由 UIMessagePartsRenderer 渲染各自的过程 parts
                     两者互斥, 避免内容重复
                     发送瞬间 (isEmptyGenerating) StreamPanel 还无 task, 显示 loading 占位 */}
-                {!isUser && isEmptyGenerating && (
+                {/* ★ FIX 2026-07-14: 加载占位只在无内容且无流送数据时显示
+                    有 phase 事件但无文本时, StreamPanel 应接管显示 */}
+                {!isUser && isEmptyGenerating && !hasStreamData && (
                   <div className="w-full pl-[58px] pr-3">
                     <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] text-on-surface/50 font-mono">
                       <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
@@ -627,7 +643,9 @@ export default function ChatPanel({
                     </div>
                   </div>
                 )}
-                {!isUser && isLastAssistant && !isEmptyGenerating && (
+                {/* ★ FIX 2026-07-14: StreamPanel 在有流送数据时也渲染, 即使 msg.content 为空
+                    解决: LLM 只发 phase 事件 (无文本) 时流送区空白 */}
+                {!isUser && isLastAssistant && (!isEmptyGenerating || hasStreamData) && (
                   <StreamPanel
                     chatId={activeChatId}
                     mainModel={mainModel}
