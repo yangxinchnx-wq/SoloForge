@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import {
   RefreshCw, Play, Square, Loader2,
   CircleDot, AlertCircle, Monitor, Smartphone, Tablet, Watch,
@@ -243,14 +243,28 @@ export default function PreviewPanel({
   const autoStartFailedRef = useRef(false);
   const lastAutoStartSessionId = useRef<string>('');
   useEffect(() => {
-    // sessionId 变化 → 重置自动启动标志, 允许用新 sessionId 重新启动
+    // sessionId 变化 → 停掉旧画布 + 重置自动启动标志, 允许用新 sessionId 重新启动
     if (sessionIdRef.current && sessionIdRef.current !== lastAutoStartSessionId.current) {
+      // ★ 停掉旧画布进程 (切换对话 / fallback→real ID 时)
+      if (lastAutoStartSessionId.current && isElectron()) {
+        console.log(`[PreviewPanel] sessionId changed: ${lastAutoStartSessionId.current} → ${sessionIdRef.current}, stopping old canvas`);
+        window.soloforge?.canvas.stop(lastAutoStartSessionId.current).catch(() => {});
+      }
       lastAutoStartSessionId.current = sessionIdRef.current;
       autoStartRef.current = false;
       autoStartFailedRef.current = false;
+      // 重置画布状态 → 允许用新 sessionId 自动启动
+      if (canvasState !== 'idle') {
+        setCanvasState('idle');
+        canvasStateRef.current = 'idle';
+        setCanvasInfo(null);
+        setCanvasError('');
+      }
     }
     if (autoStartRef.current || autoStartFailedRef.current) return;
-    if (isElectron() && canvasState === 'idle' && selectedChatId && sessionIdRef.current) {
+    // ★ 2026-07-13: 只在有真实画布 ID 时自动启动 (不再用 fallback ID)
+    //   sessionIdRef 由 useLayoutEffect 同步更新, 保证此处的值是最新的
+    if (isElectron() && canvasState === 'idle' && selectedChatId && sessionIdRef.current && canvasReady && canvasId) {
       autoStartRef.current = true;
       void startCanvas();
     }
@@ -306,7 +320,11 @@ export default function PreviewPanel({
     return unsubscribe;
   }, []);
 
-  useEffect(() => {
+  // ★ 2026-07-13: 改用 useLayoutEffect — 在 useEffect(自动启动) 之前同步执行
+  //   原因: React effect 按定义顺序执行, 自动启动 effect 在前, sessionId 更新 effect 在后
+  //   导致自动启动读到旧的 fallback ID (canvas-{chatId}), 而非真实画布 ID (canvas_1)
+  //   useLayoutEffect 在 useEffect 之前同步执行, 保证 sessionIdRef.current 始终是最新的
+  useLayoutEffect(() => {
     // P0: 仅在 canvasReady 后才切到真实画布 ID
     //   - ready=false 时保留 fallback (旧 canvas-${chatId})
     //   - ready=true 时切到 canvas_1 ... canvas_10
