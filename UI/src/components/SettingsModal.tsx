@@ -71,7 +71,6 @@ export default function SettingsModal({
 
   return (
     // 根 div：fixed 定位 + backdrop。注意：不加 select-none（会导致 button 内子元素 click 失效）
-    // 蒙层与 ThemeModal 对齐：blur(12px) + rgba(0,0,0,0.45) + animate-fadeIn，确保设置页点开后的毛玻璃观感与主题设置一致
     <div
       className="fixed inset-0 flex items-center justify-center z-[1000] p-4 font-sans overflow-hidden animate-fadeIn"
       style={{
@@ -89,7 +88,7 @@ export default function SettingsModal({
 
       {/* Modal 卡片：z-10 确保在背景层之上（不能用 z-[1001] 任意值，Tailwind v4 不生成） */}
       <div
-        className="settings-modal-card relative z-10 bg-[var(--color-surface)] border border-[var(--color-outline)]/20 rounded-2xl w-full max-w-5xl shadow-[0_12px_45px_rgba(0,0,0,0.4)] overflow-hidden flex flex-col text-[var(--color-on-surface)] select-none"
+        className="settings-modal-card sf-anim sf-anim-fade-scale relative z-10 bg-[var(--color-surface)] border border-[var(--color-outline)]/20 rounded-2xl w-full max-w-5xl shadow-[0_12px_45px_rgba(0,0,0,0.4)] overflow-hidden flex flex-col text-[var(--color-on-surface)] select-none"
         style={{ height: '85vh', flexShrink: 0 }}
       >
         {/* Modal Header */}

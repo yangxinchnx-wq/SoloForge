@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import {
   RefreshCw, Play, Square, Loader2,
-  CircleDot, AlertCircle, Monitor, Smartphone, Tablet, Watch,
+  AlertCircle, Monitor, Smartphone, Tablet, Watch,
   Palette, MonitorSmartphone, Info, ChevronDown, Check, Maximize2,
   Code2, Box, Square as SquareIcon
 } from '../utils/icons';
@@ -131,36 +131,12 @@ const DEVICES_2D: DevicePreset[] = [
   { key: 'd2-watchultra3',     group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch Ultra 3',  w: 502, h: 410 },
 ];
 
-// ── 3D 设备列表 (仅有 GLB 模型的设备, 路径对应 models/3d/ 下的实际文件) ──
+// ── 3D 设备列表 (仅有真实 GLB 模型的设备, 文件 >10KB 才算真实) ──
 const DEVICES_3D: DevicePreset[] = [
-  // 手机
+  // 手机 — 仅有真实 GLB 文件的
   { key: 'm-iphone14pro',    group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 14 Pro',      w: 393, h: 852, glbFile: 'mobile/iphone_14_pro.glb' },
-  { key: 'm-iphone14',       group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 14',          w: 390, h: 844, glbFile: 'mobile/iphone_14.glb' },
-  { key: 'm-iphone14promax', group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 14 Pro Max',  w: 430, h: 932, glbFile: 'mobile/iphone_14_pro_max.glb' },
   { key: 'm-iphone15promax', group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 15 Pro Max',  w: 430, h: 932, glbFile: 'mobile/iphone_15_pro_max.glb' },
   { key: 'm-iphone11promax', group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 11 Pro Max',  w: 414, h: 896, glbFile: 'mobile/iphone_11_pro_max.glb' },
-  { key: 'm-iphonese',       group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone SE',          w: 375, h: 667, glbFile: 'mobile/iphone_se.glb' },
-  { key: 'm-galaxys23',      group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'Galaxy S23',         w: 360, h: 780, glbFile: 'mobile/galaxy_s23.glb' },
-  { key: 'm-pixel7',         group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'Pixel 7',            w: 412, h: 915, glbFile: 'mobile/pixel_7.glb' },
-  { key: 'm-xiaomi13',       group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'Xiaomi 13',          w: 393, h: 873, glbFile: 'mobile/xiaomi_13.glb' },
-  // 平板
-  { key: 't-ipadpro129',     group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'iPad Pro 12.9"',    w: 1024, h: 1366, glbFile: 'tablet/ipad_pro_129.glb' },
-  { key: 't-ipadair',        group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'iPad Air',           w: 820,  h: 1180, glbFile: 'tablet/ipad_air.glb' },
-  { key: 't-ipadmini',       group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'iPad Mini',          w: 768,  h: 1024, glbFile: 'tablet/ipad_mini.glb' },
-  { key: 't-surfacepro',     group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'Surface Pro',        w: 912,  h: 1368, glbFile: 'tablet/surface_pro.glb' },
-  { key: 't-galaxytabs8',    group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'Galaxy Tab S8',      w: 800,  h: 1280, glbFile: 'tablet/galaxy_tab_s8.glb' },
-  // 桌面
-  { key: '1920x1080',        group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'Full HD',            w: 1920, h: 1080, glbFile: 'desktop/full_hd_monitor.glb' },
-  { key: '1440x900',         group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'MacBook',            w: 1440, h: 900,  glbFile: 'desktop/macbook.glb' },
-  { key: '1366x768',         group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: '标准笔记本',          w: 1366, h: 768,  glbFile: 'desktop/standard_laptop.glb' },
-  { key: '1280x720',         group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'HD',                 w: 1280, h: 720,  glbFile: 'desktop/hd_monitor.glb' },
-  { key: '1024x768',         group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'XGA',                w: 1024, h: 768,  glbFile: 'desktop/xga_monitor.glb' },
-  { key: '2560x1440',        group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: '2K',                 w: 2560, h: 1440, glbFile: 'desktop/2k_monitor.glb' },
-  // 手表
-  { key: 'w-apple41',        group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch 41mm',        w: 176, h: 176, glbFile: 'watch/apple_watch_41mm.glb' },
-  { key: 'w-apple45',        group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch 45mm',        w: 198, h: 198, glbFile: 'watch/apple_watch_45mm.glb' },
-  { key: 'w-apple49',        group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch Ultra 49mm',  w: 205, h: 251, glbFile: 'watch/apple_watch_ultra_49mm.glb' },
-  { key: 'w-galaxy6',        group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Galaxy Watch 6',          w: 240, h: 240, glbFile: 'watch/galaxy_watch_6.glb' },
 ];
 
 const FILL_PRESET: DevicePreset = {
@@ -633,39 +609,8 @@ export default function PreviewPanel({
     return ok;
   }, [selectedChatId]);
 
-  // 画布状态指示器
-  const renderCanvasStatus = () => {
-    if (canvasState === 'running') {
-      return (
-        <span className="flex items-center gap-1.5 text-emerald-500">
-          <CircleDot className="w-2.5 h-2.5 animate-pulse" />
-          <span className="font-mono text-[10px]">CANVAS · :{canvasInfo?.port}</span>
-        </span>
-      );
-    }
-    if (canvasState === 'starting') {
-      return (
-        <span className="flex items-center gap-1.5 text-amber-500">
-          <Loader2 className="w-2.5 h-2.5 animate-spin" />
-          <span className="font-mono text-[10px]">启动中...</span>
-        </span>
-      );
-    }
-    if (canvasState === 'error') {
-      return (
-        <span className="flex items-center gap-1.5 text-red-500" title={canvasError}>
-          <AlertCircle className="w-2.5 h-2.5" />
-          <span className="font-mono text-[10px]">错误</span>
-        </span>
-      );
-    }
-    return (
-      <span className="flex items-center gap-1.5 text-on-surface/40">
-        <span className="w-1.5 h-1.5 rounded-full bg-on-surface/30" />
-        <span className="font-mono text-[10px]">未启动</span>
-      </span>
-    );
-  };
+  // 画布状态指示器 — 已移除 (不再显示绿点)
+  const renderCanvasStatus = () => null;
 
   // 待机渲染 — 无画布时显示闪电 logo (色调跟随主题)
   const renderStandby = () => (
@@ -912,7 +857,7 @@ export default function PreviewPanel({
             </MountTransition>
           </div>
 
-          {/* 2D / 3D 渲染模式 + 设备选择 — 合并为一个下拉 */}
+          {/* 2D / 3D 渲染模式 + 设备选择 */}
           <div className="relative">
             <div className="flex items-center rounded-md overflow-hidden border border-outline/30">
               <button
@@ -1006,8 +951,6 @@ export default function PreviewPanel({
               </div>
             </MountTransition>
           </div>
-
-          {renderCanvasStatus()}
 
           {canvasError && (
             <span
