@@ -297,12 +297,14 @@ export class ApiKeyVault {
       items.push(this.toPublic(id, meta, k ? 'keychain' : 'memory'));
     }
 
-    // 2) 配置里有但 keychain 没有的 (只有 baseUrl 元信息)
+    // 2) 配置里有但 keychain 没有的 (只有 baseUrl 元信息, 无密钥)
+    // 注意: 必须标记 hasKey=false, 否则前端会误以为有密钥而尝试 reveal,
+    // getKey 返回 null, 用户看到"密钥丢失"。此分支仅供 UI 显示 baseUrl 配置。
     const cfg = getConfig();
     for (const id of Object.keys(cfg)) {
       if (!id || seen.has(id)) continue;
       seen.add(id);
-      items.push(this.toPublic(id, cfg[id], 'memory')); // source 标 memory 实际是"无 key 仅有 baseUrl"
+      items.push({ ...this.toPublic(id, cfg[id], 'memory'), hasKey: false });
     }
 
     // 3) env 里有但上面都没有的 (环境变量供的 key)
