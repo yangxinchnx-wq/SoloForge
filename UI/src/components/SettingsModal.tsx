@@ -71,8 +71,9 @@ export default function SettingsModal({
 
   return (
     // 根 div：fixed 定位 + backdrop。注意：不加 select-none（会导致 button 内子元素 click 失效）
+    // 蒙层与 ThemeModal 对齐：blur(12px) + rgba(0,0,0,0.45) + animate-fadeIn，确保设置页点开后的毛玻璃观感与主题设置一致
     <div
-      className="fixed inset-0 flex items-center justify-center z-[1000] p-4 font-sans overflow-hidden"
+      className="fixed inset-0 flex items-center justify-center z-[1000] p-4 font-sans overflow-hidden animate-fadeIn"
       style={{
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',

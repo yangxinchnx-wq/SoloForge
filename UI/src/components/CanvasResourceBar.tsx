@@ -16,7 +16,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Crown, Users } from '../utils/icons';
+import { Plus, Crown, Users, X } from '../utils/icons';
 import type { CanvasResource } from '../services/canvas/sessionApi';
 
 interface Props {
@@ -26,6 +26,7 @@ interface Props {
   onSelect: (canvasId: string) => void;
   onCreate: () => Promise<string | null>;
   onRename: (canvasId: string, description: string) => Promise<boolean>;
+  onDelete?: (canvasId: string) => Promise<boolean>;
   loading?: boolean;
 }
 
@@ -36,6 +37,7 @@ export function CanvasResourceBar({
   onSelect,
   onCreate,
   onRename,
+  onDelete,
   loading,
 }: Props) {
   const [creating, setCreating] = useState(false);
@@ -139,7 +141,7 @@ export function CanvasResourceBar({
                   : '\n○ 只读 (你非 owner)')
               }
               className={[
-                'h-6 px-2 rounded-md text-[11px] font-medium shrink-0 transition-all',
+                'group h-6 px-2 rounded-md text-[11px] font-medium shrink-0 transition-all',
                 'flex items-center gap-1 border',
                 active
                   ? 'bg-primary text-on-primary border-primary shadow-sm'
@@ -161,6 +163,27 @@ export function CanvasResourceBar({
                   title={c.description}
                 >
                   · {c.description}
+                </span>
+              )}
+              {/* 删除按钮: 只在 owner 且 canvases > 1 时显示 */}
+              {c.isOwner && onDelete && canvases.length > 1 && (
+                <span
+                  role="button"
+                  aria-label="删除画布"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (confirm(`确认删除画布 ${c.displayName}？`)) {
+                      void onDelete(c.sessionId);
+                    }
+                  }}
+                  className={`ml-0.5 w-3.5 h-3.5 flex items-center justify-center rounded transition-all ${
+                    active
+                      ? 'opacity-60 hover:opacity-100 hover:bg-on-primary/15'
+                      : 'opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:bg-on-surface/15'
+                  }`}
+                  title="删除画布"
+                >
+                  <X className="w-2.5 h-2.5" />
                 </span>
               )}
             </button>

@@ -452,7 +452,15 @@ export default function StatsModal({ onClose }: StatsModalProps) {
 
   // ─── 渲染 ───
   return (
-    <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-[1000] p-4 cursor-pointer" onClick={onClose}>
+    <div
+      className="fixed inset-0 flex items-center justify-center z-[1000] p-4 font-sans overflow-hidden animate-fadeIn cursor-pointer"
+      style={{
+        backdropFilter: 'blur(12px)',
+        WebkitBackdropFilter: 'blur(12px)',
+        backgroundColor: 'rgba(0, 0, 0, 0.45)',
+      }}
+      onClick={onClose}
+    >
       <div
         className="sf-anim sf-anim-fade-scale w-full max-w-5xl bg-bg border border-outline rounded-2xl shadow-2xl flex flex-col h-[82vh] md:h-[78vh] overflow-hidden select-none text-on-surface relative z-[1001] cursor-default"
         onClick={(e) => e.stopPropagation()}

@@ -12,6 +12,8 @@ import { usePreviewStreamStore, restoreDslFromHotStore, restoreDslFromChatHistor
 import WebAstPreview from './WebAstPreview';
 import {
   drainCanvasNotifications,
+  selectModel as apiSelectModel,
+  deleteCanvas as apiDeleteCanvas,
   type CanvasNotification,
   type CanvasResource,
 } from '../services/canvas/sessionApi';
@@ -37,6 +39,8 @@ interface PreviewPanelProps {
   onCreateCanvas?: () => Promise<string | null>;
   /** P0: 改画布描述 */
   onRenameCanvas?: (canvasId: string, description: string) => Promise<boolean>;
+  /** P0: 删除画布 (仅 owner) */
+  onDeleteCanvas?: (canvasId: string) => Promise<boolean>;
 }
 
 type CanvasState = 'idle' | 'starting' | 'running' | 'error';
@@ -97,6 +101,10 @@ type SizeGroup = 'desktop' | 'mobile' | 'tablet' | 'watch';
 interface DevicePreset {
   key: string; group: SizeGroup; groupLabel: string; icon: React.ComponentType<any>;
   label: string; w: number; h: number;
+  /** 3D 模型的 GLB 文件路径 (相对于 models/3d/) */
+  glbFile?: string;
+  /** 2D 边框的 PNG 文件路径 (相对于 models/2d/) */
+  pngFile?: string;
 }
 
 // ── 2D 设备列表 (有 PNG 边框的设备) ──
@@ -123,36 +131,36 @@ const DEVICES_2D: DevicePreset[] = [
   { key: 'd2-watchultra3',     group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch Ultra 3',  w: 502, h: 410 },
 ];
 
-// ── 3D 设备列表 (有 GLB 模型的设备) ──
+// ── 3D 设备列表 (仅有 GLB 模型的设备, 路径对应 models/3d/ 下的实际文件) ──
 const DEVICES_3D: DevicePreset[] = [
   // 手机
-  { key: 'm-iphone14pro',    group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 14 Pro',      w: 393, h: 852 },
-  { key: 'm-iphone14',       group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 14',          w: 390, h: 844 },
-  { key: 'm-iphone14promax', group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 14 Pro Max',  w: 430, h: 932 },
-  { key: 'm-iphone15promax', group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 15 Pro Max',  w: 430, h: 932 },
-  { key: 'm-iphone11promax', group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 11 Pro Max',  w: 414, h: 896 },
-  { key: 'm-iphonese',       group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone SE',          w: 375, h: 667 },
-  { key: 'm-galaxys23',      group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'Galaxy S23',         w: 360, h: 780 },
-  { key: 'm-pixel7',         group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'Pixel 7',            w: 412, h: 915 },
-  { key: 'm-xiaomi13',       group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'Xiaomi 13',          w: 393, h: 873 },
+  { key: 'm-iphone14pro',    group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 14 Pro',      w: 393, h: 852, glbFile: 'mobile/iphone_14_pro.glb' },
+  { key: 'm-iphone14',       group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 14',          w: 390, h: 844, glbFile: 'mobile/iphone_14.glb' },
+  { key: 'm-iphone14promax', group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 14 Pro Max',  w: 430, h: 932, glbFile: 'mobile/iphone_14_pro_max.glb' },
+  { key: 'm-iphone15promax', group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 15 Pro Max',  w: 430, h: 932, glbFile: 'mobile/iphone_15_pro_max.glb' },
+  { key: 'm-iphone11promax', group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 11 Pro Max',  w: 414, h: 896, glbFile: 'mobile/iphone_11_pro_max.glb' },
+  { key: 'm-iphonese',       group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone SE',          w: 375, h: 667, glbFile: 'mobile/iphone_se.glb' },
+  { key: 'm-galaxys23',      group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'Galaxy S23',         w: 360, h: 780, glbFile: 'mobile/galaxy_s23.glb' },
+  { key: 'm-pixel7',         group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'Pixel 7',            w: 412, h: 915, glbFile: 'mobile/pixel_7.glb' },
+  { key: 'm-xiaomi13',       group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'Xiaomi 13',          w: 393, h: 873, glbFile: 'mobile/xiaomi_13.glb' },
   // 平板
-  { key: 't-ipadpro129',     group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'iPad Pro 12.9"',    w: 1024, h: 1366 },
-  { key: 't-ipadair',        group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'iPad Air',           w: 820,  h: 1180 },
-  { key: 't-ipadmini',       group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'iPad Mini',          w: 768,  h: 1024 },
-  { key: 't-surfacepro',     group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'Surface Pro',        w: 912,  h: 1368 },
-  { key: 't-galaxytabs8',    group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'Galaxy Tab S8',      w: 800,  h: 1280 },
+  { key: 't-ipadpro129',     group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'iPad Pro 12.9"',    w: 1024, h: 1366, glbFile: 'tablet/ipad_pro_129.glb' },
+  { key: 't-ipadair',        group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'iPad Air',           w: 820,  h: 1180, glbFile: 'tablet/ipad_air.glb' },
+  { key: 't-ipadmini',       group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'iPad Mini',          w: 768,  h: 1024, glbFile: 'tablet/ipad_mini.glb' },
+  { key: 't-surfacepro',     group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'Surface Pro',        w: 912,  h: 1368, glbFile: 'tablet/surface_pro.glb' },
+  { key: 't-galaxytabs8',    group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'Galaxy Tab S8',      w: 800,  h: 1280, glbFile: 'tablet/galaxy_tab_s8.glb' },
   // 桌面
-  { key: '1920x1080',        group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'Full HD',            w: 1920, h: 1080 },
-  { key: '1440x900',         group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'MacBook',            w: 1440, h: 900 },
-  { key: '1366x768',         group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: '标准笔记本',          w: 1366, h: 768 },
-  { key: '1280x720',         group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'HD',                 w: 1280, h: 720 },
-  { key: '1024x768',         group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'XGA',                w: 1024, h: 768 },
-  { key: '2560x1440',        group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: '2K',                 w: 2560, h: 1440 },
+  { key: '1920x1080',        group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'Full HD',            w: 1920, h: 1080, glbFile: 'desktop/full_hd_monitor.glb' },
+  { key: '1440x900',         group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'MacBook',            w: 1440, h: 900,  glbFile: 'desktop/macbook.glb' },
+  { key: '1366x768',         group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: '标准笔记本',          w: 1366, h: 768,  glbFile: 'desktop/standard_laptop.glb' },
+  { key: '1280x720',         group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'HD',                 w: 1280, h: 720,  glbFile: 'desktop/hd_monitor.glb' },
+  { key: '1024x768',         group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'XGA',                w: 1024, h: 768,  glbFile: 'desktop/xga_monitor.glb' },
+  { key: '2560x1440',        group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: '2K',                 w: 2560, h: 1440, glbFile: 'desktop/2k_monitor.glb' },
   // 手表
-  { key: 'w-apple41',        group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch 41mm',        w: 176, h: 176 },
-  { key: 'w-apple45',        group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch 45mm',        w: 198, h: 198 },
-  { key: 'w-apple49',        group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch Ultra 49mm',  w: 205, h: 251 },
-  { key: 'w-galaxy6',        group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Galaxy Watch 6',          w: 240, h: 240 },
+  { key: 'w-apple41',        group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch 41mm',        w: 176, h: 176, glbFile: 'watch/apple_watch_41mm.glb' },
+  { key: 'w-apple45',        group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch 45mm',        w: 198, h: 198, glbFile: 'watch/apple_watch_45mm.glb' },
+  { key: 'w-apple49',        group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch Ultra 49mm',  w: 205, h: 251, glbFile: 'watch/apple_watch_ultra_49mm.glb' },
+  { key: 'w-galaxy6',        group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Galaxy Watch 6',          w: 240, h: 240, glbFile: 'watch/galaxy_watch_6.glb' },
 ];
 
 const FILL_PRESET: DevicePreset = {
@@ -168,7 +176,7 @@ export default function PreviewPanel({
   width = 385, isResizing = false, dragStartWidth = 385,
   selectedChatId, canvasId, canvasReady,
   canvases = [], maxCanvases = 10,
-  onSelectCanvas, onCreateCanvas, onRenameCanvas,
+  onSelectCanvas, onCreateCanvas, onRenameCanvas, onDeleteCanvas,
 }: PreviewPanelProps) {
   // 2026-07-06 阶段3: 订阅 AST 预览流状态
   const previewEntry = usePreviewStreamStore(s => selectedChatId ? s.entries[selectedChatId] : undefined);
@@ -590,6 +598,41 @@ export default function PreviewPanel({
     if (canvasState === 'running') pushBackground(customColor);
   };
 
+  // ★ 3D 设备选择: 调用 selectModel API 只对当前画布生效
+  const handleSelectDevice = useCallback(async (preset: DevicePreset) => {
+    if (!sessionIdRef.current || !canvasId) return;
+    // 调用后端 selectModel (仅当前 canvas session)
+    await apiSelectModel(sessionIdRef.current, preset.key).catch(() => {});
+    // 如果画布正在运行, 通过 IPC 加载 3D 模型
+    if (isElectron() && canvasState === 'running' && preset.glbFile) {
+      try {
+        await window.soloforge!.canvas.pushUI(sessionIdRef.current, {
+          action: 'selectDevice',
+          modelKey: preset.key,
+          file: preset.glbFile,
+          nativeSize: { w: preset.w, h: preset.h },
+        });
+      } catch (e) {
+        console.warn('[handleSelectDevice] pushUI failed:', e);
+      }
+    }
+  }, [canvasId, canvasState]);
+
+  // ★ 删除画布
+  const handleDeleteCanvas = useCallback(async (targetCanvasId: string): Promise<boolean> => {
+    if (!selectedChatId) return false;
+    // 停掉被删除画布的进程
+    if (isElectron()) {
+      window.soloforge?.canvas.stop(targetCanvasId).catch(() => {});
+    }
+    const ok = await apiDeleteCanvas(targetCanvasId, selectedChatId);
+    if (ok) {
+      // 刷新画布列表 — 通过 bridge 的 refresh
+      window.dispatchEvent(new CustomEvent('soloforge-canvas-deleted', { detail: { canvasId: targetCanvasId } }));
+    }
+    return ok;
+  }, [selectedChatId]);
+
   // 画布状态指示器
   const renderCanvasStatus = () => {
     if (canvasState === 'running') {
@@ -787,6 +830,7 @@ export default function PreviewPanel({
             onSelect={onSelectCanvas}
             onCreate={onCreateCanvas}
             onRename={onRenameCanvas}
+            onDelete={handleDeleteCanvas}
           />
         )}
 
@@ -938,6 +982,10 @@ export default function PreviewPanel({
                             onClick={() => {
                               setActiveSizeKey(p.key);
                               setShowDeviceDropdown(false);
+                              // ★ 3D 模式下选中设备 → 加载 GLB 模型到当前画布
+                              if (renderMode === '3D' && p.glbFile) {
+                                void handleSelectDevice(p);
+                              }
                             }}
                             className={`flex items-center gap-2 w-full px-1.5 py-1 rounded text-[10px] font-mono transition-colors ${
                               active

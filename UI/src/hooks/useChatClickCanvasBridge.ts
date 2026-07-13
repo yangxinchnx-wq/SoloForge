@@ -171,6 +171,17 @@ export function useChatClickCanvasBridge(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId, enabled, allowCreate]);
 
+  // ★ 监听画布删除事件 → 刷新列表
+  useEffect(() => {
+    const handler = () => {
+      lastResolvedFor.current = null;
+      void resolve(chatId || '');
+    };
+    window.addEventListener('soloforge-canvas-deleted', handler);
+    return () => window.removeEventListener('soloforge-canvas-deleted', handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatId]);
+
   return {
     canvasId,
     canvases,
