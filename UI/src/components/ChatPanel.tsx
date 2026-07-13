@@ -239,15 +239,47 @@ export default function ChatPanel({
   const activeChatId = selectedChatId || '1';
   const localChatInfo = useMemo(() => chatsList.find(c => c.id === activeChatId) || null, [chatsList, activeChatId]);
   // ── 用户头像 + 名字 (与右上角 UserBadgeSelector 同步) ──────────────
-  const [userAvatarIdx, setUserAvatarIdx] = useState(0);
+  // 支持: 内置头像 idx / 自定义头像 dataUrl / 动态头像列表 (从 /api/files/list 读取)
+  const [userAvatarSrc, setUserAvatarSrc] = useState('/头像/avatar1.svg');
   const [userName, setUserName] = useState('');
   useEffect(() => {
-    const syncUserBadge = () => {
-      const savedAvatar = localStorage.getItem('soloforge_user_avatar_idx');
-      if (savedAvatar !== null) {
-        const idx = parseInt(savedAvatar, 10);
-        if (idx >= 0 && idx < 4) setUserAvatarIdx(idx);
+    const DEFAULT_AVATARS = [
+      '/头像/avatar1.svg', '/头像/avatar2.svg', '/头像/avatar3.svg', '/头像/avatar4.svg',
+    ];
+    let avatarList = DEFAULT_AVATARS;
+
+    // 动态加载头像列表 (与 UserBadgeSelector 逻辑一致)
+    fetch(`/api/files/list?dir=${encodeURIComponent('UI/public/头像')}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.success && Array.isArray(data.files)) {
+          const IMAGE_EXTS = ['.svg', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'];
+          const imageFiles = data.files
+            .filter((f: any) => f.type === 'file' && IMAGE_EXTS.some(ext => f.name.toLowerCase().endsWith(ext)))
+            .sort((a: any, b: any) => a.name.localeCompare(b.name))
+            .map((f: any) => `/头像/${f.name}`);
+          if (imageFiles.length > 0) {
+            avatarList = imageFiles;
+            applyAvatar();
+          }
+        }
+      })
+      .catch(() => {});
+
+    const applyAvatar = () => {
+      const useCustom = localStorage.getItem('soloforge_user_use_custom_avatar') === 'true';
+      const customData = localStorage.getItem('soloforge_user_custom_avatar');
+      if (useCustom && customData) {
+        setUserAvatarSrc(customData);
+        return;
       }
+      const idxStr = localStorage.getItem('soloforge_user_avatar_idx');
+      const idx = idxStr !== null ? parseInt(idxStr, 10) : 0;
+      setUserAvatarSrc(avatarList[idx] ?? avatarList[0] ?? DEFAULT_AVATARS[0]);
+    };
+
+    const syncUserBadge = () => {
+      applyAvatar();
       const savedName = localStorage.getItem('soloforge_user_name');
       if (savedName) setUserName(savedName);
     };
@@ -598,7 +630,7 @@ export default function ChatPanel({
                   {isUser ? (
                     !hideUserAvatar && (
                       <img
-                        src={`/头像/avatar${userAvatarIdx + 1}.svg`}
+                        src={userAvatarSrc}
                         alt="用户头像"
                         className="w-11 h-11 shrink-0 object-cover pointer-events-none"
                         draggable={false}
@@ -633,8 +665,7 @@ export default function ChatPanel({
                     历史消息由 UIMessagePartsRenderer 渲染各自的过程 parts
                     两者互斥, 避免内容重复
                     发送瞬间 (isEmptyGenerating) StreamPanel 还无 task, 显示 loading 占位 */}
-                {/* ★ FIX 2026-07-14: 加载占位只在无内容且无流送数据时显示
-                    有 phase 事件但无文本时, StreamPanel 应接管显示 */}
+                {/* ★ FIX 2026-07-14: 加载占位只在无内容且无流送数据时显示 */}
                 {!isUser && isEmptyGenerating && !hasStreamData && (
                   <div className="w-full pl-[58px] pr-3">
                     <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] text-on-surface/50 font-mono">
@@ -643,8 +674,14 @@ export default function ChatPanel({
                     </div>
                   </div>
                 )}
-                {/* ★ FIX 2026-07-14: StreamPanel 在有流送数据时也渲染, 即使 msg.content 为空
-                    解决: LLM 只发 phase 事件 (无文本) 时流送区空白 */}
+                {/* ★ FIX 2026-07-14: 所有 assistant 消息统一用 UIMessagePartsRenderer 渲染过程 parts
+                    包括 phase-change / model-action (LLM思考) / model-delegation / subtask-* / audit-* / clarify / error / browser-*
+                    最后一条 assistant 额外渲染 StreamPanel (PromptCards + 总结) */}
+                {!isUser && uiMessageId && (
+                  <div className="w-full pl-[58px] pr-3">
+                    <UIMessagePartsRenderer chatId={activeChatId} messageId={uiMessageId} />
+                  </div>
+                )}
                 {!isUser && isLastAssistant && (!isEmptyGenerating || hasStreamData) && (
                   <StreamPanel
                     chatId={activeChatId}
@@ -653,16 +690,10 @@ export default function ChatPanel({
                     permissionMode={permissionMode}
                   />
                 )}
-                {!isUser && !isLastAssistant && uiMessageId && (
-                  <div className="w-full pl-[58px] pr-3">
-                    <UIMessagePartsRenderer chatId={activeChatId} messageId={uiMessageId} />
-                  </div>
-                )}
 
                 {/* Content block: aligned on right or left
-                    ★ 2026-07-13: 用户气泡去底色 (透明), 加右键菜单, 时间放右下角
-                    用户消息下方加复制 + 重新生成按钮 */}
-                {!isEmptyGenerating && (
+                    ★ FIX 2026-07-14: 有流送数据时也显示内容块 (工具调用等), 即使文本为空 */}
+                {(!isEmptyGenerating || hasStreamData) && (
                 <div className={`flex flex-col gap-1 font-sans text-left ${isUser ? 'pr-3 pl-[58px] items-end max-w-[88%]' : 'pl-[58px] pr-3 items-start w-full'}`}>
                   <div
                     onContextMenu={isUser ? (e) => handleUserContextMenu(e, index) : undefined}

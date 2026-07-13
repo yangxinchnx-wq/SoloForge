@@ -16,22 +16,15 @@
  *   - 总结块进入时从下淡入 (stream-summary-enter)
  *   - 消除 2 秒后折叠的视觉跳变感
  */
-import React, { useEffect, useState } from 'react';
-import { ChevronDown, Loader2, CheckCircle2, AlertCircle, Clock } from '../utils/icons';
+import React, { useEffect } from 'react';
+import { Loader2, CheckCircle2, AlertCircle, Clock } from '../utils/icons';
 import type { PermissionMode } from '../types/streaming';
 import { useStreamingStore } from '../state/streamingStore';
 import { promptCardPool } from '../services/promptCardPool';
 import { usePromptCards } from '../hooks/usePromptCards';
-import { TaskTree } from './TaskTree';
 import { PromptCard } from './PromptCard';
-// ModelIcon import removed — header avatar is rendered by ChatPanel, not StreamPanel
-// P3 集成: 自动持久化 + clearChatAll (同时清理 Actor + uiMessageStore + persistence)
 import { useAutoPersist, clearChatAll } from '../services/actorIntegration';
-// ★ 2026-07-13: UIMessagePartsRenderer 已移至 ChatPanel map 内, 每轮独立渲染
-import { MountTransition } from './MountTransition';
-// H-3 迁移: 从 uiMessageStore 派生摘要状态, 替代直接订阅 streamingStore.tasks[chatId]
 import { useStreamSummary } from '../services/useStreamSummary';
-// P0 迁移: 从 parts 派生完整 RootTask, 替代 streamingStore.tasks[chatId]
 import { useRootTaskFromParts } from '../services/usePartsDerived';
 
 interface StreamPanelProps {
@@ -120,29 +113,11 @@ interface TaskExecutionCardProps {
 
 function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: TaskExecutionCardProps) {
   // P0: 显示状态全部从 uiMessageStore (Data Parts) 派生
-  // 旧路径: useStreamingStore(s => s.tasks[chatId]) — 高频全量更新
-  // 新路径: useRootTaskFromParts — 从 parts 聚合, 只在 part 变化时更新
   const summary = useStreamSummary(chatId);
-  // userInput / rootTaskId 从 streamTaskMeta 读取 (控制流字段, 不在 parts 中, 低频)
   const streamMeta = useStreamingStore(s => s.streamTaskMeta[chatId]);
   const userInput = streamMeta?.userInput;
   const rootTaskId = streamMeta?.rootTaskId;
   const task = useRootTaskFromParts(chatId, userInput, rootTaskId);
-  const [isExpanded, setIsExpanded] = useState(true);
-
-  // 任务完成后2秒自动折叠具体信息, 显示总结
-  const [collapsed, setCollapsed] = useState(false);
-  // ★ 用户手动展开开关: 折叠后用户可点击重新展开查看完整过程, 再次点击收起
-  const [userExpanded, setUserExpanded] = useState(false);
-  useEffect(() => {
-    if (!summary.isDone && !summary.isError) {
-      setCollapsed(false);
-      setUserExpanded(false); // 新任务开始时重置用户展开状态
-      return;
-    }
-    const timer = window.setTimeout(() => setCollapsed(true), 2000);
-    return () => window.clearTimeout(timer);
-  }, [summary.isDone, summary.isError]);
 
   if (!task && !summary.hasData) return null;
 
@@ -152,111 +127,59 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
   const subCount = summary.subtaskCount;
   const doneCount = summary.doneCount;
 
-  return (
-    <>
-      {/* ★ FIX 2026-07-14: 移除重复的头像+模型名头部 — ChatPanel 已为每条消息渲染头像,
-          TaskExecutionCard 只渲染过程块+总结块, 避免出现两个重复的模型头像 */}
+  // ★ FIX 2026-07-14: 过程块已移至 UIMessagePartsRenderer (ChatPanel 统一渲染)
+  //   TaskExecutionCard 只负责渲染总结块 + 进行中状态指示器
+  //   修复: 1) 过程/总结互斥导致其中一个不显示  2) 无子任务时总结不显示  3) 过程信息缺失
 
-      <div className="w-full pl-[58px] pr-3 space-y-3">
-        {/* ★ 2026-07-13: 流送区只显示两个块 — 过程 + 总结, 等宽自适应, 同样式 */}
-
-        {/* 块1: AI 执行流程 (过程) */}
-        {/* ★ 2026-07-13: 折叠退出时加 stream-process-exit 类触发向上淡出动画 */}
-        <div className={`border border-outline/30 rounded-lg overflow-hidden bg-bg/50 ${collapsed && !userExpanded ? 'stream-process-exit' : ''}`}>
-          {/* 流程 Header */}
-          <div
-            onClick={() => setIsExpanded(!isExpanded)}
-            className="p-2.5 bg-surface border-b border-outline/30 flex items-center justify-between text-[11px] cursor-pointer select-none"
-          >
-            <div className="flex items-center gap-1.5 text-on-surface/80">
-              <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isExpanded ? 'rotate-0' : '-rotate-90'}`} />
-              <span className="font-semibold">过程</span>
-              {isActive && (
-                <span className="text-[10px] text-primary bg-primary/10 px-1.5 py-0.5 rounded font-mono font-bold">
-                  进行中 ({doneCount}/{subCount})
-                </span>
-              )}
-              {isDone && (
-                <span className="text-[10px] text-green-400 bg-green-500/10 px-1.5 py-0.5 rounded font-mono font-bold">
-                  已完成
-                </span>
-              )}
-              {isError && (
-                <span className="text-[10px] text-red-400 bg-red-500/10 px-1.5 py-0.5 rounded font-mono font-bold">
-                  错误
-                </span>
-              )}
-            </div>
-            {isActive && (
-              <Loader2 className="w-3.5 h-3.5 text-primary animate-spin shrink-0" />
-            )}
-          </div>
-
-          {/* 流程内容 — 进行中跟随 isExpanded; 完成后自动折叠, 但用户可通过开关重新展开 */}
-          <MountTransition show={isExpanded && (!collapsed || userExpanded)} variant="fade" duration={180}>
-            <div className="p-3 space-y-2">
-              {/* 用户展开后显示"收起"开关 */}
-              {collapsed && userExpanded && (
-                <button
-                  onClick={() => setUserExpanded(false)}
-                  className="w-full flex items-center justify-center gap-1.5 py-1 text-[10px] text-on-surface/50 hover:text-primary border border-outline/20 hover:border-primary/30 rounded-md transition-colors cursor-default"
-                >
-                  <ChevronDown className="w-3 h-3 rotate-[-90deg]" />
-                  <span>收起完整过程</span>
-                </button>
-              )}
-              <TaskTree
-                task={task}
-                mainModel={mainModel}
-                modelCount={modelCount}
-                mode={permissionMode}
-                chatId={chatId}
-              />
-            </div>
-          </MountTransition>
+  // 进行中: 显示进度指示器 (无总结块)
+  if (isActive) {
+    return (
+      <div className="w-full pl-[58px] pr-3">
+        <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] text-on-surface/50 font-mono">
+          <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
+          <span>执行中 {subCount > 0 ? `(${doneCount}/${subCount})` : ''}</span>
         </div>
+      </div>
+    );
+  }
 
-        {/* 块2: 任务总结 — 与过程块同样式等宽; 折叠后淡入显示, 用户展开时隐藏
-            ★ 2026-07-13: subCount === 0 且非错误时不显示, 避免空总结 */}
-        {(subCount > 0 || isError) && (
-        /* ★ 2026-07-13: 总结块进入时加 stream-summary-enter 类触发从下淡入动画 */
-        <MountTransition show={collapsed && !userExpanded} variant="fade" duration={220}>
-          <div className="border border-outline/30 rounded-lg bg-bg/50 p-3 space-y-1 stream-summary-enter">
-            <div className="flex items-center gap-1.5 text-on-surface/80 mb-1.5">
-              {isError
-                ? <AlertCircle className="w-3.5 h-3.5 text-red-400" />
-                : <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />
-              }
-              <span className="font-semibold text-[11px]">总结</span>
-              <span className="text-[10px] text-on-surface/40 ml-auto font-mono">
-                {doneCount}/{subCount} 完成
-              </span>
-            </div>
-            {task?.subTasks.map(st => (
-              <div key={st.id} className="flex items-start gap-2 text-[11px] py-0.5">
-                {st.status === 'done'
-                  ? <CheckCircle2 className="w-3 h-3 text-green-400 shrink-0 mt-0.5" />
-                  : st.status === 'error'
-                  ? <AlertCircle className="w-3 h-3 text-red-400 shrink-0 mt-0.5" />
-                  : <Clock className="w-3 h-3 text-on-surface/30 shrink-0 mt-0.5" />
-                }
-                <span className={`break-words [text-wrap:pretty] ${st.status === 'done' ? 'text-on-surface/50 line-through' : 'text-on-surface/80'}`}>
-                  {st.description}
-                </span>
-              </div>
-            ))}
-            {/* ★ 开关: 点击展开查看完整过程 */}
-            <button
-              onClick={() => setUserExpanded(true)}
-              className="w-full flex items-center justify-center gap-1.5 py-1 mt-1 text-[10px] text-on-surface/50 hover:text-primary border border-outline/20 hover:border-primary/30 rounded-md transition-colors cursor-default"
-            >
-              <ChevronDown className="w-3 h-3" />
-              <span>查看完整过程</span>
-            </button>
+  // 完成/错误: 显示总结块
+  if (!isDone && !isError) return null;
+
+  return (
+    <div className="w-full pl-[58px] pr-3">
+      <div className="border border-outline/30 rounded-lg bg-bg/50 p-3 space-y-1">
+        <div className="flex items-center gap-1.5 text-on-surface/80 mb-1.5">
+          {isError
+            ? <AlertCircle className="w-3.5 h-3.5 text-red-400" />
+            : <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />
+          }
+          <span className="font-semibold text-[11px]">总结</span>
+          {subCount > 0 && (
+            <span className="text-[10px] text-on-surface/40 ml-auto font-mono">
+              {doneCount}/{subCount} 完成
+            </span>
+          )}
+        </div>
+        {task?.subTasks.length > 0 && task.subTasks.map(st => (
+          <div key={st.id} className="flex items-start gap-2 text-[11px] py-0.5">
+            {st.status === 'done'
+              ? <CheckCircle2 className="w-3 h-3 text-green-400 shrink-0 mt-0.5" />
+              : st.status === 'error'
+              ? <AlertCircle className="w-3 h-3 text-red-400 shrink-0 mt-0.5" />
+              : <Clock className="w-3 h-3 text-on-surface/30 shrink-0 mt-0.5" />
+            }
+            <span className={`break-words [text-wrap:pretty] ${st.status === 'done' ? 'text-on-surface/50 line-through' : 'text-on-surface/80'}`}>
+              {st.description}
+            </span>
           </div>
-        </MountTransition>
+        ))}
+        {isError && !task?.subTasks?.length && (
+          <div className="text-[11px] text-red-400/80 py-0.5">
+            任务执行失败
+          </div>
         )}
       </div>
-    </>
+    </div>
   );
 }
