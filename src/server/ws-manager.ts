@@ -99,7 +99,10 @@ export class AgentEventHubManager {
         this.hub = new AgentEventHub(kernel);
         this.hub.attach(server);
       }).catch(err => {
-        console.error('[AgentEventHubManager] Failed to load AgentEventHub:', err.message);
+        // [Quality Fix] Conditional error output — suppress in production
+        if (process.env.NODE_ENV !== 'production') {
+          console.error('[AgentEventHubManager] Failed to load AgentEventHub:', err.message);
+        }
       });
     }
   }

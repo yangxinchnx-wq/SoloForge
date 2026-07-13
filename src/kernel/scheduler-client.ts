@@ -93,10 +93,12 @@ export class SoloForgeRustSchedulerClient {
     const rustBinaryPath = this.getRustBinaryPath();
 
     if (!rustBinaryPath) {
-      console.warn(`\n[RUST_IPC_WARN] ⚠️  未能在预期路径下找到 Rust 二进制资产:`);
-      console.warn(`[RUST_IPC_WARN]   - bin/scheduler.exe`);
-      console.warn(`[RUST_IPC_WARN]   - rust_core/target/release/scheduler_daemon.exe`);
-      console.warn(`[RUST_IPC_WARN] 🔌 调度看门狗已平滑切入【高性能本地内存堆栈仿真桩（含 Aging 优先队列）】托管运作。\n`);
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn(`\n[RUST_IPC_WARN] ⚠️  未能在预期路径下找到 Rust 二进制资产:`);
+        console.warn(`[RUST_IPC_WARN]   - bin/scheduler.exe`);
+        console.warn(`[RUST_IPC_WARN]   - rust_core/target/release/scheduler_daemon.exe`);
+        console.warn(`[RUST_IPC_WARN] 🔌 调度看门狗已平滑切入【高性能本地内存堆栈仿真桩（含 Aging 优先队列）】托管运作。\n`);
+      }
       return;
     }
 
@@ -135,7 +137,9 @@ export class SoloForgeRustSchedulerClient {
       });
 
       this.process.on('exit', (code, signal) => {
-        console.warn(`[RUST_IPC_WARN] ⚠️  Rust 进程退出, code=${code} signal=${signal}`);
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn(`[RUST_IPC_WARN] ⚠️  Rust 进程退出, code=${code} signal=${signal}`);
+        }
         this.process = null;
       });
     } catch (e: any) {

@@ -23,13 +23,12 @@ import { AgentRegistry } from './core/agent/agent-registry';
 import { AgentDecisionOrchestrator } from './core/agent/agent-decision-orchestrator';
 import {
   defaultAuthConfig,
-  AuthConfig,
-  RateLimiter,
   defaultRateLimit,
   strictRateLimit,
   defaultAuditSink,
-  AuditSink,
 } from './security/auth';
+import type { AuthConfig, AuditSink } from './security/auth';
+import { RateLimiter } from './security/auth';
 import { createAuditSinkFromSurreal } from './security/auditSinkSurreal';
 import { parseBindings, type TenantContextConfig } from './security/tenantContext';
 import { handleLLMStreamProxy } from './llm/llmProxyHandler';
@@ -127,8 +126,8 @@ export class SoloForgeApiServer {
 
   // Auth / security
   private authConfig: AuthConfig = defaultAuthConfig;
-  private readonly rateLimiter = new RateLimiter(defaultRateLimit);
-  private readonly strictRateLimiter = new RateLimiter(strictRateLimit);
+  private readonly rateLimiter: RateLimiter = new RateLimiter(defaultRateLimit);
+  private readonly strictRateLimiter: RateLimiter = new RateLimiter(strictRateLimit);
   private audit: AuditSink = defaultAuditSink;
   private readonly piiSalt = process.env.SOLOFORGE_PII_SALT || crypto.randomBytes(16).toString('hex');
   private auditSinkSurreal: import('./security/auditSinkSurreal').AuditSinkSurreal | null = null;

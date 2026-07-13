@@ -502,20 +502,27 @@ export function handleObservationStart(deps: SystemRouteDeps): ApiResponse {
   deps.observationState.interval = setInterval(() => {
     deps.broadcastEvent('observation', { isObserving: true, timestamp: Date.now() });
   }, 5000);
-  console.log('[Observation] Started observing civilization evolution');
+  // TODO: Replace with structured logging (pino/winston)
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('[Observation] Started observing civilization evolution');
+  }
   return { status: 200, headers: { 'Content-Type': 'application/json' }, body: { success: true, message: 'Observation started' } };
 }
 
 export function handleObservationStop(deps: SystemRouteDeps): ApiResponse {
   if (deps.observationState.interval) { clearInterval(deps.observationState.interval); deps.observationState.interval = null; }
   deps.observationState.isObserving = false;
-  console.log('[Observation] Stopped observing');
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('[Observation] Stopped observing');
+  }
   return { status: 200, headers: { 'Content-Type': 'application/json' }, body: { success: true, message: 'Observation stopped' } };
 }
 
 export function handleObservationClear(deps: SystemRouteDeps): ApiResponse {
   deps.observationState.observations = [];
-  console.log('[Observation] Cleared observation data');
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('[Observation] Cleared observation data');
+  }
   return { status: 200, headers: { 'Content-Type': 'application/json' }, body: { success: true, message: 'Observation data cleared' } };
 }
 
@@ -660,7 +667,16 @@ function getInlineAdminUI(): string {
         const res = await fetch('/api/status');
         const data = await res.json();
         document.getElementById('components').textContent = (data.agents?.active || '--') + '/' + (data.agents?.total || '--');
-        document.getElementById('sysinfo').innerHTML = ['<p>Node.js: ', String(data.nodeVersion || '--'), '</p>', '<p>', String(data.platform || '--'), '</p>', '<p>CPU: ', String(data.cpu?.toFixed(1) || '--'), '%</p>', '<p>', String(data.memory?.toFixed(1) || '--'), '%</p>', '<p>', String(data.kernel?.state || '--'), '</p>'].join('');
+        // [Security Fix] Replaced innerHTML with textContent to eliminate XSS vector
+        // Previously used .innerHTML = '<p>...</p>' which could inject HTML if data source changes
+        const sysInfoLines = [
+          'Node.js: ' + (data.nodeVersion || '--'),
+          'Platform: ' + (data.platform || '--'),
+          'CPU: ' + (data.cpu != null ? Number(data.cpu).toFixed(1) : '--') + '%',
+          'Memory: ' + (data.memory != null ? Number(data.memory).toFixed(1) : '--') + '%',
+          'Kernel: ' + (data.kernel?.state || '--'),
+        ];
+        document.getElementById('sysinfo').textContent = sysInfoLines.join('\n');
       } catch (e) { document.getElementById('sysinfo').textContent = 'Cannot load data, ensure backend is running'; }
     }
     loadData(); setInterval(loadData, 5000);

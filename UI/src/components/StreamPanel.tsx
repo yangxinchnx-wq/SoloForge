@@ -10,6 +10,11 @@
  *   - usePromptCards 替代手动 promptCardPool.getActive 调用 (响应式)
  *
  * 参考: Dan Abramov "Before You memo()" — https://overreacted.io/before-you-memo/
+ *
+ * ★ 2026-07-13 增强: 过程↔总结 crossfade 过渡动画
+ *   - 过程块退出时向上淡出 (stream-process-exit)
+ *   - 总结块进入时从下淡入 (stream-summary-enter)
+ *   - 消除 2 秒后折叠的视觉跳变感
  */
 import React, { useEffect, useState } from 'react';
 import { ChevronDown, Loader2, CheckCircle2, AlertCircle, Clock } from '../utils/icons';
@@ -163,7 +168,8 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
         {/* ★ 2026-07-13: 流送区只显示两个块 — 过程 + 总结, 等宽自适应, 同样式 */}
 
         {/* 块1: AI 执行流程 (过程) */}
-        <div className="border border-outline/30 rounded-lg overflow-hidden bg-bg/50">
+        {/* ★ 2026-07-13: 折叠退出时加 stream-process-exit 类触发向上淡出动画 */}
+        <div className={`border border-outline/30 rounded-lg overflow-hidden bg-bg/50 ${collapsed && !userExpanded ? 'stream-process-exit' : ''}`}>
           {/* 流程 Header */}
           <div
             onClick={() => setIsExpanded(!isExpanded)}
@@ -220,8 +226,9 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
         {/* 块2: 任务总结 — 与过程块同样式等宽; 折叠后淡入显示, 用户展开时隐藏
             ★ 2026-07-13: subCount === 0 且非错误时不显示, 避免空总结 */}
         {(subCount > 0 || isError) && (
+        /* ★ 2026-07-13: 总结块进入时加 stream-summary-enter 类触发从下淡入动画 */
         <MountTransition show={collapsed && !userExpanded} variant="fade" duration={220}>
-          <div className="border border-outline/30 rounded-lg bg-bg/50 p-3 space-y-1">
+          <div className="border border-outline/30 rounded-lg bg-bg/50 p-3 space-y-1 stream-summary-enter">
             <div className="flex items-center gap-1.5 text-on-surface/80 mb-1.5">
               {isError
                 ? <AlertCircle className="w-3.5 h-3.5 text-red-400" />

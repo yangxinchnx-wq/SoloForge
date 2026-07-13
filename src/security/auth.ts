@@ -6,9 +6,280 @@
 //   - RFC 6750 (Bearer Token Usage)
 import type { IncomingHttpHeaders } from 'http';
 import * as nodePath from 'path';
-import { checkTenantAccess, pickDefaultTenant } from './tenantContext';
+import * as crypto from 'crypto';
+import { checkTenantAccess, pickDefaultTenant, isValidTenantId } from './tenantContext';
 
 export type Role = 'admin' | 'operator' | 'agent' | 'public';
+
+/** Max HTTP body size in bytes (1 MB). */
+export const MAX_BODY_BYTES = 1 * 1024 * 1024;
+
+/** Audit sink function type. */
+export type AuditSink = (entry: Record<string, any>) => void;
+
+/** Audit event structure. */
+export interface AuditEvent {
+  id: string;
+  timestamp: number;
+  action: string;
+  route?: string;
+  method?: string;
+  status?: number;
+  remoteAddress?: string;
+  userAgent?: string;
+  reason?: string;
+  principal?: Principal;
+  tenantId?: string;
+  [key: string]: any;
+}
+
+/** V2 audit sink with structured events. */
+export type AuditSinkV2 = (event: AuditEvent) => void;
+
+// ============================================================
+// Rate Limiting
+// ============================================================
+
+/** Rate limiter configuration. */
+export interface RateLimitConfig {
+  /** Maximum burst of requests allowed at once. */
+  burst: number;
+  /** Token refill rate per second. */
+  refillPerSec: number;
+  /** Maximum requests per 60s window (for logging / metrics). */
+  maxPerWindow: number;
+}
+
+/** Default rate limit config (generous, per-IP). */
+export const defaultRateLimit: RateLimitConfig = {
+  burst: 120,
+  refillPerSec: 10,
+  maxPerWindow: 600,
+};
+
+/** Strict rate limit config (sensitive routes like /api/vault, /api/admin). */
+export const strictRateLimit: RateLimitConfig = {
+  burst: 20,
+  refillPerSec: 2,
+  maxPerWindow: 60,
+};
+
+/**
+ * Token-bucket rate limiter.
+ * Each key gets its own bucket with `burst` capacity and `refillPerSec` refill rate.
+ */
+export class RateLimiter {
+  private buckets = new Map<string, { tokens: number; lastRefill: number }>();
+  private interval: ReturnType<typeof setInterval> | null = null;
+
+  constructor(private readonly config: RateLimitConfig) {
+    // Periodically clean up stale buckets to prevent memory leaks
+    this.interval = setInterval(() => {
+      const now = Date.now();
+      for (const [key, bucket] of this.buckets) {
+        // If bucket is full and hasn't been used in 60s, remove it
+        if (bucket.tokens >= config.burst && now - bucket.lastRefill > 60_000) {
+          this.buckets.delete(key);
+        }
+      }
+    }, 60_000);
+  }
+
+  /** Consume one token for the given key. Returns true if allowed. */
+  allow(key: string): boolean {
+    const now = Date.now();
+    let bucket = this.buckets.get(key);
+    if (!bucket) {
+      bucket = { tokens: this.config.burst, lastRefill: now };
+      this.buckets.set(key, bucket);
+    }
+    // Refill tokens based on elapsed time
+    const elapsedSec = (now - bucket.lastRefill) / 1000;
+    const refilled = elapsedSec * this.config.refillPerSec;
+    bucket.tokens = Math.min(this.config.burst, bucket.tokens + refilled);
+    bucket.lastRefill = now;
+
+    if (bucket.tokens >= 1) {
+      bucket.tokens -= 1;
+      return true;
+    }
+    return false;
+  }
+
+  /** Seconds until the next token will be available for the given key. */
+  retryAfterSec(key: string): number {
+    const bucket = this.buckets.get(key);
+    if (!bucket) return 0;
+    if (bucket.tokens >= 1) return 0;
+    if (this.config.refillPerSec <= 0) return 0; // No refill = no retry
+    const deficit = 1 - bucket.tokens;
+    return Math.ceil(deficit / this.config.refillPerSec);
+  }
+
+  /** Stop the cleanup interval. */
+  stop(): void {
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+  }
+}
+
+// ============================================================
+// Request ID / PII Hashing
+// ============================================================
+
+const REQUEST_ID_RE = /^[A-Za-z0-9._\-]{1,128}$/;
+
+/** Generate a UUID v4 string. */
+function uuidV4(): string {
+  return crypto.randomUUID();
+}
+
+/**
+ * Generate a random request ID or reuse X-Request-Id header.
+ * Validates the upstream header: only alphanumeric + .-_ chars, max 128 bytes.
+ * If the header is missing or invalid, a UUID v4 is generated.
+ */
+export function getOrAssignRequestId(headers: IncomingHttpHeaders): string {
+  const existing = headers['x-request-id'];
+  if (typeof existing === 'string' && REQUEST_ID_RE.test(existing)) return existing;
+  return uuidV4();
+}
+
+/**
+ * Hash PII (e.g. IP address) with a salt using FNV-1a.
+ * Returns a 16-character hex string for compact, deterministic anonymization.
+ */
+export function hashPii(value: string, salt: string): string {
+  // Double-pass FNV-1a for better distribution
+  let h1 = 0x811c9dc5;
+  let h2 = 0x1000193;
+  const combined = salt + value;
+  for (let i = 0; i < combined.length; i++) {
+    h1 ^= combined.charCodeAt(i);
+    h1 = (h1 * 0x01000193) >>> 0;
+    h2 ^= combined.charCodeAt(i) << 1;
+    h2 = (h2 * 0x01000193) >>> 0;
+  }
+  // Produce 16 hex chars (two 32-bit values → 8+8 hex)
+  return (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0');
+}
+
+// ============================================================
+// Security Headers / CORS
+// ============================================================
+
+/**
+ * Security response headers (helmet-equivalent).
+ * Returns a comprehensive set of hardening headers.
+ */
+export function securityHeaders(opts: { isHttps?: boolean } = {}): Record<string, string> {
+  const h: Record<string, string> = {
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'X-XSS-Protection': '1; mode=block',
+    'Referrer-Policy': 'no-referrer',
+    'Cross-Origin-Opener-Policy': 'same-origin',
+    'Cross-Origin-Resource-Policy': 'same-origin',
+    'Cross-Origin-Embedder-Policy': 'require-corp',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
+    'X-DNS-Prefetch-Control': 'off',
+  };
+  if (opts.isHttps) {
+    h['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains';
+  }
+  return h;
+}
+
+/**
+ * CORS headers based on request Origin and config.
+ * - If origin is whitelisted: echo it back with `Vary: Origin`.
+ * - If origin is unknown: fall back to the first allowed origin (permissive mode).
+ * - If no allowed origins configured: return empty.
+ */
+export function corsHeadersFor(headers: IncomingHttpHeaders, cfg: AuthConfig): Record<string, string> {
+  const origin = typeof headers['origin'] === 'string' ? headers['origin'] : '';
+  if (!origin) return {};
+
+  // Whitelisted origin → echo it
+  if (cfg.allowedOrigins.includes(origin)) {
+    return {
+      'Access-Control-Allow-Origin': origin,
+      'Vary': 'Origin',
+      'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Request-Id,X-Tenant-Id',
+      'Access-Control-Max-Age': '86400',
+    };
+  }
+
+  // Unknown origin → fall back to first allowed origin (permissive for dev)
+  if (cfg.allowedOrigins.length > 0) {
+    return {
+      'Access-Control-Allow-Origin': cfg.allowedOrigins[0],
+      'Vary': 'Origin',
+      'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Request-Id,X-Tenant-Id',
+      'Access-Control-Max-Age': '86400',
+    };
+  }
+
+  return {};
+}
+
+// ============================================================
+// Path Traversal Defense
+// ============================================================
+
+/**
+ * Safe path join that prevents directory traversal attacks.
+ * Returns the resolved path if it stays within `sandbox`, or `null` otherwise.
+ * Rejects: empty input, overlong input (>256 chars), absolute paths, `../` traversal.
+ */
+export function safeJoin(sandbox: string, rel: string): string | null {
+  // Reject empty or overlong input
+  if (!rel || rel.length === 0 || rel.length > 256) return null;
+
+  // Reject absolute paths (Unix and Windows)
+  if (rel.startsWith('/') || /^[A-Za-z]:[\\/]/.test(rel)) return null;
+
+  // Resolve and check containment
+  const resolved = nodePath.resolve(sandbox, rel);
+  const sandboxResolved = nodePath.resolve(sandbox);
+  // Ensure resolved path is within sandbox (or equals it)
+  if (resolved !== sandboxResolved && !resolved.startsWith(sandboxResolved + nodePath.sep)) {
+    return null;
+  }
+
+  return resolved;
+}
+
+// ============================================================
+// Audit Sink
+// ============================================================
+
+/**
+ * Default audit sink: writes a JSON line with tag AUDIT to stdout.
+ */
+export const defaultAuditSink: AuditSink = (entry: Record<string, any>) => {
+  const payload = JSON.stringify({ tag: 'AUDIT', ...entry });
+  console.log(payload);
+};
+
+// ============================================================
+// Token Generation
+// ============================================================
+
+/**
+ * Generate a cryptographically random API token (64 hex chars = 256 bits).
+ */
+export function generateApiToken(): string {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+// ============================================================
+// Principal / Auth Config
+// ============================================================
 
 export interface Principal {
   id: string;
@@ -23,6 +294,10 @@ export interface Principal {
   tenantIds?: string[];
   /** 当前请求实际使用的 tenantId (从 header / path 解析) */
   activeTenantId?: string;
+  /** Token kid (供审计, 仅 bearer 路径) */
+  kid?: string;
+  /** 是否在 grace period 内 (token rotation 兼容) */
+  inGrace?: boolean;
 }
 
 export interface AuthConfig {
@@ -117,6 +392,44 @@ export interface RouteGuardResult {
   principal?: Principal;
   corsOrigin?: string | null;
   reason?: string;
+  reuseDetected?: boolean;
+  crossTenant?: boolean;
+  autoRevokedTokens?: string[];
+}
+
+/**
+ * Add tenant context to a sync-allowed result.
+ * Validates requestedTenantId and sets principal.activeTenantId.
+ */
+function addTenantContext(result: RouteGuardResult, input: RouteGuardInput): RouteGuardResult {
+  if (!result.principal) return result;
+
+  const requestedTenantId = input.requestedTenantId;
+
+  if (requestedTenantId) {
+    // Validate format
+    if (!isValidTenantId(requestedTenantId)) {
+      return {
+        ...result,
+        allow: false,
+        status: 403,
+        reason: 'invalid_tenant_id',
+        crossTenant: true,
+      };
+    }
+    // Set active tenant to the requested one
+    return {
+      ...result,
+      principal: { ...result.principal, activeTenantId: requestedTenantId },
+    };
+  }
+
+  // No explicit tenant requested → use default
+  const activeTenantId = pickDefaultTenant(result.principal.tenantIds, result.principal.role);
+  return {
+    ...result,
+    principal: { ...result.principal, activeTenantId },
+  };
 }
 
 export function evaluateRequest(input: RouteGuardInput, cfg: AuthConfig = defaultAuthConfig): RouteGuardResult {
@@ -190,14 +503,15 @@ export function evaluateRequest(input: RouteGuardInput, cfg: AuthConfig = defaul
 
 /**
  * 异步增强版鉴权:
- *   - 在 evaluateRequest 基础上, 额外做 Token Family 复用检测
- *   - 检测到 grace period 外的旧 token → 整族吊销 + 返回 401
- *   - 检测到 grace period 内的旧 token → 仍允许 (网络抖动兼容)
+ *   - 在 evaluateRequest 基础上, 添加 tenant context 验证
+ *   - 同步路径 (public/loopback/token) 通过后, 验证 requestedTenantId
+ *   - 同步路径拒绝时, 走 tokenStore 异步路径 (vault token + tenant bindings)
  *
  * 协议:
  *   - principal.kid:  命中的 token kid (供审计)
  *   - principal.inGrace: true 表示命中的是 grace period 内的旧 token
  *   - principal.tenantIds: 该 token 被允许访问的 tenant 集合
+ *   - principal.activeTenantId: 当前请求实际使用的 tenantId
  */
 export async function evaluateRequestAsync(
   input: RouteGuardInput,
@@ -205,10 +519,14 @@ export async function evaluateRequestAsync(
 ): Promise<RouteGuardResult> {
   // 先走同步鉴权（快速路径）
   const syncResult = evaluateRequest(input, cfg);
-  if (syncResult.allow) return syncResult;
 
-  // 异步路径：Token Family 复用检测
-  const { headers, remoteAddress } = input;
+  if (syncResult.allow) {
+    // Add tenant context to sync-allowed results
+    return addTenantContext(syncResult, input);
+  }
+
+  // 异步路径：Token Store 查找 (vault token)
+  const { headers } = input;
   const bearer = extractBearerToken(headers, cfg.maxAuthHeaderLength);
 
   if (!bearer) return syncResult;
@@ -219,18 +537,19 @@ export async function evaluateRequestAsync(
     if (!tokenStoreModule?.tokenStoreInit) return syncResult;
 
     await tokenStoreModule.tokenStoreInit();
-    const tokenFamily = await tokenStoreModule.lookupTokenFamily(bearer).catch(() => null);
+    const tokenRecord = await tokenStoreModule.findByToken(bearer).catch(() => null);
 
-    if (!tokenFamily) {
-      // token 不在任何 family 中 → 可能已被吊销或不存在
+    if (!tokenRecord) {
+      // token 不在 store 中 → 可能已被吊销或不存在
       return syncResult;
     }
 
-    // 检查 grace period：允许旧版本 token 在短时间内仍可使用（兼容网络抖动）
+    // Check if token is revoked (grace period check)
     const now = Date.now();
-    const graceMs = parseInt(process.env.SOLOFORGE_TOKEN_GRACE_MS || '300000', 10); // 默认 5 分钟
+    const graceMs = parseInt(process.env.SOLOFORGE_TOKEN_GRACE_MS || '300000', 10);
+    const inGrace = !!tokenRecord.revokedAt && now - tokenRecord.revokedAt <= graceMs;
 
-    if (tokenFamily.revokedAt && now - tokenFamily.revokedAt > graceMs) {
+    if (tokenRecord.revokedAt && !inGrace) {
       // grace period 已过 → 真正吊销
       return {
         allow: false,
@@ -240,17 +559,41 @@ export async function evaluateRequestAsync(
       };
     }
 
-    // grace period 内或未吊销 → 放行，但标记 inGrace
+    // Resolve tenant bindings
+    const kid = tokenRecord.kid;
+    const tenantIds = input.tenantBindings?.[kid]; // undefined = wildcard ['*']
+    const requestedTenantId = input.requestedTenantId;
+
+    // Validate tenant access
+    if (requestedTenantId) {
+      const tenantCheck = checkTenantAccess(tenantIds, requestedTenantId);
+      if (!tenantCheck.ok) {
+        const reason = tenantCheck.reason === 'invalid_id' ? 'invalid_tenant_id' : 'cross_tenant_access';
+        return {
+          allow: false,
+          status: 403,
+          corsOrigin: null,
+          reason,
+          crossTenant: true,
+        };
+      }
+    }
+
+    // Determine activeTenantId
+    const activeTenantId = requestedTenantId || pickDefaultTenant(tenantIds, 'operator');
     const origin = typeof headers['origin'] === 'string' ? headers['origin'] : '';
+
     return {
       allow: true,
       status: 200,
       principal: {
-        id: tokenFamily.kid || 'token',
+        id: kid,
         role: 'operator',
         source: 'bearer',
-        tenantIds: tokenFamily.tenantIds,
-        inGrace: !!tokenFamily.revokedAt && now - tokenFamily.revokedAt <= graceMs,
+        kid,
+        tenantIds: tenantIds || ['*'],
+        activeTenantId,
+        inGrace,
       },
       corsOrigin: cfg.allowedOrigins.includes(origin) ? origin : null,
     };
@@ -267,6 +610,8 @@ export async function evaluateRequestAsync(
  *   1. env 变量 SOLOFORGE_API_TOKENS (最快)
  *   2. vault 存储 (keytar / native 模块)
  *   3. 自动生成并写入 vault (首次启动)
+ *
+ * 当 SOLOFORGE_REQUIRE_TOKENS=1 且 env/vault 都为空时, 抛错而非自动生成.
  */
 export async function loadApiTokensAsync(): Promise<string[]> {
   // Level 1: 环境变量（热路径）
@@ -278,14 +623,15 @@ export async function loadApiTokensAsync(): Promise<string[]> {
   try {
     const store = await import('./tokenStore');
     await store.tokenStoreInit();
-    const tokens = await store.listTokens();
-    if (tokens.length > 0) return tokens.map((t: any) => t.token);
-  } catch (e) {
+    const tokens = await store.getActiveTokens();
+    if (tokens.length > 0) return tokens;
+  } catch (_e) {
     // vault 不可用时静默降级
   }
 
   // Level 3: 自动生成（仅开发环境 / 首次启动）
-  if (process.env.NODE_ENV === 'production') {
+  const requireTokens = process.env.SOLOFORGE_REQUIRE_TOKENS === '1' || process.env.NODE_ENV === 'production';
+  if (requireTokens) {
     throw new Error(
       'No API tokens configured. Set SOLOFORGE_API_TOKENS env variable, ' +
       'or run: npm run token:init. ' +
@@ -325,18 +671,10 @@ export function loadApiTokens(): string[] {
   return tokens;
 }
 
-/** Token revocation list, read from env on each call. */
-
 /**
  * 加载已吊销的 token 集合(每次请求都会调用,必须快).
  *
  * 来源:环境变量 `SOLOFORGE_REVOKED_TOKENS`(逗号分隔).
- * 使用时机:在 `handleRequest` 通过身份验证之后,再做一次吊销检查,
- * 防止 token 泄露后,虽然还没从 vault 删除但已经作废的情况.
- *
- * 注意:这层是防御性深度防御,主要的 token 生命周期管理走 vault.
- * env 列表适合紧急吊销:发现 token 泄露时,先加到 env 让请求立即被拒,
- * 然后异步 `npm run token:revoke` 从 vault 物理删除.
  *
  * @returns 字符串集合(便于 O(1) `has()` 查询)
  */
