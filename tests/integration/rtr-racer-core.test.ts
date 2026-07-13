@@ -26,7 +26,11 @@ describe('SoloForge Layer 1 核心决策引擎与内核所有权守卫集成测�
       }
     ];
 
-    const mockWorker = async () => "success";
+    const mockWorker = async (): Promise<{ output: string; durationMs: number; provider: string }> => ({
+      output: "success",
+      durationMs: 10,
+      provider: 'test-mock-provider',
+    });
     const illegalKey = 'court_case_registry_secure_node_001';
 
     await expect(

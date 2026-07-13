@@ -9,6 +9,9 @@ import { MappoHeuristicGovernor } from '../../src/core/governor/mappo-client';
 describe('SoloForge 跨语言 MAPPO 资源控流与时序自愈管道集成验收测试套件', () => {
   const governorClient = new MappoHeuristicGovernor();
 
+  // MARL 服务探测需要 TCP 连接超时,给足时间
+  const TEST_TIMEOUT = 15_000;
+
   afterAll(() => {
     governorClient.safelyTerminateGovernorContext(); // 物理释放，禁止残留孤儿进程
   });
@@ -22,7 +25,7 @@ describe('SoloForge 跨语言 MAPPO 资源控流与时序自愈管道集成验�
     // 断言：必须返回硬熔断动作代码 2
     // Fallback: 客户端内部已有熔断逻辑
     expect(finalAction).toBe(2);
-  });
+  }, TEST_TIMEOUT);
 
   it('验收点 2：[Flaw #5 高并发时序自愈] 并发瞬间砸入多路不同的资源特征向量，系统必须精准分发，绝不能发生数据交叉混淆或串线', async () => {
     const stateNominal = [0.10, 0.2, 0.2]; // Nominal 负载 -> Action 0
@@ -39,5 +42,5 @@ describe('SoloForge 跨语言 MAPPO 资源控流与时序自愈管道集成验�
     // Fallback: 客户端使用本地熔断逻辑
     expect(actionA).toBe(0);
     expect(actionB).toBe(1);
-  });
+  }, TEST_TIMEOUT);
 });
