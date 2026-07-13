@@ -70,9 +70,9 @@ describe('SoloForge Layer 1 核心决策引擎与内核所有权守卫集成测�
     const mockWorkerNode = async (selected: ModelStrategyCandidate) => {
       executionCallTrack.push(selected.modelName);
       if (selected.modelName === 'node-gamma') {
-        return "RESOLVED_REJECT";
+        return { output: "RESOLVED_REJECT", durationMs: 10, provider: 'mock-gamma' };
       }
-      return "RESOLVED_APPROVE";
+      return { output: "RESOLVED_APPROVE", durationMs: 10, provider: 'mock-alpha' };
     };
 
     const legitimateKey = 'core_scheduler_memory';
@@ -89,7 +89,7 @@ describe('SoloForge Layer 1 核心决策引擎与内核所有权守卫集成测�
     expect(executionCallTrack).toContain('node-alpha');
     expect(executionCallTrack).toContain('node-beta');
     expect(executionCallTrack).toContain('node-gamma');
-    expect(finalDecisionOutput).toBe("RESOLVED_APPROVE");
+    expect(finalDecisionOutput.output).toBe("RESOLVED_APPROVE");
 
     // ★ 严格对齐修复：从内核事件总线取出日志，直接使用 DecisionEvent.VOTE_TRIGGERED 进行强类型匹配
     const eventLogs = kernel.getEventBus().getEventLog();

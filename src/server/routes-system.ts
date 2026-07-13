@@ -801,7 +801,7 @@ export async function handleJavaAgentSSE(
 // DuckDB Analytics
 // ============================================================
 
-const ANALYTICS_QUERIES: Record<string, { description: string; sql: string }> = {
+export const ANALYTICS_QUERIES: Record<string, { description: string; sql: string }> = {
   governance_summary: {
     description: 'Governance compliance records aggregated by action_taken',
     sql: `SELECT action_taken, compliant, COUNT(*) AS cnt FROM db.main.governance_record GROUP BY action_taken, compliant ORDER BY cnt DESC LIMIT 20`,
@@ -820,7 +820,7 @@ const ANALYTICS_QUERIES: Record<string, { description: string; sql: string }> = 
   },
 };
 
-const ANALYTICS_SNAPSHOT_TABLES: string[] = [
+export const ANALYTICS_SNAPSHOT_TABLES: string[] = [
   'institution', 'governance', 'reputation', 'culture', 'economy', 'law',
   'law_violation', 'coalition', 'social_memory',
   'credit_transaction', 'economy_record', 'governance_record',

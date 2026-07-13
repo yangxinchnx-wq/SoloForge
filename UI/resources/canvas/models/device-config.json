@@ -152,36 +152,6 @@
       "nativeSize": { "w": 430, "h": 932 },
       "community": "https://sketchfab.com/search?q=iphone+14+pro+max"
     },
-    "m-iphone15promax": {
-      "key": "m-iphone15promax",
-      "label": "iPhone 15 Pro Max",
-      "group": "mobile",
-      "type": "3d",
-      "file": "mobile/iphone_15_pro_max.fbx",
-      "screenUV": {
-        "bl": [0.06, 0.04],
-        "br": [0.94, 0.04],
-        "tr": [0.94, 0.96],
-        "tl": [0.06, 0.96]
-      },
-      "nativeSize": { "w": 430, "h": 932 },
-      "note": "iPhone 15 Pro Max, FBX format (needs GLB conversion for Flutter three_d)"
-    },
-    "m-iphone11promax": {
-      "key": "m-iphone11promax",
-      "label": "iPhone 11 Pro Max",
-      "group": "mobile",
-      "type": "3d",
-      "file": "mobile/iphone_11_pro_max/iphone_11_pro_max.fbx",
-      "screenUV": {
-        "bl": [0.07, 0.05],
-        "br": [0.93, 0.05],
-        "tr": [0.93, 0.95],
-        "tl": [0.07, 0.95]
-      },
-      "nativeSize": { "w": 414, "h": 896 },
-      "note": "iPhone 11 Pro Max, FBX format with textures (needs GLB conversion for Flutter three_d)"
-    },
     "m-iphonese": {
       "key": "m-iphonese",
       "label": "iPhone SE",

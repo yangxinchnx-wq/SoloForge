@@ -110,8 +110,6 @@ const SIZE_PRESETS: {
   { key: 'm-iphone14pro',   group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'iPhone 14 Pro',     w: 393, h: 852 },
   { key: 'm-iphone14',      group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'iPhone 14',         w: 390, h: 844 },
   { key: 'm-iphone14promax',group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'iPhone 14 Pro Max', w: 430, h: 932 },
-  { key: 'm-iphone15promax',group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'iPhone 15 Pro Max', w: 430, h: 932 },
-  { key: 'm-iphone11promax',group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'iPhone 11 Pro Max', w: 414, h: 896 },
   { key: 'm-iphonese',      group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'iPhone SE',         w: 375, h: 667 },
   { key: 'm-galaxys23',     group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'Galaxy S23',        w: 360, h: 780 },
   { key: 'm-pixel7',        group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'Pixel 7',           w: 412, h: 915 },
