@@ -742,7 +742,10 @@ export class SessionStore {
       if (state) {
         // 确保 name 字段存在 (老数据可能缺)
         if (!state.name) state.name = '00';
-        if (state.ownerChatSessionId === undefined) state.ownerChatSessionId = null;
+        // ★ 兼容旧数据: 'legacy' owner → null (无归属)
+        if (state.ownerChatSessionId === undefined || state.ownerChatSessionId === 'legacy') {
+          state.ownerChatSessionId = null;
+        }
         if (!state.visibility) state.visibility = 'public';
         this.states.set(sessionId, state);
         this.dirty.add(sessionId);

@@ -189,8 +189,9 @@ export function repairSessionState(v: unknown): SessionState | null {
   //   - visibility 缺 → 默认 'public' (与新规则一致)
   //   - lastAccessedBy 缺 → 空对象 (没人访问过)
   const legacyName = String(raw.sessionId);  // 兜底字符串, parseCanvasName 返回 -1
-  const ownerFallback = isNonEmptyString(raw.ownerChatSessionId)
-    ? raw.ownerChatSessionId
+  const ownerRaw = raw.ownerChatSessionId;
+  const ownerFallback = isNonEmptyString(ownerRaw) && ownerRaw !== 'legacy'
+    ? ownerRaw
     : null;
 
   return {

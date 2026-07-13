@@ -278,13 +278,15 @@ export default function PreviewPanel({
   }, [renderMode]);
 
   // ★ 打开 Electron 原生弹窗 (避免被 Flutter 窗口遮挡)
-  const openElectronDevicePopup = useCallback(() => {
+  //   接收 modeOverride 参数, 避免闭包陷阱 (setRenderMode 后 state 未更新)
+  const openElectronDevicePopup = useCallback((modeOverride?: '2D' | '3D') => {
     if (!isElectron()) return;
-    // 计算按钮在屏幕上的位置
     const btn = document.querySelector('[data-device-btn]');
     if (!btn) return;
     const rect = btn.getBoundingClientRect();
-    const items = activeDeviceList.map(d => ({
+    // ★ 使用 override 值, 避免闭包捕获旧的 renderMode
+    const list = modeOverride === '3D' ? DEVICES_3D : DEVICES_2D;
+    const items = list.map(d => ({
       key: d.key,
       label: d.label,
       w: d.w,
@@ -298,7 +300,7 @@ export default function PreviewPanel({
       items,
       activeSizeKey,
     );
-  }, [activeDeviceList, activeSizeKey]);
+  }, [activeSizeKey]);
 
   // ★ 同步设备尺寸 + 渲染模式到 canvasDeviceStore (供 useChatStore/aiBackend 读取)
   const setDevice = useCanvasDeviceStore(s => s.setDevice);
@@ -317,6 +319,8 @@ export default function PreviewPanel({
   }, [renderMode, setDeviceRenderMode]);
   const [showElectronHint, setShowElectronHint] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  // ★ canvas 区域专用 ref — reportBounds 只上报此区域, 避免Flutter窗口覆盖工具栏
+  const canvasAreaRef = useRef<HTMLDivElement | null>(null);
 
   // 画布跟随应用默认启用 — Electron 环境下自动启动
   // 防重入: autoStartRef 防止同一生命周期内重复触发
@@ -490,11 +494,12 @@ export default function PreviewPanel({
     setNotifQueue((prev) => prev.filter((n) => n.id !== id));
   }, []);
 
-  // 上报 PreviewPanel 区域的位置和尺寸给主进程
+  // ★ 上报 canvas 区域 (不含工具栏) 的位置和尺寸给主进程
+  //   Flutter 原生窗口只覆盖此区域, 不遮挡工具栏按钮
   useEffect(() => {
-    if (!isElectron() || !containerRef.current) return;
+    if (!isElectron()) return;
     const report = () => {
-      const el = containerRef.current;
+      const el = canvasAreaRef.current;
       if (!el) return;
       const r = el.getBoundingClientRect();
       window.soloforge!.canvas.reportBounds({
@@ -502,13 +507,19 @@ export default function PreviewPanel({
         width: Math.round(r.width), height: Math.round(r.height),
       }).catch(() => {});
     };
-    report();
+    // 延迟一帧确保 layout 完成
+    const timer = setTimeout(report, 50);
     const ro = new ResizeObserver(report);
-    ro.observe(containerRef.current);
+    if (canvasAreaRef.current) ro.observe(canvasAreaRef.current);
     window.addEventListener('resize', report);
     window.addEventListener('scroll', report);
-    return () => { ro.disconnect(); window.removeEventListener('resize', report); window.removeEventListener('scroll', report); };
-  }, [width]);
+    return () => {
+      clearTimeout(timer);
+      ro.disconnect();
+      window.removeEventListener('resize', report);
+      window.removeEventListener('scroll', report);
+    };
+  }, [width, canvasId, canvasReady]);
 
   // 卸载时自动停掉画布
   useEffect(() => {
@@ -912,7 +923,7 @@ export default function PreviewPanel({
               onClick={() => {
                 setRenderMode('2D');
                 if (isElectron()) {
-                  openElectronDevicePopup();
+                  openElectronDevicePopup('2D');
                 } else {
                   setShowDeviceDropdown(s => !s);
                 }
@@ -931,7 +942,7 @@ export default function PreviewPanel({
               onClick={() => {
                 setRenderMode('3D');
                 if (isElectron()) {
-                  openElectronDevicePopup();
+                  openElectronDevicePopup('3D');
                 } else {
                   setShowDeviceDropdown(s => !s);
                 }
@@ -949,7 +960,7 @@ export default function PreviewPanel({
             <button
               onClick={() => {
                 if (isElectron()) {
-                  openElectronDevicePopup();
+                  openElectronDevicePopup(renderMode);
                 } else {
                   setShowDeviceDropdown(s => !s);
                 }
@@ -1028,7 +1039,7 @@ export default function PreviewPanel({
         )}
 
         {/* CANVAS AREA — 整个剩余空间都是画布区 */}
-        <div className="flex-1 relative overflow-hidden flex items-center justify-center">
+        <div ref={canvasAreaRef} className="flex-1 relative overflow-hidden flex items-center justify-center">
           {noCanvas ? renderStandby() : (
             <div
               className="relative flex items-center justify-center"
