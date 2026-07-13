@@ -109,6 +109,46 @@ export function setStoredToken(token: string | null): void {
   writeToken(token);
 }
 
+// ─── 启动时预获取 token (避免首次 401 刷屏) ──────────────────────────
+// ensureToken() 在 patchedFetch 中被 await, 确保所有业务请求在 token 就绪后才发出。
+// 内部用单飞: N 个并发请求只触发 1 次 fetch /api/auth/startup-token。
+let tokenReadyPromise: Promise<void> | null = null;
+
+async function doFetchStartupToken(): Promise<void> {
+  const fetchFn = getGlobalFetch();
+  if (!fetchFn) return;
+  try {
+    const res = await fetchFn(STARTUP_TOKEN_PATH, {
+      method: 'GET',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    });
+    if (res.ok) {
+      const data = await res.json().catch(() => null);
+      const token = data?.token;
+      if (typeof token === 'string' && token.length > 0) {
+        writeToken(token);
+        return;
+      }
+    }
+  } catch {
+    // startup-token 不可用, 不在此处回退 bootstrap —
+    // 留给 per-request 401 拦截器处理
+  }
+}
+
+export function ensureToken(): Promise<void> {
+  if (readToken()) return Promise.resolve();
+  if (!tokenReadyPromise) {
+    tokenReadyPromise = doFetchStartupToken().finally(() => {
+      // 保留 resolved 状态, 后续调用直接返回;
+      // 如果 token 仍为空 (fetch 失败), per-request 拦截器会兜底 401 refresh
+    });
+  }
+  return tokenReadyPromise;
+}
+
 export function onAuthFailed(cb: (reason: string) => void): () => void {
   authFailedListeners.push(cb);
   return () => {
@@ -256,6 +296,11 @@ export function installAuthRefreshInterceptor(): () => void {
     if (!/^https?:/i.test(url) && !url.startsWith('/') && !url.startsWith(href)) {
       return originalFetch.call(target, input as any, init);
     }
+
+    // 2.5) 确保 token 已就绪 — 所有业务请求在此等待, 避免首次 401 刷屏。
+    //   ensureToken() 内部单飞: N 个并发请求只触发 1 次 /api/auth/startup-token。
+    //   protected 路径 (startup-token/bootstrap) 在步骤 1 已直传, 不会死锁。
+    await ensureToken();
 
     // 3) 首次发送: 注入当前 token
     const firstInit = withAuthHeader(init, readToken());

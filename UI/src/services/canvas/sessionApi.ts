@@ -47,11 +47,21 @@ export async function fetchSession(sessionId: string): Promise<SessionState | nu
 
 /**
  * 选中设备模型(切换画布模式)
+ *
+ * @param requesterChatSessionId  调用方 chat session id (ACL 写入鉴权必需)
  */
-export async function selectModel(sessionId: string, modelKey: string): Promise<boolean> {
+export async function selectModel(
+  sessionId: string,
+  modelKey: string,
+  requesterChatSessionId: string,
+): Promise<boolean> {
   const r = await jsonRequest<{ ok: true }>(
     `${API_BASE}/${encodeURIComponent(sessionId)}/select-model`,
-    { method: 'PUT', body: JSON.stringify({ modelKey }) }
+    {
+      method: 'PUT',
+      headers: { 'X-Requester-Chat-Session-Id': requesterChatSessionId },
+      body: JSON.stringify({ modelKey }),
+    }
   );
   return r !== null;
 }
