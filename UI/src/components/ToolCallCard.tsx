@@ -210,7 +210,7 @@ function ReadDetail({ call }: { call: HashlineReadCall }): React.ReactElement {
   );
 }
 
-export function ToolCallCard({ call }: Props): React.ReactElement {
+export const ToolCallCard = React.memo(function ToolCallCard({ call }: Props): React.ReactElement {
   const [open, setOpen] = useState(true);
   const dot = statusDot(call.status);
 
@@ -243,7 +243,7 @@ export function ToolCallCard({ call }: Props): React.ReactElement {
       )}
     </div>
   );
-}
+});
 
 function BatchDetail({ call }: { call: HashlineBatchCall }): React.ReactElement {
   const results = call.results ?? [];

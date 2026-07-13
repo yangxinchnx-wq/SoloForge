@@ -14,7 +14,7 @@ export interface CollapsibleCodeBlockProps {
   text: string;
 }
 
-export function CollapsibleCodeBlock({ fileName, text }: CollapsibleCodeBlockProps) {
+export const CollapsibleCodeBlock = React.memo(function CollapsibleCodeBlock({ fileName, text }: CollapsibleCodeBlockProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const lineCount = text.split('\n').length;
 
@@ -60,4 +60,4 @@ export function CollapsibleCodeBlock({ fileName, text }: CollapsibleCodeBlockPro
       </MountTransition>
     </div>
   );
-}
+});

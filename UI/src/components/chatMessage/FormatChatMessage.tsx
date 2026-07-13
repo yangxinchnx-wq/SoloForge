@@ -15,7 +15,7 @@ export interface FormatChatMessageProps {
   content: string;
 }
 
-export function FormatChatMessage({ content }: FormatChatMessageProps) {
+export const FormatChatMessage = React.memo(function FormatChatMessage({ content }: FormatChatMessageProps) {
   if (!content) return null;
 
   // Split by ``` to extract code blocks
@@ -118,4 +118,4 @@ export function FormatChatMessage({ content }: FormatChatMessageProps) {
       })}
     </div>
   );
-}
+});
