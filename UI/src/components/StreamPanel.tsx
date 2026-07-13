@@ -24,7 +24,7 @@ import { promptCardPool } from '../services/promptCardPool';
 import { usePromptCards } from '../hooks/usePromptCards';
 import { TaskTree } from './TaskTree';
 import { PromptCard } from './PromptCard';
-import { ModelIcon } from './ModelIcon';
+// ModelIcon import removed — header avatar is rendered by ChatPanel, not StreamPanel
 // P3 集成: 自动持久化 + clearChatAll (同时清理 Actor + uiMessageStore + persistence)
 import { useAutoPersist, clearChatAll } from '../services/actorIntegration';
 // ★ 2026-07-13: UIMessagePartsRenderer 已移至 ChatPanel map 内, 每轮独立渲染
@@ -154,15 +154,8 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
 
   return (
     <>
-      <div className="flex gap-3.5 items-center mb-1">
-        <div className="w-11 h-11 rounded-full bg-on-surface/5 border border-on-surface/10 flex items-center justify-center shrink-0">
-          <ModelIcon modelName={mainModel} size={32} className="shrink-0" />
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] font-bold text-primary">{mainModel}</span>
-          <span className="text-[9px] text-on-surface/30 font-mono">{new Date().toLocaleTimeString('zh-CN', { hour12: false })}</span>
-        </div>
-      </div>
+      {/* ★ FIX 2026-07-14: 移除重复的头像+模型名头部 — ChatPanel 已为每条消息渲染头像,
+          TaskExecutionCard 只渲染过程块+总结块, 避免出现两个重复的模型头像 */}
 
       <div className="w-full pl-[58px] pr-3 space-y-3">
         {/* ★ 2026-07-13: 流送区只显示两个块 — 过程 + 总结, 等宽自适应, 同样式 */}
