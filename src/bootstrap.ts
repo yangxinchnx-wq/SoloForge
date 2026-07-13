@@ -217,6 +217,7 @@ async function initSocietyEngines(kernel: RuntimeKernel): Promise<void> {
   try {
     const lawEngine = new LawEngine(kernel);
     await lawEngine.boot();
+    kernel.lawEngineProxy = lawEngine;
     logger.info('Bootstrap', '🧱 [Phase 3 Law Layer Mounted] Constitutional Law Engine frozen into release track safely.');
   } catch (e) {
     logger.warn('Bootstrap', '⚠️ Law Engine 暂未就位');
@@ -234,6 +235,7 @@ async function initSocietyEngines(kernel: RuntimeKernel): Promise<void> {
   try {
     const socialReputationEngine = new SocialReputationEngine(kernel);
     await socialReputationEngine.boot();
+    kernel.reputationEngineProxy = socialReputationEngine;
     logger.info('Bootstrap', '🧱 [Phase 3 Trust Base Mounted] Constitutional Social Reputation Engine frozen successfully.');
   } catch (e) {
     logger.warn('Bootstrap', '⚠️ Social Reputation Engine 暂未就位');

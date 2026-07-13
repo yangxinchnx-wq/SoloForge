@@ -173,6 +173,9 @@ export class RuntimeKernel {
   public globalTelemetryExporterProxy: any = null;
   public raftConsensusEngineProxy: any = null;
   public schedulerClient: any = null;
+  // 领域引擎引用（由 bootstrap initSocietyEngines 挂载，供 index.ts 的 ClusterRuntimeOrchestrator 使用）
+  public lawEngineProxy: any = null;
+  public reputationEngineProxy: any = null;
 
   // 🔥 热数据层：Garnet 热缓存客户端（运行态，无持久化，进程结束即销毁）
   private _garnetClient: Redis | null = null;
