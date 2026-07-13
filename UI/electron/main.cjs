@@ -1105,6 +1105,22 @@ async function setCanvasBackground(sessionId, color) {
   return { ok: false, error: r.error || `http ${r.status}` };
 }
 
+// ★ 用 ShowWindow 直接隐藏/显示 Flutter 子窗口 (SW_HIDE=0, SW_SHOW=5)
+async function setFlutterWindowsVisible(visible) {
+  const hwnds = [];
+  for (const [, s] of canvasSessions) {
+    if (s.hwnd && s.process && !s.process.killed) {
+      hwnds.push(s.hwnd);
+    }
+  }
+  if (hwnds.length === 0) return;
+  const cmd = visible ? 5 : 0; // SW_SHOW=5, SW_HIDE=0
+  const script = `${PS_WIN32}
+${hwnds.map(h => `[W32]::ShowWindow([IntPtr]::new(${h}), ${cmd}) | Out-Null`).join('\n')}
+Write-Output "OK"`;
+  try { await execPs(script); } catch {}
+}
+
 async function screenshotCanvas(sessionId) {
   const s = canvasSessions.get(sessionId);
   if (!s) return { ok: false, error: 'session not found' };
@@ -1194,21 +1210,24 @@ function registerIpc() {
     return selectDeviceToCanvas(sessionId, modelKey, file, nativeSize);
   });
 
-  // ★ 新增: set-host-visible — 显示/隐藏画布宿主窗口 (下拉框打开时隐藏, 避免拦截点击)
-  ipcMain.handle('canvas:set-host-visible', async (_e, { visible }) => {
-    try {
-      if (canvasHostWindow && !canvasHostWindow.isDestroyed()) {
-        if (visible) {
-          canvasHostWindow.show();
-        } else {
-          canvasHostWindow.hide();
-        }
-      }
-      return { ok: true };
-    } catch (e) {
-      return { ok: false, error: e?.message || String(e) };
-    }
-  });
+// ★ 新增: set-host-visible — 显示/隐藏画布宿主窗口 + Flutter 子窗口 (下拉框打开时隐藏, 避免拦截点击)
+ipcMain.handle('canvas:set-host-visible', async (_e, { visible }) => {
+try {
+// 先隐藏/显示 Flutter 子窗口 (原生 HWND, 真正拦截点击的)
+await setFlutterWindowsVisible(visible);
+// 再隐藏/显示 Electron 宿主窗口
+if (canvasHostWindow && !canvasHostWindow.isDestroyed()) {
+if (visible) {
+canvasHostWindow.show();
+} else {
+canvasHostWindow.hide();
+}
+}
+return { ok: true };
+} catch (e) {
+return { ok: false, error: e?.message || String(e) };
+}
+});
 
   // ★ 新增: transformDevice — 拖拽/旋转/缩放 3D 设备
   ipcMain.handle('canvas:transform-device', async (_e, { sessionId, deviceId, transform }) => {

@@ -252,29 +252,11 @@ export default function PreviewPanel({
   const activePreset = findDevicePreset(activeSizeKey);
   const activeDeviceList = renderMode === '2D' ? DEVICES_2D : DEVICES_3D;
 
-  // ★ 下拉框/颜色选择器打开时移走 Flutter 宿主窗口, 避免原生窗口拦截点击
-  //   使用 reportBounds (旧 preload 已有) 把窗口移到屏幕外, 关闭后恢复
+  // ★ 下拉框/颜色选择器打开时隐藏 Flutter 原生窗口, 避免拦截点击
   useEffect(() => {
-    if (!isElectron() || !containerRef.current) return;
+    if (!isElectron()) return;
     const anyDropdownOpen = showDeviceDropdown || showColorPicker;
-    const el = containerRef.current;
-    if (!el) return;
-    if (anyDropdownOpen) {
-      // 移到屏幕外 + 尺寸归零, 让下拉框可以接收点击
-      window.soloforge?.canvas.reportBounds({
-        x: -9999, y: -9999, width: 0, height: 0,
-      }).catch(() => {});
-      // 同时尝试 setHostVisible (新 preload, 如果可用)
-      window.soloforge?.canvas.setHostVisible?.(false).catch(() => {});
-    } else {
-      // 恢复到真实位置
-      const r = el.getBoundingClientRect();
-      window.soloforge?.canvas.reportBounds({
-        x: Math.round(r.left), y: Math.round(r.top),
-        width: Math.round(r.width), height: Math.round(r.height),
-      }).catch(() => {});
-      window.soloforge?.canvas.setHostVisible?.(true).catch(() => {});
-    }
+    window.soloforge?.canvas.setHostVisible?.(!anyDropdownOpen).catch(() => {});
   }, [showDeviceDropdown, showColorPicker]);
 
   // ★ 同步设备尺寸 + 渲染模式到 canvasDeviceStore (供 useChatStore/aiBackend 读取)

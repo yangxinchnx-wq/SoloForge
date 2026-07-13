@@ -120,22 +120,19 @@ export function useChatClickCanvasBridge(
     const list = await resp;
     if (!aliveRef.current) return null;
     if (list) {
-      // ★ 只显示当前 chat owner 的画布 (不显示其他 chat 的共享画布)
-      setCanvases((list.canvases || []).filter(c => c.isOwner));
+      setCanvases(list.canvases || []);
       setMaxCanvases(list.maxCanvases || 10);
     }
 
     let targetId = list?.lastAccessedCanvasId ?? null;
     // 若没访问过任何画布:
-    //   1. 先找自己 owner 的画布, 有就用
-    //   2. 没有 owner 画布, 且 allowCreate=true → 新建一个
-    //   ★ 不再复用其他 chat 的画布 (避免出现非 owner 的“默认画布”)
+    //   1. 先看全局有没有可用画布, 有就复用第一个 (不新建)
+    //   2. 全局一个画布都没有, 才自动创建 (allowCreate=true 时)
     if (!targetId) {
       const allCanvases = list?.canvases || [];
-      const ownedCanvases = allCanvases.filter(c => c.isOwner);
-      if (ownedCanvases.length > 0) {
-        // 用自己 owner 的画布
-        targetId = ownedCanvases[0].sessionId;
+      if (allCanvases.length > 0) {
+        // 复用序号最小的画布
+        targetId = allCanvases[0].sessionId;
       } else if (allowCreate) {
         const created = await createCanvas(id, defaultDescription);
         if (!aliveRef.current) return null;
@@ -149,7 +146,7 @@ export function useChatClickCanvasBridge(
         // 重新拉一次列表拿到全量
         const fresh = await listCanvasResources(id);
         if (aliveRef.current && fresh) {
-          setCanvases((fresh.canvases || []).filter(c => c.isOwner));
+          setCanvases(fresh.canvases || []);
         }
       }
     }

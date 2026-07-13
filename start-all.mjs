@@ -7,7 +7,13 @@ const dir = process.env.SOLOFORGE_AGENT_DIR || (() => {
   return path.resolve(_dirname, 'solo-forge-agent');
 })();
 
-const javaHome = process.env.JAVA_HOME || 'java';
+// 优先使用内嵌 mini JDK，不需要用户安装 Java
+const __dirname_root = path.dirname(new URL(import.meta.url).pathname);
+const isWin = process.platform === 'win32';
+const miniJdk = path.join(__dirname_root, 'bin', 'jdk-23-mini');
+const javaHome = fs.existsSync(path.join(miniJdk, 'bin', isWin ? 'java.exe' : 'java'))
+  ? miniJdk
+  : (process.env.JAVA_HOME || 'java');
 const javaBin = javaHome === 'java' ? '' : path.join(javaHome, 'bin');
 const wrapperJar = path.join(dir, '.mvn', 'wrapper', 'maven-wrapper.jar');
 const uiDir = process.env.SOLOFORGE_UI_DIR || (() => {
@@ -28,10 +34,13 @@ function prereqCheck() {
   }
   if (javaHome === 'java') {
     console.warn('⚠️  JAVA_HOME 未设置，将使用系统 PATH 中的 java');
-  } else if (!fs.existsSync(path.join(javaBin, 'java'))) {
-    console.error(`❌ Java 可执行文件不存在: ${path.join(javaBin, 'java')}`);
-    console.error(`   请检查 JAVA_HOME 环境变量: ${javaHome}`);
-    process.exit(1);
+  } else {
+    const javaExeName = isWin ? 'java.exe' : 'java';
+    if (!fs.existsSync(path.join(javaBin, javaExeName))) {
+      console.error(`❌ Java 可执行文件不存在: ${path.join(javaBin, javaExeName)}`);
+      console.error(`   请检查 JAVA_HOME 环境变量: ${javaHome}`);
+      process.exit(1);
+    }
   }
   if (!fs.existsSync(uiDir)) {
     console.error(`❌ UI 目录不存在: ${uiDir}`);
