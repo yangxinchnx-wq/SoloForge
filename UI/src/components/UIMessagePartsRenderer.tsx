@@ -85,16 +85,13 @@ export const UIMessagePartsRenderer = memo(function UIMessagePartsRenderer({
   const deferredParts = useDeferredValue(message?.parts ?? EMPTY_PARTS);
   const isStreaming = message?.status === 'streaming';
 
-  // ★ FIX 2026-07-14: 过滤掉 text / delivery / subtask-step / model-action / model-delegation
+  // ★ FIX 2026-07-14: 过滤掉 text / delivery / subtask-step
   //   text: LLM 文本已在主对话气泡显示
   //   delivery: 累积文本重复
   //   subtask-step: "EXECUTE" 与 phase-change 重复
-  //   model-action: 底层思考动作 ([动作] xxx), 用户不需要
-  //   model-delegation: 模型委派日志, 过于底层
-  //   usage: token 统计, 非过程信息
+  //   保留 model-action / model-delegation / usage (用户要求可见)
   const processParts = deferredParts.filter(
     p => p.type !== 'text' && p.type !== 'delivery' && p.type !== 'subtask-step'
-      && p.type !== 'model-action' && p.type !== 'model-delegation' && p.type !== 'usage'
   );
 
   if (!message) return null;
