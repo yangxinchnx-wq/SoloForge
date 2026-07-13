@@ -91,47 +91,77 @@ const BG_PRESETS: { name: string; value: string; fg: string }[] = [
   { name: '暖灰', value: '#F4ECE0', fg: '#3a2e1f' },
 ];
 
-// ── 画布尺寸预设（平铺，不分组） ──
+// ── 设备分组类型 ──
 type SizeGroup = 'desktop' | 'mobile' | 'tablet' | 'watch';
 
-const SIZE_PRESETS: {
+interface DevicePreset {
   key: string; group: SizeGroup; groupLabel: string; icon: React.ComponentType<any>;
   label: string; w: number; h: number;
-}[] = [
-  // 桌面
-  { key: 'fill',     group: 'desktop', groupLabel: '桌面', icon: Maximize2, label: '填满当前宽度', w: 0, h: 0 },
-  { key: '1920x1080', group: 'desktop', groupLabel: '桌面', icon: Monitor,   label: 'Full HD',      w: 1920, h: 1080 },
-  { key: '1440x900',  group: 'desktop', groupLabel: '桌面', icon: Monitor,   label: 'MacBook',      w: 1440, h: 900 },
-  { key: '1366x768',  group: 'desktop', groupLabel: '桌面', icon: Monitor,   label: '标准笔记本',   w: 1366, h: 768 },
-  { key: '1280x720',  group: 'desktop', groupLabel: '桌面', icon: Monitor,   label: 'HD',           w: 1280, h: 720 },
-  { key: '1024x768',  group: 'desktop', groupLabel: '桌面', icon: Monitor,   label: 'XGA',          w: 1024, h: 768 },
-  { key: '2560x1440', group: 'desktop', groupLabel: '桌面', icon: Monitor,   label: '2K',           w: 2560, h: 1440 },
+}
+
+// ── 2D 设备列表 (有 PNG 边框的设备) ──
+const DEVICES_2D: DevicePreset[] = [
   // 手机
-  { key: 'm-iphone14pro',   group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'iPhone 14 Pro',     w: 393, h: 852 },
-  { key: 'm-iphone14',      group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'iPhone 14',         w: 390, h: 844 },
-  { key: 'm-iphone14promax',group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'iPhone 14 Pro Max', w: 430, h: 932 },
-  { key: 'm-iphone15promax',group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'iPhone 15 Pro Max', w: 430, h: 932 },
-  { key: 'm-iphone11promax',group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'iPhone 11 Pro Max', w: 414, h: 896 },
-  { key: 'm-iphonese',      group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'iPhone SE',         w: 375, h: 667 },
-  { key: 'm-galaxys23',     group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'Galaxy S23',        w: 360, h: 780 },
-  { key: 'm-pixel7',        group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'Pixel 7',           w: 412, h: 915 },
-  { key: 'm-xiaomi13',      group: 'mobile', groupLabel: '手机', icon: Smartphone, label: 'Xiaomi 13',         w: 393, h: 873 },
+  { key: 'd2-iphone16',        group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 16',          w: 393, h: 852 },
+  { key: 'd2-iphone16plus',    group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 16 Plus',      w: 430, h: 932 },
+  { key: 'd2-iphone16pro',     group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 16 Pro',       w: 402, h: 869 },
+  { key: 'd2-iphone16promax',  group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 16 Pro Max',   w: 440, h: 956 },
   // 平板
-  { key: 't-ipadpro129', group: 'tablet', groupLabel: '平板', icon: Tablet, label: 'iPad Pro 12.9"',  w: 1024, h: 1366 },
-  { key: 't-ipadair',    group: 'tablet', groupLabel: '平板', icon: Tablet, label: 'iPad Air',       w: 820,  h: 1180 },
-  { key: 't-ipadmini',   group: 'tablet', groupLabel: '平板', icon: Tablet, label: 'iPad Mini',      w: 768,  h: 1024 },
-  { key: 't-surfacepro', group: 'tablet', groupLabel: '平板', icon: Tablet, label: 'Surface Pro',    w: 912,  h: 1368 },
-  { key: 't-galaxytabs8',group: 'tablet', groupLabel: '平板', icon: Tablet, label: 'Galaxy Tab S8',  w: 800,  h: 1280 },
+  { key: 'd2-ipada16',         group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'iPad A16 (竖屏)',     w: 820, h: 1180 },
+  { key: 'd2-ipada16ls',       group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'iPad A16 (横屏)',     w: 1180, h: 820 },
+  // 桌面
+  { key: 'd2-imac',            group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'iMac M4 24"',         w: 2560, h: 1440 },
+  { key: 'd2-macbookneo',      group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'MacBook Neo',         w: 1512, h: 982 },
+  { key: 'd2-macbookpro14',    group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'MacBook Pro M5 14"',  w: 1512, h: 982 },
+  { key: 'd2-macbookpro16',    group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'MacBook Pro M5 16"',  w: 1728, h: 1117 },
+  { key: 'd2-studiodisplay',   group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'Studio Display',      w: 2560, h: 1440 },
+  { key: 'd2-appletv',         group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'Apple TV 4K',         w: 1920, h: 1080 },
   // 手表
-  { key: 'w-apple41',  group: 'watch', groupLabel: '手表', icon: Watch, label: 'Apple Watch 41mm',        w: 176, h: 176 },
-  { key: 'w-apple45',  group: 'watch', groupLabel: '手表', icon: Watch, label: 'Apple Watch 45mm',        w: 198, h: 198 },
-  { key: 'w-apple49',  group: 'watch', groupLabel: '手表', icon: Watch, label: 'Apple Watch Ultra 49mm',  w: 205, h: 251 },
-  { key: 'w-galaxy6',  group: 'watch', groupLabel: '手表', icon: Watch, label: 'Galaxy Watch 6',          w: 240, h: 240 },
+  { key: 'd2-watchs11_42',     group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch S11 42mm', w: 352, h: 352 },
+  { key: 'd2-watchs11_46',     group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch S11 46mm', w: 396, h: 396 },
+  { key: 'd2-watchultra2',     group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch Ultra 2',  w: 502, h: 410 },
+  { key: 'd2-watchultra3',     group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch Ultra 3',  w: 502, h: 410 },
 ];
 
-const DEFAULT_SIZE_KEY = 'fill';
-function getSizePreset(key: string) {
-  return SIZE_PRESETS.find(p => p.key === key);
+// ── 3D 设备列表 (有 GLB 模型的设备) ──
+const DEVICES_3D: DevicePreset[] = [
+  // 手机
+  { key: 'm-iphone14pro',    group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 14 Pro',      w: 393, h: 852 },
+  { key: 'm-iphone14',       group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 14',          w: 390, h: 844 },
+  { key: 'm-iphone14promax', group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 14 Pro Max',  w: 430, h: 932 },
+  { key: 'm-iphone15promax', group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 15 Pro Max',  w: 430, h: 932 },
+  { key: 'm-iphone11promax', group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 11 Pro Max',  w: 414, h: 896 },
+  { key: 'm-iphonese',       group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone SE',          w: 375, h: 667 },
+  { key: 'm-galaxys23',      group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'Galaxy S23',         w: 360, h: 780 },
+  { key: 'm-pixel7',         group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'Pixel 7',            w: 412, h: 915 },
+  { key: 'm-xiaomi13',       group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'Xiaomi 13',          w: 393, h: 873 },
+  // 平板
+  { key: 't-ipadpro129',     group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'iPad Pro 12.9"',    w: 1024, h: 1366 },
+  { key: 't-ipadair',        group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'iPad Air',           w: 820,  h: 1180 },
+  { key: 't-ipadmini',       group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'iPad Mini',          w: 768,  h: 1024 },
+  { key: 't-surfacepro',     group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'Surface Pro',        w: 912,  h: 1368 },
+  { key: 't-galaxytabs8',    group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'Galaxy Tab S8',      w: 800,  h: 1280 },
+  // 桌面
+  { key: '1920x1080',        group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'Full HD',            w: 1920, h: 1080 },
+  { key: '1440x900',         group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'MacBook',            w: 1440, h: 900 },
+  { key: '1366x768',         group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: '标准笔记本',          w: 1366, h: 768 },
+  { key: '1280x720',         group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'HD',                 w: 1280, h: 720 },
+  { key: '1024x768',         group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'XGA',                w: 1024, h: 768 },
+  { key: '2560x1440',        group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: '2K',                 w: 2560, h: 1440 },
+  // 手表
+  { key: 'w-apple41',        group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch 41mm',        w: 176, h: 176 },
+  { key: 'w-apple45',        group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch 45mm',        w: 198, h: 198 },
+  { key: 'w-apple49',        group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch Ultra 49mm',  w: 205, h: 251 },
+  { key: 'w-galaxy6',        group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Galaxy Watch 6',          w: 240, h: 240 },
+];
+
+const FILL_PRESET: DevicePreset = {
+  key: 'fill', group: 'desktop', groupLabel: '', icon: Maximize2, label: '填满当前宽度', w: 0, h: 0,
+};
+
+function findDevicePreset(key: string): DevicePreset {
+  if (key === 'fill') return FILL_PRESET;
+  return [...DEVICES_2D, ...DEVICES_3D].find(p => p.key === key) || FILL_PRESET;
 }
 
 export default function PreviewPanel({
@@ -228,10 +258,13 @@ export default function PreviewPanel({
   const [canvasInfo, setCanvasInfo] = useState<{ port: number; pid: number } | null>(null);
   const [bgColor, setBgColor] = useState<string>(BG_PRESETS[0].value);
   const [customColor, setCustomColor] = useState<string>('#FFFFFF');
-  const [activeSizeKey, setActiveSizeKey] = useState<string>(DEFAULT_SIZE_KEY);
+  const [activeSizeKey, setActiveSizeKey] = useState<string>('fill');
   const [showColorPicker, setShowColorPicker] = useState(false);
-  const [showSizeDropdown, setShowSizeDropdown] = useState(false);
+  const [showDeviceDropdown, setShowDeviceDropdown] = useState(false);
   const [renderMode, setRenderMode] = useState<'2D' | '3D'>('2D');
+
+  const activePreset = findDevicePreset(activeSizeKey);
+  const activeDeviceList = renderMode === '2D' ? DEVICES_2D : DEVICES_3D;
 
   // ★ 同步设备尺寸 + 渲染模式到 canvasDeviceStore (供 useChatStore/aiBackend 读取)
   const setDevice = useCanvasDeviceStore(s => s.setDevice);
@@ -250,8 +283,6 @@ export default function PreviewPanel({
   }, [renderMode, setDeviceRenderMode]);
   const [showElectronHint, setShowElectronHint] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
-
-  const activePreset = getSizePreset(activeSizeKey) || SIZE_PRESETS[0];
 
   // 画布跟随应用默认启用 — Electron 环境下自动启动
   // 防重入: autoStartRef 防止同一生命周期内重复触发
@@ -808,27 +839,61 @@ export default function PreviewPanel({
             </MountTransition>
           </div>
 
-          {/* 设备尺寸选择器 */}
+          {/* 2D / 3D 渲染模式 + 设备选择 — 合并为一个下拉 */}
           <div className="relative">
-            <button
-              onClick={() => setShowSizeDropdown(s => !s)}
-              className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-surface-bright/60 hover:bg-surface-bright text-on-surface text-[10px] font-mono transition-colors"
-              title="设备尺寸"
-            >
-              {(() => {
-                const Icon = activePreset.icon;
-                return <Icon className="w-3 h-3" />;
-              })()}
-              <span>{activePreset.label}</span>
-              {activePreset.w > 0 && (
-                <span className="text-on-surface/50">{activePreset.w}×{activePreset.h}</span>
-              )}
-              <ChevronDown className="w-2.5 h-2.5" />
-            </button>
-            <MountTransition show={showSizeDropdown} variant="fade" duration={140}>
-              <div className="absolute top-full right-0 mt-1 z-50 bg-surface border border-outline rounded-lg shadow-2xl p-1.5 min-w-[220px] max-h-[320px] overflow-y-auto">
-                {(['desktop', 'mobile', 'tablet', 'watch'] as SizeGroup[]).map(group => {
-                  const presets = SIZE_PRESETS.filter(p => p.group === group);
+            <div className="flex items-center rounded-md overflow-hidden border border-outline/30">
+              <button
+                onClick={() => { setRenderMode('2D'); setShowDeviceDropdown(s => !s); }}
+                className={`flex items-center gap-1 px-2 py-1 text-[10px] font-mono font-semibold transition-colors ${
+                  renderMode === '2D'
+                    ? 'bg-primary/15 text-primary'
+                    : 'bg-surface-bright/60 text-on-surface/50 hover:text-on-surface'
+                }`}
+                title="2D 模式 — 点击选择设备"
+              >
+                <SquareIcon className="w-3 h-3" />
+                <span>2D</span>
+              </button>
+              <button
+                onClick={() => { setRenderMode('3D'); setShowDeviceDropdown(s => !s); }}
+                className={`flex items-center gap-1 px-2 py-1 text-[10px] font-mono font-semibold transition-colors border-l border-outline/30 ${
+                  renderMode === '3D'
+                    ? 'bg-primary/15 text-primary'
+                    : 'bg-surface-bright/60 text-on-surface/50 hover:text-on-surface'
+                }`}
+                title="3D 模式 — 点击选择设备"
+              >
+                <Box className="w-3 h-3" />
+                <span>3D</span>
+              </button>
+              <button
+                onClick={() => setShowDeviceDropdown(s => !s)}
+                className="flex items-center px-1.5 py-1 text-[10px] font-mono transition-colors border-l border-outline/30 bg-surface-bright/60 text-on-surface/70 hover:text-on-surface"
+                title="选择设备"
+              >
+                <ChevronDown className={`w-2.5 h-2.5 transition-transform ${showDeviceDropdown ? 'rotate-180' : ''}`} />
+              </button>
+            </div>
+            <MountTransition show={showDeviceDropdown} variant="fade" duration={140}>
+              <div className="absolute top-full right-0 mt-1 z-50 bg-surface border border-outline rounded-lg shadow-2xl p-1.5 min-w-[240px] max-h-[360px] overflow-y-auto">
+                {/* 填满宽度选项 */}
+                <button
+                  onClick={() => { setActiveSizeKey('fill'); setShowDeviceDropdown(false); }}
+                  className={`flex items-center gap-2 w-full px-1.5 py-1 rounded text-[10px] font-mono transition-colors mb-1 ${
+                    activeSizeKey === 'fill'
+                      ? 'bg-primary/15 text-primary'
+                      : 'text-on-surface/70 hover:bg-surface-bright'
+                  }`}
+                >
+                  <Maximize2 className="w-3 h-3 shrink-0" />
+                  <span className="flex-1 text-left">填满当前宽度</span>
+                  {activeSizeKey === 'fill' && <Check className="w-2.5 h-2.5 shrink-0" />}
+                </button>
+                {/* 分组分隔线 */}
+                <div className="border-t border-outline/30 mb-1" />
+                {/* 按分组列出当前模式的设备 */}
+                {(['mobile', 'tablet', 'desktop', 'watch'] as SizeGroup[]).map(group => {
+                  const presets = activeDeviceList.filter(p => p.group === group);
                   if (presets.length === 0) return null;
                   return (
                     <div key={group} className="mb-1">
@@ -843,7 +908,7 @@ export default function PreviewPanel({
                             key={p.key}
                             onClick={() => {
                               setActiveSizeKey(p.key);
-                              setShowSizeDropdown(false);
+                              setShowDeviceDropdown(false);
                             }}
                             className={`flex items-center gap-2 w-full px-1.5 py-1 rounded text-[10px] font-mono transition-colors ${
                               active
@@ -853,9 +918,7 @@ export default function PreviewPanel({
                           >
                             <Icon className="w-3 h-3 shrink-0" />
                             <span className="flex-1 text-left truncate">{p.label}</span>
-                            {p.w > 0 && (
-                              <span className="text-on-surface/40 text-[9px]">{p.w}×{p.h}</span>
-                            )}
+                            <span className="text-on-surface/40 text-[9px]">{p.w}×{p.h}</span>
                             {active && <Check className="w-2.5 h-2.5 shrink-0" />}
                           </button>
                         );
@@ -865,34 +928,6 @@ export default function PreviewPanel({
                 })}
               </div>
             </MountTransition>
-          </div>
-
-          {/* 2D / 3D 渲染模式切换 — 并排两个按钮 */}
-          <div className="flex items-center rounded-md overflow-hidden border border-outline/30">
-            <button
-              onClick={() => setRenderMode('2D')}
-              className={`flex items-center gap-1 px-2 py-1 text-[10px] font-mono font-semibold transition-colors ${
-                renderMode === '2D'
-                  ? 'bg-primary/15 text-primary'
-                  : 'bg-surface-bright/60 text-on-surface/50 hover:text-on-surface'
-              }`}
-              title="2D 渲染模式"
-            >
-              <SquareIcon className="w-3 h-3" />
-              <span>2D</span>
-            </button>
-            <button
-              onClick={() => setRenderMode('3D')}
-              className={`flex items-center gap-1 px-2 py-1 text-[10px] font-mono font-semibold transition-colors border-l border-outline/30 ${
-                renderMode === '3D'
-                  ? 'bg-primary/15 text-primary'
-                  : 'bg-surface-bright/60 text-on-surface/50 hover:text-on-surface'
-              }`}
-              title="3D 渲染模式"
-            >
-              <Box className="w-3 h-3" />
-              <span>3D</span>
-            </button>
           </div>
 
           {renderCanvasStatus()}

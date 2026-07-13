@@ -14,7 +14,6 @@ export class AutonomousNetworkAgent {
   public agentId: string;
   public strategyType: 'direct' | 'chain_of_thought' | 'few_shot';
   public reputationScore: number;       // 信用分：会随着法庭盲审的结果动态发生物理改变
-
   /** 质押余额（用于 AgentRegistry.snapshot() 多维度声誉报告） */
   public stakeBalance: number = 0;
 

@@ -237,7 +237,10 @@ export class MappoHeuristicGovernor {
       this.batchQueue.push({ globalState, localObs, resolve, reject });
 
       if (!this.batchTimer) {
-        this.batchTimer = setTimeout(() => this.processBatch(), this.batchTimeout);
+        this.batchTimer = setTimeout(() => {
+          this.batchTimer = null;
+          this.processBatch();
+        }, this.batchTimeout);
       }
 
       if (this.batchQueue.length >= 10) {
@@ -305,6 +308,13 @@ export class MappoHeuristicGovernor {
           req.resolve(this.heuristicFallback(req.globalState));
         });
       }
+    } catch (err) {
+      // 确保异常路径也能 resolve 所有等待中的 Promise
+      batch.forEach(req => {
+        try { req.resolve(this.heuristicFallback(req.globalState)); } catch (_) {
+          req.reject(err as Error);
+        }
+      });
     } finally {
       this.isProcessingBatch = false;
 

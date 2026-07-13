@@ -198,7 +198,8 @@ function singleflightRefresh(): Promise<string | null> {
 function isProtectedPath(url: string): boolean {
   try {
     const u = new URL(url, getLocationHref());
-    return u.pathname === BOOTSTRAP_PATH || u.pathname.startsWith(BOOTSTRAP_PATH + '/');
+    return u.pathname === BOOTSTRAP_PATH || u.pathname.startsWith(BOOTSTRAP_PATH + '/')
+      || u.pathname === STARTUP_TOKEN_PATH || u.pathname.startsWith(STARTUP_TOKEN_PATH + '/');
   } catch {
     return false;
   }

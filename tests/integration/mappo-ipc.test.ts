@@ -13,8 +13,8 @@ import { MappoHeuristicGovernor } from '../../src/core/governor/mappo-client';
 describe('SoloForge 跨语言 MAPPO 资源控流与时序自愈管道集成验收测试套件', () => {
   const governorClient = new MappoHeuristicGovernor();
 
-  // MARL 服务探测需要 TCP 连接超时 + fallback 链路，给足时间
-  const TEST_TIMEOUT = 30_000;
+  // MARL 服务探测需要 TCP 连接超时 + fallback 链路
+  const TEST_TIMEOUT = 10_000;
 
   afterAll(() => {
     governorClient.safelyTerminateGovernorContext(); // 物理释放，禁止残留孤儿进程
