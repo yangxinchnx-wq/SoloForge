@@ -3,8 +3,9 @@ import {
   RefreshCw, Play, Square, Loader2,
   CircleDot, AlertCircle, Monitor, Smartphone, Tablet, Watch,
   Palette, MonitorSmartphone, Info, ChevronDown, Check, Maximize2,
-  Code2, Box
+  Code2, Box, Square as SquareIcon
 } from '../utils/icons';
+import { useCanvasDeviceStore } from '../state/canvasDeviceStore';
 import { MountTransition } from './MountTransition';
 import { CanvasNotificationStack } from './CanvasNotificationBubble';
 import { usePreviewStreamStore, restoreDslFromHotStore, restoreDslFromChatHistory } from '../state/previewStreamStore';
@@ -227,7 +228,24 @@ export default function PreviewPanel({
   const [customColor, setCustomColor] = useState<string>('#FFFFFF');
   const [activeSizeKey, setActiveSizeKey] = useState<string>(DEFAULT_SIZE_KEY);
   const [showColorPicker, setShowColorPicker] = useState(false);
+  const [showSizeDropdown, setShowSizeDropdown] = useState(false);
   const [renderMode, setRenderMode] = useState<'2D' | '3D'>('2D');
+
+  // ★ 同步设备尺寸 + 渲染模式到 canvasDeviceStore (供 useChatStore/aiBackend 读取)
+  const setDevice = useCanvasDeviceStore(s => s.setDevice);
+  const setDeviceRenderMode = useCanvasDeviceStore(s => s.setRenderMode);
+  useEffect(() => {
+    setDevice({
+      sizeKey: activePreset.key,
+      label: activePreset.label,
+      width: activePreset.w,
+      height: activePreset.h,
+      group: activePreset.group,
+    });
+  }, [activePreset, setDevice]);
+  useEffect(() => {
+    setDeviceRenderMode(renderMode);
+  }, [renderMode, setDeviceRenderMode]);
   const [showElectronHint, setShowElectronHint] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -788,6 +806,65 @@ export default function PreviewPanel({
             </MountTransition>
           </div>
 
+          {/* 设备尺寸选择器 */}
+          <div className="relative">
+            <button
+              onClick={() => setShowSizeDropdown(s => !s)}
+              className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-surface-bright/60 hover:bg-surface-bright text-on-surface text-[10px] font-mono transition-colors"
+              title="设备尺寸"
+            >
+              {(() => {
+                const Icon = activePreset.icon;
+                return <Icon className="w-3 h-3" />;
+              })()}
+              <span>{activePreset.label}</span>
+              {activePreset.w > 0 && (
+                <span className="text-on-surface/50">{activePreset.w}×{activePreset.h}</span>
+              )}
+              <ChevronDown className="w-2.5 h-2.5" />
+            </button>
+            <MountTransition show={showSizeDropdown} variant="fade" duration={140}>
+              <div className="absolute top-full right-0 mt-1 z-50 bg-surface border border-outline rounded-lg shadow-2xl p-1.5 min-w-[220px] max-h-[320px] overflow-y-auto">
+                {(['desktop', 'mobile', 'tablet', 'watch'] as SizeGroup[]).map(group => {
+                  const presets = SIZE_PRESETS.filter(p => p.group === group);
+                  if (presets.length === 0) return null;
+                  return (
+                    <div key={group} className="mb-1">
+                      <div className="text-[9px] font-mono text-on-surface/40 px-1.5 py-0.5 sticky top-0 bg-surface">
+                        {presets[0].groupLabel}
+                      </div>
+                      {presets.map(p => {
+                        const Icon = p.icon;
+                        const active = p.key === activeSizeKey;
+                        return (
+                          <button
+                            key={p.key}
+                            onClick={() => {
+                              setActiveSizeKey(p.key);
+                              setShowSizeDropdown(false);
+                            }}
+                            className={`flex items-center gap-2 w-full px-1.5 py-1 rounded text-[10px] font-mono transition-colors ${
+                              active
+                                ? 'bg-primary/15 text-primary'
+                                : 'text-on-surface/70 hover:bg-surface-bright'
+                            }`}
+                          >
+                            <Icon className="w-3 h-3 shrink-0" />
+                            <span className="flex-1 text-left truncate">{p.label}</span>
+                            {p.w > 0 && (
+                              <span className="text-on-surface/40 text-[9px]">{p.w}×{p.h}</span>
+                            )}
+                            {active && <Check className="w-2.5 h-2.5 shrink-0" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+            </MountTransition>
+          </div>
+
           {/* 2D / 3D 渲染模式切换 — 并排两个按钮 */}
           <div className="flex items-center rounded-md overflow-hidden border border-outline/30">
             <button
@@ -799,7 +876,7 @@ export default function PreviewPanel({
               }`}
               title="2D 渲染模式"
             >
-              <Square className="w-3 h-3" />
+              <SquareIcon className="w-3 h-3" />
               <span>2D</span>
             </button>
             <button
@@ -830,9 +907,45 @@ export default function PreviewPanel({
         )}
 
         {/* CANVAS AREA — 整个剩余空间都是画布区 */}
-        <div className="flex-1 relative overflow-hidden">
-          {noCanvas ? renderStandby() : renderPlaceholder()}
-
+        <div className="flex-1 relative overflow-hidden flex items-center justify-center">
+          {noCanvas ? renderStandby() : (
+            <div
+              className="relative flex items-center justify-center"
+              style={(() => {
+                // ★ 设备尺寸约束: 选中具体设备时, 画布区域被限制在设备尺寸内
+                if (activePreset.w > 0 && activePreset.h > 0) {
+                  // 计算缩放比例, 让设备框架适配可用空间
+                  const parentEl = containerRef.current;
+                  const availW = parentEl ? parentEl.clientWidth - 48 : 360;
+                  const availH = parentEl ? parentEl.clientHeight - 120 : 600;
+                  const scale = Math.min(availW / activePreset.w, availH / activePreset.h, 1);
+                  const scaledW = Math.round(activePreset.w * scale);
+                  const scaledH = Math.round(activePreset.h * scale);
+                  return {
+                    width: `${scaledW}px`,
+                    height: `${scaledH}px`,
+                    // 2D 模式下显示设备边框; 3D 模式下不显示边框 (由 3D 模型渲染)
+                    borderRadius: renderMode === '2D'
+                      ? (activePreset.group === 'watch' ? '38px' : activePreset.group === 'mobile' ? '32px' : '8px')
+                      : '0px',
+                    border: renderMode === '2D' ? '3px solid var(--color-outline)' : 'none',
+                    boxShadow: renderMode === '2D' ? '0 8px 32px rgba(0,0,0,0.12)' : 'none',
+                    overflow: 'hidden',
+                    transition: 'all 250ms cubic-bezier(0.16, 1, 0.3, 1)',
+                  } as React.CSSProperties;
+                }
+                return { width: '100%', height: '100%' } as React.CSSProperties;
+              })()}
+            >
+              {renderPlaceholder()}
+              {/* 设备尺寸标签 */}
+              {activePreset.w > 0 && (
+                <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-[9px] font-mono text-on-surface/40 whitespace-nowrap pointer-events-none">
+                  {activePreset.label} · {activePreset.w}×{activePreset.h}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

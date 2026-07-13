@@ -611,91 +611,93 @@ export default function ChatPanel({
                         ))}
                       </div>
                     )}
-                    {/* ★ 2026-07-13: 时间放在气泡右下角 */}
-                    <div className={`text-[10px] text-on-surface/35 font-mono mt-1 ${isUser ? 'text-right' : 'text-left'}`}>
-                      {msg.time}
-                    </div>
                   </div>
 
-                  {/* 用户消息: 复制 + 重新生成按钮 */}
+                  {/* 用户消息: 复制 + 重新生成按钮 + 时间 */}
                   {isUser && (
-                    <div className="flex items-center gap-1.5 pl-1 pt-0.5">
-                      <button
-                        type="button"
-                        aria-label="复制消息"
-                        title={copiedIndex === index ? '已复制' : '复制消息'}
-                        onClick={() => handleCopyMessage(index, msg.content)}
-                        className={`p-1 rounded-md transition-all ${
-                          copiedIndex === index
-                            ? 'bg-primary/15 text-primary'
-                            : 'text-on-surface/35 hover:text-primary hover:bg-primary/10 cursor-pointer'
-                        }`}
-                      >
-                        {copiedIndex === index ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="重新生成"
-                        title="以当前消息重新生成"
-                        onClick={() => handleRegenerate(index)}
-                        className="p-1 rounded-md transition-all text-on-surface/35 hover:text-primary hover:bg-primary/10 cursor-pointer"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" />
-                      </button>
+                    <div className="flex items-center justify-between gap-1.5 pl-1 pt-0.5 w-full">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          aria-label="复制消息"
+                          title={copiedIndex === index ? '已复制' : '复制消息'}
+                          onClick={() => handleCopyMessage(index, msg.content)}
+                          className={`p-1 rounded-md transition-all ${
+                            copiedIndex === index
+                              ? 'bg-primary/15 text-primary'
+                              : 'text-on-surface/35 hover:text-primary hover:bg-primary/10 cursor-pointer'
+                          }`}
+                        >
+                          {copiedIndex === index ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="重新生成"
+                          title="以当前消息重新生成"
+                          onClick={() => handleRegenerate(index)}
+                          className="p-1 rounded-md transition-all text-on-surface/35 hover:text-primary hover:bg-primary/10 cursor-pointer"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <div className="text-[10px] text-on-surface/35 font-mono pr-1">{msg.time}</div>
                     </div>
                   )}
 
                   {/* Phase 5: 👍/👎 反馈按钮 — 仅 assistant 消息, 累积 negative 触发 PromptOptimizer */}
                   {!isUser && !isGenerating && (
-                    <div className="flex items-center gap-1.5 pl-1 pt-0.5">
-                      <button
-                        type="button"
-                        aria-label="复制此回复"
-                        title={copiedIndex === index ? '已复制' : '复制此回复'}
-                        onClick={() => handleCopyMessage(index, msg.content)}
-                        className={`p-1 rounded-md transition-all ${
-                          copiedIndex === index
-                            ? 'bg-primary/15 text-primary'
-                            : 'text-on-surface/35 hover:text-primary hover:bg-primary/10 cursor-pointer'
-                        }`}
-                      >
-                        {copiedIndex === index ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="赞同此回复"
-                        title="赞同此回复"
-                        disabled={!!feedbackMap[index] || feedbackBusy[index]}
-                        onClick={() => submitFeedback(index, true)}
-                        className={`p-1 rounded-md transition-all ${
-                          feedbackMap[index] === 'up'
-                            ? 'bg-emerald-500/15 text-emerald-500'
-                            : feedbackMap[index]
-                              ? 'text-on-surface/20 cursor-not-allowed'
-                              : 'text-on-surface/35 hover:text-emerald-500 hover:bg-emerald-500/10 cursor-pointer'
-                        }`}
-                      >
-                        <ThumbsUp className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="不赞同此回复 (累积触发 Prompt 优化)"
-                        title="不赞同此回复 (累积触发 Prompt 优化)"
-                        disabled={!!feedbackMap[index] || feedbackBusy[index]}
-                        onClick={() => submitFeedback(index, false)}
-                        className={`p-1 rounded-md transition-all ${
-                          feedbackMap[index] === 'down'
-                            ? 'bg-rose-500/15 text-rose-500'
-                            : feedbackMap[index]
-                              ? 'text-on-surface/20 cursor-not-allowed'
-                              : 'text-on-surface/35 hover:text-rose-500 hover:bg-rose-500/10 cursor-pointer'
-                        }`}
-                      >
-                        <ThumbsDown className="w-3.5 h-3.5" />
-                      </button>
-                      {feedbackBusy[index] && (
-                        <span className="text-[9px] text-on-surface/40 ml-0.5">提交中…</span>
-                      )}
+                    <div className="flex items-center justify-between gap-1.5 pl-1 pt-0.5 w-full">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          aria-label="复制此回复"
+                          title={copiedIndex === index ? '已复制' : '复制此回复'}
+                          onClick={() => handleCopyMessage(index, msg.content)}
+                          className={`p-1 rounded-md transition-all ${
+                            copiedIndex === index
+                              ? 'bg-primary/15 text-primary'
+                              : 'text-on-surface/35 hover:text-primary hover:bg-primary/10 cursor-pointer'
+                          }`}
+                        >
+                          {copiedIndex === index ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="赞同此回复"
+                          title="赞同此回复"
+                          disabled={!!feedbackMap[index] || feedbackBusy[index]}
+                          onClick={() => submitFeedback(index, true)}
+                          className={`p-1 rounded-md transition-all ${
+                            feedbackMap[index] === 'up'
+                              ? 'bg-emerald-500/15 text-emerald-500'
+                              : feedbackMap[index]
+                                ? 'text-on-surface/20 cursor-not-allowed'
+                                : 'text-on-surface/35 hover:text-emerald-500 hover:bg-emerald-500/10 cursor-pointer'
+                          }`}
+                        >
+                          <ThumbsUp className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="不赞同此回复 (累积触发 Prompt 优化)"
+                          title="不赞同此回复 (累积触发 Prompt 优化)"
+                          disabled={!!feedbackMap[index] || feedbackBusy[index]}
+                          onClick={() => submitFeedback(index, false)}
+                          className={`p-1 rounded-md transition-all ${
+                            feedbackMap[index] === 'down'
+                              ? 'bg-rose-500/15 text-rose-500'
+                              : feedbackMap[index]
+                                ? 'text-on-surface/20 cursor-not-allowed'
+                                : 'text-on-surface/35 hover:text-rose-500 hover:bg-rose-500/10 cursor-pointer'
+                          }`}
+                        >
+                          <ThumbsDown className="w-3.5 h-3.5" />
+                        </button>
+                        {feedbackBusy[index] && (
+                          <span className="text-[9px] text-on-surface/40 ml-0.5">提交中…</span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-on-surface/35 font-mono pr-1">{msg.time}</div>
                     </div>
                   )}
                 </div>

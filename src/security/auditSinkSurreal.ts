@@ -27,7 +27,7 @@
  */
 
 import { logger } from '../core/logger';
-import type { AuditEvent, AuditSink } from './auth';
+import type { AuditEvent, AuditSink, AuditSinkV2 } from './auth';
 
 const MAX_QUEUE = 1000;
 const FLUSH_THRESHOLD = 50;
@@ -57,7 +57,7 @@ export interface AuditSinkSurrealOptions {
   log?: (line: string) => void;
 }
 
-export class AuditSinkSurreal implements AuditSink {
+export class AuditSinkSurreal implements AuditSinkV2 {
   private queue: AuditEvent[] = [];
   private timer: NodeJS.Timeout | null = null;
   private flushing = false;

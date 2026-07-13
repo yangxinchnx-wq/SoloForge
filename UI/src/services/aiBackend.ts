@@ -16,6 +16,7 @@
  */
 
 import { StreamingLatencyTracker } from './perfMonitor';
+import { getDeviceConstraint } from '../state/canvasDeviceStore';
 
 export type ChatStreamEvent =
   | { kind: 'text'; text: string; taskId?: string }
@@ -150,11 +151,29 @@ export function detectForceCanvas(prompt: string): string | null {
   return null;
 }
 
-/** 构建最终 prompt — 在原始 prompt 前注入强制画布指令 (若检测到关键词) */
+/** 构建最终 prompt — 在原始 prompt 前注入强制画布指令 (若检测到关键词) + 设备尺寸约束 */
 function buildPromptWithCanvasForce(prompt: string): string {
   const instruction = detectForceCanvas(prompt);
   if (instruction) {
-    return `${instruction}\n\n用户原始请求: ${prompt}`;
+    // ★ 注入设备尺寸约束 (如果用户选择了具体设备)
+    const device = getDeviceConstraint();
+    let deviceHint = '';
+    if (device) {
+      deviceHint = `
+## 设备约束
+当前画布目标设备: ${device.label}
+屏幕尺寸: ${device.width}×${device.height}px
+设备类型: ${device.group}${device.renderMode === '3D' ? ' (3D 模式)' : ''}
+
+**重要**: 你生成的 UI 必须适配此设备尺寸。
+- 宽度不超过 ${device.width}px, 高度不超过 ${device.height}px
+- 布局要考虑 ${device.group === 'mobile' ? '竖屏窄宽度' : device.group === 'tablet' ? '中等宽度' : device.group === 'watch' ? '极小圆形/方形屏幕' : '宽屏桌面'}
+- ${device.group === 'mobile' ? '使用移动端布局: 单列、大触摸区、底部导航' : ''}
+- ${device.group === 'watch' ? '使用极简布局: 单元素、大字体、最少层级' : ''}
+- ${device.group === 'tablet' ? '可用双列或网格布局, 支持横竖屏' : ''}
+- ${device.group === 'desktop' ? '可用多列、侧边栏、密集信息布局' : ''}`;
+    }
+    return `${instruction}${deviceHint}\n\n用户原始请求: ${prompt}`;
   }
   return prompt;
 }
