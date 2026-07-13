@@ -92,7 +92,9 @@ export async function initOpenTelemetry(
     const spanProcessors = [new SimpleSpanProcessor(traceExporter as ConstructorParameters<typeof SimpleSpanProcessor>[0])];
 
     // ── Phase 4: 采样器配置 ──
-    const { trace, type } = await import('@opentelemetry/api');
+    // @opentelemetry/api 已在 tracing.ts 中通过 getTracer() 初始化
+    // 此处 import 仅用于触发 API 注册
+    await import('@opentelemetry/api');
 
     // 构建采样器 — 根据 OTEL_TRACES_SAMPLER 环境变量选择
     let samplerConfig: Record<string, unknown> | undefined;

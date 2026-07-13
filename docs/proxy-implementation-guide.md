@@ -259,22 +259,31 @@ localhost, 127.0.0.1, ::1, *.local, <local>
 
 ### 4.2 SoloForge 专用绕过
 
+> 基于代码审查报告 Table 3 的完整代理链路扫描，确保所有内部服务端口均已覆盖。
+
 ```javascript
 const SOLOFORGE_BYPASS = [
+  // 通用本地绕过
   'localhost',
   '127.0.0.1',
   '::1',
   '*.local',
   '<local>',           // Chromium 内置: 所有不含 "." 的主机名
-  // SoloForge 内部服务
-  'localhost:3000',    // UI Server
+  // SoloForge 内部服务 (完整端口清单)
+  'localhost:3000',    // UI Server (Express 前端)
   'localhost:3001',    // RACER Core / Node.js 后端
-  'localhost:3002',    // git-service
-  'localhost:6379',    // Garnet
-  'localhost:8400',    // SurrealDB
-  'localhost:8770',    // Java Agent
+  'localhost:3002',    // git-service (Go)
+  'localhost:6379',    // Garnet (Redis 兼容缓存)
+  'localhost:8400',    // SurrealDB (图数据库)
+  'localhost:8765',    // MARL (多智能体强化学习)
+  'localhost:8766',    // MARL Reputation HTTP
+  'localhost:8770',    // Java Agent (Spring AI)
 ].join(',');
 ```
+
+> **⚠️ 关键**：若遗漏任何内部服务端口，手动代理模式下 Express 反向代理请求
+> 会经过代理服务器 → 无法到达本地服务 → 请求死循环或超时。
+> 未来新增内部服务时，必须同步更新此列表。
 
 ### 4.3 用户可扩展
 
@@ -371,12 +380,24 @@ async function testProxyConnection() {
 
 ### 7.2 修改文件
 
-| 文件 | 修改内容 |
-|---|---|
-| `UI/electron/main.cjs` | 初始化 ProxyService，注册 IPC handler |
-| `UI/electron/preload.cjs` | 暴露 `soloforge.proxy.*` API |
-| `UI/src/components/settingsTabs/ProxyTab.tsx` | 四模式 UI + 连通性测试 |
-| `UI/package.json` | 添加 `electron-store` 依赖（如果未安装） |
+| 文件 | 修改内容 | 备注 |
+|---|---|---|
+| `UI/electron/main.cjs` | 初始化 ProxyService，注册 IPC handler | — |
+| `UI/electron/preload.cjs` | 暴露 `soloforge.proxy.*` API | — |
+| `UI/src/components/settingsTabs/ProxyTab.tsx` | 四模式 UI + 连通性测试 | 严格类型，禁止新增 `any` |
+| `UI/package.json` | 添加 `electron-store` 依赖 | **当前未安装，需 `npm install electron-store`** |
+
+### 7.3 顺手修复（代码审查报告建议）
+
+| 文件 | 修改内容 | 成本 |
+|---|---|---|
+| `.env` / `src/security/auth.ts` | CORS 白名单补全：追加 `http://localhost:3000` | 5 分钟 |
+
+> **CORS 问题说明**（来自代码审查报告）：
+> 后端 `auth.ts` 仅允许 `localhost:5173/5174`（Vite 默认端口），
+> 当前自定义 Server 模式端口 3000 不在白名单中。
+> 生产模式走服务端代理（同源请求）不触发 CORS，但开发调试时可能踩坑。
+> 修复：在 `.env` 中设置 `SOLOFORGE_CORS_ORIGINS=http://localhost:3000,http://localhost:5173,http://localhost:5174`
 
 ---
 
@@ -473,7 +494,13 @@ const { execSync } = require('child_process');
 
 const store = new Store();
 const CONFIG_KEY = 'proxy.config';
-const BYPASS_DEFAULT = 'localhost,127.0.0.1,::1,*.local,<local>';
+const BYPASS_DEFAULT = [
+  'localhost', '127.0.0.1', '::1', '*.local', '<local>',
+  // SoloForge 内部服务完整端口 (与 4.2 节保持同步)
+  'localhost:3000', 'localhost:3001', 'localhost:3002',
+  'localhost:6379', 'localhost:8400',
+  'localhost:8765', 'localhost:8766', 'localhost:8770',
+].join(',');
 
 class ProxyService {
   constructor() {
@@ -658,6 +685,47 @@ proxy: {
 },
 ```
 
+### 10.4 ProxyTab.tsx 类型安全约束
+
+> **⚠️ 代码审查报告指出项目有 76 处 `any`，ProxyTab.tsx 改造时严禁新增。**
+
+```typescript
+// ✅ 正确：使用严格类型
+type ProxyMode = 'system' | 'direct' | 'manual' | 'pac';
+type ProxyProtocol = 'http' | 'https' | 'socks4' | 'socks5';
+
+interface ProxyConfig {
+  mode: ProxyMode;
+  protocol?: ProxyProtocol;
+  server?: string;
+  port?: string;
+  bypassList?: string;
+  pacUrl?: string;
+}
+
+interface SystemProxyInfo {
+  enabled: boolean;
+  server?: string;
+  pacUrl?: string;
+}
+
+interface TestResult {
+  ok: boolean;
+  ip?: string;
+  latency?: number;
+  error?: string;
+}
+
+// ❌ 错误：禁止以下写法
+// const config: any = await window.soloforge.proxy.getConfig();
+// interface ProxyConfig { [k: string]: any; }
+```
+
+**规则**：
+- IPC 返回值必须用 `as` 断言为具体类型，或使用泛型 `invoke<T>()`
+- 禁止 `[k: string]: any` 索引签名
+- 所有 `useState` 必须声明泛型参数
+
 ---
 
 ## 十一、与上一版方案的对比
@@ -669,11 +737,13 @@ proxy: {
 | Chromium 层 | `session.setProxy()` | `session.setProxy()` + `mode` 参数 |
 | Node.js 层 | 未处理 | **环境变量同步** |
 | 子进程代理 | 未处理 | **env 继承** |
-| 绕过列表 | 无 | **默认绕过本地服务** |
+| 绕过列表 | 无 | **完整覆盖 8 个内部服务端口**（含 MARL 8765/8766） |
 | PAC 支持 | 无 | **原生支持** |
 | 连通性测试 | 无 | **内置测试** |
 | 启动时序 | 未考虑 | **启动时恢复配置** |
 | 系统代理检测 | 读注册表 | 读注册表 + **PAC/WPAD 检测** |
+| 类型安全 | 未考虑 | **严格类型，禁止新增 any** |
+| CORS 修复 | 未涉及 | **顺手补全 3000 端口白名单** |
 
 ---
 
@@ -686,11 +756,58 @@ proxy: {
 | 手动代理 | 输入 Clash 地址 127.0.0.1:7890 | 所有请求经过 Clash |
 | SOCKS5 代理 | 输入 socks5://127.0.0.1:7891 | SOCKS5 代理生效 |
 | PAC 配置 | 输入企业 PAC URL | 按 PAC 规则分流 |
-| 绕过本地 | 手动代理模式下访问 localhost:3000 | 直连，不走代理 |
+| 绕过本地服务 | 手动代理模式下访问 localhost:3000/3001/8766/8770 | 直连，不走代理 |
 | 配置持久化 | 设置手动代理 → 重启应用 | 代理配置自动恢复 |
 | 连通性测试 | 点击测试连接 | 显示出口 IP 和延迟 |
 | Node.js 层代理 | 手动代理下发送 LLM 请求 | 后端请求也走代理 |
 | 即时生效 | 切换模式后立即发起请求 | 新配置立即生效 |
+| MARL 服务绕过 | 手动代理模式下访问 localhost:8766 | 直连，不走代理 |
+| TypeScript 编译 | `npx tsc --noEmit` 检查 ProxyTab.tsx | 零新增 `any`，零编译错误 |
+
+---
+
+## 十三、前置依赖与准备事项
+
+### 13.1 依赖安装
+
+```bash
+# electron-store (配置持久化)
+# 代码审查报告确认 UI/package.json 中未安装此依赖
+cd UI && npm install electron-store
+```
+
+> **注意**：`electron-store` 要求 Electron 环境，仅在主进程使用。
+> 渲染进程通过 IPC 间接访问，不需要额外安装前端依赖。
+
+### 13.2 CORS 白名单修复（顺手修复）
+
+代码审查报告指出：后端 `auth.ts` 的 CORS 白名单仅允许 `localhost:5173/5174`（Vite 默认端口），
+当前自定义 Server 模式端口 3000 不在白名单中。
+
+**修复方式**（二选一）：
+
+```bash
+# 方式 1: .env 文件追加
+SOLOFORGE_CORS_ORIGINS=http://localhost:3000,http://localhost:5173,http://localhost:5174
+
+# 方式 2: 启动时环境变量
+SOLOFORGE_CORS_ORIGINS=http://localhost:3000 npm start
+```
+
+> **影响评估**：低风险 — 生产模式走服务端代理（同源请求），不触发浏览器 CORS。
+> 但开发调试时若浏览器直连后端，会遇到跨域问题。
+
+### 13.3 类型安全约束
+
+代码审查报告指出项目有 **76 处 `any`**（services 34 + components 42）。
+ProxyTab.tsx 改造时必须严格遵守以下规则：
+
+| 规则 | 说明 |
+|---|---|
+| 禁止新增 `any` | IPC 返回值使用 `as` 断言或泛型 `invoke<T>()` |
+| `useState` 泛型 | 所有 `useState` 必须声明类型参数 |
+| 禁止索引签名 | 不使用 `[k: string]: any` |
+| 接口导出 | `ProxyConfig` 等类型定义导出供其他模块复用 |
 
 ---
 

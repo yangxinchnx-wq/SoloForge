@@ -48,6 +48,8 @@ import { fileURLToPath } from 'url';
 import type { RuntimeKernel } from '../kernel/runtime-kernel';
 import { RuntimeState } from '../kernel/runtime-kernel';
 import type { SurrealPersistence } from '../data/surreal_persistence';
+// Phase 3: Metric bridge — 合并三套指标源
+import { renderMergedPrometheusText, isMetricBridgeReady } from '../observability/otel-metric-bridge';
 import type { DataArchiverService } from '../data/data-archiver';
 import { logger } from '../core/logger';
 import { safeJoin } from '../security/auth';
@@ -345,7 +347,6 @@ const eventCount = deps.kernel.eventBus.getEventLog().length;
 
 // Phase 3: 合并三套指标源 — 基础系统指标 + MetricsRegistry + TelemetryMetricExporter
 try {
-  const { renderMergedPrometheusText, isMetricBridgeReady } = require('../observability/otel-metric-bridge');
   if (isMetricBridgeReady()) {
     const text = renderMergedPrometheusText(uptime, eventCount, deps.kernel.version || 1);
     return { status: 200, headers: { 'Content-Type': 'text/plain' }, body: text };

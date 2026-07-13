@@ -79,7 +79,7 @@ export async function forwardLogToOtel(entry: OtelLogEntry, level: LogLevel): Pr
   if (!initialized || !otelLogger) return;
 
   try {
-    const { SeverityNumber, type } = await import('@opentelemetry/api-logs');
+    const { SeverityNumber } = await import('@opentelemetry/api-logs');
 
     // 映射 SoloForge 日志级别到 OTel SeverityNumber
     const severityMap: Record<string, number> = {
