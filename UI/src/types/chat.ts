@@ -70,6 +70,12 @@ export function getSettingsSummary(s: ChatSettingsItem): string {
   const tMap = { detailed: '详尽', concise: '简短', humorous: '幽默' };
   const em = s.emojiEnabled ? '表情开' : '表情关';
   const ctxStr = s.contextSize >= 132000 ? '无限制' : `${s.contextSize / 1000}k`;
-  const agent = s.agentId || 'code_agent';
+  const agentId = s.agentId || 'code_agent';
+  const agentNameMap: Record<string, string> = {
+    'code_agent': '代码工程师',
+    'creative_agent': '创意策划',
+    'analysis_agent': '数据分析',
+  };
+  const agent = agentNameMap[agentId] || agentId;
   return `${agent} | ${pMap[s.personality]} | ${tMap[s.tone]} | ${ctxStr} 窗口 | ${em} (${s.enabledSkills.length} SK)`;
 }
