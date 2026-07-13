@@ -255,6 +255,13 @@ export class SoloForgeRTRRacerEngine {
 
     // 多路并行执行 (中/低置信, 多模型择优)
     const workers = matrixScoringMap.slice(0, topN);
+
+    // 发出投票触发事件,记录并行子集大小
+    this.kernel.getEventBus().emit(DecisionEvent.VOTE_TRIGGERED, {
+      subsetExpandedSize: workers.length,
+      candidates: workers.map(w => w.instance.modelName),
+    });
+
     const workerResults = await Promise.all(
       workers.map((w, idx) => executionWorkerNode(w.instance, idx).catch(err => ({
         output: `[WORKER_ERROR] ${err?.message ?? String(err)}`,

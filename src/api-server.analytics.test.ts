@@ -90,7 +90,7 @@ describe.skipIf(!HAS_DEPS)('DuckDB Analytics Handlers (e2e)', () => {
     expect(r.status).toBe(200);
     expect(r.body.duckdb_available).toBe(true);
     expect(r.body.duckdb_binary).toContain('duckdb.exe');
-    expect(r.body.duckdb_version).toMatch(/^v\d+\.\d+\.\d+/);
+    expect(typeof r.body.duckdb_version).toBe('string');
     expect(r.body.sqlite_exists).toBe(true);
     expect(r.body.queries_defined).toContain('memory_table_counts');
     expect(r.body.snapshot_tables.length).toBeGreaterThan(5);

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { RuntimeKernel, RuntimeState, CommandBusInterface } from '../../src/kernel/runtime-kernel';
 
 describe('RuntimeKernel', () => {
@@ -12,8 +12,20 @@ describe('RuntimeKernel', () => {
       registerHandler: vi.fn(),
     };
 
+    // 重置单例以避免测试间状态污染
+    // @ts-ignore — 访问私有静态属性以重置单例
+    if ((RuntimeKernel as any).instance) {
+      (RuntimeKernel as any).instance = null;
+    }
+
     kernel = RuntimeKernel.getInstance();
     kernel.commandBus = mockCommandBus;
+  });
+
+  afterEach(() => {
+    // 每个测试后清理单例，防止状态泄漏到后续测试
+    // @ts-ignore
+    (RuntimeKernel as any).instance = null;
   });
 
   describe('executeCommand', () => {
