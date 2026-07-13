@@ -5,16 +5,13 @@ import {
   Palette, MonitorSmartphone, Info, ChevronDown, Check, Maximize2,
   Code2, Box, Square as SquareIcon
 } from '../utils/icons';
-import { useCanvasDeviceStore } from '../state/canvasDeviceStore';
+import { useCanvasDeviceStore, type CanvasDeviceInfo } from '../state/canvasDeviceStore';
 import { MountTransition } from './MountTransition';
-import { CanvasNotificationStack } from './CanvasNotificationBubble';
 import { usePreviewStreamStore, restoreDslFromHotStore, restoreDslFromChatHistory } from '../state/previewStreamStore';
 import WebAstPreview from './WebAstPreview';
 import {
-  drainCanvasNotifications,
   selectModel as apiSelectModel,
   deleteCanvas as apiDeleteCanvas,
-  type CanvasNotification,
   type CanvasResource,
 } from '../services/canvas/sessionApi';
 import { CanvasResourceBar } from './CanvasResourceBar';
@@ -115,25 +112,25 @@ interface DevicePreset {
 // ── 2D 设备列表 (有 PNG 边框的设备) ──
 const DEVICES_2D: DevicePreset[] = [
   // 手机
-  { key: 'd2-iphone16',        group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 16',          w: 393, h: 852 },
-  { key: 'd2-iphone16plus',    group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 16 Plus',      w: 430, h: 932 },
-  { key: 'd2-iphone16pro',     group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 16 Pro',       w: 402, h: 869 },
-  { key: 'd2-iphone16promax',  group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 16 Pro Max',   w: 440, h: 956 },
+  { key: 'd2-iphone16',        group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 16',          w: 393, h: 852, pngFile: 'mobile/iphone_16.png' },
+  { key: 'd2-iphone16plus',    group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 16 Plus',      w: 430, h: 932, pngFile: 'mobile/iphone_16_plus.png' },
+  { key: 'd2-iphone16pro',     group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 16 Pro',       w: 402, h: 869, pngFile: 'mobile/iphone_16_pro.png' },
+  { key: 'd2-iphone16promax',  group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 16 Pro Max',   w: 440, h: 956, pngFile: 'mobile/iphone_16_pro_max.png' },
   // 平板
-  { key: 'd2-ipada16',         group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'iPad A16 (竖屏)',     w: 820, h: 1180 },
-  { key: 'd2-ipada16ls',       group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'iPad A16 (横屏)',     w: 1180, h: 820 },
+  { key: 'd2-ipada16',         group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'iPad A16 (竖屏)',     w: 820, h: 1180, pngFile: 'tablet/ipad_a16.png' },
+  { key: 'd2-ipada16ls',       group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'iPad A16 (横屏)',     w: 1180, h: 820, pngFile: 'tablet/ipad_a16_landscape.png' },
   // 桌面
-  { key: 'd2-imac',            group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'iMac M4 24"',         w: 2560, h: 1440 },
-  { key: 'd2-macbookneo',      group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'MacBook Neo',         w: 1512, h: 982 },
-  { key: 'd2-macbookpro14',    group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'MacBook Pro M5 14"',  w: 1512, h: 982 },
-  { key: 'd2-macbookpro16',    group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'MacBook Pro M5 16"',  w: 1728, h: 1117 },
-  { key: 'd2-studiodisplay',   group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'Studio Display',      w: 2560, h: 1440 },
-  { key: 'd2-appletv',         group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'Apple TV 4K',         w: 1920, h: 1080 },
+  { key: 'd2-imac',            group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'iMac M4 24"',         w: 2560, h: 1440, pngFile: 'desktop/imac_m4.png' },
+  { key: 'd2-macbookneo',      group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'MacBook Neo',         w: 1512, h: 982, pngFile: 'desktop/macbook_neo.png' },
+  { key: 'd2-macbookpro14',    group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'MacBook Pro M5 14"',  w: 1512, h: 982, pngFile: 'desktop/macbook_pro_m5_14.png' },
+  { key: 'd2-macbookpro16',    group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'MacBook Pro M5 16"',  w: 1728, h: 1117, pngFile: 'desktop/macbook_pro_m5_16.png' },
+  { key: 'd2-studiodisplay',   group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'Studio Display',      w: 2560, h: 1440, pngFile: 'desktop/studio_display.png' },
+  { key: 'd2-appletv',         group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'Apple TV 4K',         w: 1920, h: 1080, pngFile: 'desktop/apple_tv_4k.png' },
   // 手表
-  { key: 'd2-watchs11_42',     group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch S11 42mm', w: 352, h: 352 },
-  { key: 'd2-watchs11_46',     group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch S11 46mm', w: 396, h: 396 },
-  { key: 'd2-watchultra2',     group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch Ultra 2',  w: 502, h: 410 },
-  { key: 'd2-watchultra3',     group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch Ultra 3',  w: 502, h: 410 },
+  { key: 'd2-watchs11_42',     group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch S11 42mm', w: 352, h: 352, pngFile: 'watch/apple_watch_s11_42.png' },
+  { key: 'd2-watchs11_46',     group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch S11 46mm', w: 396, h: 396, pngFile: 'watch/apple_watch_s11_46.png' },
+  { key: 'd2-watchultra2',     group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch Ultra 2',  w: 502, h: 410, pngFile: 'watch/apple_watch_ultra_2.png' },
+  { key: 'd2-watchultra3',     group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch Ultra 3',  w: 502, h: 410, pngFile: 'watch/apple_watch_ultra_3.png' },
 ];
 
 // ── 3D 设备列表 (仅有真实 GLB 模型的设备, 文件 >10KB 才算真实) ──
@@ -247,13 +244,45 @@ export default function PreviewPanel({
   const [canvasInfo, setCanvasInfo] = useState<{ port: number; pid: number } | null>(null);
   const [bgColor, setBgColor] = useState<string>(BG_PRESETS[0].value);
   const [customColor, setCustomColor] = useState<string>('#FFFFFF');
-  const [activeSizeKey, setActiveSizeKey] = useState<string>('fill');
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showDeviceDropdown, setShowDeviceDropdown] = useState(false);
-  const [renderMode, setRenderMode] = useState<'2D' | '3D'>('2D');
 
-  const activePreset = findDevicePreset(activeSizeKey);
+  // ★ 从 store 读取当前画布的设备信息 (按 canvasId 独立存储)
+  const deviceStore = useCanvasDeviceStore();
+  const currentDevice = effectiveCanvasId ? deviceStore.devices[effectiveCanvasId] ?? null : null;
+  const renderMode = deviceStore.renderMode;
+  const setRenderMode = deviceStore.setRenderMode;
+  const setDeviceInStore = deviceStore.setDevice;
+
+  // ★ 从设备信息反推当前 preset (用于兼容现有逻辑)
+  const activeSizeKey = currentDevice?.sizeKey ?? 'none';
+  const activePreset = currentDevice ? findDevicePreset(currentDevice.sizeKey) : null;
   const activeDeviceList = renderMode === '2D' ? DEVICES_2D : DEVICES_3D;
+
+  // ★ 选择设备时写入 store (按 canvasId)
+  const handleSelectSizeKey = useCallback((key: string) => {
+    if (!effectiveCanvasId) return;
+    if (key === 'none') {
+      setDeviceInStore(effectiveCanvasId, null);
+      return;
+    }
+    const preset = findDevicePreset(key);
+    const deviceInfo: CanvasDeviceInfo = {
+      sizeKey: preset.key,
+      label: preset.label,
+      width: preset.w,
+      height: preset.h,
+      group: preset.group,
+      renderMode,
+      pngFile: preset.pngFile,
+      glbFile: preset.glbFile,
+    };
+    setDeviceInStore(effectiveCanvasId, deviceInfo);
+    // 3D 模式下选中设备 → 加载 GLB 模型到当前画布
+    if (renderMode === '3D' && preset.glbFile) {
+      void handleSelectDevice(preset);
+    }
+  }, [effectiveCanvasId, renderMode, setDeviceInStore]);
 
   // ★ 下拉框/颜色选择器打开时隐藏 Flutter 原生窗口, 避免拦截点击
   useEffect(() => {
@@ -266,16 +295,11 @@ export default function PreviewPanel({
   useEffect(() => {
     if (!isElectron()) return;
     const unsub = window.soloforge!.canvas.onDeviceSelected((data) => {
-      const preset = findDevicePreset(data.key);
-      setActiveSizeKey(data.key);
+      handleSelectSizeKey(data.key);
       setShowDeviceDropdown(false);
-      // 3D 模式下选中设备 → 加载 GLB 模型到当前画布
-      if (renderMode === '3D' && preset.glbFile) {
-        void handleSelectDevice(preset);
-      }
     });
     return () => { unsub(); };
-  }, [renderMode]);
+  }, [handleSelectSizeKey]);
 
   // ★ 打开 Electron 原生弹窗 (避免被 Flutter 窗口遮挡)
   //   接收 modeOverride 参数, 避免闭包陷阱 (setRenderMode 后 state 未更新)
@@ -301,22 +325,6 @@ export default function PreviewPanel({
       activeSizeKey,
     );
   }, [activeSizeKey]);
-
-  // ★ 同步设备尺寸 + 渲染模式到 canvasDeviceStore (供 useChatStore/aiBackend 读取)
-  const setDevice = useCanvasDeviceStore(s => s.setDevice);
-  const setDeviceRenderMode = useCanvasDeviceStore(s => s.setRenderMode);
-  useEffect(() => {
-    setDevice({
-      sizeKey: activePreset.key,
-      label: activePreset.label,
-      width: activePreset.w,
-      height: activePreset.h,
-      group: activePreset.group,
-    });
-  }, [activePreset, setDevice]);
-  useEffect(() => {
-    setDeviceRenderMode(renderMode);
-  }, [renderMode, setDeviceRenderMode]);
   const [showElectronHint, setShowElectronHint] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
   // ★ canvas 区域专用 ref — reportBounds 只上报此区域, 避免Flutter窗口覆盖工具栏
@@ -462,38 +470,6 @@ export default function PreviewPanel({
   }, [canvasId, canvasReady, fallbackId, selectedChatId]);
 
   // ─────────────────────────────────────────
-  // P0: 画布修改通知 (owner 轮询拉取 + 气泡队列)
-  // ─────────────────────────────────────────
-  //   - 每 3s 拉一次 GET /api/canvas/notifications?requester=<chatId>
-  //   - 拿到的 push 到 queue, queue[0] 渲染气泡
-  //   - 子组件 3s 后回调 onExpire → queue.shift
-  //   - 当前 chat 没变 / 不在 owner chat 时停止轮询
-  const [notifQueue, setNotifQueue] = useState<CanvasNotification[]>([]);
-  useEffect(() => {
-    if (!selectedChatId) {
-      setNotifQueue([]);
-      return;
-    }
-    let cancelled = false;
-    const tick = async () => {
-      if (cancelled) return;
-      const list = await drainCanvasNotifications(selectedChatId);
-      if (cancelled || !list || list.length === 0) return;
-      setNotifQueue((prev) => [...prev, ...list]);
-    };
-    // 立即拉一次, 然后每 3s
-    void tick();
-    const timer = window.setInterval(tick, 3000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [selectedChatId]);
-
-  const handleNotifExpire = useCallback((id: string) => {
-    setNotifQueue((prev) => prev.filter((n) => n.id !== id));
-  }, []);
-
   // ★ 上报 canvas 区域 (不含工具栏) 的位置和尺寸给主进程
   //   Flutter 原生窗口只覆盖此区域, 不遮挡工具栏按钮
   useEffect(() => {
@@ -565,9 +541,9 @@ export default function PreviewPanel({
   // 2026-07-11: IncrementalCanvasPusher 已经在 useChatStore 中直接推画布,
   //   PreviewPanel 不再重复推送 — 避免双推冲突 + WebAstPreview 覆盖 Flutter 画布
 
-  // 计算画布实际宽高（w=0 表示填满 PreviewPanel 宽度）
-  const computeFrame = useCallback((preset: typeof activePreset) => {
-    if (preset.w > 0) return { w: preset.w, h: preset.h };
+  // 计算画布实际宽高（无设备约束时填满 PreviewPanel 宽度）
+  const computeFrame = useCallback((preset: DevicePreset | null) => {
+    if (preset && preset.w > 0) return { w: preset.w, h: preset.h };
     return { w: Math.max(320, Math.floor(width - 32)), h: 640 };
   }, [width]);
 
@@ -975,16 +951,16 @@ export default function PreviewPanel({
           {!isElectron() && showDeviceDropdown && (
             <div className="absolute top-full right-0 mt-1 z-50 bg-surface border border-outline rounded-lg shadow-2xl p-1.5 min-w-[240px] max-h-[360px] overflow-y-auto">
               <button
-                onClick={() => { setActiveSizeKey('fill'); setShowDeviceDropdown(false); }}
+                onClick={() => { handleSelectSizeKey('none'); setShowDeviceDropdown(false); }}
                 className={`flex items-center gap-2 w-full px-1.5 py-1 rounded text-[10px] font-mono transition-colors mb-1 ${
-                  activeSizeKey === 'fill'
+                  activeSizeKey === 'none'
                     ? 'bg-primary/15 text-primary'
                     : 'text-on-surface/70 hover:bg-surface-bright'
                 }`}
               >
                 <Maximize2 className="w-3 h-3 shrink-0" />
-                <span className="flex-1 text-left">填满当前宽度</span>
-                {activeSizeKey === 'fill' && <Check className="w-2.5 h-2.5 shrink-0" />}
+                <span className="flex-1 text-left">无设备约束</span>
+                {activeSizeKey === 'none' && <Check className="w-2.5 h-2.5 shrink-0" />}
               </button>
               <div className="border-t border-outline/30 mb-1" />
               {(['mobile', 'tablet', 'desktop', 'watch'] as SizeGroup[]).map(group => {
@@ -1002,11 +978,8 @@ export default function PreviewPanel({
                         <button
                           key={p.key}
                           onClick={() => {
-                            setActiveSizeKey(p.key);
+                            handleSelectSizeKey(p.key);
                             setShowDeviceDropdown(false);
-                            if (renderMode === '3D' && p.glbFile) {
-                              void handleSelectDevice(p);
-                            }
                           }}
                           className={`flex items-center gap-2 w-full px-1.5 py-1 rounded text-[10px] font-mono transition-colors ${
                             active
@@ -1045,7 +1018,7 @@ export default function PreviewPanel({
               className="relative flex items-center justify-center"
               style={(() => {
                 // ★ 设备尺寸约束: 选中具体设备时, 画布区域被限制在设备尺寸内
-                if (activePreset.w > 0 && activePreset.h > 0) {
+                if (activePreset && activePreset.w > 0 && activePreset.h > 0) {
                   // 计算缩放比例, 让设备框架适配可用空间
                   const parentEl = containerRef.current;
                   const availW = parentEl ? parentEl.clientWidth - 48 : 360;
@@ -1056,12 +1029,6 @@ export default function PreviewPanel({
                   return {
                     width: `${scaledW}px`,
                     height: `${scaledH}px`,
-                    // 2D 模式下显示设备边框; 3D 模式下不显示边框 (由 3D 模型渲染)
-                    borderRadius: renderMode === '2D'
-                      ? (activePreset.group === 'watch' ? '38px' : activePreset.group === 'mobile' ? '32px' : '8px')
-                      : '0px',
-                    border: renderMode === '2D' ? '3px solid var(--color-outline)' : 'none',
-                    boxShadow: renderMode === '2D' ? '0 8px 32px rgba(0,0,0,0.12)' : 'none',
                     overflow: 'hidden',
                     transition: 'all 250ms cubic-bezier(0.16, 1, 0.3, 1)',
                   } as React.CSSProperties;
@@ -1070,8 +1037,17 @@ export default function PreviewPanel({
               })()}
             >
               {renderPlaceholder()}
+              {/* 2D 设备 PNG 边框图片 — 覆盖在内容上方 */}
+              {renderMode === '2D' && activePreset?.pngFile && (
+                <img
+                  src={`/canvas/models/2d/${activePreset.pngFile}`}
+                  alt={activePreset.label}
+                  className="absolute inset-0 w-full h-full object-contain pointer-events-none"
+                  style={{ zIndex: 10 }}
+                />
+              )}
               {/* 设备尺寸标签 */}
-              {activePreset.w > 0 && (
+              {activePreset && activePreset.w > 0 && (
                 <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-[9px] font-mono text-on-surface/40 whitespace-nowrap pointer-events-none">
                   {activePreset.label} · {activePreset.w}×{activePreset.h}
                 </div>
@@ -1080,9 +1056,6 @@ export default function PreviewPanel({
           )}
         </div>
       </div>
-
-      {/* P0: 画布修改通知气泡层 — 覆盖整个 PreviewPanel */}
-      <CanvasNotificationStack notes={notifQueue} onExpire={handleNotifExpire} />
     </div>
   );
 }
