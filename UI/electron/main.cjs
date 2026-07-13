@@ -1398,11 +1398,11 @@ return { ok: false, error: e?.message || String(e) };
 //   maximize() 内部调用 ShowWindow(SW_MAXIMIZE) → DWM 播放状态转换动画
 //   → 显示半透明尺寸数字提示 (白色长方形)
 //
-// 三层防御消除白色尺寸提示:
+// 消除白色尺寸提示的方案:
 //   1. applyNoSnapFinal 设置 DWMWA_TRANSITIONS_FORCEDISABLED (attr=3) → 禁用 DWM 转场动画
-//   2. 用 PS Worker SetWindowPos (SWP_NOSENDCHANGING) 替代 mainWindow.setBounds()
-//      → SWP_NOSENDCHANGING 抑制 WM_WINDOWPOSCHANGING → DWM 不触发尺寸提示
-//   3. mainWindow.setBounds() 仅作 fallback (PS Worker 不可用时)
+//   2. setBounds 期间用 setOpacity(0) 隐藏窗口 → DWM 不显示尺寸提示
+//   3. setBounds 完成后 setOpacity(1) 恢复显示 (延迟 1 帧避免闪烁)
+//   注意: 不能用 SWP_NOSENDCHANGING, 它会阻止 Electron 检测到 resize 事件
 //
 // 用自定义标志 _customMaximized 记录状态, 不依赖 OS 的 maximized 状态
 
@@ -1504,20 +1504,13 @@ ipcMain.handle('window:minimize', () => {
 
 ipcMain.handle('window:toggle-maximize', async () => {
 if (!mainWindow || mainWindow.isDestroyed()) return false;
-const hwnd = getHwndStr(mainWindow);
 if (_customMaximized) {
 // 还原
 if (_savedBounds) {
-// 优先用 PS Worker SetWindowPos (SWP_NOSENDCHANGING 抑制 WM_WINDOWPOSCHANGING → DWM 不显示尺寸提示)
-if (psWorker && psWorkerOk && hwnd) {
-try {
-await psSend(`RESIZE|${hwnd}|${_savedBounds.x}|${_savedBounds.y}|${_savedBounds.width}|${_savedBounds.height}`, 'maximize-restore');
-} catch {
+// setOpacity(0) 隐藏窗口 → setBounds 不触发 DWM 尺寸提示 → setOpacity(1) 恢复
+try { mainWindow.setOpacity(0); } catch {}
 mainWindow.setBounds(_savedBounds);
-}
-} else {
-mainWindow.setBounds(_savedBounds);
-}
+setTimeout(() => { try { mainWindow.setOpacity(1); } catch {} }, 16);
 }
 _customMaximized = false;
 } else {
@@ -1525,17 +1518,10 @@ _customMaximized = false;
 _savedBounds = mainWindow.getBounds();
 const { screen } = require('electron');
 const display = screen.getDisplayMatching(_savedBounds);
-const wa = display.workArea;
-// 优先用 PS Worker SetWindowPos (SWP_NOSENDCHANGING 抑制 WM_WINDOWPOSCHANGING → DWM 不显示尺寸提示)
-if (psWorker && psWorkerOk && hwnd) {
-try {
-await psSend(`RESIZE|${hwnd}|${wa.x}|${wa.y}|${wa.width}|${wa.height}`, 'maximize');
-} catch {
-mainWindow.setBounds(wa);
-}
-} else {
-mainWindow.setBounds(wa);
-}
+// setOpacity(0) 隐藏窗口 → setBounds 不触发 DWM 尺寸提示 → setOpacity(1) 恢复
+try { mainWindow.setOpacity(0); } catch {}
+mainWindow.setBounds(display.workArea);
+setTimeout(() => { try { mainWindow.setOpacity(1); } catch {} }, 16);
 _customMaximized = true;
 }
 // 通知渲染器状态变化
@@ -1546,17 +1532,10 @@ return _customMaximized;
 ipcMain.handle('window:restore', async () => {
 if (mainWindow && !mainWindow.isDestroyed()) {
 if (_customMaximized && _savedBounds) {
-const hwnd = getHwndStr(mainWindow);
-// 优先用 PS Worker SetWindowPos (SWP_NOSENDCHANGING 抑制 WM_WINDOWPOSCHANGING → DWM 不显示尺寸提示)
-if (psWorker && psWorkerOk && hwnd) {
-try {
-await psSend(`RESIZE|${hwnd}|${_savedBounds.x}|${_savedBounds.y}|${_savedBounds.width}|${_savedBounds.height}`, 'restore');
-} catch {
+// setOpacity(0) 隐藏窗口 → setBounds 不触发 DWM 尺寸提示 → setOpacity(1) 恢复
+try { mainWindow.setOpacity(0); } catch {}
 mainWindow.setBounds(_savedBounds);
-}
-} else {
-mainWindow.setBounds(_savedBounds);
-}
+setTimeout(() => { try { mainWindow.setOpacity(1); } catch {} }, 16);
 _customMaximized = false;
 mainWindow.webContents.send('window:maximize-state-changed', false);
 } else {
