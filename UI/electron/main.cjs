@@ -474,8 +474,7 @@ public class W32 {
 `;
 // 2026 修复:之前用 .replace(/\n/g, '') 删掉所有换行,导致 PS 解析
 // here-string @' 报 UnexpectedCharactersAfterHereStringHeader
-// (之前 findWindowByPid/embedWindow 等用 PS_WIN32 的函数从来没真被执行过
-//  → bug 隐藏;现在 applyNoSnapFinal 第一次用就炸了)
+// (之前 findWindowByPid/embedWindow 等用 PS_WIN32 的函数从来没真被执行过)
 // 改成保留换行,Add-Type 接受多行 C# 代码
 
 // 找指定 pid 的窗口
@@ -1391,21 +1390,9 @@ return { ok: false, error: e?.message || String(e) };
     };
   });
 
-// ── 2026-07-05 自定义窗口控制按钮 ──
+// ── 自定义窗口控制按钮 ──
 // 由 UI/src/components/WindowControls.tsx 调用
-//
-// toggle-maximize 不用 mainWindow.maximize()/unmaximize():
-//   maximize() 内部调用 ShowWindow(SW_MAXIMIZE) → DWM 播放状态转换动画
-//   → 显示半透明尺寸数字提示 (白色长方形)
-//
-// 消除白色尺寸提示的方案:
-//   applyDwmAttributes 设置 DWMWA_TRANSITIONS_FORCEDISABLED (attr=3) → 禁用 DWM 转场动画
-//   在启动时 + 每次最大化/还原后调用, 确保 DWM 属性始终生效
-//
-// 用自定义标志 _customMaximized 记录状态, 不依赖 OS 的 maximized 状态
-
-let _customMaximized = false;
-let _savedBounds = null;
+// 使用原生 maximize/unmaximize + maximize/unmaximize 事件通知渲染器
 
   // ── 文件夹选择器 (用于工作区绑定) ──
   ipcMain.handle('dialog:select-folder', async () => {
@@ -1500,40 +1487,20 @@ ipcMain.handle('window:minimize', () => {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize();
 });
 
-ipcMain.handle('window:toggle-maximize', async () => {
+ipcMain.handle('window:toggle-maximize', () => {
 if (!mainWindow || mainWindow.isDestroyed()) return false;
-if (_customMaximized) {
-// 还原
-if (_savedBounds) {
-mainWindow.setBounds(_savedBounds);
-}
-_customMaximized = false;
+if (mainWindow.isMaximized()) {
+mainWindow.unmaximize();
 } else {
-// 最大化: 保存当前 bounds, 然后设置为屏幕工作区全屏
-_savedBounds = mainWindow.getBounds();
-const { screen } = require('electron');
-const display = screen.getDisplayMatching(_savedBounds);
-mainWindow.setBounds(display.workArea);
-_customMaximized = true;
+mainWindow.maximize();
 }
-// 通知渲染器状态变化
-mainWindow.webContents.send('window:maximize-state-changed', _customMaximized);
-// 重新应用 DWM 属性 (setBounds 可能导致 DWM 重置属性)
-applyDwmAttributes(mainWindow);
-return _customMaximized;
+return mainWindow.isMaximized();
 });
 
-ipcMain.handle('window:restore', async () => {
+ipcMain.handle('window:restore', () => {
 if (mainWindow && !mainWindow.isDestroyed()) {
-if (_customMaximized && _savedBounds) {
-mainWindow.setBounds(_savedBounds);
-_customMaximized = false;
-mainWindow.webContents.send('window:maximize-state-changed', false);
-// 重新应用 DWM 属性
-applyDwmAttributes(mainWindow);
-} else {
-mainWindow.restore();
-}
+if (mainWindow.isMaximized()) mainWindow.unmaximize();
+else mainWindow.restore();
 }
 });
 
@@ -1541,11 +1508,12 @@ ipcMain.handle('window:close', () => {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
 });
 ipcMain.handle('window:is-maximized', () => {
-  return _customMaximized;
+  return mainWindow ? mainWindow.isMaximized() : false;
 });
 ipcMain.handle('window:maximize-state', (event) => {
   // 立即推送当前状态
-  event.sender.send('window:maximize-state-changed', _customMaximized);
+  const isMax = mainWindow ? mainWindow.isMaximized() : false;
+  event.sender.send('window:maximize-state-changed', isMax);
 });
 
   // ── 2026-07-02 彻底重构: 自定义窗口拖动(绝对坐标模式 + 同步 FIFO) ──
@@ -1597,13 +1565,7 @@ ipcMain.handle('window:maximize-state', (event) => {
         canvasHostWindow.show();
       }
     } catch {}
-    // 拖动结束后重新应用一次反 snap 样式
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      process.nextTick(() => {
-        try { applyNoSnapFinal(mainWindow); } catch {}
-      });
-    }
-    // 2026-07-06: 拖拽结束后, 如果 PS Worker 已死则重启
+    // 拖动结束后 PS Worker 重启检查 (拖拽可能弄崩 PS Worker)
     if (!psWorker && process.platform === 'win32') {
       console.log('[ps-worker] 拖拽结束, 3秒后自动重启...');
       setTimeout(() => {
@@ -1643,7 +1605,7 @@ ipcMain.handle('window:maximize-state', (event) => {
       dragStartWindow = { x: b.x, y: b.y };
       dragStartMouse = { x: p.x, y: p.y };
       dragFrameCount = 0;
-      // 拖动期间禁用 reapplyNoSnap
+      // 拖动期间禁用样式重应用检查
       dragActive = true;
       // 通知渲染器进入拖动状态 (CSS 临时禁用 backdrop-filter)
       try { mainWindow.webContents.send('drag-state', true); } catch {}
@@ -1804,111 +1766,8 @@ function getHwndStr(window) {
   } catch (e) { return null; }
 }
 
-// ── 轻量 DWM 属性设置 (不修改窗口样式, 只设 DWM 属性) ──
-// 在启动时 + 每次 setBounds 后调用, 确保 DWM 转场动画始终被禁用
-// applyNoSnapFinal 会在拖拽后调用, 但启动时不调用 → DWM 属性缺失 → 白色尺寸提示
-function applyDwmAttributes(window) {
-  if (process.platform !== 'win32') return;
-  const hwnd = getHwndStr(window);
-  if (!hwnd) return;
-  const script = PS_WIN32 + `
-$hwnd = [IntPtr]::new([Int64]${hwnd})
-# DWMWA_NCRENDERING_POLICY (2) = DWMNCRP_DISABLED (1)
-# DWMWA_TRANSITIONS_FORCEDISABLED (3) = TRUE (1) → 禁用 DWM 转场动画 → 不显示白色尺寸提示
-# DWMWA_WINDOW_CORNER_PREFERENCE (33) = DWMWCP_DONOTROUND (2)
-$policy1 = 1
-$transitions = 1
-$policy4 = 2
-$r1 = [W32]::DwmSetWindowAttribute($hwnd, 2,  [ref]$policy1, 4)
-$r3 = [W32]::DwmSetWindowAttribute($hwnd, 3,  [ref]$transitions, 4)
-$r4 = [W32]::DwmSetWindowAttribute($hwnd, 33, [ref]$policy4, 4)
-Write-Output "DWM NCR=$r1 TRANS=$r3 CORNER=$r4"
-`;
-  execPsSync(script).then((out) => {
-    if (out) console.log('[dwm-attrs]', out);
-  });
-}
-
-// ── 2026-07-05 窗口样式 → WS_POPUP (彻底移除非客户区) ──
-//   核心反 snap: 将 GWL_STYLE 替换为 WS_POPUP
-//   frame:false 不够: Chromium 内部 WM_NCHITTEST 仍返回 HTMAXBUTTON → snap flyout
-//   WS_POPUP 完全无非客户区 → WM_NCHITTEST 不返回 HTMAXBUTTON → flyout 不出现
-//   A) GWL_STYLE = WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN
-//   B) GWL_EXSTYLE |= WS_EX_APPWINDOW (任务栏可见)
-//   C) DWM: 方角 + NC 渲染关闭
-//   D) SetWindowPos 刷新
-function applyNoSnapFinal(window) {
-  if (process.platform !== 'win32') return;
-  const hwnd = getHwndStr(window);
-  if (!hwnd) return;
-
-  const script = PS_WIN32 + `
-$hwnd = [IntPtr]::new([Int64]${hwnd})
-
-# === 核心反 snap: 将窗口样式替换为 WS_POPUP ===
-#   frame:false 不够: Chromium 内部的 WM_NCHITTEST 处理器仍然为右上角返回 HTMAXBUTTON,
-#   触发 Windows 11 snap layout flyout (白色尺寸浮动块)
-#   WS_POPUP 完全没有非客户区 → WM_NCHITTEST 不会返回 HTMAXBUTTON → flyout 不出现
-#   保留 WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN
-$WS_POPUP        = 0x80000000
-$WS_VISIBLE      = 0x10000000
-$WS_CLIPSIBLINGS = 0x04000000
-$WS_CLIPCHILDREN = 0x02000000
-$oldStyle = [W32]::GetWindowLong($hwnd, -16)
-$newStyle = $WS_POPUP -bor $WS_VISIBLE -bor $WS_CLIPSIBLINGS -bor $WS_CLIPCHILDREN
-[W32]::SetWindowLong($hwnd, -16, $newStyle) | Out-Null
-$styleOut = "STYLE=0x$($oldStyle.ToString('X8'))->0x$($newStyle.ToString('X8'))"
-
-# === GWL_EXSTYLE: 确保 WS_EX_APPWINDOW (任务栏可见) ===
-$APP  = 0x40000
-$oldEx = [W32]::GetWindowLong($hwnd, -20)
-$newEx = $oldEx -bor $APP
-[W32]::SetWindowLong($hwnd, -20, $newEx) | Out-Null
-$exOut = "EX=0x$($oldEx.ToString('X8'))->0x$($newEx.ToString('X8'))"
-
-# === DWM: 方角 + NC 渲染关闭 + 禁用转场动画 ===
-# DWMWA_TRANSITIONS_FORCEDISABLED (attr=3): 禁用 DWM 状态转场动画
-#   → 最大化/还原时 DWM 不播放尺寸变化动画 → 不显示白色尺寸提示
-$policy1 = 1
-$policy4 = 2
-$transitions = 1
-$dwmRet1 = [W32]::DwmSetWindowAttribute($hwnd, 2,  [ref]$policy1, 4)      # NC渲染关闭
-$dwmRet3 = [W32]::DwmSetWindowAttribute($hwnd, 3,  [ref]$transitions, 4)  # 禁用转场动画
-$dwmRet4 = [W32]::DwmSetWindowAttribute($hwnd, 33, [ref]$policy4, 4)      # 方角
-$dwmOut = "DWM_NCR=$dwmRet1,TRANS=$dwmRet3,CORNER=$dwmRet4"
-
-# === SetWindowPos 刷新 ===
-$SWP = 0x0001 -bor 0x0002 -bor 0x0004 -bor 0x0010 -bor 0x0400
-$swpRet = [W32]::SetWindowPos($hwnd, [IntPtr]::Zero, 0, 0, 0, 0, $SWP)
-$swpOut = "SWP=$swpRet"
-
-Write-Output "$styleOut; $exOut; $dwmOut; $swpOut"
-`;
-  execPsSync(script).then((out) => {
-    if (out) console.log('[dwm-style]', out);
-  });
-}
-
-// 2026-07-04 拖动期间禁用 reapplyNoSnap 的标志
+// ── 2026-07-04 拖动期间禁用标志 ──
 let dragActive = false;
-
-// 2026-07-05: 样式只需应用一次, 不再在每次 move/resize 时重新应用
-//   之前每次 move/resize 都 spawn 一个新 PowerShell 进程 → 启动时十几个进程 → 拖动卡
-//   SetWindowLong 设的样式会持久保持, 不需要反复重设
-let _styleApplied = false;
-function reapplyNoSnap() {
-  if (process.platform !== 'win32') return;
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  if (dragActive) return;
-  if (mainWindow.isMinimized()) return;
-  if (_styleApplied) return;  // 已应用过, 跳过
-  setImmediate(() => {
-    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isMinimized()) {
-      applyNoSnapFinal(mainWindow);
-      _styleApplied = true;
-    }
-  });
-}
 
 // ── 2026 持久 PowerShell 进程(高频 SetWindowPos 用) ──
 //
@@ -2258,21 +2117,13 @@ function createWindow() {
     width: 1440,
     height: 900,
     show: false,
-    // ── 2026-07-05 最终方案: titleBarStyle:'hidden' (无 overlay) ──
-    //
-    // 根因: frame:false 时 Chromium 硬编码 WM_NCHITTEST 返回 HTMAXBUTTON,
-    //   触发 Windows 11 snap layout flyout。跨进程拦截得到 ACCESS_DENIED。
-    //
-    // titleBarStyle:'hidden' (无 titleBarOverlay):
-    //   - 系统处理 WM_NCHITTEST (不是 Chromium)
-    //   - maximizable:false → WS_MAXIMIZEBOX 不被加入 → 系统不返回 HTMAXBUTTON → 无 snap flyout
-    //   - 不画系统按钮 (无 overlay) → 三个按钮全部自绘 (跟之前 frame:false 一样)
-    //   - 自定义拖动: -webkit-app-region: drag (已有)
+    // titleBarStyle:'hidden' (无 overlay): 系统处理 WM_NCHITTEST, 不画系统按钮
+    // 三个窗口按钮全部自绘 (WindowControls.tsx)
     titleBarStyle: 'hidden',
     backgroundColor: '#050505',
     hasShadow: false,
     minimizable: true,
-    maximizable: false,
+    maximizable: true,
     resizable: true,
     fullscreenable: true,
     paintWhenInitiallyHidden: true,
@@ -2536,17 +2387,17 @@ app.whenReady().then(async () => {
   createWindow();                  // 先创建主窗口
   createCanvasHostWindow(mainWindow); // 再以主窗口为 parent 创建画布宿主 → OS 自动管 z-order
 
-// 2026-07-05: titleBarStyle:'hidden' (无 overlay) + maximizable:false → 系统 WM_NCHITTEST 不返回 HTMAXBUTTON → 无 snap flyout
-// 启动时必须调用 applyDwmAttributes 设置 DWMWA_TRANSITIONS_FORCEDISABLED → 禁用 DWM 转场动画 → 无白色尺寸提示
-//   (之前注释说"不需要 applyNoSnapFinal" 是错误的: applyNoSnapFinal 从未在启动时调用, DWM 属性缺失)
+// 2026-07-05: titleBarStyle:'hidden' (无 overlay) → 系统处理 WM_NCHITTEST, 无 snap flyout
+//   maximizable: true → 可用原生 maximize()/unmaximize(), 无白色尺寸提示
 mainWindow.once('ready-to-show', () => {
-mainWindow.show();
-// 延迟 200ms 等 HWND 稳定后再设 DWM 属性 (太早设可能被 Chromium 覆盖)
-setTimeout(() => {
-if (mainWindow && !mainWindow.isDestroyed()) {
-applyDwmAttributes(mainWindow);
-}
-}, 200);
+  mainWindow.show();
+});
+// 原生 maximize/unmaximize 事件 → 通知渲染器更新按钮状态
+mainWindow.on('maximize', () => {
+  mainWindow.webContents.send('window:maximize-state-changed', true);
+});
+mainWindow.on('unmaximize', () => {
+  mainWindow.webContents.send('window:maximize-state-changed', false);
 });
   registerIpc();
 
