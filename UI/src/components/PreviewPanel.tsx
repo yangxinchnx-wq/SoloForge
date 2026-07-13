@@ -60,6 +60,7 @@ declare global {
         hostInfo: () => Promise<{ ok: boolean; created?: boolean; bounds: { x: number; y: number; width: number; height: number } }>;
         ensureHost: () => Promise<{ ok: boolean; created?: boolean; hwnd?: number; bounds?: any; error?: string }>;
         pushUI: (sessionId: string, dsl: any, deviceId?: string | null) => Promise<{ ok: boolean; error?: string }>;
+        selectDevice: (sessionId: string, modelKey: string, file: string, nativeSize: { w: number; h: number }) => Promise<{ ok: boolean; error?: string }>;
         transformDevice: (sessionId: string, deviceId: string, transform: any) => Promise<{ ok: boolean; error?: string }>;
         clearDevices: (sessionId: string) => Promise<{ ok: boolean; error?: string }>;
         setBackground: (sessionId: string, color: string) => Promise<{ ok: boolean; error?: string }>;
@@ -574,22 +575,22 @@ export default function PreviewPanel({
     if (canvasState === 'running') pushBackground(customColor);
   };
 
-  // ★ 3D 设备选择: 调用 selectModel API 只对当前画布生效
+  // ★ 3D 设备选择: 通过 /render 端点加载 GLB 模型到当前画布
   const handleSelectDevice = useCallback(async (preset: DevicePreset) => {
     if (!sessionIdRef.current || !canvasId) return;
     // 调用后端 selectModel (仅当前 canvas session)
     await apiSelectModel(sessionIdRef.current, preset.key).catch(() => {});
-    // 如果画布正在运行, 通过 IPC 加载 3D 模型
+    // 通过 IPC selectDevice → POST /render → Flutter 加载 GLB 模型
     if (isElectron() && canvasState === 'running' && preset.glbFile) {
       try {
-        await window.soloforge!.canvas.pushUI(sessionIdRef.current, {
-          action: 'selectDevice',
-          modelKey: preset.key,
-          file: preset.glbFile,
-          nativeSize: { w: preset.w, h: preset.h },
-        });
+        await window.soloforge!.canvas.selectDevice(
+          sessionIdRef.current,
+          preset.key,
+          preset.glbFile,
+          { w: preset.w, h: preset.h },
+        );
       } catch (e) {
-        console.warn('[handleSelectDevice] pushUI failed:', e);
+        console.warn('[handleSelectDevice] selectDevice failed:', e);
       }
     }
   }, [canvasId, canvasState]);

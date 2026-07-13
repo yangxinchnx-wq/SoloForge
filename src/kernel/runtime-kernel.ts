@@ -9,6 +9,7 @@ import { LifecycleManager } from '../runtime/lifecycle';
 import { ConfigCenter, globalConfigCenter, MetricsCollectorInterface, globalMetricsCollector } from './config-center';
 import type Redis from 'ioredis';
 import type { TransactionManager } from './transaction-manager';
+import type { ITransactionManager } from '../types/bootstrap-deps';
 
 export enum RuntimeState {
   BOOTING = 'BOOTING',
@@ -423,13 +424,13 @@ export class RuntimeKernel {
   // ────────────── 兼容旧系统装配器的存根接口 ──────────────
   public bootstrapCoreLinkages(components: {
     commandBus: CommandBusInterface;
-    transactionManager: TransactionManager;
+    transactionManager: ITransactionManager;
     projectionManager: any;
     snapshotManager: any;
     scheduler: any;
   }): void {
     this.commandBus = components.commandBus;
-    this.transactionManager = components.transactionManager;
+    this.transactionManager = components.transactionManager as TransactionManager;
     this.projectionManager = components.projectionManager;
     this.snapshotManager = components.snapshotManager;
     this.scheduler = components.scheduler;

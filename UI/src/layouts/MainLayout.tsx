@@ -72,6 +72,10 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
   const { sidebarWidth, previewWidth } = layoutState;
   const { isResizingSidebar, isResizingPreview, dragStartPreviewWidth } = layoutStatus;
   const showFloatingEditor = useAppStore((s) => s.showFloatingEditor);
+  const showThemeCustomizer = useAppStore((s) => s.showThemeCustomizer);
+  const showSettingsModal = useAppStore((s) => s.showSettingsModal);
+  const showStatsModal = useAppStore((s) => s.showStatsModal);
+  const anyModalOpen = showThemeCustomizer || showSettingsModal || showStatsModal;
   const { primaryColorTargets } = useHotTheme();
 
   const sidebarVisible = activeTab === 'explorer' || activeTab === 'git' || showCodeEditor;
@@ -155,7 +159,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         {/* Column 3: History Dialogues List */}
         <div
           data-theme-region="editor-explorer"
-          className="absolute left-[48px] top-0 bottom-0 z-40 flex flex-col overflow-hidden border-r border-[var(--color-primary)]/20 shadow-[4px_0_15px_rgba(0,0,0,0.22)]"
+          className={`absolute left-[48px] top-0 bottom-0 z-40 flex flex-col overflow-hidden border-r border-[var(--color-primary)]/20 ${anyModalOpen ? '' : 'shadow-[4px_0_15px_rgba(0,0,0,0.22)]'}`}
           style={{
             width: showHistory ? `${sidebarWidth}px` : '0px',
             opacity: showHistory ? 1 : 0,

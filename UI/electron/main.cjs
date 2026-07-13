@@ -1079,6 +1079,23 @@ async function clearCanvasDevices(sessionId) {
   return { ok: false, error: r.error || `http ${r.status}` };
 }
 
+async function selectDeviceToCanvas(sessionId, modelKey, file, nativeSize) {
+  const s = canvasSessions.get(sessionId);
+  if (!s) return { ok: false, error: 'session not found' };
+  const payload = JSON.stringify({
+    action: 'selectDevice',
+    modelKey,
+    file,
+    nativeSize,
+  });
+  const r = await sendToCanvasRaw(s.port, '/render', payload, 5000);
+  if (r.status === 200) {
+    try { return { ok: true, ...JSON.parse(r.body) }; }
+    catch { return { ok: true }; }
+  }
+  return { ok: false, error: r.error || `http ${r.status}` };
+}
+
 async function setCanvasBackground(sessionId, color) {
   const s = canvasSessions.get(sessionId);
   if (!s) return { ok: false, error: 'session not found' };
@@ -1170,6 +1187,11 @@ function registerIpc() {
   // ★ 新增: pushUI — 推送 UI DSL 到画布 (带 deviceId 关联)
   ipcMain.handle('canvas:push-ui', async (_e, { sessionId, dsl, deviceId }) => {
     return pushUIToCanvas(sessionId, dsl, deviceId);
+  });
+
+  // ★ 新增: selectDevice — 加载 3D 设备模型到画布 (POST /render)
+  ipcMain.handle('canvas:select-device', async (_e, { sessionId, modelKey, file, nativeSize }) => {
+    return selectDeviceToCanvas(sessionId, modelKey, file, nativeSize);
   });
 
   // ★ 新增: transformDevice — 拖拽/旋转/缩放 3D 设备

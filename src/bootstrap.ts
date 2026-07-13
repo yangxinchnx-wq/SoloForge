@@ -6,7 +6,7 @@
 import { RuntimeKernel } from './kernel/runtime-kernel';
 import { RuntimeEvent } from './core/events/runtime-events';
 import { logger } from './core/logger';
-import { ShadowGovernorClient, DEFAULT_SHADOW_CONFIG } from './kernel/shadow-governor-client';
+import { ShadowGovernorClient, DEFAULT_SHADOW_CONFIG, TelemetryVector } from './kernel/shadow-governor-client';
 import { GovernorShadowOrchestrator } from './kernel/governor-shadow-orchestrator';
 import { SurrealPersistence } from './data/surreal_persistence';
 import { connect as garnetConnect, disconnect as garnetDisconnect } from './data/garnet/index';
@@ -450,7 +450,7 @@ export class ShadowOrchestrator {
     if (!this.shadowClient || !this.isConnected) return;
 
     try {
-      const shadowResponse = await this.shadowClient.getShadowAction(payload);
+      const shadowResponse = await this.shadowClient.getShadowAction(payload as TelemetryVector);
 
       // 通过 EventBus 发出 Shadow 决策事件（Event Sourcing）
       this.kernel.eventBus.emit('shadow.decision.recorded', {
