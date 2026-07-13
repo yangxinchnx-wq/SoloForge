@@ -1389,8 +1389,12 @@ return { ok: false, error: e?.message || String(e) };
 // toggle-maximize 不用 mainWindow.maximize()/unmaximize():
 //   maximize() 内部调用 ShowWindow(SW_MAXIMIZE) → DWM 播放状态转换动画
 //   → 显示半透明尺寸数字提示 (白色长方形)
-//   DWMWA_TRANSITIONS_FORCEDISABLED 对 Win11 的这个 tooltip 无效
-//   改用 setBounds 手动设置窗口尺寸到工作区全屏 → 不触发 DWM 动画 → 无 tooltip
+//
+// 三层防御消除白色尺寸提示:
+//   1. applyNoSnapFinal 设置 DWMWA_TRANSITIONS_FORCEDISABLED (attr=3) → 禁用 DWM 转场动画
+//   2. 用 PS Worker SetWindowPos (SWP_NOSENDCHANGING) 替代 mainWindow.setBounds()
+//      → SWP_NOSENDCHANGING 抑制 WM_WINDOWPOSCHANGING → DWM 不触发尺寸提示
+//   3. mainWindow.setBounds() 仅作 fallback (PS Worker 不可用时)
 //
 // 用自定义标志 _customMaximized 记录状态, 不依赖 OS 的 maximized 状态
 
@@ -1490,37 +1494,67 @@ ipcMain.handle('window:minimize', () => {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize();
 });
 
-ipcMain.handle('window:toggle-maximize', () => {
-  if (!mainWindow || mainWindow.isDestroyed()) return false;
-  if (_customMaximized) {
-    // 还原
-    if (_savedBounds) {
-      mainWindow.setBounds(_savedBounds);
-    }
-    _customMaximized = false;
-  } else {
-    // 最大化: 保存当前 bounds, 然后设置为屏幕工作区全屏
-    _savedBounds = mainWindow.getBounds();
-    const { screen } = require('electron');
-    const display = screen.getDisplayMatching(_savedBounds);
-    mainWindow.setBounds(display.workArea);
-    _customMaximized = true;
-  }
-  // 通知渲染器状态变化
-  mainWindow.webContents.send('window:maximize-state-changed', _customMaximized);
-  return _customMaximized;
+ipcMain.handle('window:toggle-maximize', async () => {
+if (!mainWindow || mainWindow.isDestroyed()) return false;
+const hwnd = getHwndStr(mainWindow);
+if (_customMaximized) {
+// 还原
+if (_savedBounds) {
+// 优先用 PS Worker SetWindowPos (SWP_NOSENDCHANGING 抑制 WM_WINDOWPOSCHANGING → DWM 不显示尺寸提示)
+if (psWorker && psWorkerOk && hwnd) {
+try {
+await psSend(`RESIZE|${hwnd}|${_savedBounds.x}|${_savedBounds.y}|${_savedBounds.width}|${_savedBounds.height}`, 'maximize-restore');
+} catch {
+mainWindow.setBounds(_savedBounds);
+}
+} else {
+mainWindow.setBounds(_savedBounds);
+}
+}
+_customMaximized = false;
+} else {
+// 最大化: 保存当前 bounds, 然后设置为屏幕工作区全屏
+_savedBounds = mainWindow.getBounds();
+const { screen } = require('electron');
+const display = screen.getDisplayMatching(_savedBounds);
+const wa = display.workArea;
+// 优先用 PS Worker SetWindowPos (SWP_NOSENDCHANGING 抑制 WM_WINDOWPOSCHANGING → DWM 不显示尺寸提示)
+if (psWorker && psWorkerOk && hwnd) {
+try {
+await psSend(`RESIZE|${hwnd}|${wa.x}|${wa.y}|${wa.width}|${wa.height}`, 'maximize');
+} catch {
+mainWindow.setBounds(wa);
+}
+} else {
+mainWindow.setBounds(wa);
+}
+_customMaximized = true;
+}
+// 通知渲染器状态变化
+mainWindow.webContents.send('window:maximize-state-changed', _customMaximized);
+return _customMaximized;
 });
 
-ipcMain.handle('window:restore', () => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    if (_customMaximized && _savedBounds) {
-      mainWindow.setBounds(_savedBounds);
-      _customMaximized = false;
-      mainWindow.webContents.send('window:maximize-state-changed', false);
-    } else {
-      mainWindow.restore();
-    }
-  }
+ipcMain.handle('window:restore', async () => {
+if (mainWindow && !mainWindow.isDestroyed()) {
+if (_customMaximized && _savedBounds) {
+const hwnd = getHwndStr(mainWindow);
+// 优先用 PS Worker SetWindowPos (SWP_NOSENDCHANGING 抑制 WM_WINDOWPOSCHANGING → DWM 不显示尺寸提示)
+if (psWorker && psWorkerOk && hwnd) {
+try {
+await psSend(`RESIZE|${hwnd}|${_savedBounds.x}|${_savedBounds.y}|${_savedBounds.width}|${_savedBounds.height}`, 'restore');
+} catch {
+mainWindow.setBounds(_savedBounds);
+}
+} else {
+mainWindow.setBounds(_savedBounds);
+}
+_customMaximized = false;
+mainWindow.webContents.send('window:maximize-state-changed', false);
+} else {
+mainWindow.restore();
+}
+}
 });
 
 ipcMain.handle('window:close', () => {
@@ -1827,12 +1861,16 @@ $newEx = $oldEx -bor $APP
 [W32]::SetWindowLong($hwnd, -20, $newEx) | Out-Null
 $exOut = "EX=0x$($oldEx.ToString('X8'))->0x$($newEx.ToString('X8'))"
 
-# === DWM: 方角 + NC 渲染关闭 ===
+# === DWM: 方角 + NC 渲染关闭 + 禁用转场动画 ===
+# DWMWA_TRANSITIONS_FORCEDISABLED (attr=3): 禁用 DWM 状态转场动画
+#   → 最大化/还原时 DWM 不播放尺寸变化动画 → 不显示白色尺寸提示
 $policy1 = 1
 $policy4 = 2
-$dwmRet1 = [W32]::DwmSetWindowAttribute($hwnd, 2,  [ref]$policy1, 4)
-$dwmRet4 = [W32]::DwmSetWindowAttribute($hwnd, 33, [ref]$policy4, 4)
-$dwmOut = "DWM_NCR=$dwmRet1,CORNER=$dwmRet4"
+$transitions = 1
+$dwmRet1 = [W32]::DwmSetWindowAttribute($hwnd, 2,  [ref]$policy1, 4)      # NC渲染关闭
+$dwmRet3 = [W32]::DwmSetWindowAttribute($hwnd, 3,  [ref]$transitions, 4)  # 禁用转场动画
+$dwmRet4 = [W32]::DwmSetWindowAttribute($hwnd, 33, [ref]$policy4, 4)      # 方角
+$dwmOut = "DWM_NCR=$dwmRet1,TRANS=$dwmRet3,CORNER=$dwmRet4"
 
 # === SetWindowPos 刷新 ===
 $SWP = 0x0001 -bor 0x0002 -bor 0x0004 -bor 0x0010 -bor 0x0400
