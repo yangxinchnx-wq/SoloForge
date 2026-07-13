@@ -456,92 +456,95 @@ function UserBadgeSelectorImpl() {
             onMouseDown={(e) => e.stopPropagation()}
             style={{
               ...panelStyle,
-              transformOrigin: '20% 0%',
+              transformOrigin: 'right top',
               zIndex: 60,
             }}
-            className="absolute left-0 top-full mt-3 p-2 flex gap-2 w-max max-w-[90vw] overflow-x-auto overflow-y-hidden"
+            className="absolute right-0 top-full mt-3 p-2 rounded-xl"
+            style={{ ...panelStyle, transformOrigin: 'right top', zIndex: 60, width: 248 }}
           >
-            {AVATARS.map((src, idx) => (
+            <div className="flex gap-2 overflow-x-auto overflow-y-hidden scrollbar-none" style={{ maxHeight: 60 }}>
+              {AVATARS.map((src, idx) => (
+                <motion.button
+                  key={idx}
+                  type="button"
+                  role="option"
+                  aria-selected={avatarIdx === idx}
+                  aria-label={`头像 ${idx + 1}`}
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1], delay: idx * 0.02 }}
+                  onClick={() => selectAvatar(idx)}
+                  whileHover={{ scale: 1.08 }}
+                  whileTap={{ scale: 0.94 }}
+                  className="relative shrink-0 rounded-xl overflow-hidden cursor-pointer"
+                  style={{
+                    border: avatarIdx === idx
+                      ? `2px solid var(--color-primary)`
+                      : `2px solid transparent`,
+                    boxShadow: avatarIdx === idx
+                      ? `0 0 0 2px ${rgba('--color-primary-rgb', 0.25)}`
+                      : 'none',
+                  }}
+                >
+                  <img src={src} alt={`头像 ${idx + 1}`} className="w-12 h-12 object-cover" draggable={false} />
+                </motion.button>
+              ))}
+              {/* 自定义头像 (已上传) */}
+              {customAvatar && (
+                <motion.button
+                  key="custom-avatar"
+                  type="button"
+                  role="option"
+                  aria-selected={false}
+                  aria-label="自定义头像 (右键移除)"
+                  title="点击应用 · 右键移除"
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1], delay: AVATARS.length * 0.02 }}
+                  onClick={() => {
+                    setUseCustomAvatar(true);
+                    localStorage.setItem(STORAGE_USE_CUSTOM_AVATAR, 'true');
+                    setOpenMenu(null);
+                    window.dispatchEvent(new CustomEvent('soloforge-user-badge-updated'));
+                  }}
+                  onContextMenu={(e) => { e.preventDefault(); removeCustomAvatar(); }}
+                  whileHover={{ scale: 1.08 }}
+                  whileTap={{ scale: 0.94 }}
+                  className="relative shrink-0 rounded-xl overflow-hidden cursor-pointer"
+                  style={{ border: '2px solid var(--color-primary)' }}
+                >
+                  <img src={customAvatar} alt="自定义头像" className="w-12 h-12 object-cover" draggable={false} />
+                </motion.button>
+              )}
+              {/* 上传按钮 — 虚线轮廓, 主题色 */}
               <motion.button
-                key={idx}
+                key="upload-avatar"
                 type="button"
-                role="option"
-                aria-selected={avatarIdx === idx}
-                aria-label={`头像 ${idx + 1}`}
+                aria-label="上传自定义头像"
+                title="上传自定义头像 (PNG / JPEG / WebP / GIF / SVG, ≤2MB)"
                 initial={{ opacity: 0, y: -4 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1], delay: idx * 0.02 }}
-                onClick={() => selectAvatar(idx)}
+                transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1], delay: (AVATARS.length + 1) * 0.02 }}
+                onClick={() => fileInputRef.current?.click()}
                 whileHover={{ scale: 1.08 }}
                 whileTap={{ scale: 0.94 }}
-                className="relative shrink-0 rounded-xl overflow-hidden cursor-pointer"
+                className="relative shrink-0 rounded-xl overflow-hidden cursor-pointer w-12 h-12 flex items-center justify-center"
                 style={{
-                  border: avatarIdx === idx
-                    ? `2px solid var(--color-primary)`
-                    : `2px solid transparent`,
-                  boxShadow: avatarIdx === idx
-                    ? `0 0 0 2px ${rgba('--color-primary-rgb', 0.25)}`
-                    : 'none',
+                  border: `2px dashed var(--color-primary)`,
+                  color: 'var(--color-primary)',
+                  background: rgba('--color-primary-rgb', 0.06),
                 }}
               >
-                <img src={src} alt={`头像 ${idx + 1}`} className="w-12 h-12 object-cover" draggable={false} />
+                <Plus className="w-5 h-5" />
               </motion.button>
-            ))}
-            {/* 自定义头像 (已上传) */}
-            {customAvatar && (
-              <motion.button
-                key="custom-avatar"
-                type="button"
-                role="option"
-                aria-selected={false}
-                aria-label="自定义头像 (右键移除)"
-                title="点击应用 · 右键移除"
-                initial={{ opacity: 0, y: -4 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1], delay: AVATARS.length * 0.02 }}
-                onClick={() => {
-                  setUseCustomAvatar(true);
-                  localStorage.setItem(STORAGE_USE_CUSTOM_AVATAR, 'true');
-                  setOpenMenu(null);
-                  window.dispatchEvent(new CustomEvent('soloforge-user-badge-updated'));
-                }}
-                onContextMenu={(e) => { e.preventDefault(); removeCustomAvatar(); }}
-                whileHover={{ scale: 1.08 }}
-                whileTap={{ scale: 0.94 }}
-                className="relative shrink-0 rounded-xl overflow-hidden cursor-pointer"
-                style={{ border: '2px solid var(--color-primary)' }}
-              >
-                <img src={customAvatar} alt="自定义头像" className="w-12 h-12 object-cover" draggable={false} />
-              </motion.button>
-            )}
-            {/* 上传按钮 — 虚线轮廓, 主题色 */}
-            <motion.button
-              key="upload-avatar"
-              type="button"
-              aria-label="上传自定义头像"
-              title="上传自定义头像 (PNG / JPEG / WebP / GIF / SVG, ≤2MB)"
-              initial={{ opacity: 0, y: -4 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1], delay: (AVATARS.length + 1) * 0.02 }}
-              onClick={() => fileInputRef.current?.click()}
-              whileHover={{ scale: 1.08 }}
-              whileTap={{ scale: 0.94 }}
-              className="relative shrink-0 rounded-xl overflow-hidden cursor-pointer w-12 h-12 flex items-center justify-center"
-              style={{
-                border: `2px dashed var(--color-primary)`,
-                color: 'var(--color-primary)',
-                background: rgba('--color-primary-rgb', 0.06),
-              }}
-            >
-              <Plus className="w-5 h-5" />
-            </motion.button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
-              onChange={handleAvatarUpload}
-              className="hidden"
-            />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+                onChange={handleAvatarUpload}
+                className="hidden"
+              />
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -563,7 +566,7 @@ function UserBadgeSelectorImpl() {
               transformOrigin: '20% 0%',
               zIndex: 60,
             }}
-            className="absolute left-0 top-full mt-3 p-1 flex flex-col gap-0.5 max-h-64 overflow-y-auto w-max min-w-[160px] max-w-[90vw]"
+            className="absolute right-0 top-full mt-3 p-1 flex flex-col gap-0.5 max-h-64 overflow-y-auto w-max min-w-[160px] max-w-[90vw]"
           >
             {names.length === 0 ? (
               <div className="px-3 py-4 text-center text-[11px] text-on-surface/55 select-none">

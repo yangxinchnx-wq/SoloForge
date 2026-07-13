@@ -62,6 +62,9 @@ declare global {
         pushUI: (sessionId: string, dsl: any, deviceId?: string | null) => Promise<{ ok: boolean; error?: string }>;
         selectDevice: (sessionId: string, modelKey: string, file: string, nativeSize: { w: number; h: number }) => Promise<{ ok: boolean; error?: string }>;
         setHostVisible: (visible: boolean) => Promise<{ ok: boolean; error?: string }>;
+        openDevicePopup: (x: number, y: number, items: Array<{key:string; label:string; w:number; h:number; glbFile?:string; icon?:string}>, activeKey: string) => Promise<{ ok: boolean }>;
+        closeDevicePopup: () => Promise<{ ok: boolean }>;
+        onDeviceSelected: (callback: (data: { key: string; glbFile?: string }) => void) => () => void;
         transformDevice: (sessionId: string, deviceId: string, transform: any) => Promise<{ ok: boolean; error?: string }>;
         clearDevices: (sessionId: string) => Promise<{ ok: boolean; error?: string }>;
         setBackground: (sessionId: string, color: string) => Promise<{ ok: boolean; error?: string }>;
@@ -258,6 +261,44 @@ export default function PreviewPanel({
     const anyDropdownOpen = showDeviceDropdown || showColorPicker;
     window.soloforge?.canvas.setHostVisible?.(!anyDropdownOpen).catch(() => {});
   }, [showDeviceDropdown, showColorPicker]);
+
+  // ★ 监听 Electron 弹窗的设备选择回调
+  useEffect(() => {
+    if (!isElectron()) return;
+    const unsub = window.soloforge!.canvas.onDeviceSelected((data) => {
+      const preset = findDevicePreset(data.key);
+      setActiveSizeKey(data.key);
+      setShowDeviceDropdown(false);
+      // 3D 模式下选中设备 → 加载 GLB 模型到当前画布
+      if (renderMode === '3D' && preset.glbFile) {
+        void handleSelectDevice(preset);
+      }
+    });
+    return () => { unsub(); };
+  }, [renderMode]);
+
+  // ★ 打开 Electron 原生弹窗 (避免被 Flutter 窗口遮挡)
+  const openElectronDevicePopup = useCallback(() => {
+    if (!isElectron()) return;
+    // 计算按钮在屏幕上的位置
+    const btn = document.querySelector('[data-device-btn]');
+    if (!btn) return;
+    const rect = btn.getBoundingClientRect();
+    const items = activeDeviceList.map(d => ({
+      key: d.key,
+      label: d.label,
+      w: d.w,
+      h: d.h,
+      glbFile: d.glbFile,
+      icon: '',
+    }));
+    window.soloforge!.canvas.openDevicePopup(
+      Math.round(rect.right) - 260,
+      Math.round(rect.bottom) + 4,
+      items,
+      activeSizeKey,
+    );
+  }, [activeDeviceList, activeSizeKey]);
 
   // ★ 同步设备尺寸 + 渲染模式到 canvasDeviceStore (供 useChatStore/aiBackend 读取)
   const setDevice = useCanvasDeviceStore(s => s.setDevice);
@@ -865,100 +906,115 @@ export default function PreviewPanel({
             </MountTransition>
           </div>
 
-          {/* 2D / 3D 渲染模式 + 设备选择 */}
-          <div className="relative">
-            <div className="flex items-center rounded-md overflow-hidden border border-outline/30">
-              <button
-                onClick={() => { setRenderMode('2D'); setShowDeviceDropdown(s => !s); }}
-                className={`flex items-center gap-1 px-2 py-1 text-[10px] font-mono font-semibold transition-colors ${
-                  renderMode === '2D'
-                    ? 'bg-primary/15 text-primary'
-                    : 'bg-surface-bright/60 text-on-surface/50 hover:text-on-surface'
-                }`}
-                title="2D 模式 — 点击选择设备"
-              >
-                <SquareIcon className="w-3 h-3" />
-                <span>2D</span>
-              </button>
-              <button
-                onClick={() => { setRenderMode('3D'); setShowDeviceDropdown(s => !s); }}
-                className={`flex items-center gap-1 px-2 py-1 text-[10px] font-mono font-semibold transition-colors border-l border-outline/30 ${
-                  renderMode === '3D'
-                    ? 'bg-primary/15 text-primary'
-                    : 'bg-surface-bright/60 text-on-surface/50 hover:text-on-surface'
-                }`}
-                title="3D 模式 — 点击选择设备"
-              >
-                <Box className="w-3 h-3" />
-                <span>3D</span>
-              </button>
-              <button
-                onClick={() => setShowDeviceDropdown(s => !s)}
-                className="flex items-center px-1.5 py-1 text-[10px] font-mono transition-colors border-l border-outline/30 bg-surface-bright/60 text-on-surface/70 hover:text-on-surface"
-                title="选择设备"
-              >
-                <ChevronDown className={`w-2.5 h-2.5 transition-transform ${showDeviceDropdown ? 'rotate-180' : ''}`} />
-              </button>
-            </div>
-            <MountTransition show={showDeviceDropdown} variant="fade" duration={140}>
-              <div className="absolute top-full right-0 mt-1 z-50 bg-surface border border-outline rounded-lg shadow-2xl p-1.5 min-w-[240px] max-h-[360px] overflow-y-auto">
-                {/* 填满宽度选项 */}
-                <button
-                  onClick={() => { setActiveSizeKey('fill'); setShowDeviceDropdown(false); }}
-                  className={`flex items-center gap-2 w-full px-1.5 py-1 rounded text-[10px] font-mono transition-colors mb-1 ${
-                    activeSizeKey === 'fill'
-                      ? 'bg-primary/15 text-primary'
-                      : 'text-on-surface/70 hover:bg-surface-bright'
-                  }`}
-                >
-                  <Maximize2 className="w-3 h-3 shrink-0" />
-                  <span className="flex-1 text-left">填满当前宽度</span>
-                  {activeSizeKey === 'fill' && <Check className="w-2.5 h-2.5 shrink-0" />}
-                </button>
-                {/* 分组分隔线 */}
-                <div className="border-t border-outline/30 mb-1" />
-                {/* 按分组列出当前模式的设备 */}
-                {(['mobile', 'tablet', 'desktop', 'watch'] as SizeGroup[]).map(group => {
-                  const presets = activeDeviceList.filter(p => p.group === group);
-                  if (presets.length === 0) return null;
-                  return (
-                    <div key={group} className="mb-1">
-                      <div className="text-[9px] font-mono text-on-surface/40 px-1.5 py-0.5 sticky top-0 bg-surface">
-                        {presets[0].groupLabel}
-                      </div>
-                      {presets.map(p => {
-                        const Icon = p.icon;
-                        const active = p.key === activeSizeKey;
-                        return (
-                          <button
-                            key={p.key}
-                            onClick={() => {
-                              setActiveSizeKey(p.key);
-                              setShowDeviceDropdown(false);
-                              // ★ 3D 模式下选中设备 → 加载 GLB 模型到当前画布
-                              if (renderMode === '3D' && p.glbFile) {
-                                void handleSelectDevice(p);
-                              }
-                            }}
-                            className={`flex items-center gap-2 w-full px-1.5 py-1 rounded text-[10px] font-mono transition-colors ${
-                              active
-                                ? 'bg-primary/15 text-primary'
-                                : 'text-on-surface/70 hover:bg-surface-bright'
-                            }`}
-                          >
-                            <Icon className="w-3 h-3 shrink-0" />
-                            <span className="flex-1 text-left truncate">{p.label}</span>
-                            <span className="text-on-surface/40 text-[9px]">{p.w}×{p.h}</span>
-                            {active && <Check className="w-2.5 h-2.5 shrink-0" />}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  );
-                })}
-              </div>
-            </MountTransition>
+          {/* 2D / 3D 渲染模式 + 设备选择 — 用 Electron 原生弹窗避免 Flutter 遮挡 */}
+          <div className="flex items-center rounded-md overflow-hidden border border-outline/30" data-device-btn>
+            <button
+              onClick={() => {
+                setRenderMode('2D');
+                if (isElectron()) {
+                  openElectronDevicePopup();
+                } else {
+                  setShowDeviceDropdown(s => !s);
+                }
+              }}
+              className={`flex items-center gap-1 px-2 py-1 text-[10px] font-mono font-semibold transition-colors ${
+                renderMode === '2D'
+                  ? 'bg-primary/15 text-primary'
+                  : 'bg-surface-bright/60 text-on-surface/50 hover:text-on-surface'
+              }`}
+              title="2D 模式 — 点击选择设备"
+            >
+              <SquareIcon className="w-3 h-3" />
+              <span>2D</span>
+            </button>
+            <button
+              onClick={() => {
+                setRenderMode('3D');
+                if (isElectron()) {
+                  openElectronDevicePopup();
+                } else {
+                  setShowDeviceDropdown(s => !s);
+                }
+              }}
+              className={`flex items-center gap-1 px-2 py-1 text-[10px] font-mono font-semibold transition-colors border-l border-outline/30 ${
+                renderMode === '3D'
+                  ? 'bg-primary/15 text-primary'
+                  : 'bg-surface-bright/60 text-on-surface/50 hover:text-on-surface'
+              }`}
+              title="3D 模式 — 点击选择设备"
+            >
+              <Box className="w-3 h-3" />
+              <span>3D</span>
+            </button>
+            <button
+              onClick={() => {
+                if (isElectron()) {
+                  openElectronDevicePopup();
+                } else {
+                  setShowDeviceDropdown(s => !s);
+                }
+              }}
+              className="flex items-center px-1.5 py-1 text-[10px] font-mono transition-colors border-l border-outline/30 bg-surface-bright/60 text-on-surface/70 hover:text-on-surface"
+              title="选择设备"
+            >
+              <ChevronDown className="w-2.5 h-2.5" />
+            </button>
           </div>
+          {/* 非 Electron 环境用 DOM 下拉框 (devtoos 调试用) */}
+          {!isElectron() && showDeviceDropdown && (
+            <div className="absolute top-full right-0 mt-1 z-50 bg-surface border border-outline rounded-lg shadow-2xl p-1.5 min-w-[240px] max-h-[360px] overflow-y-auto">
+              <button
+                onClick={() => { setActiveSizeKey('fill'); setShowDeviceDropdown(false); }}
+                className={`flex items-center gap-2 w-full px-1.5 py-1 rounded text-[10px] font-mono transition-colors mb-1 ${
+                  activeSizeKey === 'fill'
+                    ? 'bg-primary/15 text-primary'
+                    : 'text-on-surface/70 hover:bg-surface-bright'
+                }`}
+              >
+                <Maximize2 className="w-3 h-3 shrink-0" />
+                <span className="flex-1 text-left">填满当前宽度</span>
+                {activeSizeKey === 'fill' && <Check className="w-2.5 h-2.5 shrink-0" />}
+              </button>
+              <div className="border-t border-outline/30 mb-1" />
+              {(['mobile', 'tablet', 'desktop', 'watch'] as SizeGroup[]).map(group => {
+                const presets = activeDeviceList.filter(p => p.group === group);
+                if (presets.length === 0) return null;
+                return (
+                  <div key={group} className="mb-1">
+                    <div className="text-[9px] font-mono text-on-surface/40 px-1.5 py-0.5 sticky top-0 bg-surface">
+                      {presets[0].groupLabel}
+                    </div>
+                    {presets.map(p => {
+                      const Icon = p.icon;
+                      const active = p.key === activeSizeKey;
+                      return (
+                        <button
+                          key={p.key}
+                          onClick={() => {
+                            setActiveSizeKey(p.key);
+                            setShowDeviceDropdown(false);
+                            if (renderMode === '3D' && p.glbFile) {
+                              void handleSelectDevice(p);
+                            }
+                          }}
+                          className={`flex items-center gap-2 w-full px-1.5 py-1 rounded text-[10px] font-mono transition-colors ${
+                            active
+                              ? 'bg-primary/15 text-primary'
+                              : 'text-on-surface/70 hover:bg-surface-bright'
+                          }`}
+                        >
+                          <Icon className="w-3 h-3 shrink-0" />
+                          <span className="flex-1 text-left truncate">{p.label}</span>
+                          <span className="text-on-surface/40 text-[9px]">{p.w}×{p.h}</span>
+                          {active && <Check className="w-2.5 h-2.5 shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           {canvasError && (
             <span

@@ -1121,6 +1121,112 @@ Write-Output "OK"`;
   try { await execPs(script); } catch {}
 }
 
+// ★ 设备选择弹窗 — 用独立 BrowserWindow 避免被 Flutter 原生窗口遮挡
+let devicePopupWin = null;
+
+ipcMain.handle('canvas:open-device-popup', async (_e, { x, y, items, activeKey }) => {
+  // 关闭已有弹窗
+  if (devicePopupWin && !devicePopupWin.isDestroyed()) {
+    devicePopupWin.destroy();
+    devicePopupWin = null;
+  }
+
+  const w = 260;
+  const h = Math.min(400, items.length * 28 + 60);
+
+  devicePopupWin = new BrowserWindow({
+    parent: mainWindow,
+    x: Math.round(x),
+    y: Math.round(y),
+    width: w,
+    height: h,
+    frame: false,
+    transparent: true,
+    skipTaskbar: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    hasShadow: true,
+    focusable: true,
+    alwaysOnTop: true,
+    webPreferences: {
+      contextIsolation: false,
+      nodeIntegration: false,
+    },
+  });
+
+  // 构建 HTML
+  const itemHtml = items.map(it => {
+    const active = it.key === activeKey;
+    const glb = it.glbFile || '';
+    return `<div class="item${active ? ' active' : ''}" data-key="${it.key}" data-glb="${glb}">
+      <span class="ico">${it.icon || ''}</span>
+      <span class="label">${it.label}</span>
+      <span class="size">${it.w}×${it.h}</span>
+    </div>`;
+  }).join('');
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { background:rgba(28,28,30,0.98); color:#e0e0e0; font-family:'SF Mono',Consolas,monospace; font-size:11px; padding:6px; border-radius:10px; border:1px solid rgba(255,255,255,0.08); overflow:hidden; }
+    .fill { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:6px; cursor:pointer; margin-bottom:4px; font-weight:600; }
+    .fill:hover { background:rgba(255,255,255,0.06); }
+    .fill.active { background:rgba(100,140,255,0.15); color:#8ab4ff; }
+    .sep { height:1px; background:rgba(255,255,255,0.06); margin:4px 0; }
+    .group { color:rgba(255,255,255,0.25); font-size:9px; padding:4px 8px 2px; text-transform:uppercase; letter-spacing:0.5px; }
+    .item { display:flex; align-items:center; gap:8px; padding:5px 8px; border-radius:6px; cursor:pointer; }
+    .item:hover { background:rgba(255,255,255,0.06); }
+    .item.active { background:rgba(100,140,255,0.15); color:#8ab4ff; }
+    .label { flex:1; }
+    .size { color:rgba(255,255,255,0.3); font-size:9px; }
+  </style></head><body>
+    <div class="fill${activeKey==='fill'?' active':''}" data-key="fill">⤢ 填满当前宽度</div>
+    <div class="sep"></div>
+    ${itemHtml}
+    <script>
+      document.querySelectorAll('[data-key]').forEach(function(el) {
+        el.addEventListener('click', function() {
+          document.title = 'SELECT:' + el.getAttribute('data-key') + ':' + (el.getAttribute('data-glb')||'');
+        });
+      });
+    </script>
+  </body></html>`;
+
+  devicePopupWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+
+  // 通过 title 变化接收选择结果
+  devicePopupWin.webContents.on('page-title-updated', (_e2, title) => {
+    if (title.startsWith('SELECT:')) {
+      const parts = title.split(':');
+      const key = parts[1];
+      const glb = parts[2] || '';
+      mainWindow.webContents.send('canvas:device-selected', { key, glbFile: glb });
+      if (devicePopupWin && !devicePopupWin.isDestroyed()) {
+        devicePopupWin.destroy();
+        devicePopupWin = null;
+      }
+    }
+  });
+
+  // 失焦关闭
+  devicePopupWin.on('blur', () => {
+    if (devicePopupWin && !devicePopupWin.isDestroyed()) {
+      devicePopupWin.destroy();
+      devicePopupWin = null;
+    }
+  });
+
+  return { ok: true };
+});
+
+ipcMain.handle('canvas:close-device-popup', async () => {
+  if (devicePopupWin && !devicePopupWin.isDestroyed()) {
+    devicePopupWin.destroy();
+    devicePopupWin = null;
+  }
+  return { ok: true };
+});
+
 async function screenshotCanvas(sessionId) {
   const s = canvasSessions.get(sessionId);
   if (!s) return { ok: false, error: 'session not found' };

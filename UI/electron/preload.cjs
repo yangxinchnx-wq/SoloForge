@@ -35,6 +35,18 @@ contextBridge.exposeInMainWorld('soloforge', {
     // ★ 新增: setHostVisible — 显示/隐藏画布宿主窗口 (下拉框打开时隐藏)
     setHostVisible: (visible) =>
       ipcRenderer.invoke('canvas:set-host-visible', { visible }),
+    // ★ 新增: openDevicePopup — 打开设备选择弹窗 (独立 BrowserWindow, 不被 Flutter 遮挡)
+    openDevicePopup: (x, y, items, activeKey) =>
+      ipcRenderer.invoke('canvas:open-device-popup', { x, y, items, activeKey }),
+    // ★ 新增: closeDevicePopup — 关闭设备选择弹窗
+    closeDevicePopup: () =>
+      ipcRenderer.invoke('canvas:close-device-popup'),
+    // ★ 新增: onDeviceSelected — 监听设备选择事件
+    onDeviceSelected: (callback) => {
+      const handler = (_e, data) => callback(data);
+      ipcRenderer.on('canvas:device-selected', handler);
+      return () => ipcRenderer.removeListener('canvas:device-selected', handler);
+    },
     // ★ 新增: transformDevice — 拖拽/旋转/缩放 3D 设备
     transformDevice: (sessionId, deviceId, transform) =>
       ipcRenderer.invoke('canvas:transform-device', { sessionId, deviceId, transform }),
