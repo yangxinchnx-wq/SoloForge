@@ -126,28 +126,40 @@ export function useChatClickCanvasBridge(
 
     let targetId = list?.lastAccessedCanvasId ?? null;
     // 若没访问过任何画布:
-    //   1. 先看全局有没有可用画布, 有就复用第一个 (不新建)
-    //   2. 全局一个画布都没有, 才自动创建 (allowCreate=true 时)
+    //   1. 优先复用当前 chat 已拥有的画布 (isOwner) — 避免重复创建
+    //   2. 没有则创建新画布 (后端创建后立即认领归属权给当前 chat)
+    //   3. 创建失败 (达上限) → 报错 (用户可手动删除多余画布后再试)
+    //   ★ FIX 2026-07-14 v3: 不复用无归属画布 (会导致多个 chat 混用同一画布)
+    //     无归属画布只能通过手动删除清理, 不会被自动分配给新 chat
+    //   ★ FIX 2026-07-14 v2: v1 总是创建新画布导致一堆画布
+    //   ★ FIX 2026-07-14 v1: 原逻辑复用 allCanvases[0] → 多个 chat 共享同一画布 → 数据串台
     if (!targetId) {
       const allCanvases = list?.canvases || [];
-      if (allCanvases.length > 0) {
-        // 复用序号最小的画布
-        targetId = allCanvases[0].sessionId;
+      // 优先复用当前 chat 已拥有的画布 (避免重复创建)
+      const owned = allCanvases.find(c => c.isOwner);
+      if (owned) {
+        targetId = owned.sessionId;
       } else if (allowCreate) {
         const created = await createCanvas(id, defaultDescription);
         if (!aliveRef.current) return null;
-        if (!created) {
-          setError('canvas limit reached (max 10)');
+        if (created) {
+          targetId = created.sessionId;
+          // 重新拉一次列表拿到全量
+          const fresh = await listCanvasResources(id);
+          if (aliveRef.current && fresh) {
+            setCanvases(fresh.canvases || []);
+            setMaxCanvases(fresh.maxCanvases || 10);
+          }
+        } else {
+          // 创建失败 (达上限) → 报错, 用户可手动删除多余画布
+          setError('canvas limit reached (max 10), please delete unused canvases');
           setCanvasId(null);
           setReady(true);
           return null;
         }
-        targetId = created.sessionId;
-        // 重新拉一次列表拿到全量
-        const fresh = await listCanvasResources(id);
-        if (aliveRef.current && fresh) {
-          setCanvases(fresh.canvases || []);
-        }
+      } else if (allCanvases.length > 0) {
+        // allowCreate=false 且无自己的画布: 复用序号最小的 (read-only 场景)
+        targetId = allCanvases[0].sessionId;
       }
     }
     lastResolvedFor.current = id;

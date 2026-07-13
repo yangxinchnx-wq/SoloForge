@@ -15,7 +15,7 @@ import {
   type CanvasResource,
 } from '../services/canvas/sessionApi';
 import { CanvasResourceBar } from './CanvasResourceBar';
-import { setCanvasSessionId, clearCanvasSessionId } from '../services/incrementalCanvasPusher';
+import { setCanvasSessionId, clearCanvasSessionId, clearByCanvasSessionId } from '../services/incrementalCanvasPusher';
 
 interface PreviewPanelProps {
   width?: number;
@@ -532,7 +532,14 @@ export default function PreviewPanel({
     };
     try {
       const r = await window.soloforge!.canvas.push(sessionIdRef.current, dsl);
-      if (!r.ok) console.warn('[pushBackground] push failed:', r.error);
+      if (!r.ok) {
+        // "session not found" 是 startCanvas 返回后、画布进程立即崩溃的竞态:
+        //   main.cjs exit handler 已从 canvasSessions 删除 session,
+        //   但 canvas:exited IPC 事件尚未到达渲染层。
+        //   onExited 监听器会显示真正的崩溃原因, 此处无需重复告警。
+        if (String(r.error).includes('session not found')) return;
+        console.warn('[pushBackground] push failed:', r.error);
+      }
     } catch (e: any) {
       console.warn('[pushBackground] exception:', e?.message || e);
     }
@@ -546,6 +553,14 @@ export default function PreviewPanel({
     if (preset && preset.w > 0) return { w: preset.w, h: preset.h };
     return { w: Math.max(320, Math.floor(width - 32)), h: 640 };
   }, [width]);
+
+  // ★ 2026-07-14: 将画布实际帧尺寸写入 store, 供 aiBackend (LLM prompt 注入) + incrementalCanvasPusher (canvas.start 参数) 读取
+  const setFrameSizeInStore = deviceStore.setFrameSize;
+  useEffect(() => {
+    if (!effectiveCanvasId) return;
+    const { w, h } = computeFrame(activePreset);
+    setFrameSizeInStore(effectiveCanvasId, { width: w, height: h });
+  }, [effectiveCanvasId, activePreset, computeFrame, setFrameSizeInStore]);
 
   // 启动画布 — 带 30s 超时保护，防止 IPC 卡死导致 UI 永远停在 "启动中"
   const startCanvas = useCallback(async () => {
@@ -614,8 +629,10 @@ export default function PreviewPanel({
   // ★ 3D 设备选择: 通过 /render 端点加载 GLB 模型到当前画布
   const handleSelectDevice = useCallback(async (preset: DevicePreset) => {
     if (!sessionIdRef.current || !canvasId) return;
-    // 调用后端 selectModel (仅当前 canvas session)
-    await apiSelectModel(sessionIdRef.current, preset.key).catch(() => {});
+    // 调用后端 selectModel (仅当前 canvas session) — 必须带 requester header (ACL)
+    if (selectedChatId) {
+      await apiSelectModel(sessionIdRef.current, preset.key, selectedChatId).catch(() => {});
+    }
     // 通过 IPC selectDevice → POST /render → Flutter 加载 GLB 模型
     if (isElectron() && canvasState === 'running' && preset.glbFile) {
       try {
@@ -629,22 +646,33 @@ export default function PreviewPanel({
         console.warn('[handleSelectDevice] selectDevice failed:', e);
       }
     }
-  }, [canvasId, canvasState]);
+  }, [canvasId, canvasState, selectedChatId]);
 
-  // ★ 删除画布
+  // ★ 删除画布 — 彻底清理: 后端数据库 + Electron 子进程 + 前端所有缓存
   const handleDeleteCanvas = useCallback(async (targetCanvasId: string): Promise<boolean> => {
     if (!selectedChatId) return false;
-    // 停掉被删除画布的进程
+    // 1. 停掉被删除画布的 Electron 子进程
     if (isElectron()) {
       window.soloforge?.canvas.stop(targetCanvasId).catch(() => {});
     }
+    // 2. 调后端 DELETE — 清理内存 states/dirty + Garnet 热存储 + SurrealDB 持久层
     const ok = await apiDeleteCanvas(targetCanvasId, selectedChatId);
     if (ok) {
-      // 刷新画布列表 — 通过 bridge 的 refresh
+      // 3. 前端缓存清理 — incrementalCanvasPusher (chatId→canvasId 映射 + _startedSessions)
+      clearByCanvasSessionId(targetCanvasId);
+      // 4. 前端缓存清理 — canvasDeviceStore (设备尺寸/渲染模式记录)
+      useCanvasDeviceStore.getState().removeDevice(targetCanvasId);
+      // 5. 前端缓存清理 — previewStreamStore (当前 chat 的流式预览数据)
+      usePreviewStreamStore.getState().clearEntry(selectedChatId);
+      // 6. 如果删除的是当前画布, 清除当前选中状态
+      if (canvasId === targetCanvasId) {
+        clearCanvasSessionId(selectedChatId);
+      }
+      // 7. 刷新画布列表 — 通过 bridge 的 refresh
       window.dispatchEvent(new CustomEvent('soloforge-canvas-deleted', { detail: { canvasId: targetCanvasId } }));
     }
     return ok;
-  }, [selectedChatId]);
+  }, [selectedChatId, canvasId]);
 
   // 画布状态指示器 — 已移除 (不再显示绿点)
   const renderCanvasStatus = () => null;

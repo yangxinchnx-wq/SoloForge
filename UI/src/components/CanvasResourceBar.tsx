@@ -164,14 +164,14 @@ export function CanvasResourceBar({
                   · {c.description}
                 </span>
               )}
-              {/* 删除按钮: 只在 owner 且 canvases > 1 时显示 (无归属画布不可删除) */}
-              {c.isOwner && onDelete && canvases.length > 1 && (
+              {/* 删除按钮: 每个画布都可删除 (含无归属画布), 删除后彻底清理内存+数据库 */}
+              {onDelete && (
                 <span
                   role="button"
                   aria-label="删除画布"
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (confirm(`确认删除画布 ${c.displayName}？`)) {
+                    if (confirm(`确认删除画布 ${c.displayName}？\n该画布的所有数据和数据库记录将被彻底清除, 此操作不可撤销。`)) {
                       void onDelete(c.sessionId);
                     }
                   }}

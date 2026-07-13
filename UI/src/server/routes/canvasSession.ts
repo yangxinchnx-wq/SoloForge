@@ -160,7 +160,12 @@ export function handleCreateCanvas(req: Request, res: Response): Response {
   if (description !== undefined) {
     state.description = description;
   }
-  // 创建即记录访问 (但不认领归属权 — 第一个写入者获得归属权)
+  // ★ FIX 2026-07-14: 创建后立即认领归属权给创建者
+  // 原逻辑: 只 recordAccess 不 claimCanvas → 画布保持无归属 (isUnowned=true)
+  //         → 其他 chat 打开时看到无归属画布就复用 → 数据串台 (画布混用)
+  // 修复: 创建即认领, 确保每个 chat 创建的画布立即归属该 chat, 其他 chat 不会复用
+  getSessionStore().claimCanvas(state.sessionId, requester);
+  // 记录访问 (用于 lastAccessedCanvasId 自动切回)
   getSessionStore().recordAccess(state.sessionId, requester);
   return ok(res, state);
 }
@@ -347,7 +352,8 @@ export function handleRenameSession(req: Request, res: Response): Response {
 /**
  * DELETE /api/canvas/sessions/:id
  * P0: 删除画布 (内存 + 持久层)
- * 写操作 - 仅 owner
+ * ★ FIX 2026-07-14: 移除 owner 限制, 任何 requester 都可删除 (用户手动清理需求)
+ * 彻底清理: 内存 states/dirty + Garnet 热存储 + SurrealDB 持久层 + Electron 子进程
  */
 export async function handleDeleteSession(req: Request, res: Response): Promise<Response> {
   const id = String(req.params.id || '');
@@ -355,8 +361,11 @@ export async function handleDeleteSession(req: Request, res: Response): Promise<
   const store = getSessionStore();
   const state = store.listCanvases().find(c => c.sessionId === id);
   if (!state) return err(res, 404, 'canvas not found');
-  if (!ensureManage(req, res, state)) return res;
+  // ★ FIX 2026-07-14: 不再检查 ensureManage — 允许任何 requester 删除任何画布
+  //   原 ACL (仅 owner 可删) 在多 chat 场景下导致用户无法清理无归属/别人的画布
+  //   删除是破坏性操作, 前端已有 confirm 二次确认, 后端不再二次鉴权
   const requester = getRequesterChatSessionId(req);
+  if (!requester) return err(res, 401, 'X-Requester-Chat-Session-Id header required');
   try {
     const ok2 = await store.deleteSession(id);
     if (!ok2) return err(res, 404, 'canvas not found');

@@ -23,6 +23,7 @@ import { translateCode, isLanguageSupported } from '../translate';
 import { translateCodeAsync } from '../translate/translatorWorker';
 import { usePreviewStreamStore } from '../state/previewStreamStore';
 import type { UniversalNode, UniversalStyle } from './canvas/UniversalAST';
+import { getCanvasSize } from '../state/canvasDeviceStore';
 
 // ── chatId → canvasSessionId 映射 ──
 const canvasSessionIdMap = new Map<string, string>();
@@ -60,6 +61,25 @@ export function clearCanvasSessionId(chatId: string): void {
 // 当 canvas.push 返回 "session not found" 时, 自动 start session 并重试一次
 const _startedSessions = new Set<string>();
 
+/**
+ * ★ 2026-07-14: 按 canvasSessionId 清理所有相关状态
+ * 用于画布删除场景 — 彻底清除该画布的所有前端缓存
+ *   1. canvasSessionIdMap 中所有映射到该 canvasSessionId 的 chatId
+ *   2. _startedSessions 中的启动记录 (允许后续同 ID 画布重新启动)
+ */
+export function clearByCanvasSessionId(canvasSessionId: string): void {
+  // 反向查找所有映射到该 canvasSessionId 的 chatId 并清除
+  for (const [chatId, cid] of canvasSessionIdMap.entries()) {
+    if (cid === canvasSessionId) {
+      canvasSessionIdMap.delete(chatId);
+    }
+  }
+  // 清理已启动记录, 允许同 ID 画布 (如 canvas_3 被删除后新建) 重新启动
+  _startedSessions.delete(canvasSessionId);
+}
+
+// ── 画布 session 自动启动 + push 重试 (辅助) ──
+
 export async function ensureCanvasAndPush(
   sessionId: string,
   dsl: any,
@@ -83,7 +103,9 @@ export async function ensureCanvasAndPush(
       if (!_startedSessions.has(sessionId)) {
         _startedSessions.add(sessionId);
         try {
-          const startR = await canvas.start(sessionId, 0, 640);
+          // ★ FIX 2026-07-14: 使用 store 中的实际画布尺寸, 不再硬编码 width=0
+          const size = getCanvasSize(sessionId);
+          const startR = await canvas.start(sessionId, size.width, size.height);
           if (!startR?.ok) {
             console.warn(`[ensureCanvasAndPush] canvas.start failed:`, startR?.error);
             return { ok: false, error: `start failed: ${startR?.error || 'unknown'}` };
