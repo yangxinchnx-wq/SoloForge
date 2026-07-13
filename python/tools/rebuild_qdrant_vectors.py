@@ -8,8 +8,8 @@ Path: python/tools/rebuild_qdrant_vectors.py
   从 SQLite (ai_society.db) 的 social_memory 表重新嵌入向量到 Qdrant。
 
 用法:
-  cd c:\Users\yangx\Desktop\SoloForge
-  bin\python-3.13\python.exe python\tools\rebuild_qdrant_vectors.py
+  cd SoloForge
+  bin/python-3.13/python.exe python/tools/rebuild_qdrant_vectors.py
 
 前提:
   1. Qdrant 服务已启动 (port 6333)
