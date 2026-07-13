@@ -17,7 +17,7 @@
  * 2026-07-11: 补充 model-action Part 渲染器 (修复 LLM/Agent 思考过程不显示的 bug)
  */
 
-import React, { memo, useDeferredValue, useState, useCallback } from 'react';
+import React, { memo, useDeferredValue, useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   CheckCircle2,
@@ -76,7 +76,6 @@ export const UIMessagePartsRenderer = memo(function UIMessagePartsRenderer({
   chatId,
   messageId,
 }: UIMessagePartsRendererProps) {
-  // ★ 优先按 messageId 取对应消息; 未指定时回退到最后一条 assistant 消息
   const allMessages = useUIMessages(chatId);
   const lastAssistant = useLastAssistantMessage(chatId);
   const message = messageId
@@ -84,23 +83,22 @@ export const UIMessagePartsRenderer = memo(function UIMessagePartsRenderer({
     : lastAssistant;
 
   const deferredParts = useDeferredValue(message?.parts ?? EMPTY_PARTS);
-
-  // ★ FIX 2026-07-13: 过滤掉 text / delivery / subtask-step parts
-  //   text: LLM 文本已在主对话气泡显示
-  //   delivery: useChatStore.ts:225 把 LLM 累积文本同时作为 delivery 事件发送, 内容重复
-  //   subtask-step: "EXECUTE" 与 phase-change (AGENT_EXEC) 重复, 信息量低, 默认不显示
-  //   流送区只显示过程信息 (phase-change / subtask-created / model-action / audit 等)
-  const processParts = deferredParts.filter(
-    p => p.type !== 'text' && p.type !== 'delivery' && p.type !== 'subtask-step'
-  );
-
   const isStreaming = message?.status === 'streaming';
 
-  // ★ 2026-07-13: 消息不存在直接返回
+  // ★ FIX 2026-07-14: 过滤掉 text / delivery / subtask-step / model-action / model-delegation
+  //   text: LLM 文本已在主对话气泡显示
+  //   delivery: 累积文本重复
+  //   subtask-step: "EXECUTE" 与 phase-change 重复
+  //   model-action: 底层思考动作 ([动作] xxx), 用户不需要
+  //   model-delegation: 模型委派日志, 过于底层
+  //   usage: token 统计, 非过程信息
+  const processParts = deferredParts.filter(
+    p => p.type !== 'text' && p.type !== 'delivery' && p.type !== 'subtask-step'
+      && p.type !== 'model-action' && p.type !== 'model-delegation' && p.type !== 'usage'
+  );
+
   if (!message) return null;
 
-  // ★ 2026-07-13: streaming 时 parts 为空, 显示 loading 占位
-  //   确保发送瞬间流送区立即出现, 而非等第一个 SSE 事件
   if (processParts.length === 0) {
     return isStreaming ? (
       <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] text-on-surface/50 font-mono">
@@ -111,25 +109,95 @@ export const UIMessagePartsRenderer = memo(function UIMessagePartsRenderer({
   }
 
   return (
-    <div className="flex flex-col gap-1.5">
-      {processParts.map((part, index) => {
-        const isLast = index === processParts.length - 1;
-        return (
-        <motion.div
-          key={`${part.type}-${index}`}
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ ...SPRING, delay: Math.min(index * 0.04, 0.3) }}
-        >
-          <PartRenderer
-            part={part}
-            isStreaming={isStreaming && isLast}
-            isLast={isLast}
-            chatId={chatId}
-          />
-        </motion.div>
-        );
-      })}
+    <CollapsibleProcess parts={processParts} isStreaming={isStreaming} chatId={chatId} />
+  );
+});
+
+// ==================== CollapsibleProcess — 可折叠过程块 ====================
+// ★ 2026-07-14: 用户要求 — 简化、可折叠、不消失
+//   - streaming 时自动展开
+//   - 完成后 1.5s 自动折叠 (但不消失)
+//   - 用户可手动点击展开/折叠
+
+interface CollapsibleProcessProps {
+  parts: UIPart[];
+  isStreaming: boolean;
+  chatId: string;
+}
+
+const CollapsibleProcess = memo(function CollapsibleProcess({ parts, isStreaming, chatId }: CollapsibleProcessProps) {
+  const [isOpen, setIsOpen] = useState(true);
+  const [userToggled, setUserToggled] = useState(false);
+
+  // streaming 时自动展开; 完成后 1.5s 自动折叠 (仅在用户未手动操作过时)
+  useEffect(() => {
+    if (isStreaming) {
+      if (!isOpen) setIsOpen(true);
+      return;
+    }
+    // streaming 结束后延迟折叠
+    if (!userToggled) {
+      const timer = setTimeout(() => setIsOpen(false), 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [isStreaming]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleToggle = useCallback(() => {
+    setUserToggled(true);
+    setIsOpen(prev => !prev);
+  }, []);
+
+  return (
+    <div className="rounded-lg border border-outline/20 bg-bg/30 overflow-hidden">
+      {/* 折叠头 */}
+      <button
+        onClick={handleToggle}
+        className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[11px] text-on-surface/60 hover:bg-surface/40 transition-colors"
+      >
+        {isStreaming ? (
+          <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
+        ) : isOpen ? (
+          <ChevronDown className="w-3 h-3 shrink-0" />
+        ) : (
+          <ChevronRight className="w-3 h-3 shrink-0" />
+        )}
+        <span className="font-medium">过程</span>
+        <span className="text-[10px] text-on-surface/30 font-mono ml-0.5">{parts.length}</span>
+      </button>
+
+      {/* 展开内容 */}
+      <AnimatePresence initial={false}>
+        {isOpen && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: EASE }}
+            className="overflow-hidden"
+          >
+            <div className="flex flex-col gap-1.5 px-3 pb-2.5 pt-0.5">
+              {parts.map((part, index) => {
+                const isLast = index === parts.length - 1;
+                return (
+                  <motion.div
+                    key={`${part.type}-${index}`}
+                    initial={{ opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ ...SPRING, delay: Math.min(index * 0.03, 0.2) }}
+                  >
+                    <PartRenderer
+                      part={part}
+                      isStreaming={isStreaming && isLast}
+                      isLast={isLast}
+                      chatId={chatId}
+                    />
+                  </motion.div>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 });
