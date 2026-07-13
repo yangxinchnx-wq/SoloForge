@@ -125,21 +125,29 @@ export function useChatClickCanvasBridge(
     }
 
     let targetId = list?.lastAccessedCanvasId ?? null;
-    // 若没访问过任何画布, 且允许自动建
-    if (!targetId && allowCreate) {
-      const created = await createCanvas(id, defaultDescription);
-      if (!aliveRef.current) return null;
-      if (!created) {
-        setError('canvas limit reached (max 10)');
-        setCanvasId(null);
-        setReady(true);
-        return null;
-      }
-      targetId = created.sessionId;
-      // 重新拉一次列表拿到全量
-      const fresh = await listCanvasResources(id);
-      if (aliveRef.current && fresh) {
-        setCanvases(fresh.canvases || []);
+    // 若没访问过任何画布:
+    //   1. 先看全局有没有可用画布, 有就复用第一个 (不新建)
+    //   2. 全局一个画布都没有, 才自动创建 (allowCreate=true 时)
+    if (!targetId) {
+      const allCanvases = list?.canvases || [];
+      if (allCanvases.length > 0) {
+        // 复用序号最小的画布
+        targetId = allCanvases[0].sessionId;
+      } else if (allowCreate) {
+        const created = await createCanvas(id, defaultDescription);
+        if (!aliveRef.current) return null;
+        if (!created) {
+          setError('canvas limit reached (max 10)');
+          setCanvasId(null);
+          setReady(true);
+          return null;
+        }
+        targetId = created.sessionId;
+        // 重新拉一次列表拿到全量
+        const fresh = await listCanvasResources(id);
+        if (aliveRef.current && fresh) {
+          setCanvases(fresh.canvases || []);
+        }
       }
     }
     lastResolvedFor.current = id;

@@ -294,22 +294,51 @@ export default function PreviewPanel({
   const autoStartFailedRef = useRef(false);
   const lastAutoStartSessionId = useRef<string>('');
   useEffect(() => {
-    // sessionId 变化 → 停掉旧画布 + 重置自动启动标志, 允许用新 sessionId 重新启动
-    if (sessionIdRef.current && sessionIdRef.current !== lastAutoStartSessionId.current) {
-      // ★ 停掉旧画布进程 (切换对话 / fallback→real ID 时)
-      if (lastAutoStartSessionId.current && isElectron()) {
-        console.log(`[PreviewPanel] sessionId changed: ${lastAutoStartSessionId.current} → ${sessionIdRef.current}, stopping old canvas`);
-        window.soloforge?.canvas.stop(lastAutoStartSessionId.current).catch(() => {});
-      }
-      lastAutoStartSessionId.current = sessionIdRef.current;
+    const prevId = lastAutoStartSessionId.current;
+    const newId = sessionIdRef.current;
+    // sessionId 变化 → 切换画布
+    if (newId && newId !== prevId) {
+      const wasRunning = canvasState === 'running';
+      // ★ 不立即停旧画布, 保持旧画布可见 (避免白屏 + "启动中"闪烁)
+      //   先启动新画布, 成功后再停旧画布
+      lastAutoStartSessionId.current = newId;
       autoStartRef.current = false;
       autoStartFailedRef.current = false;
-      // 重置画布状态 → 允许用新 sessionId 自动启动
-      if (canvasState !== 'idle') {
-        setCanvasState('idle');
-        canvasStateRef.current = 'idle';
-        setCanvasInfo(null);
-        setCanvasError('');
+
+      if (wasRunning && isElectron() && prevId) {
+        // 切换模式: 后台启动新画布, 成功后停旧画布
+        //   不设 starting 状态 → 用户不会看到全屏"启动中"
+        (async () => {
+          try {
+            const { w: frameW, h: frameH } = computeFrame(activePreset);
+            const res = await window.soloforge!.canvas.start(newId, frameW, frameH);
+            if (!res.ok) {
+              // 新画布启动失败 → 保持旧画布运行, 显示错误
+              setCanvasError(res.error || '切换画布失败');
+              autoStartFailedRef.current = true;
+              return;
+            }
+            // 新画布启动成功 → 停旧画布
+            window.soloforge?.canvas.stop(prevId).catch(() => {});
+            setCanvasInfo({ port: res.session.port, pid: res.session.pid });
+            await pushBackground(bgColor);
+          } catch (e: any) {
+            setCanvasError(e?.message || String(e));
+            autoStartFailedRef.current = true;
+          }
+        })();
+      } else {
+        // 首次启动 (非切换): 正常走 idle → starting → running
+        if (canvasState !== 'idle') {
+          setCanvasState('idle');
+          canvasStateRef.current = 'idle';
+          setCanvasInfo(null);
+          setCanvasError('');
+        }
+        // 停掉旧画布 (如果存在)
+        if (prevId && isElectron()) {
+          window.soloforge?.canvas.stop(prevId).catch(() => {});
+        }
       }
     }
     if (autoStartRef.current || autoStartFailedRef.current) return;
