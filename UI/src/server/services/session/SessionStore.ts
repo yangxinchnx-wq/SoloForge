@@ -861,3 +861,53 @@ export function getSessionStore(): SessionStore {
   }
   return _instance;
 }
+
+/**
+ * ★ 2026-07-13: 清空所有画布数据 (内存 + Garnet + SurrealDB)
+ * 用于清理旧数据 / 重置状态
+ * 不检查 ACL — 调用方需确保只在受控场景使用
+ */
+export async function clearAllCanvases(): Promise<{ deleted: number; errors: string[] }> {
+  const store = getSessionStore();
+  const allIds = store.listCanvases().map(c => c.sessionId);
+  const errors: string[] = [];
+  let deleted = 0;
+  for (const sid of allIds) {
+    try {
+      const ok = await store.deleteSession(sid);
+      if (ok) deleted++;
+    } catch (e) {
+      errors.push(`${sid}: ${(e as Error).message}`);
+    }
+  }
+  // 同时清理 SurrealDB 里可能不在内存中的残留 session
+  try {
+    const { getSurrealStore } = await import('../persistence/SurrealStore');
+    const surreal = getSurrealStore() as any;
+    if (surreal && typeof surreal.listAllSessionIds === 'function') {
+      const dbIds = await surreal.listAllSessionIds();
+      for (const sid of dbIds) {
+        if (typeof surreal.deleteSessionState === 'function') {
+          await surreal.deleteSessionState(sid).catch(() => {});
+        }
+      }
+    }
+  } catch (e) {
+    errors.push(`surreal cleanup: ${(e as Error).message}`);
+  }
+  // 同时清理 Garnet 残留
+  try {
+    const { getGarnetStore } = await import('../persistence/GarnetStore');
+    const garnet = getGarnetStore() as any;
+    if (garnet && typeof garnet.client?.keys === 'function') {
+      const keys = await garnet.client.keys('hot:sf:session:*');
+      if (keys && keys.length > 0) {
+        await garnet.client.del(...keys);
+      }
+    }
+  } catch (e) {
+    errors.push(`garnet cleanup: ${(e as Error).message}`);
+  }
+  console.log(`[clearAllCanvases] deleted=${deleted}, errors=${errors.length}`);
+  return { deleted, errors };
+}

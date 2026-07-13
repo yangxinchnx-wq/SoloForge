@@ -19,6 +19,7 @@ import type { Request, Response } from 'express';
 import type { DeviceInstance, SessionState } from '../services/canvas/types';
 import { displayCanvasName, parseCanvasName } from '../services/canvas/types';
 import { getSessionStore } from '../services/session/SessionStore';
+import { clearAllCanvases } from '../services/session/SessionStore';
 import { getNotificationBus } from '../services/canvas/NotificationBus';
 
 function err(res: Response, status: number, message: string): Response {
@@ -451,6 +452,21 @@ export async function handleRestoreAll(_req: Request, res: Response): Promise<Re
 }
 
 /**
+ * ★ POST /api/canvas/persistence/clear-all
+ * 清空所有画布数据 (内存 + Garnet + SurrealDB)
+ * 用于清理旧数据 / 重置状态
+ */
+export async function handleClearAll(_req: Request, res: Response): Promise<Response> {
+  try {
+    const r = await clearAllCanvases();
+    console.log('[canvasSession] clearAll result:', JSON.stringify(r));
+    return ok(res, r);
+  } catch (e) {
+    return err(res, 500, `clear-all failed: ${(e as Error).message}`);
+  }
+}
+
+/**
  * s2.2: 多选 + 群组变换
  * ----------------------------------------------------------------
  * PUT    /api/canvas/sessions/:id/devices/selected-many
@@ -634,6 +650,7 @@ export function registerCanvasSessionRoutes(app: import('express').Express): voi
   app.get('/api/canvas/persistence/status', handleGetPersistenceStatus);
   app.post('/api/canvas/persistence/force-flush', handleForceFlush);
   app.post('/api/canvas/persistence/restore-all', handleRestoreAll);
+  app.post('/api/canvas/persistence/clear-all', handleClearAll);
 }
 
 // ─────────────────────────────────────────────────────────────
