@@ -16,7 +16,7 @@
  */
 
 import { StreamingLatencyTracker } from './perfMonitor';
-import { getDeviceConstraint } from '../state/canvasDeviceStore';
+import { getDeviceConstraint, getCanvasSize } from '../state/canvasDeviceStore';
 
 export type ChatStreamEvent =
   | { kind: 'text'; text: string; taskId?: string }
@@ -151,31 +151,68 @@ export function detectForceCanvas(prompt: string): string | null {
   return null;
 }
 
-/** 构建最终 prompt — 在原始 prompt 前注入强制画布指令 (若检测到关键词) + 设备尺寸约束 */
-function buildPromptWithCanvasForce(prompt: string): string {
-  const instruction = detectForceCanvas(prompt);
-  if (instruction) {
-    // ★ 注入设备尺寸约束 (如果用户选择了具体设备)
-    const device = getDeviceConstraint();
-    let deviceHint = '';
-    if (device) {
-      deviceHint = `
-## 设备约束
+/**
+ * ★ 2026-07-14: 构建画布尺寸约束提示词
+ *
+ * 无论是否触发强制画布关键词, 都会注入画布尺寸信息。
+ * 这样 LLM 在生成任何 UI 代码时都能知道画布的实际尺寸。
+ *
+ * 优先级:
+ *   1. 有设备约束 → 返回设备尺寸 + 设备类型布局建议
+ *   2. 无设备约束 → 返回画布实际帧尺寸 (PreviewPanel 计算的)
+ *   3. 都没有 → 返回默认尺寸 360×640
+ */
+function buildCanvasSizeHint(canvasId?: string): string {
+  const device = getDeviceConstraint(canvasId);
+  if (device) {
+    const groupHint =
+      device.group === 'mobile' ? '使用移动端布局: 单列、大触摸区、底部导航' :
+      device.group === 'watch'  ? '使用极简布局: 单元素、大字体、最少层级' :
+      device.group === 'tablet' ? '可用双列或网格布局, 支持横竖屏' :
+                                  '可用多列、侧边栏、密集信息布局';
+    const screenHint =
+      device.group === 'mobile' ? '竖屏窄宽度' :
+      device.group === 'tablet' ? '中等宽度' :
+      device.group === 'watch'  ? '极小圆形/方形屏幕' :
+                                  '宽屏桌面';
+    return `## 画布尺寸约束
 当前画布目标设备: ${device.label}
 屏幕尺寸: ${device.width}×${device.height}px
 设备类型: ${device.group}${device.renderMode === '3D' ? ' (3D 模式)' : ''}
 
 **重要**: 你生成的 UI 必须适配此设备尺寸。
 - 宽度不超过 ${device.width}px, 高度不超过 ${device.height}px
-- 布局要考虑 ${device.group === 'mobile' ? '竖屏窄宽度' : device.group === 'tablet' ? '中等宽度' : device.group === 'watch' ? '极小圆形/方形屏幕' : '宽屏桌面'}
-- ${device.group === 'mobile' ? '使用移动端布局: 单列、大触摸区、底部导航' : ''}
-- ${device.group === 'watch' ? '使用极简布局: 单元素、大字体、最少层级' : ''}
-- ${device.group === 'tablet' ? '可用双列或网格布局, 支持横竖屏' : ''}
-- ${device.group === 'desktop' ? '可用多列、侧边栏、密集信息布局' : ''}`;
-    }
-    return `${instruction}${deviceHint}\n\n用户原始请求: ${prompt}`;
+- 布局要考虑 ${screenHint}
+- ${groupHint}`;
   }
-  return prompt;
+
+  // 无设备约束: 使用画布实际帧尺寸
+  const size = getCanvasSize(canvasId);
+  return `## 画布尺寸约束
+当前画布尺寸: ${size.width}×${size.height}px
+设备类型: 无设备约束 (自由布局)
+
+**重要**: 你生成的 UI 必须适配此画布尺寸。
+- 根节点宽度建议不超过 ${size.width}px, 高度建议不超过 ${size.height}px
+- 使用响应式布局: 优先用 flex/column/row 自动撑满, 避免硬编码过大尺寸
+- 字体大小: 标题 18-24px, 正文 14-16px, 辅助文字 12px
+- 间距: padding 12-16px, 元素间距 8-12px
+- 如果内容超出画布高度, 使用 scroll 类型节点包裹`;
+}
+
+/** 构建最终 prompt — 始终注入画布尺寸约束 + (若检测到关键词) 强制画布指令 */
+function buildPromptWithCanvasForce(prompt: string, canvasId?: string): string {
+  const instruction = detectForceCanvas(prompt);
+  const sizeHint = buildCanvasSizeHint(canvasId);
+
+  if (instruction) {
+    // 强制画布模式: 注入完整指令 + 尺寸约束
+    return `${instruction}\n${sizeHint}\n\n用户原始请求: ${prompt}`;
+  }
+
+  // ★ 2026-07-14: 即使没有强制画布关键词, 也注入尺寸约束
+  //   这样 LLM 生成任何 UI 代码时都知道画布有多大
+  return `${sizeHint}\n\n用户原始请求: ${prompt}`;
 }
 
 /**
@@ -194,7 +231,7 @@ export function _getUseRacer(): boolean { return _useRacer; }
 
 function buildRacerRequestBody(req: ChatRequest): any {
   return {
-    prompt: buildPromptWithCanvasForce(req.prompt),
+    prompt: buildPromptWithCanvasForce(req.prompt, req.canvasId),
     chatId: req.chatId ?? `chat-${Date.now()}`,
     packetUuid: `pkt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     history: req.history || [],
@@ -219,7 +256,7 @@ function buildJavaRequestBody(req: ChatRequest): any {
   }
 
   return {
-    message: buildPromptWithCanvasForce(req.prompt),
+    message: buildPromptWithCanvasForce(req.prompt, req.canvasId),
     sessionId: req.chatId ?? null,
     provider: req.mainProvider
       ? {
@@ -484,8 +521,9 @@ async function executeLLMProxyPath(req: ChatRequest, signal: AbortSignal, taskId
 
   console.log('[aiBackend] Falling back to Node.js LLM proxy (/api/llm/stream)');
 
+  // ★ 2026-07-14: LLM proxy 路径也注入画布尺寸约束
   const llmReqBody: Record<string, any> = {
-    userGoal: req.prompt,
+    userGoal: buildPromptWithCanvasForce(req.prompt, req.canvasId),
     baseUrl: req.mainProvider.baseUrl,
     apiKey: req.mainProvider.apiKey,
     model: req.mainProvider.model,

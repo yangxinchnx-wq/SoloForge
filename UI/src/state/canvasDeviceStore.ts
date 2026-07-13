@@ -6,6 +6,11 @@
  *   - 默认无设备约束 (null = 不显示设备边框)
  *   - localStorage 持久化 (断电保留)
  *   - PreviewPanel 写入, useChatStore / aiBackend 读取
+ *
+ * ★ 2026-07-14: 新增 frameSizes — 画布实际渲染帧尺寸 (运行时, 不持久化)
+ *   - PreviewPanel 每次 computeFrame 后写入
+ *   - aiBackend 读取并注入到 LLM prompt, 让 LLM 知道画布有多大
+ *   - incrementalCanvasPusher 读取用于 canvas.start 的正确参数
  */
 
 import { create } from 'zustand';
@@ -30,11 +35,19 @@ export interface CanvasDeviceInfo {
   glbFile?: string;
 }
 
+/** 画布实际渲染帧尺寸 (运行时计算, 不持久化) */
+export interface CanvasFrameSize {
+  width: number;
+  height: number;
+}
+
 interface CanvasDeviceStoreState {
   /** canvasId → 设备信息 (null = 无设备约束) */
   devices: Record<string, CanvasDeviceInfo | null>;
   /** 全局渲染模式 (2D/3D) */
   renderMode: '2D' | '3D';
+  /** canvasId → 实际渲染帧尺寸 (运行时, 不持久化) */
+  frameSizes: Record<string, CanvasFrameSize>;
 
   // ── Actions ──
   /** 设置画布设备 (canvasId, null 表示清除设备约束) */
@@ -45,6 +58,10 @@ interface CanvasDeviceStoreState {
   setRenderMode: (mode: '2D' | '3D') => void;
   /** 删除画布设备记录 */
   removeDevice: (canvasId: string) => void;
+  /** 设置画布实际帧尺寸 (PreviewPanel 调用) */
+  setFrameSize: (canvasId: string, size: CanvasFrameSize) => void;
+  /** 获取画布实际帧尺寸 */
+  getFrameSize: (canvasId: string) => CanvasFrameSize | null;
 }
 
 export const useCanvasDeviceStore = create<CanvasDeviceStoreState>()(
@@ -52,6 +69,7 @@ export const useCanvasDeviceStore = create<CanvasDeviceStoreState>()(
     (set, get) => ({
       devices: {},
       renderMode: '2D',
+      frameSizes: {},
 
       setDevice: (canvasId, info) =>
         set((s) => ({
@@ -71,10 +89,25 @@ export const useCanvasDeviceStore = create<CanvasDeviceStoreState>()(
           const { [canvasId]: _, ...rest } = s.devices;
           return { devices: rest };
         }),
+
+      setFrameSize: (canvasId, size) =>
+        set((s) => ({
+          frameSizes: { ...s.frameSizes, [canvasId]: size },
+        })),
+
+      getFrameSize: (canvasId) => {
+        const { frameSizes } = get();
+        return frameSizes[canvasId] ?? null;
+      },
     }),
     {
       name: 'solo-forge-canvas-devices',
-      version: 1,
+      version: 2,
+      // ★ frameSizes 不持久化 (运行时窗口尺寸, 重启后需重新计算)
+      partialize: (state) => ({
+        devices: state.devices,
+        renderMode: state.renderMode,
+      }),
     }
   )
 );
@@ -95,4 +128,40 @@ export function getDeviceConstraint(canvasId?: string): CanvasDeviceInfo | null 
     if (device) return device;
   }
   return null;
+}
+
+/**
+ * ★ 2026-07-14: 获取画布实际渲染尺寸 (供 LLM prompt 注入 + canvas.start 参数)
+ *
+ * 优先级:
+ *   1. 有设备约束 → 返回设备原生尺寸
+ *   2. 有 frameSizes 记录 → 返回 PreviewPanel 计算的实际帧尺寸
+ *   3. 都没有 → 返回默认值 { width: 360, height: 640 }
+ *
+ * @param canvasId 画布 sessionId (如 canvas_1)
+ */
+export function getCanvasSize(canvasId?: string): CanvasFrameSize {
+  const state = useCanvasDeviceStore.getState();
+
+  // 1. 设备约束优先
+  if (canvasId) {
+    const device = state.getDevice(canvasId);
+    if (device && device.width > 0 && device.height > 0) {
+      return { width: device.width, height: device.height };
+    }
+    // 2. frameSizes
+    const frame = state.getFrameSize(canvasId);
+    if (frame && frame.width > 0 && frame.height > 0) {
+      return frame;
+    }
+  } else {
+    // 无 canvasId: 尝试从 frameSizes 取第一个
+    const frames = Object.values(state.frameSizes);
+    if (frames.length > 0 && frames[0].width > 0) {
+      return frames[0];
+    }
+  }
+
+  // 3. 默认值
+  return { width: 360, height: 640 };
 }

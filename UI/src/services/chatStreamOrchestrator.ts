@@ -41,6 +41,8 @@ import { bestEffortRoot } from './canvas/StreamingASTParser';
 import { usePreviewStreamStore } from '../state/previewStreamStore';
 import { useChatsStore } from '../state/chatsStore';
 import type { PreviewPayload, StreamState } from './canvas/UniversalAST';
+// ★ 2026-07-14: 注入画布尺寸到 LLM system prompt
+import { getCanvasSize, getDeviceConstraint } from '../state/canvasDeviceStore';
 
 export interface StreamPreviewOptions {
   chatId: string;
@@ -133,7 +135,13 @@ export function streamPreviewForChat(opts: StreamPreviewOptions): StreamPreviewH
   const donePromise = (async (): Promise<PreviewPayload | null> => {
     try {
       const adapter = getAdapter(safeLang);
-      const systemPrompt = adapter.buildSystemPrompt(userGoal);
+      // ★ 2026-07-14: 注入画布尺寸到 system prompt, 让 LLM 知道画布有多大
+      const canvasSize = getCanvasSize(deviceId || undefined);
+      const device = getDeviceConstraint(deviceId || undefined);
+      const sizeContext = device
+        ? `\n\n## 画布尺寸约束\n目标设备: ${device.label} (${device.width}×${device.height}px, ${device.group})\nUI 必须适配此设备尺寸。`
+        : `\n\n## 画布尺寸约束\n画布尺寸: ${canvasSize.width}×${canvasSize.height}px\nUI 必须适配此画布尺寸, 避免硬编码过大尺寸。`;
+      const systemPrompt = adapter.buildSystemPrompt(userGoal + sizeContext);
       const handle = llmClient.stream({
         systemPrompt,
         userGoal,
