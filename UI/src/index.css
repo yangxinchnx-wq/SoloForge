@@ -118,6 +118,13 @@ a {
   -webkit-app-region: no-drag !important;
 }
 
+/* 消除按钮焦点轮廓 (浅白色长方形) — 点击窗口控件按钮时不显示 focus ring */
+button:focus,
+button:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
 /* ==========================================================================
    Settings Modal Dynamic Adaptive Theme Styling (Anti-Glare & Eye-Care)
    ========================================================================== */

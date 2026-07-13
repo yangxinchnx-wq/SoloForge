@@ -1,8 +1,6 @@
 // ─────────────────────────────────────────────────────────────────
 // SoloForge 自定义窗口控件
-// 2026-07-05: titleBarStyle:'hidden' (无 overlay)
-//   - 系统处理 WM_NCHITTEST (不是 Chromium) → maximizable:false → 无 snap flyout
-//   - 系统不画按钮 → 三个按钮全部自绘
+// titleBarStyle:'hidden' (无 overlay): 系统不画按钮, 三个按钮全部自绘
 // ─────────────────────────────────────────────────────────────────
 
 import React, { useEffect, useState, useCallback } from 'react';
@@ -60,6 +58,7 @@ export const WindowControls: React.FC = () => {
     background: 'transparent',
     color: '#a8b0b8',
     border: 'none',
+    outline: 'none',
     cursor: 'pointer',
     transition: 'background 120ms ease, color 120ms ease',
     padding: 0,
