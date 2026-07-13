@@ -22,5 +22,7 @@
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
-  }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "electron/**/*.ts", "tests/**/*.ts", "server.ts", "vite.config.ts", "vitest.config.ts"],
+  "exclude": ["node_modules", "dist", "release", "coverage", ".drag-test", "stubs"]
 }
