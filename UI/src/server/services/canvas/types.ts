@@ -82,11 +82,12 @@ export interface SessionState {
   selectedDeviceIds: string[];
   lastUpdated: number;
   /**
-   * P0: 归属字段 - 创建该画布的 chat session ID
-   * 决定写权限 (改设备/改名/删除) 仅 owner 可做
+   * P0: 归属字段 - 拥有该画布的 chat session ID
+   * null = 无归属 (默认画布, 谁都可以写, 第一个使用者获得归属权)
+   * 有值 = 已被认领, 仅 owner 可管理 (改名/删除)
    * 例: "chat-abc123"
    */
-  ownerChatSessionId: string;
+  ownerChatSessionId: string | null;
   /**
    * P0: 可见性
    * 当前固定 'public' (所有 chat 默认可见, 仅写权限受 owner 限制)

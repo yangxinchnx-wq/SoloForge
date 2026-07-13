@@ -60,11 +60,13 @@ class CanvasNotificationBus {
    */
   emit(input: {
     actorChatSessionId: string;
-    ownerChatSessionId: string;
+    ownerChatSessionId: string | null;
     canvasId: string;
     canvasDisplayName: string;
     action: CanvasAction;
   }): boolean {
+    // 无归属画布: 没有 owner 可通知, 跳过
+    if (!input.ownerChatSessionId) return false;
     // owner 自己写自己不通知
     if (input.actorChatSessionId === input.ownerChatSessionId) return false;
     // 60s cooldown per (canvasId, action, target)

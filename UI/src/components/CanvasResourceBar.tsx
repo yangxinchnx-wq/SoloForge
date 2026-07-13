@@ -16,7 +16,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Crown, Users, X } from '../utils/icons';
+import { Crown, Users, X, Sparkles } from '../utils/icons';
 import type { CanvasResource } from '../services/canvas/sessionApi';
 
 interface Props {
@@ -59,7 +59,7 @@ export function CanvasResourceBar({
   }, [editingId]);
 
   const beginEdit = (c: CanvasResource) => {
-    if (!c.isOwner) return; // 仅 owner 可改名
+    if (!c.isOwner) return; // 仅 owner 可改名 (无归属画布不可改名)
     setEditingId(c.sessionId);
     setEditingText(c.description || '');
   };
@@ -130,10 +130,12 @@ export function CanvasResourceBar({
               }}
               title={
                 (c.description ? `备注: ${c.description}\n` : '') +
-                'owner: ' + c.ownerChatSessionId +
-                (c.isOwner
-                  ? '\n★ 你可以编辑\n双击改名 · 点击切换'
-                  : '\n○ 只读 (你非 owner)')
+                (c.isUnowned
+                  ? '无归属\n✦ 首次使用后获得归属权\n点击切换'
+                  : 'owner: ' + c.ownerChatSessionId +
+                    (c.isOwner
+                      ? '\n★ 你可以编辑\n双击改名 · 点击切换'
+                      : '\n○ 只读 (你非 owner)'))
               }
               className={[
                 'group h-6 px-2 rounded-md text-[11px] font-medium shrink-0 transition-all',
@@ -146,9 +148,11 @@ export function CanvasResourceBar({
               ].join(' ')}
             >
               <span className="tabular-nums">{c.displayName}</span>
-              {c.isOwner
-                ? <Crown className={`w-2.5 h-2.5 ${active ? '' : 'text-amber-500'}`} />
-                : <Users className="w-2.5 h-2.5 opacity-60" />}
+              {c.isUnowned
+                ? <Sparkles className={`w-2.5 h-2.5 ${active ? '' : 'text-blue-400'}`} />
+                : c.isOwner
+                  ? <Crown className={`w-2.5 h-2.5 ${active ? '' : 'text-amber-500'}`} />
+                  : <Users className="w-2.5 h-2.5 opacity-60" />}
               {c.deviceCount > 0 && (
                 <span className={active ? 'opacity-80' : 'opacity-50'}>{c.deviceCount}</span>
               )}
@@ -160,7 +164,7 @@ export function CanvasResourceBar({
                   · {c.description}
                 </span>
               )}
-              {/* 删除按钮: 只在 owner 且 canvases > 1 时显示 */}
+              {/* 删除按钮: 只在 owner 且 canvases > 1 时显示 (无归属画布不可删除) */}
               {c.isOwner && onDelete && canvases.length > 1 && (
                 <span
                   role="button"

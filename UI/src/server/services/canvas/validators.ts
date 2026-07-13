@@ -184,14 +184,14 @@ export function repairSessionState(v: unknown): SessionState | null {
   if (!isNonEmptyString(raw.sessionId)) return null;
 
   // P0: ACL 字段缺失时软修复 (老数据兼容)
-  //   - ownerChatSessionId 缺 → 标 'legacy' (只读, 无写权限)
+  //   - ownerChatSessionId 缺 → null (无归属, 第一个使用者获得归属权)
   //   - name 缺 → 派生自 sessionId (兼容旧 canvas-{chatId} 命名)
   //   - visibility 缺 → 默认 'public' (与新规则一致)
   //   - lastAccessedBy 缺 → 空对象 (没人访问过)
   const legacyName = String(raw.sessionId);  // 兜底字符串, parseCanvasName 返回 -1
   const ownerFallback = isNonEmptyString(raw.ownerChatSessionId)
     ? raw.ownerChatSessionId
-    : 'legacy';
+    : null;
 
   return {
     sessionId: raw.sessionId,

@@ -154,12 +154,12 @@ export function handleCreateCanvas(req: Request, res: Response): Response {
   if (!requester) return err(res, 401, 'X-Requester-Chat-Session-Id header required');
   const body = (req.body && typeof req.body === 'object') ? req.body as { description?: unknown } : {};
   const description = typeof body.description === 'string' ? body.description : undefined;
-  const state = getSessionStore().createCanvas(requester);
+  const state = getSessionStore().createCanvas();
   if (!state) return err(res, 409, 'canvas limit reached (max 10, please delete some before creating)');
   if (description !== undefined) {
     state.description = description;
   }
-  // 创建即记录访问
+  // 创建即记录访问 (但不认领归属权 — 第一个写入者获得归属权)
   getSessionStore().recordAccess(state.sessionId, requester);
   return ok(res, state);
 }
@@ -187,6 +187,7 @@ export function handleListResources(req: Request, res: Response): Response {
       description: c.description,
       ownerChatSessionId: c.ownerChatSessionId,
       isOwner: c.ownerChatSessionId === requester,
+      isUnowned: c.ownerChatSessionId === null,
       deviceCount: c.devices.length,
       lastUpdated: c.lastUpdated,
       lastAccessedAt: c.lastAccessedBy?.[requester] ?? null,
@@ -214,6 +215,8 @@ export function handleSelectModel(req: Request, res: Response): Response {
   if (!state) return err(res, 404, 'canvas not found (use POST /api/canvas/sessions to create)');
   if (!ensureWriteDevice(req, res, state, 'write_device')) return res;
   const requester = getRequesterChatSessionId(req);
+  // ★ 无归属画布: 第一个写入者获得归属权
+  if (requester) store.claimCanvas(id, requester);
   store.selectDevice(id, modelKey);
   if (requester) emitCanvasChange(state, requester, 'write_device');
   return ok(res);
@@ -236,6 +239,8 @@ export function handleSetSelectedDevice(req: Request, res: Response): Response {
   if (!state) return err(res, 404, 'canvas not found');
   if (!ensureWriteDevice(req, res, state, 'write_device')) return res;
   const requester = getRequesterChatSessionId(req);
+  // ★ 无归属画布: 第一个写入者获得归属权
+  if (requester) store.claimCanvas(id, requester);
   store.setSelectedDevice(id, deviceId);
   if (requester) emitCanvasChange(state, requester, 'write_device');
   return ok(res);
@@ -258,6 +263,8 @@ export function handleAddDevice(req: Request, res: Response): Response {
   if (!state) return err(res, 404, 'canvas not found');
   if (!ensureWriteDevice(req, res, state, 'write_device')) return res;
   const requester = getRequesterChatSessionId(req);
+  // ★ 无归属画布: 第一个写入者获得归属权
+  if (requester) store.claimCanvas(id, requester);
   store.addDevice(id, device);
   if (requester) emitCanvasChange(state, requester, 'write_device');
   return ok(res);
@@ -276,6 +283,8 @@ export function handleRemoveDevice(req: Request, res: Response): Response {
   if (!state) return err(res, 404, 'canvas not found');
   if (!ensureWriteDevice(req, res, state, 'remove_device')) return res;
   const requester = getRequesterChatSessionId(req);
+  // ★ 无归属画布: 第一个写入者获得归属权
+  if (requester) store.claimCanvas(id, requester);
   store.removeDevice(id, deviceId);
   if (requester) emitCanvasChange(state, requester, 'remove_device');
   return ok(res);
@@ -299,6 +308,8 @@ export function handleUpdateTransform(req: Request, res: Response): Response {
   if (!state) return err(res, 404, 'canvas not found');
   if (!ensureWriteDevice(req, res, state, 'write_device')) return res;
   const requester = getRequesterChatSessionId(req);
+  // ★ 无归属画布: 第一个写入者获得归属权
+  if (requester) store.claimCanvas(id, requester);
   store.updateDeviceTransform(id, deviceId, transform);
   if (requester) emitCanvasChange(state, requester, 'write_device');
   return ok(res);
@@ -373,6 +384,7 @@ export function handleListSessions(req: Request, res: Response): Response {
       displayName: parseCanvasName(c.name) > 0 ? String(parseCanvasName(c.name)) : c.name,
       ownerChatSessionId: c.ownerChatSessionId,
       isOwner: c.ownerChatSessionId === requester,
+      isUnowned: c.ownerChatSessionId === null,
       deviceCount: c.devices.length,
       lastUpdated: c.lastUpdated,
     }));
@@ -465,6 +477,8 @@ export function handleSetSelectedDevices(req: Request, res: Response): Response 
   if (!state) return err(res, 404, 'canvas not found');
   if (!ensureWriteDevice(req, res, state, 'write_device')) return res;
   const requester = getRequesterChatSessionId(req);
+  // ★ 无归属画布: 第一个写入者获得归属权
+  if (requester) store.claimCanvas(id, requester);
   store.setSelectedDevices(id, body.deviceIds as string[], primaryId);
   if (requester) emitCanvasChange(state, requester, 'write_device');
   return ok(res);
@@ -485,6 +499,8 @@ export function handleTransformGroup(req: Request, res: Response): Response {
   if (!state) return err(res, 404, 'canvas not found');
   if (!ensureWriteDevice(req, res, state, 'write_device')) return res;
   const requester = getRequesterChatSessionId(req);
+  // ★ 无归属画布: 第一个写入者获得归属权
+  if (requester) store.claimCanvas(id, requester);
   store.transformGroup(id, {
     dXRatio: n(body.dXRatio),
     dYRatio: n(body.dYRatio),
@@ -518,6 +534,8 @@ export function handleSetDeviceUiSession(req: Request, res: Response): Response 
   if (!state) return err(res, 404, 'canvas not found');
   if (!ensureWriteDevice(req, res, state, 'write_device')) return res;
   const requester = getRequesterChatSessionId(req);
+  // ★ 无归属画布: 第一个写入者获得归属权
+  if (requester) store.claimCanvas(id, requester);
   const found = store.setDeviceUiSession(
     id,
     deviceId,

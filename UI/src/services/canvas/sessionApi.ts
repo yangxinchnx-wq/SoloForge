@@ -299,8 +299,10 @@ export interface CanvasResource {
   name: string;
   displayName: string;
   description?: string;
-  ownerChatSessionId: string;
+  ownerChatSessionId: string | null;
   isOwner: boolean;
+  /** 画布是否无归属 (任何人写入即可认领) */
+  isUnowned?: boolean;
   deviceCount: number;
   lastUpdated: number;
   lastAccessedAt: number | null;

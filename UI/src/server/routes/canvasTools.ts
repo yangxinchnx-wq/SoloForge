@@ -64,14 +64,14 @@ const TOOLS: ToolSchema[] = [
       '## 用法\n' +
       '- 序号由系统自动分配 (canvas_1, canvas_2, ..., canvas_10, 满了返回错误)\n' +
       '- description 可选, 建议用一句话描述画布用途, 例如 "3 设备对比图"\n' +
-      '- requesterChatSessionId 必填 (创建者 = owner, 拥有 manage 权限)\n' +
+      '- requesterChatSessionId 必填 (创建者, 画布创建时无归属, 第一个写入者获得归属权)\n' +
       '\n' +
       '## 后续\n' +
-      '创建后用 solo_canvas_add_device 摆设备, 用 solo_canvas_rename 改备注。',
+      '创建后用 solo_canvas_add_device 摆设备 (同时获得归属权), 用 solo_canvas_rename 改备注 (需已获得归属权)。',
     input_schema: {
       type: 'object',
       properties: {
-        requesterChatSessionId: { type: 'string', description: '创建者 chat session ID (必填, 即 owner)' },
+        requesterChatSessionId: { type: 'string', description: '创建者 chat session ID (必填, 画布创建时无归属, 第一个写入者获得归属权)' },
         description: { type: 'string', description: '可选备注 (最多 200 字符, 例: "3 设备对比图")' },
       },
       required: ['requesterChatSessionId'],
@@ -262,7 +262,7 @@ async function dispatchTool(name: string, args: Record<string, unknown>): Promis
     case 'solo_canvas_create': {
       const requester = String(args.requesterChatSessionId);
       const description = typeof args.description === 'string' ? args.description : undefined;
-      const state = store.createCanvas(requester);
+      const state = store.createCanvas();
       if (!state) throw new ToolError('canvas limit reached (max 10, please delete some before creating)', 400);
       if (description !== undefined) {
         if (description.length > 200) throw new ToolError('description too long (max 200)', 400);
@@ -354,6 +354,10 @@ function mustGetCanvas(id: string, requester: string, mode: 'read' | 'write_devi
     : mode === 'write_device' ? store.canWriteDevice(state, requester)
     : store.canManage(state, requester);
   if (!allowed) throw new ToolError(`forbidden: ${mode} not allowed`, 403);
+  // ★ 无归属画布: 第一个写入者获得归属权
+  if (mode === 'write_device') {
+    store.claimCanvas(id, requester);
+  }
   return state;
 }
 
@@ -416,6 +420,7 @@ function summarize(c: SessionState, requester: string) {
     description: c.description,
     ownerChatSessionId: c.ownerChatSessionId,
     isOwner: c.ownerChatSessionId === requester,
+    isUnowned: c.ownerChatSessionId === null,
     deviceCount: c.devices.length,
     lastUpdated: c.lastUpdated,
     lastAccessedAt: c.lastAccessedBy?.[requester] ?? null,

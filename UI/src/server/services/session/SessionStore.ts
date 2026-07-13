@@ -52,10 +52,10 @@ export class SessionStore {
   /**
    * 获取或创建会话
    *
-   * 兼容模式: 不传 ownerChatSessionId 时, 用 'legacy' 占位
+   * 兼容模式: 不传 ownerChatSessionId 时, 创建无归属画布 (null)
    * (用于 restore-from-surreal / 旧数据恢复, 或 dev 早期调用)
    */
-  getOrCreate(sessionId: string, ownerChatSessionId?: string): SessionState {
+  getOrCreate(sessionId: string, ownerChatSessionId?: string | null): SessionState {
     if (this.states.has(sessionId)) {
       return this.states.get(sessionId)!;
     }
@@ -69,7 +69,7 @@ export class SessionStore {
       selectedDeviceId: null,
       selectedDeviceIds: [],
       lastUpdated: Date.now(),
-      ownerChatSessionId: ownerChatSessionId || 'legacy',
+      ownerChatSessionId: ownerChatSessionId ?? null,
       visibility: 'public',
     };
     this.states.set(sessionId, state);
@@ -78,13 +78,16 @@ export class SessionStore {
   }
 
   /**
-   * P0: 显式创建画布
+   * P0: 显式创建画布 (无归属)
    * 序号策略: 全 chat 全局最小可用 (删除后复用)
    * 满 10 个返回 null (调用方应返回 4xx error)
    *
+   * 画布创建时无归属权 (ownerChatSessionId = null)。
+   * 第一个写入 (add device / select model / transform 等) 的 chat 获得归属权。
+   *
    * @returns 新画布, 或 null 表示已达上限
    */
-  createCanvas(ownerChatSessionId: string): SessionState | null {
+  createCanvas(): SessionState | null {
     const seq = this.findMinAvailableSequence();
     if (seq <= 0) return null;  // 已满
     const sessionId = `canvas_${seq}`;
@@ -102,7 +105,7 @@ export class SessionStore {
       selectedDeviceId: null,
       selectedDeviceIds: [],
       lastUpdated: Date.now(),
-      ownerChatSessionId,
+      ownerChatSessionId: null,  // ★ 无归属 — 第一个使用者获得归属权
       visibility: 'public',
     };
     this.states.set(sessionId, state);
@@ -156,10 +159,32 @@ export class SessionStore {
 
   /**
    * 资源管理 (改名/删除): 仅 owner
+   * 无归属画布 (ownerChatSessionId = null) 无人可管理, 直到被认领
    */
   canManage(canvas: SessionState, requesterChatSessionId: string | undefined): boolean {
     if (!requesterChatSessionId) return false;
+    if (canvas.ownerChatSessionId === null) return false;  // 无归属 → 无人可管理
     return canvas.ownerChatSessionId === requesterChatSessionId;
+  }
+
+  /**
+   * P0: 认领画布归属权
+   * 如果画布无归属 (ownerChatSessionId = null), 将归属权赋予 requester
+   * 已有归属时不做改变 (归属权不可转让)
+   *
+   * @returns true = 刚认领, false = 已有归属 (无需认领)
+   */
+  claimCanvas(sessionId: string, chatSessionId: string): boolean {
+    const state = this.states.get(sessionId);
+    if (!state) return false;
+    if (state.ownerChatSessionId === null || state.ownerChatSessionId === undefined) {
+      state.ownerChatSessionId = chatSessionId;
+      state.lastUpdated = Date.now();
+      this.dirty.add(sessionId);
+      console.log(`[SessionStore] claimCanvas: ${sessionId} claimed by ${chatSessionId}`);
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -717,7 +742,7 @@ export class SessionStore {
       if (state) {
         // 确保 name 字段存在 (老数据可能缺)
         if (!state.name) state.name = '00';
-        if (!state.ownerChatSessionId) state.ownerChatSessionId = 'legacy';
+        if (state.ownerChatSessionId === undefined) state.ownerChatSessionId = null;
         if (!state.visibility) state.visibility = 'public';
         this.states.set(sessionId, state);
         this.dirty.add(sessionId);
