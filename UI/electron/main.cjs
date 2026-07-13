@@ -1399,10 +1399,8 @@ return { ok: false, error: e?.message || String(e) };
 //   → 显示半透明尺寸数字提示 (白色长方形)
 //
 // 消除白色尺寸提示的方案:
-//   1. applyNoSnapFinal 设置 DWMWA_TRANSITIONS_FORCEDISABLED (attr=3) → 禁用 DWM 转场动画
-//   2. setBounds 期间用 setOpacity(0) 隐藏窗口 → DWM 不显示尺寸提示
-//   3. setBounds 完成后 setOpacity(1) 恢复显示 (延迟 1 帧避免闪烁)
-//   注意: 不能用 SWP_NOSENDCHANGING, 它会阻止 Electron 检测到 resize 事件
+//   applyDwmAttributes 设置 DWMWA_TRANSITIONS_FORCEDISABLED (attr=3) → 禁用 DWM 转场动画
+//   在启动时 + 每次最大化/还原后调用, 确保 DWM 属性始终生效
 //
 // 用自定义标志 _customMaximized 记录状态, 不依赖 OS 的 maximized 状态
 
@@ -1507,10 +1505,7 @@ if (!mainWindow || mainWindow.isDestroyed()) return false;
 if (_customMaximized) {
 // 还原
 if (_savedBounds) {
-// setOpacity(0) 隐藏窗口 → setBounds 不触发 DWM 尺寸提示 → setOpacity(1) 恢复
-try { mainWindow.setOpacity(0); } catch {}
 mainWindow.setBounds(_savedBounds);
-setTimeout(() => { try { mainWindow.setOpacity(1); } catch {} }, 16);
 }
 _customMaximized = false;
 } else {
@@ -1518,26 +1513,24 @@ _customMaximized = false;
 _savedBounds = mainWindow.getBounds();
 const { screen } = require('electron');
 const display = screen.getDisplayMatching(_savedBounds);
-// setOpacity(0) 隐藏窗口 → setBounds 不触发 DWM 尺寸提示 → setOpacity(1) 恢复
-try { mainWindow.setOpacity(0); } catch {}
 mainWindow.setBounds(display.workArea);
-setTimeout(() => { try { mainWindow.setOpacity(1); } catch {} }, 16);
 _customMaximized = true;
 }
 // 通知渲染器状态变化
 mainWindow.webContents.send('window:maximize-state-changed', _customMaximized);
+// 重新应用 DWM 属性 (setBounds 可能导致 DWM 重置属性)
+applyDwmAttributes(mainWindow);
 return _customMaximized;
 });
 
 ipcMain.handle('window:restore', async () => {
 if (mainWindow && !mainWindow.isDestroyed()) {
 if (_customMaximized && _savedBounds) {
-// setOpacity(0) 隐藏窗口 → setBounds 不触发 DWM 尺寸提示 → setOpacity(1) 恢复
-try { mainWindow.setOpacity(0); } catch {}
 mainWindow.setBounds(_savedBounds);
-setTimeout(() => { try { mainWindow.setOpacity(1); } catch {} }, 16);
 _customMaximized = false;
 mainWindow.webContents.send('window:maximize-state-changed', false);
+// 重新应用 DWM 属性
+applyDwmAttributes(mainWindow);
 } else {
 mainWindow.restore();
 }
@@ -1809,6 +1802,31 @@ function getHwndStr(window) {
     if (buf.length >= 8) return buf.readBigInt64LE(0).toString();
     return buf.readInt32LE(0).toString();
   } catch (e) { return null; }
+}
+
+// ── 轻量 DWM 属性设置 (不修改窗口样式, 只设 DWM 属性) ──
+// 在启动时 + 每次 setBounds 后调用, 确保 DWM 转场动画始终被禁用
+// applyNoSnapFinal 会在拖拽后调用, 但启动时不调用 → DWM 属性缺失 → 白色尺寸提示
+function applyDwmAttributes(window) {
+  if (process.platform !== 'win32') return;
+  const hwnd = getHwndStr(window);
+  if (!hwnd) return;
+  const script = PS_WIN32 + `
+$hwnd = [IntPtr]::new([Int64]${hwnd})
+# DWMWA_NCRENDERING_POLICY (2) = DWMNCRP_DISABLED (1)
+# DWMWA_TRANSITIONS_FORCEDISABLED (3) = TRUE (1) → 禁用 DWM 转场动画 → 不显示白色尺寸提示
+# DWMWA_WINDOW_CORNER_PREFERENCE (33) = DWMWCP_DONOTROUND (2)
+$policy1 = 1
+$transitions = 1
+$policy4 = 2
+$r1 = [W32]::DwmSetWindowAttribute($hwnd, 2,  [ref]$policy1, 4)
+$r3 = [W32]::DwmSetWindowAttribute($hwnd, 3,  [ref]$transitions, 4)
+$r4 = [W32]::DwmSetWindowAttribute($hwnd, 33, [ref]$policy4, 4)
+Write-Output "DWM NCR=$r1 TRANS=$r3 CORNER=$r4"
+`;
+  execPsSync(script).then((out) => {
+    if (out) console.log('[dwm-attrs]', out);
+  });
 }
 
 // ── 2026-07-05 窗口样式 → WS_POPUP (彻底移除非客户区) ──
@@ -2518,11 +2536,18 @@ app.whenReady().then(async () => {
   createWindow();                  // 先创建主窗口
   createCanvasHostWindow(mainWindow); // 再以主窗口为 parent 创建画布宿主 → OS 自动管 z-order
 
-  // 2026-07-05: titleBarStyle:'hidden' + titleBarOverlay 让系统处理 WM_NCHITTEST
-  //   不需要 applyNoSnapFinal (WS_POPUP hack) 或 SUBCLASS (跨进程拦截)
-  mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
-  });
+// 2026-07-05: titleBarStyle:'hidden' (无 overlay) + maximizable:false → 系统 WM_NCHITTEST 不返回 HTMAXBUTTON → 无 snap flyout
+// 启动时必须调用 applyDwmAttributes 设置 DWMWA_TRANSITIONS_FORCEDISABLED → 禁用 DWM 转场动画 → 无白色尺寸提示
+//   (之前注释说"不需要 applyNoSnapFinal" 是错误的: applyNoSnapFinal 从未在启动时调用, DWM 属性缺失)
+mainWindow.once('ready-to-show', () => {
+mainWindow.show();
+// 延迟 200ms 等 HWND 稳定后再设 DWM 属性 (太早设可能被 Chromium 覆盖)
+setTimeout(() => {
+if (mainWindow && !mainWindow.isDestroyed()) {
+applyDwmAttributes(mainWindow);
+}
+}, 200);
+});
   registerIpc();
 
   app.on('activate', () => {
