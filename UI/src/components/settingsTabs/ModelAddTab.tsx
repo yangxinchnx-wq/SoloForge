@@ -546,8 +546,12 @@ export default function ModelAddTab() {
   const [isScanning, setIsScanning] = useState(false);
   const [scanResult, setScanResult] = useState<CloudModelScanResult | null>(null);
   const [showModelPicker, setShowModelPicker] = useState(false);
-  const [batchProbeTrigger, setBatchProbeTrigger] = useState(0);
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+
+  // 热数据库缓存：providerId → (modelId → ProbeResult)
+  // 从服务端 /api/providers/probe-cache/:providerId 加载，点击"测试连通性"时刷新
+  // 除非点击重新检测，否则一直用缓存数据，不重复发请求
+  const [probeCacheByProvider, setProbeCacheByProvider] = useState<Record<string, Record<string, ProbeResult>>>({});
 
   const scanProviderModels = async (providerId: string) => {
     setIsScanning(true);
@@ -901,20 +905,40 @@ export default function ModelAddTab() {
       return;
     }
     try {
-      const probeModel = target.models.find(m => m.enabled)?.id || target.customModels[0];
-      const r = await fetch('/api/providers/test', {
+      // 收集所有已选模型 ID (扫描启用的 + 自定义登记的)
+      const modelIds = [
+        ...target.models.filter(m => m.enabled).map(m => m.id),
+        ...target.customModels,
+      ];
+
+      // 一次聚合请求：provider 连通性 + 所有模型串行探测 (避免 429)
+      const r = await fetch('/api/providers/test-batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ baseUrl: urlToUse, apiKey: target.apiKey, defaultUrl: target.defaultUrl, model: probeModel }),
+        body: JSON.stringify({
+          providerId,
+          baseUrl: urlToUse,
+          apiKey: target.apiKey,
+          defaultUrl: target.defaultUrl,
+          models: modelIds,
+        }),
       });
       const data = await r.json();
       if (data?.success) {
+        const prov = data.provider || {};
         setProviders(prev => prev.map(p => p.id === providerId ? {
           ...p,
-          status: 'success',
-          delay: data.latency,
-          errorMessage: undefined,
+          status: prov.success ? 'success' as const : 'failed' as const,
+          delay: prov.latency,
+          errorMessage: prov.error,
         } : p));
+        // 缓存探测结果到 state (热数据库已在服务端持久化，这里同步前端 state)
+        if (data.models) {
+          setProbeCacheByProvider(prev => ({
+            ...prev,
+            [providerId]: data.models,
+          }));
+        }
       } else {
         setProviders(prev => prev.map(p => p.id === providerId ? {
           ...p,
@@ -930,6 +954,31 @@ export default function ModelAddTab() {
       } : p));
     }
   };
+
+  // 切换到某个 provider 时，从服务端热数据库加载已持久化的探测结果
+  // 避免每次打开配置页都重新探测
+  // 注意：只加载 probeCacheByProvider，不更新 providers state
+  // 因为更新 providers 会触发 persist useEffect，可能在钥匙串恢复 apiKey 之前
+  // 把空 apiKey 写入 localStorage，导致密钥丢失
+  useEffect(() => {
+    if (!activeProviderId) return;
+    // 已有缓存就不重复加载
+    if (probeCacheByProvider[activeProviderId]) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/providers/probe-cache/${encodeURIComponent(activeProviderId)}`);
+        if (!r.ok) return;
+        const data = await r.json();
+        if (cancelled || !data?.found || !data?.entry?.models) return;
+        setProbeCacheByProvider(prev => ({
+          ...prev,
+          [activeProviderId]: data.entry.models,
+        }));
+      } catch { /* 静默 */ }
+    })();
+    return () => { cancelled = true; };
+  }, [activeProviderId]);
 
   const activeProvider = providers.find(p => p.id === activeProviderId) || providers[0];
   const dragModels = activeProvider.enabled ? activeProvider.models.filter((model) => {
@@ -1211,10 +1260,10 @@ export default function ModelAddTab() {
                     <ModelDetailPanel
                       key={selectedModelId}
                       modelName={selectedModelId}
-                      providerBaseUrl={activeProvider.baseUrl || activeProvider.defaultUrl}
-                      providerApiKey={activeProvider.apiKey}
-                      providerDefaultUrl={activeProvider.defaultUrl}
-                      probeTrigger={batchProbeTrigger}
+                      providerId={activeProvider.id}
+                      probeResult={probeCacheByProvider[activeProvider.id]?.[selectedModelId] ?? null}
+                      loading={activeProvider.status === 'loading'}
+                      onReprobe={() => testProviderConnection(activeProvider.id)}
                       onRemove={() => {
                         const isInModels = activeProvider.models.some(m => m.id === selectedModelId && m.enabled);
                         if (isInModels) {
@@ -1268,9 +1317,6 @@ export default function ModelAddTab() {
                   type="button"
                   onClick={() => {
                     testProviderConnection(activeProvider.id);
-                    if (dragModels.length > 0 || activeProvider.customModels.length > 0) {
-                      setBatchProbeTrigger(Date.now());
-                    }
                   }}
                   disabled={!activeProvider.enabled || activeProvider.status === 'loading'}
                   className="px-4 py-2 bg-[var(--color-primary)] hover:opacity-95 text-[var(--color-bg)] font-extrabold text-xs rounded-xl transition-all flex items-center gap-2 active:scale-95 disabled:opacity-40 cursor-pointer shadow-md"
@@ -1529,58 +1575,6 @@ function fmtCapability(v: boolean | null): { text: string; color: string } {
 }
 
 // =====================================================
-// useModelProbe — 探针 hook (SortableModelItem / CustomModelItem 共享)
-// 点击展开时自动发起 /api/providers/model-probe 请求
-// =====================================================
-function useModelProbe(
-  name: string,
-  providerBaseUrl: string,
-  providerApiKey: string,
-  providerDefaultUrl: string,
-) {
-  const [probeResult, setProbeResult] = useState<ProbeResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const probeIdRef = useRef(0);
-  const hasProbed = useRef(false);
-
-  const probe = async () => {
-    const currentId = ++probeIdRef.current;
-    setLoading(true);
-    setError(null);
-    setProbeResult(null);
-    hasProbed.current = false;
-    try {
-      const r = await fetch('/api/providers/model-probe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          baseUrl: providerBaseUrl,
-          apiKey: providerApiKey,
-          defaultUrl: providerDefaultUrl,
-          modelId: name,
-        }),
-      });
-      const data = await r.json();
-      if (probeIdRef.current !== currentId) return;
-      if (!r.ok || !data.probed) {
-        setError(data?.error || `探测失败 (${r.status})`);
-      } else {
-        setProbeResult(data as ProbeResult);
-        hasProbed.current = true;
-      }
-    } catch (e: any) {
-      if (probeIdRef.current !== currentId) return;
-      setError(e?.message || '探测请求失败');
-    } finally {
-      if (probeIdRef.current === currentId) setLoading(false);
-    }
-  };
-
-  return { probeResult, loading, error, probe };
-}
-
-// =====================================================
 // ModelTabBar — 浏览器选项卡式模型列表
 // 横向排列，支持鼠标滚轮左右滚动，每个选项卡含 logo + 全名 + X关闭
 // =====================================================
@@ -1700,10 +1694,13 @@ const ModelTabBar: React.FC<ModelTabBarProps> = ({
 
 interface ModelDetailPanelProps {
   modelName: string;
-  providerBaseUrl: string;
-  providerApiKey: string;
-  providerDefaultUrl: string;
-  probeTrigger?: number;
+  providerId: string;
+  /** 从热数据库读取的缓存探测结果 (null = 尚未探测) */
+  probeResult: ProbeResult | null;
+  /** 是否正在探测中 (provider 级别 loading) */
+  loading: boolean;
+  /** 重新检测回调 (触发父组件 testProviderConnection) */
+  onReprobe: () => void;
   onRemove: () => void;
 }
 
@@ -1722,24 +1719,13 @@ function isRateLimited(errMsg: string | undefined): boolean {
 
 const ModelDetailPanel: React.FC<ModelDetailPanelProps> = ({
   modelName,
-  providerBaseUrl,
-  providerApiKey,
-  providerDefaultUrl,
-  probeTrigger,
+  providerId: _providerId,
+  probeResult,
+  loading,
+  onReprobe,
   onRemove,
 }) => {
-  const { probeResult, loading, error, probe } = useModelProbe(modelName, providerBaseUrl, providerApiKey, providerDefaultUrl);
-  const prevTriggerRef = useRef(0);
   const [showErrors, setShowErrors] = useState(false);
-
-  useEffect(() => { probe(); }, []);
-
-  useEffect(() => {
-    if (probeTrigger && probeTrigger !== prevTriggerRef.current) {
-      prevTriggerRef.current = probeTrigger;
-      probe();
-    }
-  }, [probeTrigger, probe]);
 
   // 服务器信息条目
   const serverInfoEntries: Array<[string, string]> = React.useMemo(() => {
@@ -1875,7 +1861,7 @@ const ModelDetailPanel: React.FC<ModelDetailPanelProps> = ({
         <div className="flex items-center gap-1 shrink-0">
           <button
             type="button"
-            onClick={() => probe()}
+            onClick={onReprobe}
             disabled={loading}
             className="p-1.5 hover:bg-[var(--color-primary)]/10 rounded-lg text-on-surface/50 hover:text-[var(--color-primary)] cursor-pointer transition-all disabled:opacity-40"
             title="重新探测"
@@ -1902,19 +1888,20 @@ const ModelDetailPanel: React.FC<ModelDetailPanelProps> = ({
           </div>
         )}
 
-        {error && !loading && (
-          <div className="flex flex-col items-center justify-center h-full gap-3">
-            <div className="flex items-center gap-2 text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>探测失败: {error}</span>
+        {/* 无缓存数据且未在探测中 — 提示用户点击"测试连通性" */}
+        {!probeResult && !loading && (
+          <div className="flex flex-col items-center justify-center h-full gap-3 py-6">
+            <div className="flex items-center gap-2 text-xs text-on-surface/50 bg-on-surface/5 border border-on-surface/10 rounded-lg px-3 py-2">
+              <Info className="w-4 h-4 shrink-0" />
+              <span>尚未探测此模型，点击下方按钮开始检测</span>
             </div>
-            <button type="button" onClick={() => probe()} className="text-[11px] text-[var(--color-primary)] hover:underline font-bold flex items-center gap-1 cursor-pointer">
-              <RefreshCw className="w-3 h-3" /> 重新探测
+            <button type="button" onClick={onReprobe} className="text-[11px] text-[var(--color-primary)] hover:underline font-bold flex items-center gap-1 cursor-pointer">
+              <RefreshCw className="w-3 h-3" /> 开始探测
             </button>
           </div>
         )}
 
-        {probeResult && !loading && !error && (
+        {probeResult && !loading && (
           <>
             {/* 429 限流提示 */}
             {hasRateLimit && (

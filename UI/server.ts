@@ -681,6 +681,19 @@ async function startServer() {
         proxyRes.headers["cache-control"] = "no-cache";
         proxyRes.headers["x-accel-buffering"] = "no";
       },
+      error: (err, _req, res) => {
+        console.error("[proxy→3001] SSE error:", err.message);
+        if (res && 'writeHead' in res) {
+          try {
+            (res as any).writeHead(502, { "Content-Type": "application/json" });
+            (res as any).end(JSON.stringify({
+              success: false,
+              error: `后端 SSE 不可达: ${err.message}`,
+              backend: BACKEND_URL,
+            }));
+          } catch { /* response already sent */ }
+        }
+      },
     },
     proxyTimeout: 0 as any,
     timeout: 0 as any,
@@ -1208,6 +1221,495 @@ async function startServer() {
   });
 
   // ============================================================
+  // probeModelInternal — 单模型探测核心逻辑 (从 /api/providers/model-probe 提取)
+  // 供 /api/providers/model-probe 和 /api/providers/test-batch 共同调用
+  // 串行调用时可避免并发 429
+  // ============================================================
+  async function probeModelInternal(
+    target: string,
+    apiKey: string,
+    modelId: string,
+  ): Promise<any> {
+    const base = target.replace(/\/+$/, "");
+    const headers: Record<string, string> = { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` };
+
+    // 1x1 透明 PNG (base64)
+    const TINY_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+    const result = {
+      success: false,
+      modelId,
+      latency: 0,
+      probed: {
+        basic: false,
+        vision: null as boolean | null,
+        tools: null as boolean | null,
+        json: null as boolean | null,
+        streaming: null as boolean | null,
+        embeddings: null as boolean | null,
+      },
+      limits: {
+        contextWindow: null as number | null,
+        maxOutput: null as number | null,
+      },
+      usage: null as Record<string, unknown> | null,
+      pricing: null as Record<string, unknown> | null,
+      rawModelInfo: null as Record<string, unknown> | null,
+      responseHeaders: {} as Record<string, string>,
+      pingResponse: null as Record<string, unknown> | null,
+      serverInfo: {} as Record<string, unknown>,
+      errors: {} as Record<string, string>,
+    };
+
+    const t0 = Date.now();
+    const mkTimeout = (ms: number) => {
+      const c = new AbortController();
+      const t = setTimeout(() => c.abort(), ms);
+      return { c, t };
+    };
+
+    async function chatProbe(body: Record<string, unknown>, timeoutMs = 12000): Promise<{ ok: boolean; status: number; text: string }> {
+      const { c, t } = mkTimeout(timeoutMs);
+      try {
+        const r = await fetch(`${base}/chat/completions`, {
+          method: "POST",
+          headers,
+          signal: c.signal,
+          body: JSON.stringify({ model: modelId, max_tokens: 1, stream: false, ...body }),
+        });
+        const text = await r.text();
+        return { ok: r.ok, status: r.status, text };
+      } catch (e: any) {
+        return { ok: false, status: 0, text: e?.name === "AbortError" ? "timeout" : (e?.message || "error") };
+      } finally {
+        clearTimeout(t);
+      }
+    }
+
+    async function chatProbeFull(body: Record<string, unknown>, timeoutMs = 12000): Promise<{ ok: boolean; status: number; text: string; json: any | null; headers: Record<string, string> }> {
+      const { c, t } = mkTimeout(timeoutMs);
+      try {
+        const r = await fetch(`${base}/chat/completions`, {
+          method: "POST",
+          headers,
+          signal: c.signal,
+          body: JSON.stringify({ model: modelId, max_tokens: 1, stream: false, ...body }),
+        });
+        const text = await r.text();
+        let json: any = null;
+        try { json = JSON.parse(text); } catch {}
+        const respHeaders: Record<string, string> = {};
+        r.headers.forEach((v, k) => {
+          const kl = k.toLowerCase();
+          if (kl.startsWith('x-ratelimit') || kl.startsWith('x-request') || kl.includes('remaining') || kl.includes('limit') || kl.includes('reset') || kl === 'date' || kl === 'server' || kl === 'content-type') {
+            respHeaders[k] = v;
+          }
+        });
+        return { ok: r.ok, status: r.status, text, json, headers: respHeaders };
+      } catch (e: any) {
+        return { ok: false, status: 0, text: e?.name === "AbortError" ? "timeout" : (e?.message || "error"), json: null, headers: {} };
+      } finally {
+        clearTimeout(t);
+      }
+    }
+
+    // ── Phase 1: 基础 ping + /models/{id} (2 个请求并行, 仅限单模型内部) ──
+    const [pingFull, modelsRes] = await Promise.all([
+      chatProbeFull({ messages: [{ role: "user", content: "Hi" }] }),
+      (async () => {
+        const { c, t } = mkTimeout(10000);
+        try {
+          let r = await fetch(`${base}/models/${encodeURIComponent(modelId)}`, { method: "GET", headers, signal: c.signal });
+          if (!r.ok) {
+            r = await fetch(`${base}/models`, { method: "GET", headers, signal: c.signal });
+            if (!r.ok) return {};
+            const data = await r.json();
+            const list = Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : Array.isArray(data) ? data : [];
+            const found = list.find((m: any) => (typeof m === "string" ? m : (m.id || m.name)) === modelId);
+            return typeof found === "string" ? { id: found } : (found || {});
+          }
+          return await r.json();
+        } catch { return {}; }
+        finally { clearTimeout(t); }
+      })(),
+    ]);
+
+    const pingRes = { ok: pingFull.ok, status: pingFull.status, text: pingFull.text };
+
+    if (pingFull.json) {
+      result.pingResponse = pingFull.json;
+      if (pingFull.json.usage) result.usage = pingFull.json.usage;
+    }
+    result.responseHeaders = pingFull.headers;
+
+    if (modelsRes && typeof modelsRes === "object") {
+      result.rawModelInfo = modelsRes;
+      result.serverInfo = modelsRes;
+      if ((modelsRes as any).owned_by) result.serverInfo.owner = (modelsRes as any).owned_by;
+      if ((modelsRes as any).pricing) result.pricing = (modelsRes as any).pricing;
+    }
+
+    if (!pingRes.ok) {
+      result.errors.basic = `${pingRes.status}: ${pingRes.text.slice(0, 300)}`;
+      result.latency = Date.now() - t0;
+      return result;
+    }
+    result.probed.basic = true;
+
+    // ── Phase 2: vision / tools / json (3 个请求并行) ──
+    const [visionRes, toolsRes, jsonRes] = await Promise.all([
+      chatProbe({
+        messages: [{
+          role: "user",
+          content: [
+            { type: "text", text: "What is this?" },
+            { type: "image_url", image_url: { url: TINY_PNG } },
+          ],
+        }],
+      }),
+      chatProbe({
+        messages: [{ role: "user", content: "What's the weather?" }],
+        tools: [{
+          type: "function",
+          function: {
+            name: "get_weather",
+            description: "Get current weather",
+            parameters: { type: "object", properties: { location: { type: "string", description: "City name" } }, required: ["location"] },
+          },
+        }],
+      }),
+      chatProbe({
+        messages: [{ role: "user", content: 'Return {"hello":"world"}' }],
+        response_format: { type: "json_object" },
+      }),
+    ]);
+
+    result.probed.vision = visionRes.ok;
+    if (!visionRes.ok && visionRes.status !== 0) result.errors.vision = `${visionRes.status}: ${visionRes.text.slice(0, 200)}`;
+    else if (visionRes.status === 0) result.errors.vision = visionRes.text;
+
+    result.probed.tools = toolsRes.ok;
+    if (!toolsRes.ok && toolsRes.status !== 0) result.errors.tools = `${toolsRes.status}: ${toolsRes.text.slice(0, 200)}`;
+    else if (toolsRes.status === 0) result.errors.tools = toolsRes.text;
+
+    result.probed.json = jsonRes.ok;
+    if (!jsonRes.ok && jsonRes.status !== 0) result.errors.json = `${jsonRes.status}: ${jsonRes.text.slice(0, 200)}`;
+    else if (jsonRes.status === 0) result.errors.json = jsonRes.text;
+
+    // ── Phase 2b: streaming (单独请求, 读取首 chunk 后 abort) ──
+    try {
+      const { c, t } = mkTimeout(8000);
+      const sr = await fetch(`${base}/chat/completions`, {
+        method: "POST",
+        headers,
+        signal: c.signal,
+        body: JSON.stringify({ model: modelId, messages: [{ role: "user", content: "Hi" }], max_tokens: 1, stream: true }),
+      });
+      if (sr.ok) {
+        const ct = sr.headers.get("content-type") || "";
+        if (ct.includes("text/event-stream") || ct.includes("stream")) {
+          result.probed.streaming = true;
+        } else {
+          const reader = sr.body?.getReader();
+          if (reader) {
+            const { value } = await reader.read();
+            result.probed.streaming = !!value && value.length > 0;
+          }
+        }
+        c.abort();
+      } else {
+        const st = await sr.text();
+        result.errors.streaming = `${sr.status}: ${st.slice(0, 200)}`;
+      }
+      clearTimeout(t);
+    } catch (e: any) {
+      if (e?.name === "AbortError" && result.probed.streaming !== false) {
+        result.probed.streaming = result.probed.streaming ?? true;
+      } else {
+        result.errors.streaming = e?.message || "streaming probe failed";
+      }
+    }
+
+    // ── Phase 3: 限制探测 (1 个请求, 从错误信息解析上下文/输出上限) ──
+    const limitRes = await chatProbe({ messages: [{ role: "user", content: "Hi" }], max_tokens: 999999 }, 10000);
+    if (!limitRes.ok && limitRes.text) {
+      const maxOutPatterns = [
+        /max_tokens?\s*(?:must be|is|should be|may not be)?\s*(?:less than|<=?|at most|up to|greater than)\s*(?:or equal to\s*)?(\d+)/i,
+        /max(?:imum)?\s*(?:output|tokens?|allowed)\s*(?:is|of|:)?\s*(\d+)/i,
+        /max_tokens?\s*(?:is|:)\s*(\d+)/i,
+        /(?:maximum|max)\s+\d+\s*(?:output|completion)\s*tokens?/i,
+        /tokens?\s*(?:limit|max|maximum)\s*(?:is|:)?\s*(\d+)/i,
+        /supports\s+at\s+most\s+(\d+)\s*(?:completion|output)?\s*tokens?/i,
+        /at\s+most\s+(\d+)\s*(?:completion|output)?\s*tokens?/i,
+        /too\s+large.*?(\d{4,})\s*(?:completion|output)?\s*tokens?/i,
+      ];
+      for (const p of maxOutPatterns) {
+        const m = limitRes.text.match(p);
+        if (m) { result.limits.maxOutput = parseInt(m[m.length - 1]); break; }
+      }
+      const ctxPatterns = [
+        /(?:maximum\s+)?context\s*(?:length|window)\s*(?:is|:|of)?\s*(\d+)/i,
+        /context_length\s*(?:is|:)?\s*(\d+)/i,
+        /(?:maximum|max)\s+(?:of\s+)?(\d+)\s*tokens?/i,
+        /(?:input|total)\s*tokens?\s*(?:cannot\s*exceed|must\s*be\s*less\s*than|limit(?:ed)?\s*to)\s*(\d+)/i,
+        /tokens?\s*(?:limit|max)\s*(?:is|:)?\s*(\d+)/i,
+        /(?:max|maximum)\s*(?:input|context)\s*tokens?\s*:?\s*(\d+)/i,
+        /(\d+)\s*tokens?\s*(?:context|window|input\s*limit)/i,
+        /context\s*(?:length|window)\s*(?:of|is)?\s*(\d+)/i,
+      ];
+      for (const p of ctxPatterns) {
+        const m = limitRes.text.match(p);
+        if (m) { result.limits.contextWindow = parseInt(m[m.length - 1]); break; }
+      }
+      result.errors.limits = `${limitRes.status}: ${limitRes.text.slice(0, 500)}`;
+    } else if (limitRes.ok) {
+      result.errors.limits = "API accepted max_tokens:999999 without error (silent cap, limit unknown)";
+    }
+
+    // ── Phase 4: 从 /models 响应补充限制信息 ──
+    if (modelsRes) {
+      const m = modelsRes as any;
+      if (!result.limits.contextWindow) {
+        const ctxFields = ['context_length', 'inputTokenLimit', 'max_input_tokens', 'context_window', 'maxContextLength', 'max_context_tokens', 'input_tokens_limit', 'maxInputTokens'];
+        for (const f of ctxFields) {
+          if (m[f] && typeof m[f] === 'number') { result.limits.contextWindow = m[f]; break; }
+        }
+        if (!result.limits.contextWindow && m.top_provider?.context_length) result.limits.contextWindow = m.top_provider.context_length;
+        if (!result.limits.contextWindow && m.architecture?.context_length) result.limits.contextWindow = m.architecture.context_length;
+      }
+      if (!result.limits.maxOutput) {
+        const outFields = ['max_completion_tokens', 'outputTokenLimit', 'max_output_tokens', 'maxOutputTokens', 'max_tokens', 'output_tokens_limit'];
+        for (const f of outFields) {
+          if (m[f] && typeof m[f] === 'number') { result.limits.maxOutput = m[f]; break; }
+        }
+        if (!result.limits.maxOutput && m.top_provider?.max_completion_tokens) result.limits.maxOutput = m.top_provider.max_completion_tokens;
+        if (!result.limits.maxOutput && m.architecture?.max_output_tokens) result.limits.maxOutput = m.architecture.max_output_tokens;
+      }
+    }
+
+    // ── Phase 4.5: 从多层数据库补充 ──
+    if (!result.limits.contextWindow || !result.limits.maxOutput) {
+      const known = lookupKnownContext(modelId);
+      if (known) {
+        if (!result.limits.contextWindow) result.limits.contextWindow = known.context;
+        if (!result.limits.maxOutput) result.limits.maxOutput = known.maxOutput ?? null;
+      }
+    }
+
+    // ── Phase 4.5b: 探针成功后自动缓存 ──
+    if (result.limits.contextWindow || result.limits.maxOutput) {
+      cacheProbeResult(modelId, result.limits.contextWindow, result.limits.maxOutput);
+    }
+
+    // ── Phase 4.6: 推断 contextWindow >= maxOutput ──
+    if (result.limits.maxOutput && !result.limits.contextWindow) {
+      result.limits.contextWindow = result.limits.maxOutput;
+    }
+
+    // ── Phase 5: Embeddings 探测 ──
+    try {
+      const { c, t } = mkTimeout(8000);
+      const embRes = await fetch(`${base}/embeddings`, {
+        method: "POST",
+        headers,
+        signal: c.signal,
+        body: JSON.stringify({ model: modelId, input: "test" }),
+      });
+      if (embRes.ok) {
+        result.probed.embeddings = true;
+      } else if (embRes.status === 404 || embRes.status === 400) {
+        result.probed.embeddings = false;
+      } else {
+        result.probed.embeddings = null;
+        result.errors.embeddings = `${embRes.status}: ${(await embRes.text()).slice(0, 150)}`;
+      }
+      clearTimeout(t);
+    } catch {
+      result.probed.embeddings = null;
+    }
+
+    result.success = true;
+    result.latency = Date.now() - t0;
+
+    // ── 同步到后端能力库 ──
+    try {
+      await fetch(`http://localhost:3001/api/capabilities/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          modelId,
+          capabilities: {
+            supportsTools: result.probed.tools,
+            supportsVision: result.probed.vision,
+            supportsJson: result.probed.json,
+            supportsStreaming: result.probed.streaming,
+            contextWindow: result.limits.contextWindow,
+            maxOutput: result.limits.maxOutput,
+          },
+        }),
+      }).catch(() => {});
+    } catch { /* 静默 */ }
+
+    return result;
+  }
+
+  // ============================================================
+  // 批量聚合测试：一次性串行探测 provider 连通性 + 所有已选模型
+  //
+  // 设计目的：
+  //   - 替代前端 N+1 并发请求 (1×/test + N×/model-probe)，避免 429
+  //   - 串行探测 (for...of + await)，每个模型探测完才探测下一个
+  //   - 结果写入 providerProbeCache 热数据库，持久化到磁盘
+  //   - 除非用户点击"重新检测"，前端直接从热数据库读取，不再发请求
+  //
+  // 入参：{ providerId, baseUrl, apiKey, defaultUrl, models: string[] }
+  // 返回：{ provider: { success, latency, error? }, models: { [modelId]: ProbeResult }, fromCache: boolean }
+  // ============================================================
+  app.post("/api/providers/test-batch", async (req, res) => {
+    try {
+      const { providerId, baseUrl, apiKey, defaultUrl, models } = req.body || {};
+      const target = (baseUrl && baseUrl.trim()) || (defaultUrl && defaultUrl.trim());
+      if (!target || !/^https?:\/\//i.test(target)) {
+        return res.status(400).json({ success: false, error: "接口重定向网址 (baseUrl) 非法或缺失" });
+      }
+      if (!apiKey || !apiKey.trim()) {
+        return res.status(400).json({ success: false, error: "API 密钥为空，请先填写密钥再测试" });
+      }
+      if (!providerId || typeof providerId !== "string") {
+        return res.status(400).json({ success: false, error: "providerId 为空" });
+      }
+
+      const modelList: string[] = Array.isArray(models) ? models.filter(m => m && typeof m === "string") : [];
+
+      // ── Step 1: provider 连通性测试 (1 个最小 chat-completion 请求) ──
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey.trim()}`,
+      };
+      const ctrl = new AbortController();
+      const tCtrl = setTimeout(() => ctrl.abort(), 12000);
+      const pT0 = Date.now();
+      let providerResult: { success: boolean; latency: number; error?: string };
+      try {
+        const probeModel = modelList[0] || "gpt-3.5-turbo";
+        const probe = await fetch(target.replace(/\/+$/, "") + "/chat/completions", {
+          method: "POST",
+          headers,
+          signal: ctrl.signal,
+          body: JSON.stringify({
+            model: probeModel,
+            messages: [{ role: "user", content: "ping" }],
+            max_tokens: 1,
+            stream: false,
+          }),
+        });
+        const latency = Date.now() - pT0;
+        if (probe.ok) {
+          providerResult = { success: true, latency };
+        } else {
+          const authFail = probe.status === 401 || probe.status === 403;
+          providerResult = {
+            success: false,
+            latency,
+            error: authFail ? `鉴权失败 (${probe.status})，请检查 API 密钥` : `上游 ${probe.status} ${probe.statusText}`,
+          };
+        }
+      } catch (err: any) {
+        providerResult = {
+          success: false,
+          latency: Date.now() - pT0,
+          error: err.name === "AbortError" ? "请求超时（>12s）" : (err.message || "上游不可达"),
+        };
+      } finally {
+        clearTimeout(tCtrl);
+      }
+
+      // ── Step 2: 串行探测每个模型 (避免 429) ──
+      // 复用 /api/providers/model-probe 的内部逻辑，通过内部函数调用
+      const modelResults: Record<string, any> = {};
+      for (const modelId of modelList) {
+        // provider 连通性失败时，不逐个探测模型 (浪费时间 + 额外请求)
+        if (!providerResult.success) {
+          modelResults[modelId] = {
+            success: false,
+            modelId,
+            latency: 0,
+            probed: { basic: false, vision: null, tools: null, json: null, streaming: null, embeddings: null },
+            limits: { contextWindow: null, maxOutput: null },
+            usage: null,
+            pricing: null,
+            rawModelInfo: null,
+            responseHeaders: {},
+            pingResponse: null,
+            serverInfo: {},
+            errors: { basic: providerResult.error || "provider 连通性失败，跳过模型探测" },
+          };
+          continue;
+        }
+
+        // 串行探测：等前一个完成再探测下一个
+        try {
+          const result = await probeModelInternal(target, apiKey.trim(), modelId);
+          modelResults[modelId] = result;
+        } catch (err: any) {
+          modelResults[modelId] = {
+            success: false,
+            modelId,
+            latency: 0,
+            probed: { basic: false, vision: null, tools: null, json: null, streaming: null, embeddings: null },
+            limits: { contextWindow: null, maxOutput: null },
+            usage: null,
+            pricing: null,
+            rawModelInfo: null,
+            responseHeaders: {},
+            pingResponse: null,
+            serverInfo: {},
+            errors: { basic: err?.message || "探测内部错误" },
+          };
+        }
+      }
+
+      // ── Step 3: 写入 providerProbeCache 热数据库 ──
+      providerProbeCache[providerId] = {
+        testedAt: new Date().toISOString(),
+        baseUrl: target,
+        provider: providerResult,
+        models: modelResults,
+      };
+      saveProviderProbeCache();
+      console.log(`[provider-probe] 💾 热数据库已更新: ${providerId} (${modelList.length} 个模型)`);
+
+      res.json({
+        success: true,
+        provider: providerResult,
+        models: modelResults,
+        fromCache: false,
+      });
+    } catch (err: any) {
+      console.error("[test-batch] 未捕获异常:", err);
+      if (!res.headersSent) {
+        res.status(500).json({ success: false, error: `批量测试内部错误: ${err?.message || err}` });
+      }
+    }
+  });
+
+  // ============================================================
+  // 读取热数据库缓存：按 providerId 返回已持久化的探测结果
+  // 前端打开配置页时调用，避免重复探测
+  // ============================================================
+  app.get("/api/providers/probe-cache/:providerId", (req, res) => {
+    const { providerId } = req.params;
+    if (!providerId) {
+      return res.status(400).json({ success: false, error: "providerId 为空" });
+    }
+    const entry = providerProbeCache[providerId];
+    if (!entry) {
+      return res.json({ success: true, found: false, entry: null });
+    }
+    res.json({ success: true, found: true, entry });
+  });
+
+  // ============================================================
   // 模型详情探测：获取单个模型的完整元数据
   // 策略：
   //   1. GET {baseUrl}/models/{modelId} — 部分服务商支持
@@ -1320,6 +1822,34 @@ async function startServer() {
 
   const MODEL_DB_PATH = path.join(__dirname_srv, "model_context_db.json");
   const MODEL_CACHE_PATH = path.join(__dirname_srv, "model_probe_cache.json");
+  // 热数据库：按 providerId 索引的完整探针结果 (内存快速访问 + 文件持久化)
+  // 除非用户点击"重新检测"，否则一直从热数据库读取，不重复发请求
+  const PROVIDER_PROBE_CACHE_PATH = path.join(__dirname_srv, "provider_probe_cache.json");
+
+  interface ProviderProbeEntry {
+    /** 本次检测的时间戳 */
+    testedAt: string;
+    /** 检测时使用的 baseUrl (变更后可判断是否需要失效) */
+    baseUrl: string;
+    /** provider 连通性结果 */
+    provider: { success: boolean; latency: number; error?: string };
+    /** 各模型的完整探针结果 (modelId → ProbeResult) */
+    models: Record<string, any>;
+  }
+  let providerProbeCache: Record<string, ProviderProbeEntry> = {};
+  try {
+    const raw = fs.readFileSync(PROVIDER_PROBE_CACHE_PATH, "utf-8");
+    providerProbeCache = JSON.parse(raw) || {};
+    console.log(`[provider-probe] ✅ 已加载热数据库: ${Object.keys(providerProbeCache).length} 个服务商`);
+  } catch { /* 首次运行, 文件不存在 */ }
+
+  function saveProviderProbeCache(): void {
+    try {
+      fs.writeFileSync(PROVIDER_PROBE_CACHE_PATH, JSON.stringify(providerProbeCache, null, 2), "utf-8");
+    } catch (e: any) {
+      console.warn(`[provider-probe] ⚠️  保存热数据库失败: ${e.message}`);
+    }
+  }
 
   // ── Layer 3: 本地 JSON 数据库 (热加载) ──
   let KNOWN_MODEL_CONTEXT: Record<string, { context: number; maxOutput?: number }> = {};
@@ -1529,383 +2059,8 @@ async function startServer() {
       return res.status(400).json({ success: false, error: "API 密钥为空" });
     }
 
-    const base = target.replace(/\/+$/, "");
-    const authHeader = `Bearer ${apiKey.trim()}`;
-    const headers: Record<string, string> = { "Content-Type": "application/json", "Authorization": authHeader };
-
-    // 1x1 透明 PNG (base64)
-    const TINY_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
-
-    const result = {
-      success: false,
-      modelId,
-      latency: 0,
-      probed: {
-        basic: false,
-        vision: null as boolean | null,
-        tools: null as boolean | null,
-        json: null as boolean | null,
-        streaming: null as boolean | null,
-        embeddings: null as boolean | null,
-      },
-      limits: {
-        contextWindow: null as number | null,
-        maxOutput: null as number | null,
-      },
-      usage: null as Record<string, unknown> | null,
-      pricing: null as Record<string, unknown> | null,
-      rawModelInfo: null as Record<string, unknown> | null,
-      responseHeaders: {} as Record<string, string>,
-      pingResponse: null as Record<string, unknown> | null,
-      serverInfo: {} as Record<string, unknown>,
-      errors: {} as Record<string, string>,
-    };
-
-    const t0 = Date.now();
-    const mkTimeout = (ms: number) => {
-      const c = new AbortController();
-      const t = setTimeout(() => c.abort(), ms);
-      return { c, t };
-    };
-
-    // ── 辅助：发 chat/completions 请求 ──
-    async function chatProbe(body: Record<string, unknown>, timeoutMs = 12000): Promise<{ ok: boolean; status: number; text: string }> {
-      const { c, t } = mkTimeout(timeoutMs);
-      try {
-        const r = await fetch(`${base}/chat/completions`, {
-          method: "POST",
-          headers,
-          signal: c.signal,
-          body: JSON.stringify({ model: modelId, max_tokens: 1, stream: false, ...body }),
-        });
-        const text = await r.text();
-        return { ok: r.ok, status: r.status, text };
-      } catch (e: any) {
-        return { ok: false, status: 0, text: e?.name === "AbortError" ? "timeout" : (e?.message || "error") };
-      } finally {
-        clearTimeout(t);
-      }
-    }
-
-    // ── 辅助：发 chat/completions 并捕获完整响应 + headers ──
-    async function chatProbeFull(body: Record<string, unknown>, timeoutMs = 12000): Promise<{ ok: boolean; status: number; text: string; json: any | null; headers: Record<string, string> }> {
-      const { c, t } = mkTimeout(timeoutMs);
-      try {
-        const r = await fetch(`${base}/chat/completions`, {
-          method: "POST",
-          headers,
-          signal: c.signal,
-          body: JSON.stringify({ model: modelId, max_tokens: 1, stream: false, ...body }),
-        });
-        const text = await r.text();
-        let json: any = null;
-        try { json = JSON.parse(text); } catch {}
-        // 捕获关键响应头
-        const respHeaders: Record<string, string> = {};
-        r.headers.forEach((v, k) => {
-          const kl = k.toLowerCase();
-          if (kl.startsWith('x-ratelimit') || kl.startsWith('x-request') || kl.includes('remaining') || kl.includes('limit') || kl.includes('reset') || kl === 'date' || kl === 'server' || kl === 'content-type') {
-            respHeaders[k] = v;
-          }
-        });
-        return { ok: r.ok, status: r.status, text, json, headers: respHeaders };
-      } catch (e: any) {
-        return { ok: false, status: 0, text: e?.name === "AbortError" ? "timeout" : (e?.message || "error"), json: null, headers: {} };
-      } finally {
-        clearTimeout(t);
-      }
-    }
-
-    // ── Phase 1: 基础 ping (完整响应) + /models/{id} (并行) ──
-    const [pingFull, modelsRes] = await Promise.all([
-      chatProbeFull({ messages: [{ role: "user", content: "Hi" }] }),
-      (async () => {
-        const { c, t } = mkTimeout(10000);
-        try {
-          let r = await fetch(`${base}/models/${encodeURIComponent(modelId)}`, { method: "GET", headers, signal: c.signal });
-          if (!r.ok) {
-            // 回退到 /models 列表
-            r = await fetch(`${base}/models`, { method: "GET", headers, signal: c.signal });
-            if (!r.ok) return {};
-            const data = await r.json();
-            const list = Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : Array.isArray(data) ? data : [];
-            const found = list.find((m: any) => (typeof m === "string" ? m : (m.id || m.name)) === modelId);
-            return typeof found === "string" ? { id: found } : (found || {});
-          }
-          return await r.json();
-        } catch { return {}; }
-        finally { clearTimeout(t); }
-      })(),
-    ]);
-
-    const pingRes = { ok: pingFull.ok, status: pingFull.status, text: pingFull.text };
-
-    // 保存完整 ping 响应 + usage + 响应头
-    if (pingFull.json) {
-      result.pingResponse = pingFull.json;
-      if (pingFull.json.usage) result.usage = pingFull.json.usage;
-    }
-    result.responseHeaders = pingFull.headers;
-
-    // 保存完整 /models/{id} 原始数据
-    if (modelsRes && typeof modelsRes === "object") {
-      result.rawModelInfo = modelsRes;
-      result.serverInfo = modelsRes;
-      if (modelsRes.owned_by) result.serverInfo.owner = modelsRes.owned_by;
-      // 提取 pricing (OpenRouter 格式)
-      if (modelsRes.pricing) result.pricing = modelsRes.pricing;
-    }
-
-    if (!pingRes.ok) {
-      result.errors.basic = `${pingRes.status}: ${pingRes.text.slice(0, 300)}`;
-      result.latency = Date.now() - t0;
-      return res.json(result);
-    }
-    result.probed.basic = true;
-
-    // ── Phase 2: 并行探测 vision / tools / json / streaming ──
-    const [visionRes, toolsRes, jsonRes] = await Promise.all([
-      // 视觉探测
-      chatProbe({
-        messages: [{
-          role: "user",
-          content: [
-            { type: "text", text: "What is this?" },
-            { type: "image_url", image_url: { url: TINY_PNG } },
-          ],
-        }],
-      }),
-      // 工具探测
-      chatProbe({
-        messages: [{ role: "user", content: "What's the weather?" }],
-        tools: [{
-          type: "function",
-          function: {
-            name: "get_weather",
-            description: "Get current weather",
-            parameters: { type: "object", properties: { location: { type: "string", description: "City name" } }, required: ["location"] },
-          },
-        }],
-      }),
-      // JSON 模式探测
-      chatProbe({
-        messages: [{ role: "user", content: 'Return {"hello":"world"}' }],
-        response_format: { type: "json_object" },
-      }),
-    ]);
-
-    result.probed.vision = visionRes.ok;
-    if (!visionRes.ok && visionRes.status !== 0) result.errors.vision = `${visionRes.status}: ${visionRes.text.slice(0, 200)}`;
-    else if (visionRes.status === 0) result.errors.vision = visionRes.text;
-
-    result.probed.tools = toolsRes.ok;
-    if (!toolsRes.ok && toolsRes.status !== 0) result.errors.tools = `${toolsRes.status}: ${toolsRes.text.slice(0, 200)}`;
-    else if (toolsRes.status === 0) result.errors.tools = toolsRes.text;
-
-    result.probed.json = jsonRes.ok;
-    if (!jsonRes.ok && jsonRes.status !== 0) result.errors.json = `${jsonRes.status}: ${jsonRes.text.slice(0, 200)}`;
-    else if (jsonRes.status === 0) result.errors.json = jsonRes.text;
-
-    // 流式探测 (需要特殊处理：读取首个 chunk 后立即 abort)
-    try {
-      const { c, t } = mkTimeout(8000);
-      const sr = await fetch(`${base}/chat/completions`, {
-        method: "POST",
-        headers,
-        signal: c.signal,
-        body: JSON.stringify({
-          model: modelId,
-          messages: [{ role: "user", content: "Hi" }],
-          max_tokens: 1,
-          stream: true,
-        }),
-      });
-      if (sr.ok) {
-        const ct = sr.headers.get("content-type") || "";
-        if (ct.includes("text/event-stream") || ct.includes("stream")) {
-          result.probed.streaming = true;
-        } else {
-          // 非 SSE header，尝试读取 body
-          const reader = sr.body?.getReader();
-          if (reader) {
-            const { value } = await reader.read();
-            result.probed.streaming = !!value && value.length > 0;
-          }
-        }
-        c.abort(); // 主动中断流
-      } else {
-        const st = await sr.text();
-        result.errors.streaming = `${sr.status}: ${st.slice(0, 200)}`;
-      }
-      clearTimeout(t);
-    } catch (e: any) {
-      // AbortError 在读取到数据后触发 = 流式正常
-      if (e?.name === "AbortError" && result.probed.streaming !== false) {
-        result.probed.streaming = result.probed.streaming ?? true;
-      } else {
-        result.errors.streaming = e?.message || "streaming probe failed";
-      }
-    }
-
-    // ── Phase 3: 限制探测 — 发送超大 max_tokens，从错误信息解析 ──
-    const limitRes = await chatProbe({
-      messages: [{ role: "user", content: "Hi" }],
-      max_tokens: 999999,
-    }, 10000);
-
-    if (!limitRes.ok && limitRes.text) {
-      // 尝试提取 max_output / max_tokens 上限
-      // 支持多种错误消息格式:
-      //   "max_tokens must be less than or equal to 16384"
-      //   "max tokens is too large: 999999. Max tokens: 8192"
-      //   "maximum output is 4096 tokens"
-      //   "The maximum allowed tokens is 4096"
-      //   "max_tokens may not be greater than 8192"
-      //   "This model has a maximum output of 4096 tokens"
-      //   "max_tokens is too large: 999999. This model supports at most 131072 completion tokens"
-      const maxOutPatterns = [
-        /max_tokens?\s*(?:must be|is|should be|may not be)?\s*(?:less than|<=?|at most|up to|greater than)\s*(?:or equal to\s*)?(\d+)/i,
-        /max(?:imum)?\s*(?:output|tokens?|allowed)\s*(?:is|of|:)?\s*(\d+)/i,
-        /max_tokens?\s*(?:is|:)\s*(\d+)/i,
-        /(?:maximum|max)\s+\d+\s*(?:output|completion)\s*tokens?/i,
-        /tokens?\s*(?:limit|max|maximum)\s*(?:is|:)?\s*(\d+)/i,
-        /supports\s+at\s+most\s+(\d+)\s*(?:completion|output)?\s*tokens?/i,
-        /at\s+most\s+(\d+)\s*(?:completion|output)?\s*tokens?/i,
-        /too\s+large.*?(\d{4,})\s*(?:completion|output)?\s*tokens?/i,
-      ];
-      for (const p of maxOutPatterns) {
-        const m = limitRes.text.match(p);
-        if (m) { result.limits.maxOutput = parseInt(m[m.length - 1]); break; }
-      }
-
-      // 尝试提取 context_length / context window
-      // 支持多种错误消息格式:
-      //   "This model's maximum context length is 128000 tokens"
-      //   "context_length is 64000"
-      //   "This model supports a maximum of 128000 tokens"
-      //   "maximum input tokens: 128000"
-      //   "total tokens cannot exceed 128000"
-      //   "input tokens must be less than 64000"
-      //   "This model supports at most 131072 completion tokens, whereas you provided 999999"
-      //   "maximum context length of 131072 tokens"
-      const ctxPatterns = [
-        /(?:maximum\s+)?context\s*(?:length|window)\s*(?:is|:|of)?\s*(\d+)/i,
-        /context_length\s*(?:is|:)?\s*(\d+)/i,
-        /(?:maximum|max)\s+(?:of\s+)?(\d+)\s*tokens?/i,
-        /(?:input|total)\s*tokens?\s*(?:cannot\s*exceed|must\s*be\s*less\s*than|limit(?:ed)?\s*to)\s*(\d+)/i,
-        /tokens?\s*(?:limit|max)\s*(?:is|:)?\s*(\d+)/i,
-        /(?:max|maximum)\s*(?:input|context)\s*tokens?\s*:?\s*(\d+)/i,
-        /(\d+)\s*tokens?\s*(?:context|window|input\s*limit)/i,
-        /context\s*(?:length|window)\s*(?:of|is)?\s*(\d+)/i,
-      ];
-      for (const p of ctxPatterns) {
-        const m = limitRes.text.match(p);
-        if (m) { result.limits.contextWindow = parseInt(m[m.length - 1]); break; }
-      }
-
-      result.errors.limits = `${limitRes.status}: ${limitRes.text.slice(0, 500)}`;
-    } else if (limitRes.ok) {
-      // API 接受了 999999 max_tokens — 可能静默截断了，无法确定上限
-      result.errors.limits = "API accepted max_tokens:999999 without error (silent cap, limit unknown)";
-    }
-
-    // ── Phase 4: 从 /models 响应补充限制信息 (OpenRouter/Gemini/通用) ──
-    if (modelsRes) {
-      const m = modelsRes as any;
-      if (!result.limits.contextWindow) {
-        // 尝试所有可能的字段名
-        const ctxFields = ['context_length', 'inputTokenLimit', 'max_input_tokens', 'context_window', 'maxContextLength', 'max_context_tokens', 'input_tokens_limit', 'maxInputTokens'];
-        for (const f of ctxFields) {
-          if (m[f] && typeof m[f] === 'number') { result.limits.contextWindow = m[f]; break; }
-        }
-        // OpenRouter 嵌套格式
-        if (!result.limits.contextWindow && m.top_provider?.context_length) {
-          result.limits.contextWindow = m.top_provider.context_length;
-        }
-        // 某些 API 在 architecture 中返回
-        if (!result.limits.contextWindow && m.architecture?.context_length) {
-          result.limits.contextWindow = m.architecture.context_length;
-        }
-      }
-      if (!result.limits.maxOutput) {
-        const outFields = ['max_completion_tokens', 'outputTokenLimit', 'max_output_tokens', 'maxOutputTokens', 'max_tokens', 'output_tokens_limit'];
-        for (const f of outFields) {
-          if (m[f] && typeof m[f] === 'number') { result.limits.maxOutput = m[f]; break; }
-        }
-        if (!result.limits.maxOutput && m.top_provider?.max_completion_tokens) {
-          result.limits.maxOutput = m.top_provider.max_completion_tokens;
-        }
-        if (!result.limits.maxOutput && m.architecture?.max_output_tokens) {
-          result.limits.maxOutput = m.architecture.max_output_tokens;
-        }
-      }
-    }
-
-    // ── Phase 4.5: 从多层数据库补充 (API 完全不返回时的兜底) ──
-    if (!result.limits.contextWindow || !result.limits.maxOutput) {
-      const known = lookupKnownContext(modelId);
-      if (known) {
-        if (!result.limits.contextWindow) result.limits.contextWindow = known.context;
-        if (!result.limits.maxOutput) result.limits.maxOutput = known.maxOutput ?? null;
-      }
-    }
-
-    // ── Phase 4.5b: 探针成功后自动缓存结果 (供下次直接使用) ──
-    if (result.limits.contextWindow || result.limits.maxOutput) {
-      cacheProbeResult(modelId, result.limits.contextWindow, result.limits.maxOutput);
-    }
-
-    // ── Phase 4.6: 如果 maxOutput 已知但 contextWindow 未知,推断 contextWindow >= maxOutput ──
-    if (result.limits.maxOutput && !result.limits.contextWindow) {
-      result.limits.contextWindow = result.limits.maxOutput;
-    }
-
-    // ── Phase 5: Embeddings 支持探测 ──
-    try {
-      const { c, t } = mkTimeout(8000);
-      const embRes = await fetch(`${base}/embeddings`, {
-        method: "POST",
-        headers,
-        signal: c.signal,
-        body: JSON.stringify({ model: modelId, input: "test" }),
-      });
-      if (embRes.ok) {
-        result.probed.embeddings = true;
-      } else if (embRes.status === 404 || embRes.status === 400) {
-        result.probed.embeddings = false;
-      } else {
-        result.probed.embeddings = null;
-        result.errors.embeddings = `${embRes.status}: ${(await embRes.text()).slice(0, 150)}`;
-      }
-      clearTimeout(t);
-    } catch {
-      result.probed.embeddings = null;
-    }
-
-    result.success = true;
-    result.latency = Date.now() - t0;
-
-    // ── 探针结果自动同步到后端能力库 ──
-    // 这样 agent 调用时能直接查询模型是否支持 tools/vision/json/streaming
-    try {
-      const capUrl = `http://localhost:3001/api/capabilities/save`;
-      await fetch(capUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          modelId: modelId,
-          capabilities: {
-            supportsTools: result.probed.tools,
-            supportsVision: result.probed.vision,
-            supportsJson: result.probed.json,
-            supportsStreaming: result.probed.streaming,
-            contextWindow: result.limits.contextWindow,
-            maxOutput: result.limits.maxOutput,
-          },
-        }),
-      }).catch(() => {}); // 静默失败, 不影响探针返回
-    } catch { /* 静默 */ }
-
+    // 复用 probeModelInternal 核心逻辑 (与 /api/providers/test-batch 共享)
+    const result = await probeModelInternal(target, apiKey.trim(), modelId.trim());
     res.json(result);
    } catch (err: any) {
     console.error('[model-probe] 未捕获异常:', err);

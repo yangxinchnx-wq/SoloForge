@@ -147,6 +147,7 @@ nul
 
 # Model probe runtime cache (auto-generated, do not commit)
 UI/model_probe_cache.json
+UI/provider_probe_cache.json
 
 # Auth token (auto-generated at startup, do not commit)
 .soloforge-token
