@@ -237,7 +237,7 @@ export const Camera = CameraIcon;
 export const Pause = PauseIcon;
 export const Play = PlayIcon;
 export const Square = StopIcon;                   // 停止方块 → Stop
-export const Send = PaperAirplaneIcon;            // 发送 → 纸飞机
+export const Send = ArrowUpIcon;                  // 发送 → 向上箭头
 
 // 数据 / 存储
 export const Database = CircleStackIcon;          // 数据库 → 圆形堆栈

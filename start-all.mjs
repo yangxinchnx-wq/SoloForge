@@ -60,8 +60,9 @@ const env = {
 console.log('=== Building Java Agent ===');
 console.log(`   Agent dir : ${dir}`);
 console.log(`   Java home : ${javaHome}`);
+const javaExeSuffix = isWin ? '.exe' : '';
+const javaExe = javaBin ? path.join(javaBin, `java${javaExeSuffix}`) : 'java';
 try {
-  const javaExe = javaBin ? path.join(javaBin, 'java') : 'java';
   execSync(
     `"${javaExe}" -classpath "${wrapperJar}" -Dmaven.multiModuleProjectDirectory="${dir}" org.apache.maven.wrapper.MavenWrapperMain -DskipTests clean package`,
     { cwd: dir, stdio: 'inherit', env, shell: false }
@@ -72,7 +73,6 @@ try {
 const jar = path.join(dir, 'target', 'solo-forge-agent-1.0.0.jar');
 console.log(`\n=== Starting Java Agent on :8770 ===`);
 
-const javaExe = javaBin ? path.join(javaBin, 'java') : 'java';
 const javaProc = spawn(javaExe, ['-jar', jar, '--server.port=8770'], {
   stdio: ['ignore', 'pipe', 'pipe'],
   env,

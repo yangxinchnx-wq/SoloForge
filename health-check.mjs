@@ -134,10 +134,12 @@ async function startJavaAgent() {
     log("java-agent", `JAR not found: ${JAVA_AGENT_JAR}, skipping`);
     return null;
   }
-  let javaExe = "java";
-  if (isWin) {
+  const miniJdk = path.join(ROOT, "bin", "jdk-23-mini");
+  let javaExe = path.join(miniJdk, "bin", isWin ? "java.exe" : "java");
+  if (!fs.existsSync(javaExe)) {
+    // fallback: JAVA_HOME 或系统 java
     const javaHome = process.env.JAVA_HOME;
-    if (javaHome) javaExe = path.join(javaHome, "bin", "java.exe");
+    javaExe = javaHome ? path.join(javaHome, "bin", isWin ? "java.exe" : "java") : "java";
   }
   return spawnBg("java-agent", javaExe, [
     "-jar", JAVA_AGENT_JAR, "--server.port=8770",

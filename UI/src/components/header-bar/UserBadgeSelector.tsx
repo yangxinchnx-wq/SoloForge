@@ -28,6 +28,7 @@ const AVATARS = [
 const STORAGE_AVATAR = 'soloforge_user_avatar_idx';
 const STORAGE_NAME = 'soloforge_user_name';
 const STORAGE_CUSTOM_AVATAR = 'soloforge_user_custom_avatar';
+const STORAGE_USE_CUSTOM_AVATAR = 'soloforge_user_use_custom_avatar';
 const DEFAULT_NAME = '问剑白玉京';
 
 // 允许上传的图片 MIME 类型白名单 (拒绝音乐、视频、可执行等)
@@ -42,6 +43,7 @@ function UserBadgeSelectorImpl() {
   const [customName, setCustomName] = useState<string>('');
   const [avatarIdx, setAvatarIdx] = useState(0);
   const [customAvatar, setCustomAvatar] = useState<string>('');
+  const [useCustomAvatar, setUseCustomAvatar] = useState(false);
   const [name, setName] = useState('');
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -89,6 +91,8 @@ function UserBadgeSelectorImpl() {
     }
     const savedCustom = localStorage.getItem(STORAGE_CUSTOM_AVATAR);
     if (savedCustom) setCustomAvatar(savedCustom);
+    const savedUseCustom = localStorage.getItem(STORAGE_USE_CUSTOM_AVATAR);
+    if (savedUseCustom === 'true' && savedCustom) setUseCustomAvatar(true);
   }, []);
 
   // ── 上传自定义头像 ─────────────────────────────────────
@@ -110,7 +114,9 @@ function UserBadgeSelectorImpl() {
     reader.onload = () => {
       const dataUrl = reader.result as string;
       setCustomAvatar(dataUrl);
+      setUseCustomAvatar(true);
       localStorage.setItem(STORAGE_CUSTOM_AVATAR, dataUrl);
+      localStorage.setItem(STORAGE_USE_CUSTOM_AVATAR, 'true');
       window.dispatchEvent(new CustomEvent('soloforge-user-badge-updated'));
     };
     reader.onerror = () => alert('头像读取失败, 请重试');
@@ -120,7 +126,9 @@ function UserBadgeSelectorImpl() {
 
   const removeCustomAvatar = useCallback(() => {
     setCustomAvatar('');
+    setUseCustomAvatar(false);
     localStorage.removeItem(STORAGE_CUSTOM_AVATAR);
+    localStorage.removeItem(STORAGE_USE_CUSTOM_AVATAR);
     window.dispatchEvent(new CustomEvent('soloforge-user-badge-updated'));
   }, []);
 
@@ -134,13 +142,17 @@ function UserBadgeSelectorImpl() {
 
   // ── 滚轮切换(无感, 不开下拉) ────────────────────────
   const cycleAvatar = useCallback((dir: 1 | -1) => {
+    if (useCustomAvatar) {
+      setUseCustomAvatar(false);
+      localStorage.removeItem(STORAGE_USE_CUSTOM_AVATAR);
+    }
     setAvatarIdx((prev) => {
       const next = (prev + dir + AVATARS.length) % AVATARS.length;
       localStorage.setItem(STORAGE_AVATAR, String(next));
       window.dispatchEvent(new CustomEvent('soloforge-user-badge-updated'));
       return next;
     });
-  }, []);
+  }, [useCustomAvatar]);
 
   // 清除 [CUSTOM] 槽位 (用户选择列表名称 / 滚轮切换时调用)
   const clearCustomSlot = useCallback(() => {
@@ -218,7 +230,9 @@ function UserBadgeSelectorImpl() {
   // ── 选择 & 切换 ───────────────────────────────────────
   const selectAvatar = useCallback((idx: number) => {
     setAvatarIdx(idx);
+    setUseCustomAvatar(false);
     localStorage.setItem(STORAGE_AVATAR, String(idx));
+    localStorage.removeItem(STORAGE_USE_CUSTOM_AVATAR);
     setOpenMenu(null);
     window.dispatchEvent(new CustomEvent('soloforge-user-badge-updated'));
   }, []);
@@ -333,7 +347,7 @@ function UserBadgeSelectorImpl() {
   return (
     <div
       ref={rootRef}
-      className={`relative flex items-center gap-3 h-11 pl-1.5 pr-4 mr-12 rounded-full overflow-visible ${openMenu ? 'z-50' : 'z-10'}`}
+      className={`relative flex items-center gap-3 h-11 pl-1.5 pr-4 mr-12 rounded-full ${openMenu ? 'z-50' : 'z-10'}`}
       style={capsuleStyle}
     >
       {/* ── 头像容器(点击弹出下拉 · 滚轮切换) ─────────── */}
@@ -351,8 +365,8 @@ function UserBadgeSelectorImpl() {
         style={{ width: 36, height: 36 }}
       >
         <img
-          key={avatarIdx}
-          src={AVATARS[avatarIdx]}
+          key={useCustomAvatar ? 'custom' : avatarIdx}
+          src={useCustomAvatar && customAvatar ? customAvatar : AVATARS[avatarIdx]}
           alt="用户头像"
           className="w-9 h-9 rounded-full object-cover pointer-events-none"
           style={{
@@ -445,7 +459,7 @@ function UserBadgeSelectorImpl() {
               transformOrigin: '20% 0%',
               zIndex: 60,
             }}
-            className="absolute left-0 top-full mt-3 p-2 flex gap-2 w-max overflow-visible"
+            className="absolute left-0 top-full mt-3 p-2 flex gap-2 w-max max-w-[90vw] overflow-x-auto overflow-y-hidden"
           >
             {AVATARS.map((src, idx) => (
               <motion.button
@@ -481,11 +495,16 @@ function UserBadgeSelectorImpl() {
                 role="option"
                 aria-selected={false}
                 aria-label="自定义头像 (右键移除)"
-                title="右键单击移除自定义头像"
+                title="点击应用 · 右键移除"
                 initial={{ opacity: 0, y: -4 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1], delay: AVATARS.length * 0.02 }}
-                onClick={() => setAvatarIdx(0)}
+                onClick={() => {
+                  setUseCustomAvatar(true);
+                  localStorage.setItem(STORAGE_USE_CUSTOM_AVATAR, 'true');
+                  setOpenMenu(null);
+                  window.dispatchEvent(new CustomEvent('soloforge-user-badge-updated'));
+                }}
                 onContextMenu={(e) => { e.preventDefault(); removeCustomAvatar(); }}
                 whileHover={{ scale: 1.08 }}
                 whileTap={{ scale: 0.94 }}
@@ -544,7 +563,7 @@ function UserBadgeSelectorImpl() {
               transformOrigin: '20% 0%',
               zIndex: 60,
             }}
-            className="absolute left-0 top-full mt-3 p-1 flex flex-col gap-0.5 max-h-64 overflow-y-auto w-max min-w-[160px]"
+            className="absolute left-0 top-full mt-3 p-1 flex flex-col gap-0.5 max-h-64 overflow-y-auto w-max min-w-[160px] max-w-[90vw]"
           >
             {names.length === 0 ? (
               <div className="px-3 py-4 text-center text-[11px] text-on-surface/55 select-none">
