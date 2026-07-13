@@ -16,7 +16,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Crown, Users, X } from '../utils/icons';
+import { Crown, Users, X } from '../utils/icons';
 import type { CanvasResource } from '../services/canvas/sessionApi';
 
 interface Props {
@@ -24,7 +24,6 @@ interface Props {
   activeCanvasId: string | null;
   maxCanvases: number;
   onSelect: (canvasId: string) => void;
-  onCreate: () => Promise<string | null>;
   onRename: (canvasId: string, description: string) => Promise<boolean>;
   onDelete?: (canvasId: string) => Promise<boolean>;
   loading?: boolean;
@@ -35,18 +34,14 @@ export function CanvasResourceBar({
   activeCanvasId,
   maxCanvases,
   onSelect,
-  onCreate,
   onRename,
   onDelete,
   loading,
 }: Props) {
-  const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
   const [savingRename, setSavingRename] = useState(false);
-  const editInputRef = useRef<HTMLInputElement | null>(null);
-
-  const full = canvases.length >= maxCanvases;
+    const editInputRef = useRef<HTMLInputElement | null>(null);
 
   // 按 displayName 数字升序排 (1, 2, 3 ...)
   const sorted = [...canvases].sort((a, b) => {
@@ -190,27 +185,6 @@ export function CanvasResourceBar({
           );
         })}
 
-        <button
-          onClick={async () => {
-            if (full || creating || editingId) return;
-            setCreating(true);
-            try {
-              await onCreate();
-            } finally {
-              setCreating(false);
-            }
-          }}
-          disabled={full || creating || loading}
-          title={full ? `已达上限 ${maxCanvases} 个, 请先删除` : '新建画布 (占用最小可用序号)'}
-          className={[
-            'h-6 w-6 rounded-md text-[11px] flex items-center justify-center shrink-0 border border-dashed',
-            full
-              ? 'border-outline/30 text-on-surface/30 cursor-not-allowed'
-              : 'border-outline/50 text-on-surface/70 hover:bg-primary/10 hover:text-primary hover:border-primary',
-          ].join(' ')}
-        >
-          <Plus className="w-3 h-3" />
-        </button>
       </div>
 
       <span className="ml-auto text-[10px] text-on-surface/40 tabular-nums shrink-0">

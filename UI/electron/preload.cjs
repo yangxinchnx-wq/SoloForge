@@ -32,6 +32,9 @@ contextBridge.exposeInMainWorld('soloforge', {
     // ★ 新增: selectDevice — 加载 3D 设备模型到画布 (POST /render)
     selectDevice: (sessionId, modelKey, file, nativeSize) =>
       ipcRenderer.invoke('canvas:select-device', { sessionId, modelKey, file, nativeSize }),
+    // ★ 新增: setHostVisible — 显示/隐藏画布宿主窗口 (下拉框打开时隐藏)
+    setHostVisible: (visible) =>
+      ipcRenderer.invoke('canvas:set-host-visible', { visible }),
     // ★ 新增: transformDevice — 拖拽/旋转/缩放 3D 设备
     transformDevice: (sessionId, deviceId, transform) =>
       ipcRenderer.invoke('canvas:transform-device', { sessionId, deviceId, transform }),

@@ -61,6 +61,7 @@ declare global {
         ensureHost: () => Promise<{ ok: boolean; created?: boolean; hwnd?: number; bounds?: any; error?: string }>;
         pushUI: (sessionId: string, dsl: any, deviceId?: string | null) => Promise<{ ok: boolean; error?: string }>;
         selectDevice: (sessionId: string, modelKey: string, file: string, nativeSize: { w: number; h: number }) => Promise<{ ok: boolean; error?: string }>;
+        setHostVisible: (visible: boolean) => Promise<{ ok: boolean; error?: string }>;
         transformDevice: (sessionId: string, deviceId: string, transform: any) => Promise<{ ok: boolean; error?: string }>;
         clearDevices: (sessionId: string) => Promise<{ ok: boolean; error?: string }>;
         setBackground: (sessionId: string, color: string) => Promise<{ ok: boolean; error?: string }>;
@@ -153,7 +154,7 @@ export default function PreviewPanel({
   width = 385, isResizing = false, dragStartWidth = 385,
   selectedChatId, canvasId, canvasReady,
   canvases = [], maxCanvases = 10,
-  onSelectCanvas, onCreateCanvas, onRenameCanvas, onDeleteCanvas,
+  onSelectCanvas, onRenameCanvas, onDeleteCanvas,
 }: PreviewPanelProps) {
   // 2026-07-06 阶段3: 订阅 AST 预览流状态
   const previewEntry = usePreviewStreamStore(s => selectedChatId ? s.entries[selectedChatId] : undefined);
@@ -250,6 +251,13 @@ export default function PreviewPanel({
 
   const activePreset = findDevicePreset(activeSizeKey);
   const activeDeviceList = renderMode === '2D' ? DEVICES_2D : DEVICES_3D;
+
+  // ★ 下拉框/颜色选择器打开时隐藏 Flutter 宿主窗口, 避免原生窗口拦截点击
+  useEffect(() => {
+    if (!isElectron()) return;
+    const anyDropdownOpen = showDeviceDropdown || showColorPicker;
+    window.soloforge?.canvas.setHostVisible(!anyDropdownOpen).catch(() => {});
+  }, [showDeviceDropdown, showColorPicker]);
 
   // ★ 同步设备尺寸 + 渲染模式到 canvasDeviceStore (供 useChatStore/aiBackend 读取)
   const setDevice = useCanvasDeviceStore(s => s.setDevice);
@@ -767,14 +775,13 @@ export default function PreviewPanel({
           overflow: 'hidden'
         }}
       >
-        {/* P0: 画布资源池 chip 栏 — 切换/新建画布 (置顶, 与 ChatPanel 头部对齐) */}
-        {!noCanvas && onSelectCanvas && onCreateCanvas && onRenameCanvas && (
+        {/* P0: 画布资源池 chip 栏 — 切换画布 (置顶, 与 ChatPanel 头部对齐) */}
+        {!noCanvas && onSelectCanvas && onRenameCanvas && (
           <CanvasResourceBar
             canvases={canvases}
             activeCanvasId={canvasId ?? null}
             maxCanvases={maxCanvases}
             onSelect={onSelectCanvas}
-            onCreate={onCreateCanvas}
             onRename={onRenameCanvas}
             onDelete={handleDeleteCanvas}
           />
