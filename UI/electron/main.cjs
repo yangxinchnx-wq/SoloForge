@@ -24,6 +24,14 @@ const net = require('net');
 const http = require('http');
 const fs = require('fs');
 
+// ── Proxy Service（网络代理管理） ──
+const { ProxyService } = require('./proxy-service.cjs');
+const proxyService = new ProxyService();
+
+// ── Local LLM Manager（本地大模型管理） ──
+const localLLM = require('./local-llm-manager.cjs');
+localLLM.init();
+
 // dev 模式: Vite dev server (3000) + 外部独立后端
 // prod 模式: Electron 自动启动所有服务
 const DEV_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:3000';
@@ -2424,6 +2432,18 @@ if (process.platform === 'win32') {
 
 // ── 主进程入口 ──
 app.whenReady().then(async () => {
+  // ── 应用上次保存的代理配置 ──
+  try { await proxyService.apply(proxyService.getConfig()); }
+  catch(e) { console.warn('[ProxyService] Failed to restore:', e?.message); }
+
+  // ── 注册代理 IPC handler ──
+  ipcMain.handle('proxy:get-config', () => proxyService.getConfig());
+  ipcMain.handle('proxy:apply', (_, cfg) => proxyService.apply(cfg));
+  ipcMain.handle('proxy:test', () => proxyService.testConnection());
+  ipcMain.handle('proxy:system-info', () => proxyService.getSystemProxyInfo());
+
+  // ── 注册 Local LLM IPC handler ──
+  localLLM.registerIpc(ipcMain, dialog);
   // ── dev/prod 模式判定 ──
   //   dev: 开发者通过 npm run dev 启动, Vite dev server 在 3000
   //         环境变量 SOLOFORGE_FORCE_DEV=1 也强制 dev (从 IDE 启动调试时用)
@@ -2551,6 +2571,8 @@ app.on('before-quit', () => {
     stopWatchdog(s);
     if (s.process && !s.process.killed) killProcessTree(s.process);
   }
+  // 退出 Local LLM 服务
+  localLLM.cleanup();
   // 生产模式: 退出所有后端服务
   killAllChildren();
 });

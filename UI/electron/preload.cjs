@@ -119,4 +119,32 @@ contextBridge.exposeInMainWorld('soloforge', {
   // 旧 API 保留作为 fallback (调试/特殊场景)
   moveWindow: (x, y) => ipcRenderer.invoke('window:move-to', { x, y }),
   getWindowBounds: () => ipcRenderer.invoke('window:get-bounds'),
+  // ── 网络代理（四模式：system/direct/manual/pac） ──
+  proxy: {
+    getConfig:      ()  => ipcRenderer.invoke('proxy:get-config'),
+    apply:          (c) => ipcRenderer.invoke('proxy:apply', c),
+    testConnection: ()  => ipcRenderer.invoke('proxy:test'),
+    getSystemInfo:  ()  => ipcRenderer.invoke('proxy:system-info'),
+  },
+  // ── 本地 LLM 管理 ──
+  localLLM: {
+    // 模型列表 CRUD
+    list:        ()         => ipcRenderer.invoke('local-llm:list'),
+    add:         (modelPath) => ipcRenderer.invoke('local-llm:add', { path: modelPath }),
+    remove:      (modelPath) => ipcRenderer.invoke('local-llm:remove', { path: modelPath }),
+    delete:      (modelPath) => ipcRenderer.invoke('local-llm:delete', { path: modelPath }),
+    browse:      ()         => ipcRenderer.invoke('local-llm:browse'),
+    // 模型加载/卸载
+    load:        (modelPath, params) => ipcRenderer.invoke('local-llm:load', { path: modelPath, params }),
+    unload:      ()         => ipcRenderer.invoke('local-llm:unload'),
+    // 状态查询
+    status:      ()         => ipcRenderer.invoke('local-llm:status'),
+    device:      ()         => ipcRenderer.invoke('local-llm:device'),
+    metrics:     ()         => ipcRenderer.invoke('local-llm:metrics'),
+    // 服务管理
+    startServer: ()         => ipcRenderer.invoke('local-llm:start-server'),
+    stopServer:  ()         => ipcRenderer.invoke('local-llm:stop-server'),
+    serverRunning: ()       => ipcRenderer.invoke('local-llm:server-running'),
+    serverUrl:   ()         => ipcRenderer.invoke('local-llm:server-url'),
+  },
 });
