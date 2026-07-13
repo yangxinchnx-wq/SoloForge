@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useMemo, useState } from 'react';
 import { Send, ChevronDown, ChevronUp, FileCode, X, SlidersHorizontal, Check, ShieldAlert, ThumbsUp, ThumbsDown, Copy, Loader2, Pause, Play, RefreshCw } from '../utils/icons';
+import { motion, AnimatePresence } from 'framer-motion';
 import { MountTransition } from './MountTransition';
 import TerminalPanelWithWorkdir from './terminal/TerminalPanelWithWorkdir';
 // 2026-07-03 阶段3.1.C: DocsGeneratorModal 抽出为独立子应用, 状态收敛到 useDocsGeneratorStore
@@ -33,6 +34,61 @@ export { NormalIcon, PerformanceIcon, ExpertIcon, UltimateIcon } from './permiss
 
 // ChatPanelProps / ChatSettingsItem 已外移到 types/chat.ts (2026-07-03 阶段3.1.A)
 export type { ChatPanelProps, ChatSettingsItem } from '../types/chat';
+
+// 模式选择器动画变体 — 与 SecondaryModelSelector 一致的"柔和推出"效果
+const modePanelVariants = {
+  hidden: {
+    opacity: 0,
+    scale: 0.94,
+    y: 20,
+    transition: {
+      // 关闭: 快速收起 (140ms), 往下退 + 淡出
+      duration: 0.14,
+      ease: [0.4, 0, 1, 1] as [number, number, number, number],
+    },
+  },
+  visible: {
+    opacity: 1,
+    scale: 1,
+    y: 0,
+    transition: {
+      // 开启: 380ms ease-out-expo, 慢启动消除突兀, 长尾缓停丝滑
+      duration: 0.38,
+      ease: [0.16, 1, 0.3, 1] as [number, number, number, number],
+    },
+  },
+};
+
+const modeContentVariants = {
+  hidden: { opacity: 0, y: 8 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    // 内容与面板同方向同曲线, 延迟 80ms 让面板先成型再显内容
+    transition: {
+      duration: 0.32,
+      ease: [0.16, 1, 0.3, 1] as [number, number, number, number],
+      delay: 0.08,
+    },
+  },
+};
+
+const modeBackdropVariants = {
+  hidden: { opacity: 0, transition: { duration: 0.18, ease: [0.4, 0, 1, 1] as [number, number, number, number] } },
+  visible: { opacity: 1, transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] } },
+};
+
+// 模式选择器按钮动画 — 与 backdrop 一致的 opacity 渐入渐出
+const modeButtonVariants = {
+  hidden: {
+    opacity: 0,
+    transition: { duration: 0.18, ease: [0.4, 0, 1, 1] as [number, number, number, number] },
+  },
+  visible: {
+    opacity: 1,
+    transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] },
+  },
+};
 
 // generateSmartReply 已删除 (2026-07-03 阶段3.1.A) - mock 时代死代码, 实际走 startChat 真实流式
 // getSettingsSummary 已外移到 types/chat.ts
@@ -808,9 +864,12 @@ export default function ChatPanel({
           <div className="flex items-center justify-between pt-1 border-t border-outline/30">
             {/* Conversation mode select dropdown */}
             <div className="relative" id="chat-mode-selection-dropdown">
-              <button
+              <motion.button
                 onClick={() => setShowModeDropdown(!showModeDropdown)}
-                className="sf-lift flex items-center gap-1.5 text-[10px] text-on-surface/85 bg-surface-bright hover:bg-bg border border-outline px-2.5 py-1 rounded cursor-pointer hover:text-on-surface transition-all font-sans font-bold shadow select-none"
+                variants={modeButtonVariants}
+                initial="hidden"
+                animate="visible"
+                className="flex items-center gap-1.5 text-[10px] text-on-surface/85 bg-surface-bright hover:bg-bg border border-outline px-2.5 py-1 rounded cursor-pointer hover:text-on-surface transition-all font-sans font-bold shadow select-none"
                 style={{ backfaceVisibility: "hidden", WebkitFontSmoothing: "subpixel-antialiased" }}
               >
                 {permissionMode === 'normal' && <NormalIcon className="w-3.5 h-3.5" />}
@@ -823,28 +882,49 @@ export default function ChatPanel({
                    permissionMode === 'expert' ? '专家模式 (全自动)' : '极致模式 (全自动)'}
                 </span>
                 <ChevronDown className={`w-2.5 h-2.5 opacity-60 transition-transform duration-200 ${showModeDropdown ? 'rotate-180' : ''}`} />
-              </button>
+              </motion.button>
 
-              <MountTransition show={showModeDropdown} variant="slide-up" duration={150}>
+              <AnimatePresence>
+                {showModeDropdown && (
                   <>
-                    <div
+                    {/* 透明 backdrop 仅用于承载 click-outside + z-index */}
+                    <motion.div
+                      key="mode-backdrop"
+                      variants={modeBackdropVariants}
+                      initial="hidden"
+                      animate="visible"
+                      exit="hidden"
                       className="fixed inset-0 z-40 cursor-default"
                       onClick={() => setShowModeDropdown(false)}
                     />
-                    <div
+
+                    {/* 模式选择面板: 与 SecondaryModelSelector 一致的"柔和推出"动画 */}
+                    <motion.div
+                      key="mode-panel"
+                      variants={modePanelVariants}
+                      initial="hidden"
+                      animate="visible"
+                      exit="hidden"
                       style={{
-                        transformOrigin: "bottom left",
-                        backfaceVisibility: "hidden",
-                        WebkitFontSmoothing: "subpixel-antialiased"
+                        // 锚点: 底部左侧 (clipPath 从底部展开, scale 围绕此点生长)
+                        transformOrigin: 'bottom left',
+                        willChange: 'transform, opacity',
+                        transform: 'translateZ(0)',
+                        backfaceVisibility: 'hidden',
+                        WebkitBackfaceVisibility: 'hidden',
                       }}
                       className="absolute left-0 bottom-full mb-1.5 w-[230px] bg-surface/98 backdrop-blur-md border border-outline/35 rounded-lg shadow-2xl p-1.5 flex flex-col font-sans z-50 capitalize-none text-left"
                     >
-                      <span className="text-[9px] text-primary/70 px-2 py-1 font-semibold border-b border-outline/25 mb-1 tracking-wider uppercase select-none">
+                      <motion.span
+                        variants={modeContentVariants}
+                        className="text-[9px] text-primary/70 px-2 py-1 font-semibold border-b border-outline/25 mb-1 tracking-wider uppercase select-none"
+                      >
                         运行资源模式
-                      </span>
+                      </motion.span>
 
                       {/* Normal Mode Option */}
-                      <button
+                      <motion.button
+                        variants={modeContentVariants}
                         onClick={() => {
                           setPermissionMode?.('normal');
                           setShowModeDropdown(false);
@@ -864,10 +944,11 @@ export default function ChatPanel({
                         <p className="text-[9px] leading-relaxed text-on-surface/50 font-medium whitespace-normal font-sans group-hover:text-on-surface/70 transition-colors">
                           自动识别并绕过风险命令，守护代码与环境安全。
                         </p>
-                      </button>
+                      </motion.button>
 
                       {/* Performance Mode Option */}
-                      <button
+                      <motion.button
+                        variants={modeContentVariants}
                         onClick={() => {
                           setPermissionMode?.('performance');
                           setShowModeDropdown(false);
@@ -887,10 +968,11 @@ export default function ChatPanel({
                         <p className="text-[9px] leading-relaxed text-on-surface/50 font-medium whitespace-normal font-sans group-hover:text-on-surface/70 transition-colors">
                           自主加载各项基础工具逻辑，支持多模型智能混合。
                         </p>
-                      </button>
+                      </motion.button>
 
                       {/* Expert Mode Option */}
-                      <button
+                      <motion.button
+                        variants={modeContentVariants}
                         onClick={() => {
                           setPermissionMode?.('expert');
                           setShowModeDropdown(false);
@@ -910,10 +992,11 @@ export default function ChatPanel({
                         <p className="text-[9px] leading-relaxed text-on-surface/50 font-medium whitespace-normal font-sans group-hover:text-on-surface/70 transition-colors">
                           深度专家级 resource 调度，多模型高频协同攻坚复杂任务。
                         </p>
-                      </button>
+                      </motion.button>
 
                       {/* Ultimate Mode Option */}
-                      <button
+                      <motion.button
+                        variants={modeContentVariants}
                         onClick={() => {
                           setPermissionMode?.('ultimate');
                           setShowModeDropdown(false);
@@ -933,10 +1016,11 @@ export default function ChatPanel({
                         <p className="text-[9px] leading-relaxed text-on-surface/50 font-medium whitespace-normal font-sans group-hover:text-on-surface/70 transition-colors">
                           最大化释放算力，无中断调度全部工具加速实现诉求。
                         </p>
-                      </button>
-                    </div>
+                      </motion.button>
+                    </motion.div>
                   </>
-              </MountTransition>
+                )}
+              </AnimatePresence>
             </div>
 
             {/* Submit Send Button — 三态: 发送(Send) / 生成中暂停(Pause) / 已暂停恢复或合并指令(Play) */}
