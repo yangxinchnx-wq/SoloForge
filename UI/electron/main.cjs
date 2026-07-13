@@ -1194,6 +1194,22 @@ function registerIpc() {
     return selectDeviceToCanvas(sessionId, modelKey, file, nativeSize);
   });
 
+  // ★ 新增: set-host-visible — 显示/隐藏画布宿主窗口 (下拉框打开时隐藏, 避免拦截点击)
+  ipcMain.handle('canvas:set-host-visible', async (_e, { visible }) => {
+    try {
+      if (canvasHostWindow && !canvasHostWindow.isDestroyed()) {
+        if (visible) {
+          canvasHostWindow.show();
+        } else {
+          canvasHostWindow.hide();
+        }
+      }
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e?.message || String(e) };
+    }
+  });
+
   // ★ 新增: transformDevice — 拖拽/旋转/缩放 3D 设备
   ipcMain.handle('canvas:transform-device', async (_e, { sessionId, deviceId, transform }) => {
     return transformDevice(sessionId, deviceId, transform);
