@@ -55,7 +55,11 @@ export default defineConfig(() => {
       ],
     },
     server: {
-      hmr: process.env.ENABLE_HMR === 'true',
+      // 2026-07-14 修复 "@vitejs/plugin-react can't detect preamble" 错误:
+      //   当 hmr: false 时,plugin-react 的 skipFastRefresh=true → 不注入 preamble,
+      //   但 OXC 转换器仍可能在组件中注入 Refresh 注册代码 → 运行时检测不到 preamble 报错。
+      //   修复: hmr 默认 true,仅当 DISABLE_HMR=true 时关闭(与 watch 逻辑一致)。
+      hmr: process.env.DISABLE_HMR !== 'true',
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {
         // [2026-06-28 关键修复] .soloforge/ 在项目根目录, 不在 UI/ 下; 必须用绝对路径

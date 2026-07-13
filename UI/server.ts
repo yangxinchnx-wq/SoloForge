@@ -2404,6 +2404,11 @@ async function startServer() {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
+      // ★ 2026-07-14 修复 "can't detect preamble" 错误:
+      //   middleware 模式下显式传 hmr:true,避免 vite.config.ts 中
+      //   hmr:false 时 plugin-react 不注入 preamble 但 OXC 仍注入 Refresh 代码的冲突。
+      //   DISABLE_HMR=true 时仍可关闭 (与 vite.config.ts watch 逻辑一致)。
+      hmr: process.env.DISABLE_HMR !== 'true',
     });
     app.use(vite.middlewares);
     console.log("Vite development middleware mounted successfully.");
