@@ -567,9 +567,22 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
   handleSend: async (_inputRef) => {
     const state = get();
     const { inputValue, pendingAttachment, conversations, options, hashlineAgentEnabled, configs } = state;
-    const { permissionMode = 'normal', mainModel = 'GPT-4o', secModels = [], selectedFile, editorContent, modelProviderMap = {}, selectedChatId = '1' } = options;
+    const { permissionMode = 'normal', mainModel = 'GPT-4o', secModels = [], selectedFile, editorContent, modelProviderMap = {} } = options;
     if (!inputValue.trim() && !pendingAttachment) return;
     const finalContent = inputValue.trim() || `请帮我分析如下来自于 "${pendingAttachment?.fileName}" 的代码。`;
+
+    // ── 确保存在有效对话: 没有对话历史时自动创建一个新对话 ──
+    //   原代码 selectedChatId || '1' 会把首条消息写进虚假 ID '1',
+    //   历史列表里看不到、重启后丢失。首次发送时改成自动建真实对话。
+    let selectedChatId = options.selectedChatId || '';
+    if (!selectedChatId || !useChatsStore.getState().getChat(selectedChatId)) {
+      const newChat = await useChatsStore.getState().createChat();
+      if (!newChat) {
+        set({ inputValue: '' });
+        return;
+      }
+      selectedChatId = newChat.id;
+    }
 
     // ── 工作区越界检查 ──
     const chatInfo = useChatsStore.getState().getChat(selectedChatId);
@@ -588,7 +601,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
 
     const userMsg: ChatMessage = { sender: 'user', content: finalContent, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), avatar: '' };
     if (pendingAttachment) userMsg.attachment = { fileName: pendingAttachment.fileName, text: pendingAttachment.text };
-    const activeChatId = selectedChatId || '1'; const activeMessages = conversations[activeChatId] || []; const currentChatMsgs = [...activeMessages, userMsg];
+    const activeChatId = selectedChatId; const activeMessages = conversations[activeChatId] || []; const currentChatMsgs = [...activeMessages, userMsg];
     set({ conversations: { ...conversations, [activeChatId]: currentChatMsgs }, inputValue: '', pendingAttachment: null, isGenerating: true, isPaused: false, activeChatHandle: null, streamState: { ...emptyStreamState } });
 
     const mainEntry = modelProviderMap[mainModel];
