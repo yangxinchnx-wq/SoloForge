@@ -237,16 +237,12 @@ export default function ThemeModal({
 
   // Dragging and resizing states matching a premium floating dock panel
   const [size, setSize] = useState({ width: 440, height: 580 });
-  const [position, setPosition] = useState({ x: 120, y: 80 });
-
-  // Dynamically position in the center when the component is initially mounted
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const initX = Math.max(20, (window.innerWidth - 440) / 2);
-      const initY = Math.max(25, (window.innerHeight - 580) / 2);
-      setPosition({ x: initX, y: initY });
-    }
-  }, []);
+  const [position, setPosition] = useState(() => {
+    if (typeof window === 'undefined') return { x: 120, y: 80 };
+    const initX = Math.max(20, (window.innerWidth - 440) / 2);
+    const initY = Math.max(25, (window.innerHeight - 580) / 2);
+    return { x: initX, y: initY };
+  });
 
   const handleMouseDown = (e: React.MouseEvent) => {
     const target = e.target as HTMLElement;

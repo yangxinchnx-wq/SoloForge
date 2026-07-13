@@ -12301,7 +12301,7 @@ var init_apiKeyVault = __esm({
         for (const id2 of Object.keys(cfg)) {
           if (!id2 || seen.has(id2)) continue;
           seen.add(id2);
-          items.push(this.toPublic(id2, cfg[id2], "memory"));
+          items.push({ ...this.toPublic(id2, cfg[id2], "memory"), hasKey: false });
         }
         const envIds = listEnvProviders();
         for (const id2 of envIds) {
