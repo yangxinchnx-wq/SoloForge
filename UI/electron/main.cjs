@@ -1392,7 +1392,11 @@ return { ok: false, error: e?.message || String(e) };
 
 // ── 自定义窗口控制按钮 ──
 // 由 UI/src/components/WindowControls.tsx 调用
-// 使用原生 maximize/unmaximize + maximize/unmaximize 事件通知渲染器
+// frame:false + maximizable:false → 无原生按钮效果, 无 snap flyout
+// 最大化用 setBounds(workArea) 实现, 自定义状态跟踪
+
+let _customMaximized = false;
+let _savedBounds = null;
 
   // ── 文件夹选择器 (用于工作区绑定) ──
   ipcMain.handle('dialog:select-folder', async () => {
@@ -1489,18 +1493,33 @@ ipcMain.handle('window:minimize', () => {
 
 ipcMain.handle('window:toggle-maximize', () => {
 if (!mainWindow || mainWindow.isDestroyed()) return false;
-if (mainWindow.isMaximized()) {
-mainWindow.unmaximize();
-} else {
-mainWindow.maximize();
+if (_customMaximized) {
+// 还原
+if (_savedBounds) {
+mainWindow.setBounds(_savedBounds);
 }
-return mainWindow.isMaximized();
+_customMaximized = false;
+} else {
+// 最大化: 保存当前 bounds, 设置为屏幕工作区全屏
+_savedBounds = mainWindow.getBounds();
+const { screen } = require('electron');
+const display = screen.getDisplayMatching(_savedBounds);
+mainWindow.setBounds(display.workArea);
+_customMaximized = true;
+}
+mainWindow.webContents.send('window:maximize-state-changed', _customMaximized);
+return _customMaximized;
 });
 
 ipcMain.handle('window:restore', () => {
 if (mainWindow && !mainWindow.isDestroyed()) {
-if (mainWindow.isMaximized()) mainWindow.unmaximize();
-else mainWindow.restore();
+if (_customMaximized && _savedBounds) {
+mainWindow.setBounds(_savedBounds);
+_customMaximized = false;
+mainWindow.webContents.send('window:maximize-state-changed', false);
+} else {
+mainWindow.restore();
+}
 }
 });
 
@@ -1508,12 +1527,10 @@ ipcMain.handle('window:close', () => {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
 });
 ipcMain.handle('window:is-maximized', () => {
-  return mainWindow ? mainWindow.isMaximized() : false;
+  return _customMaximized;
 });
 ipcMain.handle('window:maximize-state', (event) => {
-  // 立即推送当前状态
-  const isMax = mainWindow ? mainWindow.isMaximized() : false;
-  event.sender.send('window:maximize-state-changed', isMax);
+  event.sender.send('window:maximize-state-changed', _customMaximized);
 });
 
   // ── 2026-07-02 彻底重构: 自定义窗口拖动(绝对坐标模式 + 同步 FIFO) ──
@@ -2117,13 +2134,14 @@ function createWindow() {
     width: 1440,
     height: 900,
     show: false,
-    // titleBarStyle:'hidden' (无 overlay): 系统处理 WM_NCHITTEST, 不画系统按钮
-    // 三个窗口按钮全部自绘 (WindowControls.tsx)
-    titleBarStyle: 'hidden',
+    // frame:false → 完全无非客户区 → 系统不绘制原生标题栏按钮 hover/press 效果 (变色方块)
+    // maximizable:false → WS_MAXIMIZEBOX 不设置 → Chromium 不返回 HTMAXBUTTON → 无 snap flyout
+    // 三个窗口按钮全部自绘 (WindowControls.tsx), 最大化用 setBounds 实现
+    frame: false,
     backgroundColor: '#050505',
     hasShadow: false,
     minimizable: true,
-    maximizable: true,
+    maximizable: false,
     resizable: true,
     fullscreenable: true,
     paintWhenInitiallyHidden: true,
@@ -2387,17 +2405,10 @@ app.whenReady().then(async () => {
   createWindow();                  // 先创建主窗口
   createCanvasHostWindow(mainWindow); // 再以主窗口为 parent 创建画布宿主 → OS 自动管 z-order
 
-// 2026-07-05: titleBarStyle:'hidden' (无 overlay) → 系统处理 WM_NCHITTEST, 无 snap flyout
-//   maximizable: true → 可用原生 maximize()/unmaximize(), 无白色尺寸提示
+// frame:false → 完全无非客户区 → 无原生按钮效果, 无 snap flyout
+//   maximizable:false → Chromium 不返回 HTMAXBUTTON
 mainWindow.once('ready-to-show', () => {
   mainWindow.show();
-});
-// 原生 maximize/unmaximize 事件 → 通知渲染器更新按钮状态
-mainWindow.on('maximize', () => {
-  mainWindow.webContents.send('window:maximize-state-changed', true);
-});
-mainWindow.on('unmaximize', () => {
-  mainWindow.webContents.send('window:maximize-state-changed', false);
 });
   registerIpc();
 
