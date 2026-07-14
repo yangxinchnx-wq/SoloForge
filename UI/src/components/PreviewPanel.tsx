@@ -330,15 +330,19 @@ export default function PreviewPanel({
   //   - 打开: 计算按钮坐标 + 读取主题色 + 构造设备列表 → IPC openDevicePopup
   //   - 关闭: 用户选择 (onDeviceSelected) 或窗口失焦 (主进程 blur hide)
   const toggleDeviceDropdown = () => {
-    if (!isElectron() || !window.soloforge?.canvas) return;
+    if (!isElectron() || !window.soloforge?.canvas) {
+      console.warn('[dropdown] not electron or no canvas api');
+      return;
+    }
     if (showDeviceDropdown) {
       window.soloforge.canvas.closeDevicePopup?.().catch(() => {});
       setShowDeviceDropdown(false);
       return;
     }
     const btn = deviceBtnRef.current;
-    if (!btn) return;
+    if (!btn) { console.warn('[dropdown] deviceBtnRef null'); return; }
     const rect = btn.getBoundingClientRect();
+    console.log('[dropdown] btn rect', { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, innerW: window.innerWidth, innerH: window.innerHeight });
     // 读取当前主题色 (跟随主题切换)
     const cs = getComputedStyle(document.documentElement);
     const cssVar = (n: string, fb: string) => (cs.getPropertyValue(n).trim() || fb);
@@ -370,7 +374,11 @@ export default function PreviewPanel({
       groups,
       theme,
     };
-    window.soloforge.canvas.openDevicePopup(payload).catch(() => {});
+    window.soloforge.canvas.openDevicePopup(payload).then(r => {
+      console.log('[dropdown] openDevicePopup result', r);
+    }).catch(e => {
+      console.error('[dropdown] openDevicePopup error', e);
+    });
     setShowDeviceDropdown(true);
   };
 
@@ -613,8 +621,9 @@ export default function PreviewPanel({
   //   PreviewPanel 不再重复推送 — 避免双推冲突 + WebAstPreview 覆盖 Flutter 画布
 
   // ★ 追踪 canvas 实际区域尺寸 (无设备时用此尺寸作为画布逻辑尺寸)
-  const [canvasAreaSize, setCanvasAreaSize] = useState<{ w: number; h: number }>({ w: 430, h: 932 });
-  useEffect(() => {
+  // ★ FIX: 初始值 {0,0}, useLayoutEffect 在首帧绘制前同步读取真实尺寸, 避免刷新闪烁
+  const [canvasAreaSize, setCanvasAreaSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  useLayoutEffect(() => {
     const el = canvasAreaRef.current;
     if (!el) return;
     const update = () => {
@@ -657,19 +666,19 @@ export default function PreviewPanel({
   }, [effectiveCanvasId, activePreset, computeFrame, setFrameSizeInStore, selectedChatId]);
 
   // ★ FIX 2026-07-15: 拖动面板时实时 resize Flutter 窗口, 确保 canvas 跟随自适应
-  //   canvasAreaSize 变化 → computeFrame 变化 → canvas.resize 更新 Flutter 渲染尺寸
-  //   仅在画布运行中且无设备约束时触发 (有设备时尺寸固定, 不需要 resize)
+  //   拖动中即时响应 (无防抖), 停止后也即时生效
   useEffect(() => {
     if (!isElectron()) return;
     if (canvasState !== 'running') return;
     if (!sessionIdRef.current) return;
     if (activePreset && activePreset.w > 0) return; // 有设备时不 resize
+    if (canvasAreaSize.w === 0 || canvasAreaSize.h === 0) return; // 尺寸未就绪
     const { w, h } = computeFrame(activePreset);
-    // 防抖: 避免拖动过程中频繁 IPC 调用
-    const timer = setTimeout(() => {
+    // 拖动中用 requestAnimationFrame 合并, 非拖动时直接执行
+    const raf = requestAnimationFrame(() => {
       window.soloforge?.canvas.resize(sessionIdRef.current, w, h).catch(() => {});
-    }, 100);
-    return () => clearTimeout(timer);
+    });
+    return () => cancelAnimationFrame(raf);
   }, [canvasAreaSize, canvasState, activePreset, computeFrame]);
 
   // 启动画布 — 带 30s 超时保护，防止 IPC 卡死导致 UI 永远停在 "启动中"
@@ -1125,10 +1134,10 @@ export default function PreviewPanel({
                   width: `${scaledW}px`,
                   height: `${scaledH}px`,
                   overflow: 'hidden',
-                  border: '1px solid rgba(0, 0, 0, 0.45)',
-                  boxShadow: '0 0 12px rgba(0, 0, 0, 0.25), 0 2px 8px rgba(0, 0, 0, 0.15)',
-                  borderRadius: '4px',
-                  transition: 'all 250ms cubic-bezier(0.16, 1, 0.3, 1)',
+                  border: '0.5px solid rgba(0, 0, 0, 0.35)',
+                  boxShadow: '0 0 10px rgba(0, 0, 0, 0.2), 0 1px 4px rgba(0, 0, 0, 0.1)',
+                  borderRadius: '3px',
+                  transition: isResizing ? 'none' : 'all 250ms cubic-bezier(0.16, 1, 0.3, 1)',
                 } as React.CSSProperties;
                 }
                 // ★ 无设备时填满可用区域 (四边各留 BLEED/2 出血线)
@@ -1137,10 +1146,10 @@ export default function PreviewPanel({
                   height: `calc(100% - ${BLEED}px)`,
                   margin: `${BLEED / 2}px`,
                   overflow: 'hidden',
-                  border: '1px solid rgba(0, 0, 0, 0.45)',
-                  boxShadow: '0 0 12px rgba(0, 0, 0, 0.25), 0 2px 8px rgba(0, 0, 0, 0.15)',
-                  borderRadius: '4px',
-                  transition: 'all 250ms cubic-bezier(0.16, 1, 0.3, 1)',
+                  border: '0.5px solid rgba(0, 0, 0, 0.35)',
+                  boxShadow: '0 0 10px rgba(0, 0, 0, 0.2), 0 1px 4px rgba(0, 0, 0, 0.1)',
+                  borderRadius: '3px',
+                  transition: isResizing ? 'none' : 'all 250ms cubic-bezier(0.16, 1, 0.3, 1)',
                 } as React.CSSProperties;
               })()}
             >
