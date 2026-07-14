@@ -55,8 +55,10 @@ function tryParse(raw: string): PreviewPayload | null {
 /**
  * 暴力修复：补全截断的字符串、未闭合的花括号 / 中括号
  * 适用于 LLM 在 chunk 边界处切断的常见情况
+ *
+ * ★ FIX: 导出供 incrementalCanvasPusher 使用 — 流送期间修复不完整 JSON
  */
-function repair(raw: string): string {
+export function repairJson(raw: string): string {
   let s = raw;
   // 截断的字符串：在最后一个未闭合引号处补 "
   const quoteCount = (s.match(/(?<!\\)"/g) || []).length;
@@ -106,7 +108,7 @@ export function feedChunk(state: StreamState, chunk: string): StreamState {
   if (direct) {
     payload = direct;
   } else {
-    const repaired = repair(raw);
+    const repaired = repairJson(raw);
     const r = tryParse(repaired);
     if (r) {
       payload = r;

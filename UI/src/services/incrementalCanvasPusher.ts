@@ -24,6 +24,7 @@ import { translateCodeAsync } from '../translate/translatorWorker';
 import { usePreviewStreamStore } from '../state/previewStreamStore';
 import type { UniversalNode, UniversalStyle } from './canvas/UniversalAST';
 import { getCanvasSize, useCanvasDeviceStore } from '../state/canvasDeviceStore';
+import { repairJson } from './canvas/StreamingASTParser';
 
 // ── chatId → canvasSessionId 映射 ──
 const canvasSessionIdMap = new Map<string, string>();
@@ -600,9 +601,11 @@ class LineTracker {
       //   1. 直接 DSL: {"type":"svg","props":{...}}
       //   2. 工具调用: {"tool":"canvas_push_ui","args":{"dslJson":"{...}"}}
       if (this.translateLang === '__json_dsl__') {
-        // ★ 2026-07-14: JSON DSL 不做增量翻译 — 部分 JSON 永远无法 JSON.parse
-        //   增量阶段 (isFinal=false) 静默跳过, 等 flush() 时 isFinal=true 再解析
+        // ★ FIX: 流式 JSON DSL 增量推送 — 不再等 done 一次性出现
+        //   流送期间 (isFinal=false): 用 repairJson 修复截断 JSON → 提取半成品 DSL → 增量推送
+        //   最终 (isFinal=true): 完整 JSON.parse → 最终推送 + confirmPayload
         let parsed: any;
+        let usedRepaired = false;
         try {
           parsed = JSON.parse(codeToTranslate);
         } catch (jsonErr) {
@@ -610,9 +613,26 @@ class LineTracker {
             // 最终翻译也失败 — JSON 语法错误, 打印警告
             console.warn(`[LineTracker] JSON.parse 失败 (final): ${(jsonErr as Error).message}, codeLen=${codeToTranslate.length}`);
             console.warn(`[LineTracker] code preview: ${codeToTranslate.slice(0, 300)}...`);
+            // 尝试修复后解析
+            try {
+              const repaired = repairJson(codeToTranslate);
+              parsed = JSON.parse(repaired);
+              usedRepaired = true;
+              console.log(`[LineTracker] JSON repair 成功 (final), len=${codeToTranslate.length}`);
+            } catch {
+              return;
+            }
+          } else {
+            // ★ 增量阶段: 尝试修复截断 JSON → 提取半成品 DSL
+            try {
+              const repaired = repairJson(codeToTranslate);
+              parsed = JSON.parse(repaired);
+              usedRepaired = true;
+            } catch {
+              // 修复后仍无法解析, 静默返回, 等更多 chunk
+              return;
+            }
           }
-          // 增量阶段: JSON 不完整是正常的, 静默返回
-          return;
         }
         // ★ 2026-07-14: 非 canvas_push_ui 的工具调用 (read_file/list_files/write_file 等)
         //   不是 DSL, 静默跳过, 不打警告
@@ -621,7 +641,10 @@ class LineTracker {
           return;
         }
 
-        console.log('[LineTracker] __json_dsl__ parsed, keys=', Object.keys(parsed || {}), 'isFinal=', isFinal);
+        // ★ 增量阶段日志 (低频, 帮助调试)
+        if (!isFinal && usedRepaired) {
+          console.log(`[LineTracker] 增量 JSON DSL repair 成功, keys=`, Object.keys(parsed || {}), 'codeLen=', codeToTranslate.length);
+        }
 
         // Case 1: 直接 DSL (有 type 字段)
         if (parsed && parsed.type) {
@@ -631,7 +654,6 @@ class LineTracker {
         }
 
         // Case 1b: 已包装的 DSL 格式 {ui: {...}, platform: "material"}
-        //   LLM 可能直接返回这种格式, 不需要再包装
         if (parsed && parsed.ui) {
           this._pushed = true;
           this.pushWrappedDsl(parsed, codeToTranslate, isFinal);
@@ -639,7 +661,6 @@ class LineTracker {
         }
 
         // Case 2: 工具调用 JSON (有 tool + args 字段)
-        // LLM 用 canvas_push_ui 工具时返回的格式, 从 args.dslJson 提取真正的 DSL
         if (parsed && parsed.tool === 'canvas_push_ui' && parsed.args) {
           const dslJsonStr = parsed.args.dslJson || parsed.args.dsl;
           if (dslJsonStr && typeof dslJsonStr === 'string') {
@@ -650,14 +671,22 @@ class LineTracker {
                 this.pushRawDsl(innerDsl, dslJsonStr, isFinal);
                 return;
               }
-              // innerDsl 也可能是已包装格式
               if (innerDsl && innerDsl.ui) {
                 this._pushed = true;
                 this.pushWrappedDsl(innerDsl, dslJsonStr, isFinal);
                 return;
               }
             } catch {
-              // dslJson 解析失败, 静默跳过
+              // dslJson 解析失败, 尝试修复
+              try {
+                const repairedInner = repairJson(dslJsonStr);
+                const innerDsl = JSON.parse(repairedInner);
+                if (innerDsl && innerDsl.type) {
+                  this._pushed = true;
+                  this.pushRawDsl(innerDsl, dslJsonStr, isFinal);
+                  return;
+                }
+              } catch { /* 修复后仍失败, 静默跳过 */ }
             }
           }
           // args 本身可能就是 DSL 对象 (非字符串)
@@ -666,7 +695,6 @@ class LineTracker {
             this.pushRawDsl(parsed.args, codeToTranslate, isFinal);
             return;
           }
-          // args 本身也可能是已包装格式
           if (parsed.args.ui) {
             this._pushed = true;
             this.pushWrappedDsl(parsed.args, codeToTranslate, isFinal);
@@ -674,17 +702,21 @@ class LineTracker {
           }
         }
 
-        // ★ 2026-07-14: 深度搜索 fallback — 从任意 JSON 中提取 DSL
+        // ★ 深度搜索 fallback — 从任意 JSON 中提取 DSL
         const found = deepFindDsl(parsed);
         if (found) {
-          console.log('[LineTracker] deepFindDsl found DSL, type=', found.type, 'keys=', Object.keys(found));
+          if (!isFinal) {
+            console.log('[LineTracker] 增量 deepFindDsl found DSL, type=', found.type);
+          }
           this._pushed = true;
           this.pushRawDsl(found, codeToTranslate, isFinal);
           return;
         }
 
         // 真的不是已知的 JSON 格式
-        console.warn('[LineTracker] JSON DSL 格式未识别, keys=', Object.keys(parsed || {}), 'code=', codeToTranslate.slice(0, 200));
+        if (isFinal) {
+          console.warn('[LineTracker] JSON DSL 格式未识别, keys=', Object.keys(parsed || {}), 'code=', codeToTranslate.slice(0, 200));
+        }
         return;
       }
 
