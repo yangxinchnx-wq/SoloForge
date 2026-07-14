@@ -290,7 +290,7 @@ export default function PreviewPanel({
   const [showDeviceDropdown, setShowDeviceDropdown] = useState(false);
 
   // ★ 设备下拉框 ref (用于点击外部关闭 + Esc 关闭, 与协同副模型一致)
-  const deviceBtnRef = useRef<HTMLButtonElement | null>(null);
+  const deviceBtnRef = useRef<HTMLDivElement | null>(null);
   const devicePanelRef = useRef<HTMLDivElement | null>(null);
 
   // ★ 从 store 读取当前画布的设备信息 (按 canvasId 独立存储)
@@ -995,7 +995,11 @@ export default function PreviewPanel({
           </div>
 
           {/* 2D / 3D 渲染模式 + 设备选择 — DOM 下拉框 (与协同副模型同款 framer-motion 动画) */}
-          <div className={`relative ${showDeviceDropdown ? 'z-50' : ''}`} data-device-btn>
+          <div
+            ref={deviceBtnRef}
+            className={`relative ${showDeviceDropdown ? 'z-50' : ''}`}
+            data-device-btn
+          >
             <div className="flex items-center rounded-md overflow-hidden border border-[var(--color-outline)]/30">
               <button
                 onClick={() => {
@@ -1028,7 +1032,6 @@ export default function PreviewPanel({
                 <span>3D</span>
               </button>
               <motion.button
-                ref={deviceBtnRef}
                 onClick={() => setShowDeviceDropdown(s => !s)}
                 whileTap={{ scale: 0.94 }}
                 transition={{ type: 'spring', stiffness: 600, damping: 28 }}
