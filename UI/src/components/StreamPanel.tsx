@@ -127,17 +127,88 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
   const subCount = summary.subtaskCount;
   const doneCount = summary.doneCount;
 
-  // ★ FIX 2026-07-14: 过程块已移至 UIMessagePartsRenderer (ChatPanel 统一渲染)
-  //   TaskExecutionCard 只负责渲染总结块 + 进行中状态指示器
-  //   修复: 1) 过程/总结互斥导致其中一个不显示  2) 无子任务时总结不显示  3) 过程信息缺失
+  // ★ FIX 2026-07-14: 进行中也显示丰富信息, 不再只显示 spinner
+  //   过程块由 UIMessagePartsRenderer 渲染, 这里显示:
+  //   - 当前阶段 (phase)
+  //   - 总进度条
+  //   - 子任务完成数
+  //   - 用户输入回显
 
-  // 进行中: 显示进度指示器 (无总结块)
+  // 进行中: 显示进度面板 (不再是单一 spinner)
   if (isActive) {
+    const phaseLabel = summary.phase || '执行中';
+    const phaseColors: Record<string, string> = {
+      CLARIFY: 'text-orange-400 bg-orange-500/10',
+      PLANNING: 'text-violet-400 bg-violet-500/10',
+      DECOMPOSING: 'text-blue-400 bg-blue-500/10',
+      DISPATCHING: 'text-cyan-400 bg-cyan-500/10',
+      EXECUTING: 'text-indigo-400 bg-indigo-500/10',
+      REVIEWING: 'text-amber-400 bg-amber-500/10',
+      AUDITING: 'text-purple-400 bg-purple-500/10',
+      DELIVERING: 'text-teal-400 bg-teal-500/10',
+      SINGLE_MODEL: 'text-blue-400 bg-blue-500/10',
+    };
+    const phaseClass = phaseColors[phaseLabel] ?? 'text-on-surface/60 bg-on-surface/5';
+
     return (
       <div className="w-full pl-[58px] pr-3">
-        <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] text-on-surface/50 font-mono">
-          <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
-          <span>执行中 {subCount > 0 ? `(${doneCount}/${subCount})` : ''}</span>
+        <div className="border border-outline/30 rounded-lg bg-bg/50 p-3 space-y-2">
+          {/* 阶段 + 进度头 */}
+          <div className="flex items-center gap-1.5">
+            <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
+            <span className={`px-1.5 py-0.5 rounded font-mono font-bold text-[10px] ${phaseClass}`}>
+              {phaseLabel}
+            </span>
+            {subCount > 0 && (
+              <span className="text-[10px] text-on-surface/40 font-mono ml-auto">
+                {doneCount}/{subCount} 子任务完成
+              </span>
+            )}
+          </div>
+
+          {/* 总进度条 */}
+          {subCount > 0 && (
+            <div className="flex items-center gap-2">
+              <div className="flex-1 h-1 rounded-full bg-on-surface/10 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-primary transition-all duration-300"
+                  style={{ width: `${summary.progress}%` }}
+                />
+              </div>
+              <span className="text-[10px] font-mono text-on-surface/40 tabular-nums w-8 text-right">
+                {summary.progress}%
+              </span>
+            </div>
+          )}
+
+          {/* 用户输入回显 */}
+          {userInput && (
+            <div className="text-[10px] text-on-surface/40 truncate pl-1 border-l-2 border-primary/30">
+              {userInput}
+            </div>
+          )}
+
+          {/* 子任务列表 (进行中/已完成) */}
+          {task?.subTasks && task.subTasks.length > 0 && (
+            <div className="flex flex-col gap-0.5 pt-1">
+              {task.subTasks.map(st => (
+                <div key={st.id} className="flex items-start gap-1.5 text-[10px] py-0.5">
+                  {st.status === 'done'
+                    ? <CheckCircle2 className="w-2.5 h-2.5 text-green-400 shrink-0 mt-0.5" />
+                    : st.status === 'error'
+                    ? <AlertCircle className="w-2.5 h-2.5 text-red-400 shrink-0 mt-0.5" />
+                    : <Loader2 className="w-2.5 h-2.5 text-primary animate-spin shrink-0 mt-0.5" />
+                  }
+                  <span className={`break-words [text-wrap:pretty] ${st.status === 'done' ? 'text-on-surface/40 line-through' : 'text-on-surface/70'}`}>
+                    {st.description}
+                  </span>
+                  {st.source === 'browser-use' && (
+                    <span className="text-[9px] text-indigo-400/60 font-mono shrink-0">[browser]</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     );

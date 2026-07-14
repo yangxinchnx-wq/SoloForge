@@ -15,6 +15,12 @@
  * 2026-07-10: P3 集成层
  * 2026-07-10: 视觉打磨 — 交错入场动画、审计折叠、phase 过渡、步骤条动画
  * 2026-07-11: 补充 model-action Part 渲染器 (修复 LLM/Agent 思考过程不显示的 bug)
+ *
+ * ★ 2026-07-14: 全量显示修复
+ *   - 移除 subtask-step / delivery 过滤 (之前被错误隐藏)
+ *   - 移除自动折叠 (1.5s 后消失导致用户看不到)
+ *   - 新增 usage / task-summary part 渲染器
+ *   - 过程块始终保持展开, 用户手动折叠
  */
 
 import React, { memo, useDeferredValue, useState, useCallback, useEffect } from 'react';
@@ -31,12 +37,15 @@ import {
   ChevronRight,
   ChevronDown,
   Globe,
+  Gauge,
+  FolderTree,
 } from '../utils/icons';
 import { useLastAssistantMessage, useUIMessages } from '../services/uiMessageStore';
 import { useAgentName, useAgentAvatar } from '../state/streamingStore';
 import type {
   UIPart,
   UITextPart,
+  UITaskSummaryPart,
   UIPhaseChangePart,
   UISubTaskCreatedPart,
   UISubTaskProgressPart,
@@ -52,6 +61,7 @@ import type {
   UIErrorPart,
   UIBrowserStepPart,
   UIBrowserScreenshotPart,
+  UIUsagePart,
 } from '../types/messages';
 import { ModelIcon } from './ModelIcon';
 
@@ -85,13 +95,13 @@ export const UIMessagePartsRenderer = memo(function UIMessagePartsRenderer({
   const deferredParts = useDeferredValue(message?.parts ?? EMPTY_PARTS);
   const isStreaming = message?.status === 'streaming';
 
-  // ★ FIX 2026-07-14: 过滤掉 text / delivery / subtask-step
-  //   text: LLM 文本已在主对话气泡显示
-  //   delivery: 累积文本重复
-  //   subtask-step: "EXECUTE" 与 phase-change 重复
-  //   保留 model-action / model-delegation / usage (用户要求可见)
+  // ★ FIX 2026-07-14: 全量显示 — 不再过滤 subtask-step / delivery
+  //   只过滤 text (LLM 文本已在主对话气泡显示, 避免重复)
+  //   subtask-step: 子任务执行步骤 (READ_TASK/EXECUTE 等), 之前被错误隐藏
+  //   delivery: 交付结果, 之前被错误隐藏
+  //   usage: Token 统计, 需要可见
   const processParts = deferredParts.filter(
-    p => p.type !== 'text' && p.type !== 'delivery' && p.type !== 'subtask-step'
+    p => p.type !== 'text'
   );
 
   if (!message) return null;
@@ -126,16 +136,13 @@ const CollapsibleProcess = memo(function CollapsibleProcess({ parts, isStreaming
   const [isOpen, setIsOpen] = useState(true);
   const [userToggled, setUserToggled] = useState(false);
 
-  // streaming 时自动展开; 完成后 1.5s 自动折叠 (仅在用户未手动操作过时)
+  // ★ FIX 2026-07-14: 移除自动折叠 — 过程块始终保持展开
+  //   原逻辑: streaming 结束后 1.5s 自动折叠, 导致用户来不及看就消失了
+  //   新逻辑: 始终展开, 用户可手动点击折叠
+  //   streaming 时确保展开
   useEffect(() => {
-    if (isStreaming) {
-      if (!isOpen) setIsOpen(true);
-      return;
-    }
-    // streaming 结束后延迟折叠
-    if (!userToggled) {
-      const timer = setTimeout(() => setIsOpen(false), 1500);
-      return () => clearTimeout(timer);
+    if (isStreaming && !isOpen) {
+      setIsOpen(true);
     }
   }, [isStreaming]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -242,6 +249,10 @@ const PartRenderer = memo(function PartRenderer({ part, isStreaming, isLast, cha
       return <BrowserStepPartView part={part} />;
     case 'browser-screenshot':
       return <BrowserScreenshotPartView part={part} />;
+    case 'usage':
+      return <UsagePartView part={part} />;
+    case 'task-summary':
+      return <TaskSummaryPartView part={part} />;
     default:
       return null;
   }
@@ -653,6 +664,50 @@ const BrowserScreenshotPartView = memo(function BrowserScreenshotPartView({ part
         className="w-full h-auto block"
         style={{ outline: '1px solid rgba(255,255,255,0.06)' }}
       />
+    </div>
+  );
+});
+
+// ── Usage: Token 使用统计 (★ 2026-07-14 新增) ──
+
+const UsagePartView = memo(function UsagePartView({ part }: { part: UIUsagePart }) {
+  const formatNum = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+  return (
+    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-surface/50" style={{ boxShadow: '0 0 0 1px rgba(255,255,255,0.04)' }}>
+      <Gauge className="w-3 h-3 text-on-surface/40 shrink-0" />
+      <span className="text-[10px] font-mono text-on-surface/40 shrink-0">Token</span>
+      <span className="text-[10px] font-mono text-on-surface/60">
+        {formatNum(part.promptTokens)} + {formatNum(part.completionTokens)} = <span className="text-on-surface/80 font-bold">{formatNum(part.totalTokens)}</span>
+      </span>
+      {part.cachedTokens !== undefined && part.cachedTokens > 0 && (
+        <span className="text-[9px] font-mono text-emerald-400/70">({formatNum(part.cachedTokens)} cached)</span>
+      )}
+      {part.model && (
+        <span className="text-[9px] font-mono text-on-surface/30 ml-auto truncate">{part.model}</span>
+      )}
+    </div>
+  );
+});
+
+// ── Task Summary: 任务摘要 (★ 2026-07-14 新增) ──
+
+const TaskSummaryPartView = memo(function TaskSummaryPartView({ part }: { part: UITaskSummaryPart }) {
+  return (
+    <div
+      className="px-2.5 py-1.5 rounded-xl bg-primary/5"
+      style={{ boxShadow: '0 0 0 1px rgba(99, 102, 241, 0.12)' }}
+    >
+      <div className="flex items-center gap-1.5 mb-0.5">
+        <FolderTree className="w-3 h-3 text-primary shrink-0" />
+        <span className="text-[10px] font-bold text-primary">任务摘要</span>
+        <span className="text-[9px] text-on-surface/40 font-mono ml-auto">{part.phase}</span>
+      </div>
+      <div className="text-[10px] text-on-surface/60 truncate">{part.userInput}</div>
+      {part.progress > 0 && (
+        <div className="flex-1 h-0.5 rounded-full bg-on-surface/10 overflow-hidden mt-1">
+          <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${part.progress}%` }} />
+        </div>
+      )}
     </div>
   );
 });
