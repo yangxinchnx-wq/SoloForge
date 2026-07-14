@@ -439,19 +439,22 @@ class _CanvasAppState extends State<CanvasApp> {
       case 'selectDevice':
         final modelKey = data['modelKey'] as String?;
         if (modelKey == null) return;
-        // 'fill' = 2D 模式标记
+        // 'fill' / 'none' = 2D 模式标记
         if (modelKey == 'fill' || modelKey == 'none') {
           setState(() {
             _renderMode = 'material';
             _devices.clear();
+            _currentGlbPath = null;
           });
+          _stopModelWatcher();
           _writeLog('[device] switch to 2D fill mode');
           break;
         }
-        // 解析 nativeSize {w, h}
+        // 解析 nativeSize {w, h} 和 file (GLB 路径)
         final ns = data['nativeSize'] as Map<String, dynamic>?;
         final nw = (ns?['w'] as num?)?.toDouble() ?? 0;
         final nh = (ns?['h'] as num?)?.toDouble() ?? 0;
+        final glbFile = data['file'] as String?; // 如 "mobile/iphone_14_pro.glb"
         final deviceId = 'dev-$modelKey';
         setState(() {
           _renderMode = '3d';
@@ -464,12 +467,15 @@ class _CanvasAppState extends State<CanvasApp> {
             displayScale: 1.0,
             isSelected: true,
           );
-          // nativeSize 暂存到 _nativeSizes (供 _buildDevice3DScene 计算卡片比例)
           _nativeSizes[deviceId] = (nw, nh);
-          // 切到 3D 时清空之前的 UI, 让 3D 设备场景独占画面
           _uiNode = null;
+          // ★ 设置当前 GLB 路径, _buildDevice3DScene 据此加载 model-viewer
+          _currentGlbPath = glbFile;
+          _loadRetry = 0;
         });
-        _writeLog('[device] select: $modelKey native=${nw}x${nh}');
+        // ★ 启动热加载监听 (监听 models/3d 目录)
+        _startModelWatcher(glbFile);
+        _writeLog('[device] select: $modelKey glb=$glbFile native=${nw}x${nh}');
         break;
 
       case 'transformDevice':
@@ -524,9 +530,84 @@ class _CanvasAppState extends State<CanvasApp> {
     setState(() {});
   }
 
+  // ── 3D 模型热加载: 监听 models/3d 目录变化 ──────────────────
+
+  /// 启动文件监听: 当 GLB 文件被放入目录时自动重新加载
+  void _startModelWatcher(String? glbFile) {
+    _stopModelWatcher();
+    if (glbFile == null || widget.modelsDir == null) return;
+    final watchDir = '${widget.modelsDir}/3d';
+    try {
+      final dir = Directory(watchDir);
+      if (!dir.existsSync()) {
+        _writeLog('[watcher] dir not found: $watchDir, will poll');
+        // 目录不存在时用轮询 (用户可能稍后创建)
+        _startPollWatcher(glbFile);
+        return;
+      }
+      _modelWatcher = dir.watch(recursive: true).listen((event) {
+        final path = event.path.replaceAll('\\', '/');
+        // 只关心当前设备的 GLB 文件变化
+        if (glbFile != null && path.endsWith(glbFile)) {
+          _writeLog('[watcher] file changed: $path, reloading...');
+          _reloadModel();
+        }
+      });
+      _writeLog('[watcher] watching $watchDir for $glbFile');
+    } catch (e) {
+      _writeLog('[watcher] watch failed: $e, fallback to poll');
+      _startPollWatcher(glbFile);
+    }
+  }
+
+  /// 轮询兜底 (watch 在某些文件系统上不可靠)
+  Timer? _pollTimer;
+  void _startPollWatcher(String? glbFile) {
+    _pollTimer?.cancel();
+    if (glbFile == null || widget.modelsDir == null) return;
+    _pollTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      _checkAndReload(glbFile);
+    });
+  }
+
+  void _checkAndReload(String glbFile) {
+    final filePath = '${widget.modelsDir}/3d/$glbFile';
+    final file = File(filePath);
+    if (file.existsSync()) {
+      _writeLog('[poll] file detected: $filePath, reloading...');
+      _pollTimer?.cancel();
+      _pollTimer = null;
+      _reloadModel();
+    }
+  }
+
+  /// 重新加载 model-viewer (通过 JS 切换 src)
+  void _reloadModel() {
+    final ctrl = _webviewController;
+    final glbPath = _currentGlbPath;
+    if (ctrl == null || glbPath == null) return;
+    final url = 'http://127.0.0.1:${widget.port}/models/3d/$glbPath';
+    // 通过 JS 更新 model-viewer 的 src 属性触发重新加载
+    ctrl.evaluateJavascript(source: '''
+      const mv = document.querySelector('model-viewer');
+      if (mv) {
+        mv.src = "$url?t=${DateTime.now().millisecondsSinceEpoch}";
+      }
+    ''');
+    _writeLog('[reload] model-viewer src updated: $url');
+  }
+
+  void _stopModelWatcher() {
+    _modelWatcher?.cancel();
+    _modelWatcher = null;
+    _pollTimer?.cancel();
+    _pollTimer = null;
+  }
+
   @override
   void dispose() {
     _setStateTimer?.cancel();
+    _stopModelWatcher();
     // 关闭所有 WebSocket 连接
     for (final ws in _activeWebSockets) {
       try { ws.close(); } catch (_) {}
