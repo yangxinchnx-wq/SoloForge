@@ -34,7 +34,7 @@ import { usePreviewStreamStore } from './previewStreamStore';
 // P2-7: handleSend 拆分出的纯逻辑 (错误分类 / 越界检测 / 预览触发判定)
 import { classifyStreamError, mentionsOutsideWorkspace, detectPreviewTrigger } from './useChatStore.helpers';
 // 2026-07-11: 实时增量代码翻译 — LLM 每输出一行代码, 立即翻译推送到画布
-import { IncrementalCanvasPusher, getCanvasSessionId, ensureCanvasAndPush, ensureCanvasForChat } from '../services/incrementalCanvasPusher';
+import { IncrementalCanvasPusher, getCanvasSessionId, ensureCanvasAndPush, ensureCanvasForChat, universalNodeToFlutterDSL } from '../services/incrementalCanvasPusher';
 
 // ════════════════════════════════════════════════════════════
 // [CANVAS PROBE — 临时诊断探针, 验证后删除]
@@ -290,6 +290,8 @@ const BLOCK_LANG_TO_TRANSLATOR: Record<string, string> = {
   vue: 'vue', dart: 'flutter', swift: 'swiftui', kotlin: 'compose',
   xml: 'android', xaml: 'xaml', qml: 'qml', python: 'python', py: 'python',
   c: 'c', cpp: 'c', 'c++': 'c', h: 'c',
+  // ★ 2026-07-14: 补充 json DSL 支持 — 与 incrementalCanvasPusher 保持一致
+  json: '__json_dsl__',
 };
 
 function extractCodeBlock(text: string): { code: string; lang: string } | null {
@@ -301,6 +303,8 @@ function extractCodeBlock(text: string): { code: string; lang: string } | null {
     const code = match[2].trim();
     if (!code) continue;
     const translatorLang = BLOCK_LANG_TO_TRANSLATOR[blockLang];
+    // ★ 2026-07-14: __json_dsl__ 不在 translatorRegistry 中, 需要特殊处理
+    if (translatorLang === '__json_dsl__') return { code, lang: '__json_dsl__' };
     if (translatorLang && isLanguageSupported(translatorLang)) return { code, lang: translatorLang };
     const detected = detectLanguage(code);
     if (detected) return { code, lang: detected.language };
@@ -316,28 +320,92 @@ async function tryLocalTranslateAndPush(text: string, chatSessionId: string): Pr
   if (!block) { console.log('[tryLocalTranslateAndPush] 未检测到 UI 代码块, 跳过'); return false; }
   const { code, lang } = block;
   console.log('[tryLocalTranslateAndPush] 检测到代码块, lang=', lang, 'code长度=', code.length);
+
+  // ★ 2026-07-14: JSON DSL 直接解析推送, 不走翻译器
+  if (lang === '__json_dsl__') {
+    try {
+      const dsl = JSON.parse(code);
+      if (!dsl || !dsl.type) { console.warn('[tryLocalTranslateAndPush] JSON DSL 缺少 type 字段'); return false; }
+      const canvasSessionId = getCanvasSessionId(chatSessionId);
+      const flutterDsl = { ui: dsl, platform: 'material' };
+
+      // Electron IPC 推送
+      if (typeof window !== 'undefined' && window.soloforge?.canvas) {
+        const result = await ensureCanvasAndPush(canvasSessionId, flutterDsl, chatSessionId);
+        if (!result.ok) console.warn('[tryLocalTranslateAndPush] JSON DSL IPC push failed:', result.error);
+      }
+
+      // ★ 始终更新 previewStreamStore, 确保 WebAstPreview 有数据渲染
+      const previewStore = usePreviewStreamStore.getState();
+      previewStore.initEntry(chatSessionId, { language: 'json', sessionId: canvasSessionId });
+      previewStore.updateStream(chatSessionId, {
+        raw: code,
+        payload: { language: 'json', framework: 'json', source_code: code, preview: { root: dsl } } as any,
+        errors: [], done: true,
+      });
+      previewStore.confirmPayload(chatSessionId, {
+        language: 'json', framework: 'json', source_code: code, preview: { root: dsl } } as any,
+      );
+      console.log('[tryLocalTranslateAndPush] ✓ JSON DSL 推送成功');
+      return true;
+    } catch (err) {
+      console.warn('[tryLocalTranslateAndPush] JSON DSL 解析失败:', err);
+      return false;
+    }
+  }
+
   if (!isLanguageSupported(lang)) { console.log('[tryLocalTranslateAndPush] 语言不支持:', lang); return false; }
 
   try {
     const ast = translateCode(code, lang);
+    const canvasSessionId = getCanvasSessionId(chatSessionId);
+
+    // ★ FIX 2026-07-14: 使用正确的 DSL 格式 { ui: flutterDSL, platform: 'material' }
+    //   原代码 { ...ast, platform } 是 UniversalNode 格式, Flutter 画布无法渲染
+    const flutterRoot = universalNodeToFlutterDSL(ast);
+    const dsl = { ui: flutterRoot, platform: 'material' };
+
     if (typeof window !== 'undefined' && window.soloforge?.canvas) {
-      const canvasSessionId = getCanvasSessionId(chatSessionId);
-      const dsl = { ...ast, platform: 'material' };
       const result = await ensureCanvasAndPush(canvasSessionId, dsl, chatSessionId);
       if (result.ok) {
         console.log('[tryLocalTranslateAndPush] ✓ Electron IPC 推送成功', { canvasSessionId, language: lang });
-        const previewStore = usePreviewStreamStore.getState();
-        previewStore.initEntry(chatSessionId, { language: lang, sessionId: canvasSessionId });
-        previewStore.updateStream(chatSessionId, { raw: code, payload: { language: lang, framework: lang, source_code: code, preview: { root: ast } } as any, errors: [], done: true });
-        previewStore.confirmPayload(chatSessionId, { language: lang, framework: lang, source_code: code, preview: { root: ast } } as any);
-        return true;
+      } else {
+        console.warn('[tryLocalTranslateAndPush] Electron IPC 推送失败:', result.error);
       }
-      console.warn('[tryLocalTranslateAndPush] Electron IPC 推送失败:', result.error);
     }
-    const resp = await fetch('/api/canvas/relay/push-ui', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: chatSessionId, dsl: ast, language: lang }) });
-    if (!resp.ok) { console.warn('[tryLocalTranslateAndPush] relay push-ui 失败:', resp.status); return false; }
-    const data = await resp.json(); return data.success === true;
-  } catch (err) { console.warn('[tryLocalTranslateAndPush] 翻译或推送失败:', err); return false; }
+
+    // ★ FIX 2026-07-14: 始终更新 previewStreamStore, 即使 IPC 失败或非 Electron 环境
+    //   原代码只在 IPC 成功时才更新 previewStreamStore, 导致 WebAstPreview 无数据
+    const previewStore = usePreviewStreamStore.getState();
+    previewStore.initEntry(chatSessionId, { language: lang, sessionId: canvasSessionId });
+    previewStore.updateStream(chatSessionId, {
+      raw: code,
+      payload: { language: lang, framework: lang, source_code: code, preview: { root: ast } } as any,
+      errors: [], done: true,
+    });
+    previewStore.confirmPayload(chatSessionId, {
+      language: lang, framework: lang, source_code: code, preview: { root: ast } } as any,
+    );
+    console.log('[tryLocalTranslateAndPush] ✓ previewStreamStore 已更新', { language: lang, canvasSessionId });
+
+    // fetch relay (非 Electron 环境的画布推送)
+    if (typeof window === 'undefined' || !window.soloforge?.canvas) {
+      try {
+        const resp = await fetch('/api/canvas/relay/push-ui', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId: chatSessionId, dsl: flutterRoot, language: lang }),
+        });
+        if (!resp.ok) { console.warn('[tryLocalTranslateAndPush] relay push-ui HTTP', resp.status); }
+      } catch (relayErr) {
+        console.warn('[tryLocalTranslateAndPush] relay push-ui 异常:', relayErr);
+      }
+    }
+
+    return true;
+  } catch (err) {
+    console.warn('[tryLocalTranslateAndPush] 翻译或推送失败:', err);
+    return false;
+  }
 }
 
 const defaultChatDetails: Record<string, { title: string; icon: any }> = {};

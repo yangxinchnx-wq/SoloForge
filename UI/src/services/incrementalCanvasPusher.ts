@@ -23,7 +23,7 @@ import { translateCode, isLanguageSupported } from '../translate';
 import { translateCodeAsync } from '../translate/translatorWorker';
 import { usePreviewStreamStore } from '../state/previewStreamStore';
 import type { UniversalNode, UniversalStyle } from './canvas/UniversalAST';
-import { getCanvasSize } from '../state/canvasDeviceStore';
+import { getCanvasSize, useCanvasDeviceStore } from '../state/canvasDeviceStore';
 
 // ── chatId → canvasSessionId 映射 ──
 const canvasSessionIdMap = new Map<string, string>();
@@ -98,6 +98,19 @@ export async function ensureCanvasForChat(chatId: string): Promise<string | null
       const realId = data.payload.sessionId as string;
       canvasSessionIdMap.set(chatId, realId);
       console.log(`[ensureCanvasForChat] ✅ created canvas ${realId} for chat ${chatId}`);
+
+      // ★ FIX 2026-07-14: 把 fallback key 的帧尺寸复制到真实 key
+      //   PreviewPanel 在 bridge 未就绪时用 fallback key 写入 frameSizes,
+      //   现在映射已更新为真实 ID, 需要确保 frameSizes 也有真实 key 的数据,
+      //   否则 aiBackend/incrementalCanvasPusher 用真实 ID 查不到尺寸。
+      const fallbackKey = `canvas-${chatId}`;
+      const devState = useCanvasDeviceStore.getState();
+      const fallbackFrame = devState.getFrameSize(fallbackKey);
+      if (fallbackFrame && fallbackFrame.width > 0) {
+        devState.setFrameSize(realId, fallbackFrame);
+        console.log(`[ensureCanvasForChat] 📐 copied frame size ${fallbackFrame.width}×${fallbackFrame.height} from ${fallbackKey} → ${realId}`);
+      }
+
       // 通知 bridge 刷新, 让 PreviewPanel 拿到真实画布 ID
       window.dispatchEvent(new CustomEvent('soloforge-canvas-created'));
       return realId;
@@ -268,7 +281,11 @@ function styleToProps(style: UniversalStyle | undefined, nodeType: string): Reco
   return props;
 }
 
-function universalNodeToFlutterDSL(node: UniversalNode): any {
+/**
+ * ★ 2026-07-14: 导出供 useChatStore.tryLocalTranslateAndPush 使用
+ * 将 UniversalNode 转换为 Flutter DSL 格式 {type, props, children}
+ */
+export function universalNodeToFlutterDSL(node: UniversalNode): any {
   const nodeAny = node as any;
   const props: Record<string, any> = styleToProps(nodeAny.style, nodeAny.type);
 
@@ -467,8 +484,9 @@ class LineTracker {
         this._pushed = true;
         this.pushToCanvas(result.node, codeToTranslate, isFinal);
       }
-    } catch {
-      // 翻译失败 (代码不完整 / JSON 解析失败) — 静默跳过
+    } catch (err: any) {
+      // ★ 2026-07-14: 不再静默吞错, 打印详细错误帮助诊断
+      console.warn(`[LineTracker] translateAndPush 翻译失败: lang=${this.translateLang}, codeLen=${codeToTranslate.length}, error=${err?.message || err}`);
     } finally {
       this.translating = false;
     }
