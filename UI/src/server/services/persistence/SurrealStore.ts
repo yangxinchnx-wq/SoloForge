@@ -26,6 +26,8 @@ export interface ISurrealStore {
   init(): Promise<boolean>;
   saveSessionSnapshot(state: SessionState): Promise<boolean>;
   loadSessionSnapshot(sessionId: string): Promise<SessionState | null>;
+  /** ★ 2026-07-14: 暴露底层 db 实例供 ConversationSurrealStore 共享连接 */
+  getRawDb(): any;
   /**
    * s2.4: 列出所有已知 sessionId
    *   - 冷启动恢复时调用, SessionStore 据此批量恢复
@@ -210,6 +212,10 @@ class SurrealStoreImpl implements ISurrealStore {
 
   isAvailable(): boolean { return this.connected; }
 
+  /** ★ 2026-07-14: 暴露底层 db 实例供 ConversationSurrealStore 共享连接 (避免两个 Surreal 实例争抢 rocksdb 锁) */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  getRawDb(): any { return this.connected ? this.db : null; }
+
   /**
    * ★ 2026-07-11: 删除画布会话状态 (级联清理)
    * DELETE FROM session_state WHERE sessionId = $sid
@@ -333,6 +339,23 @@ export function getSurrealStore(): ISurrealStore {
     `位置: SurrealStore.ts → getSurrealStore()。` +
     `原因: 调用方在 SurrealDB init() 完成前同步访问了 SurrealStore。` +
     `请改用 await getSurrealStoreAsync(), 或确保 bootstrap 已完成后再调用。`,
+  );
+}
+
+/**
+ * ★ 2026-07-14: 获取已初始化的底层 db 实例 (供 ConversationSurrealStore 共享)
+ * 必须在 getSurrealStoreAsync() 完成后调用, 否则抛错。
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function getSharedSurrealDb(): any {
+  if (_instance) {
+    const db = (_instance as SurrealStoreImpl).getRawDb();
+    if (db) return db;
+  }
+  throw new Error(
+    `[SurrealStore] getSharedSurrealDb() 失败: SurrealDB 尚未初始化或连接已断开。` +
+    `位置: SurrealStore.ts → getSharedSurrealDb()。` +
+    `原因: 请确保 getSurrealStoreAsync() 已完成后再调用此函数。`,
   );
 }
 

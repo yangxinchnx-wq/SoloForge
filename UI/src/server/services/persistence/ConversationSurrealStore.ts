@@ -22,6 +22,7 @@
 
 import type { ChatMessage, ChatSettingsItem } from '../chat/ConversationStore';
 import type { ChatItem, ChatLiveState } from '../chat/ChatStore';
+import { getSharedSurrealDb } from './SurrealStore';
 
 // ── 接口契约 ─────────────────────────────────────────────────
 
@@ -55,18 +56,18 @@ class SurrealWarmStoreImpl implements IConversationWarmStore {
   private db: any;
   private connected: boolean = false;
 
+  /**
+   * ★ 2026-07-14: 接收共享的 db 实例 (来自 SurrealStore), 不再自己创建 Surreal 实例。
+   * 避免两个 Surreal 实例争抢同一个 rocksdb 文件锁。
+   */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constructor(SurrealCtor: any, engines: any) {
-    this.db = new SurrealCtor({ engines });
+  constructor(db: any) {
+    this.db = db;
   }
 
   async init(): Promise<boolean> {
     try {
-      const relPath = 'data/canvas_sessions_db';
-      console.log(`[ConvSurreal] connecting to rocksdb://${relPath} ...`);
-      await this.db.connect(`rocksdb://${relPath}`);
-      await this.db.use({ namespace: 'soloforge_core', database: 'canvas_state' });
-
+      // ★ 2026-07-14: db 已由 SurrealStore 初始化完成, 这里只需定义表结构
       // 定义 schemaless 表 + 索引
       try {
         await this.db.query('DEFINE TABLE IF NOT EXISTS conversation SCHEMALESS;');
@@ -83,19 +84,19 @@ class SurrealWarmStoreImpl implements IConversationWarmStore {
         throw new Error(
           `[ConvSurreal] init() 定义表结构失败: ${(e as Error).message}。` +
           `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.init() → DEFINE TABLE/INDEX。` +
-          `原因: SurrealDB rocksdb 可能损坏或路径不可写 (${relPath})。`,
+          `原因: SurrealDB rocksdb 可能损坏或路径不可写。`,
         );
       }
 
       this.connected = true;
-      console.log('[ConvSurreal] ✅ connected (warm store for conversations)');
+      console.log('[ConvSurreal] ✅ connected (warm store for conversations, shared db)');
       return true;
     } catch (e) {
       this.connected = false;
       throw new Error(
-        `[ConvSurreal] init() 连接 SurrealDB 失败: ${(e as Error).message}。` +
-        `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.init() → db.connect()。` +
-        `原因: rocksdb 路径不可访问、磁盘满、或 surrealdb/@surrealdb/node 引擎版本不兼容。`,
+        `[ConvSurreal] init() 失败: ${(e as Error).message}。` +
+        `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.init()。` +
+        `原因: 共享 db 实例不可用或表定义失败。`,
       );
     }
   }
@@ -404,9 +405,7 @@ class SurrealWarmStoreImpl implements IConversationWarmStore {
   }
 
   async close(): Promise<void> {
-    if (this.db) {
-      try { await this.db.close(); } catch { /* ignore */ }
-    }
+    // ★ 2026-07-14: 不关闭 db — 这是 SurrealStore 共享的连接, 由 SurrealStore 负责关闭
     this.connected = false;
   }
 }
@@ -417,32 +416,10 @@ let _instance: IConversationWarmStore | null = null;
 let _initPromise: Promise<IConversationWarmStore> | null = null;
 
 async function createWarmStore(): Promise<IConversationWarmStore> {
-  let SurrealCtor: any = null;
-  let engines: any = null;
-  try {
-    const mainMod = await import('surrealdb' as string);
-    SurrealCtor = (mainMod as any).Surreal || (mainMod as any).default;
-    if (!SurrealCtor) throw new Error('surrealdb 包没有导出 Surreal 类');
-  } catch (e) {
-    throw new Error(
-      `[ConvSurreal] 加载 surrealdb 依赖失败: ${(e as Error).message}。` +
-      `位置: ConversationSurrealStore.ts → createWarmStore() → import('surrealdb')。` +
-      `原因: surrealdb 包未安装或损坏。请执行 npm install surrealdb。`,
-    );
-  }
-  try {
-    const nodeMod = await import('@surrealdb/node' as string);
-    const createNodeEngines = (nodeMod as any).createNodeEngines || (nodeMod as any).default?.createNodeEngines;
-    if (!createNodeEngines) throw new Error('@surrealdb/node 包没有导出 createNodeEngines');
-    engines = createNodeEngines();
-  } catch (e) {
-    throw new Error(
-      `[ConvSurreal] 加载 @surrealdb/node 依赖失败: ${(e as Error).message}。` +
-      `位置: ConversationSurrealStore.ts → createWarmStore() → import('@surrealdb/node')。` +
-      `原因: @surrealdb/node 包未安装或损坏。请执行 npm install @surrealdb/node。`,
-    );
-  }
-  return new SurrealWarmStoreImpl(SurrealCtor, engines);
+  // ★ 2026-07-14: 不再创建独立 Surreal 实例, 而是共享 SurrealStore 的 db 连接
+  // 避免两个 Surreal 实例争抢同一个 rocksdb 文件锁导致超时
+  const db = getSharedSurrealDb();
+  return new SurrealWarmStoreImpl(db);
 }
 
 export async function getConversationWarmStore(): Promise<IConversationWarmStore> {
