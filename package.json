@@ -41,6 +41,7 @@
     "express": "^5.2.1",
     "ioredis": "^5.11.0",
     "kafkajs": "^2.2.4",
+    "keytar": "^7.9.0",
     "motion": "^12.40.0",
     "surrealdb": "^2.0.3",
     "ulid": "^3.0.2",

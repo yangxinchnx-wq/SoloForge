@@ -34,22 +34,31 @@
       {
         "from": "resources/canvas/canvas-dist",
         "to": "canvas",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "resources/core",
         "to": "core",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "../bin/garnet/portable/net10.0",
         "to": "garnet",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "git-service",
         "to": "git-service",
-        "filter": ["git-service.exe", "**/*.dll"]
+        "filter": [
+          "git-service.exe",
+          "**/*.dll"
+        ]
       },
       {
         "from": "../bin/scheduler.exe",
@@ -102,6 +111,7 @@
     "framer-motion": "^12.42.2",
     "http-proxy-middleware": "^4.1.1",
     "ioredis": "^5.11.1",
+    "keytar": "^7.9.0",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "recharts": "^3.8.1",
