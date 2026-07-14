@@ -243,7 +243,46 @@ class _CanvasAppState extends State<CanvasApp> {
     }
   }
 
-  /// 并发处理每个 HTTP 请求 — 不阻塞事件循环
+  /// ★ 3D 模型文件服务: 从 modelsDir 读取 GLB 文件返回给 WebView
+  Future<void> _handleModelFile(HttpRequest request, String path) async {
+    try {
+      final baseDir = widget.modelsDir;
+      if (baseDir == null) {
+        request.response.statusCode = 404;
+        await request.response.close();
+        return;
+      }
+      // /models/3d/mobile/xxx.glb → baseDir/3d/mobile/xxx.glb
+      final relativePath = path.substring('/models/'.length);
+      final filePath = '$baseDir/$relativePath';
+      final file = File(filePath);
+      if (!await file.exists()) {
+        _writeLog('[models] file not found: $filePath');
+        request.response.statusCode = 404;
+        await request.response.close();
+        return;
+      }
+      // 根据扩展名设置 Content-Type
+      if (filePath.endsWith('.glb')) {
+        request.response.headers.contentType = ContentType.parse('model/gltf-binary');
+      } else if (filePath.endsWith('.gltf')) {
+        request.response.headers.contentType = ContentType.parse('model/gltf+json');
+      } else {
+        request.response.headers.contentType = ContentType.binary;
+      }
+      // 允许跨域 (WebView file:// 协议需要)
+      request.response.headers.add('Access-Control-Allow-Origin', '*');
+      await file.openRead().pipe(request.response);
+    } catch (e) {
+      _writeLog('[models] serve error: $e');
+      try {
+        request.response.statusCode = 500;
+        await request.response.close();
+      } catch (_) {}
+    }
+  }
+
+
   Future<void> _handleRequest(HttpRequest request) async {
     try {
       final path = request.uri.path;
@@ -284,6 +323,13 @@ class _CanvasAppState extends State<CanvasApp> {
         } catch (e) {
           _writeLog('[ws] upgrade failed: $e');
         }
+        return;
+      }
+
+      // ★ 3D 模型静态文件服务: /models/3d/... → modelsDir/3d/...
+      //    InAppWebView 里的 model-viewer 通过 http://127.0.0.1:port/models/3d/xxx.glb 加载 GLB
+      if (request.method == 'GET' && path.startsWith('/models/')) {
+        await _handleModelFile(request, path);
         return;
       }
 
