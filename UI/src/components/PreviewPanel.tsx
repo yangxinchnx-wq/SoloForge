@@ -305,6 +305,35 @@ export default function PreviewPanel({
   const activePreset = currentDevice ? findDevicePreset(currentDevice.sizeKey) : null;
   const activeDeviceList = renderMode === '2D' ? DEVICES_2D : DEVICES_3D;
 
+  // ★ canvasStateRef — 提前声明, 供 handleSelectDevice / 崩溃检测使用 (避免 TDZ)
+  const canvasStateRef = useRef(canvasState);
+  useEffect(() => { canvasStateRef.current = canvasState; }, [canvasState]);
+  const isStoppingRef = useRef(false);
+
+  // ★ 3D 设备选择: 通过 /render 端点加载 GLB 模型到当前画布
+  //   用 canvasStateRef.current 代替 canvasState, 避免闭包陷阱
+  const handleSelectDevice = useCallback(async (preset: DevicePreset) => {
+    if (!sessionIdRef.current || !canvasId) return;
+    // 调用后端 selectModel (仅当前 canvas session) — 必须带 requester header (ACL)
+    if (selectedChatId) {
+      await apiSelectModel(sessionIdRef.current, preset.key, selectedChatId).catch(() => {});
+    }
+    // 通过 IPC selectDevice → POST /render → Flutter 加载 GLB 模型
+    // ★ 用 ref 读取最新 canvasState, 避免捕获旧 state
+    if (isElectron() && canvasStateRef.current === 'running' && preset.glbFile) {
+      try {
+        await window.soloforge!.canvas.selectDevice(
+          sessionIdRef.current,
+          preset.key,
+          preset.glbFile,
+          { w: preset.w, h: preset.h },
+        );
+      } catch (e) {
+        console.warn('[handleSelectDevice] selectDevice failed:', e);
+      }
+    }
+  }, [canvasId, selectedChatId]);
+
   // ★ 选择设备时写入 store (按 canvasId)
   const handleSelectSizeKey = useCallback((key: string) => {
     if (!effectiveCanvasId) return;
@@ -373,30 +402,6 @@ export default function PreviewPanel({
     return () => { unsub(); };
   }, [handleSelectSizeKey]);
 
-  // ★ 打开 Electron 原生弹窗 (避免被 Flutter 窗口遮挡)
-  //   接收 modeOverride 参数, 避免闭包陷阱 (setRenderMode 后 state 未更新)
-  const openElectronDevicePopup = useCallback((modeOverride?: '2D' | '3D') => {
-    if (!isElectron()) return;
-    const btn = document.querySelector('[data-device-btn]');
-    if (!btn) return;
-    const rect = btn.getBoundingClientRect();
-    // ★ 使用 override 值, 避免闭包捕获旧的 renderMode
-    const list = modeOverride === '3D' ? DEVICES_3D : DEVICES_2D;
-    const items = list.map(d => ({
-      key: d.key,
-      label: d.label,
-      w: d.w,
-      h: d.h,
-      glbFile: d.glbFile,
-      icon: '',
-    }));
-    window.soloforge!.canvas.openDevicePopup(
-      Math.round(rect.right) - 260,
-      Math.round(rect.bottom) + 4,
-      items,
-      activeSizeKey,
-    );
-  }, [activeSizeKey]);
   const [showElectronHint, setShowElectronHint] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
   // ★ canvas 区域专用 ref — reportBounds 只上报此区域, 避免Flutter窗口覆盖工具栏
@@ -474,9 +479,6 @@ export default function PreviewPanel({
   //   - 崩溃时: 更新 UI 状态 + 显示友好错误 + 允许重启
   //   - 正常退出 (用户点停止): 不显示错误, 仅同步状态
   // ─────────────────────────────────────────
-  const canvasStateRef = useRef(canvasState);
-  useEffect(() => { canvasStateRef.current = canvasState; }, [canvasState]);
-  const isStoppingRef = useRef(false);
 
   useEffect(() => {
     if (!isElectron() || !window.soloforge?.canvas?.onExited) return;
@@ -718,31 +720,6 @@ export default function PreviewPanel({
     setShowColorPicker(false);
     if (canvasState === 'running') pushBackground(customColor);
   };
-
-  // ★ 3D 设备选择: 通过 /render 端点加载 GLB 模型到当前画布
-  //   用 canvasStateRef.current 代替 canvasState, 避免闭包陷阱
-  //   (handleSelectSizeKey 不把 handleSelectDevice 放入依赖, 否则 state 变化时引用失效)
-  const handleSelectDevice = useCallback(async (preset: DevicePreset) => {
-    if (!sessionIdRef.current || !canvasId) return;
-    // 调用后端 selectModel (仅当前 canvas session) — 必须带 requester header (ACL)
-    if (selectedChatId) {
-      await apiSelectModel(sessionIdRef.current, preset.key, selectedChatId).catch(() => {});
-    }
-    // 通过 IPC selectDevice → POST /render → Flutter 加载 GLB 模型
-    // ★ 用 ref 读取最新 canvasState, 避免捕获旧 state
-    if (isElectron() && canvasStateRef.current === 'running' && preset.glbFile) {
-      try {
-        await window.soloforge!.canvas.selectDevice(
-          sessionIdRef.current,
-          preset.key,
-          preset.glbFile,
-          { w: preset.w, h: preset.h },
-        );
-      } catch (e) {
-        console.warn('[handleSelectDevice] selectDevice failed:', e);
-      }
-    }
-  }, [canvasId, selectedChatId]);
 
   // ★ 删除画布 — 彻底清理: 后端数据库 + Electron 子进程 + 前端所有缓存
   const handleDeleteCanvas = useCallback(async (targetCanvasId: string): Promise<boolean> => {
