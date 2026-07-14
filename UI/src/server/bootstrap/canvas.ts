@@ -195,6 +195,26 @@ export async function bootstrapCanvasSessionLayer(
           `(剩余 ${store.listSessions().length} 个 session)`,
       );
     }
+
+    // ★ 2026-07-14: 交叉验证 — 清理 owner 不存在的画布
+    //   对话被删除时如果级联删除失败 (服务器重启后内存清空),
+    //   画布会残留在 SurrealDB 中, 占着槽位导致新画布创建失败。
+    //   这里拿 ChatStore 的所有 chat ID, 删除 owner 不在列表中的画布。
+    try {
+      const { getChatStore } = await import('../services/chat/ChatStore');
+      const chatStore = getChatStore();
+      const { chats: existingChats } = chatStore.list();
+      const existingChatIds = new Set(existingChats.map((c: any) => c.id));
+      const deadOwnerCanvases = await store.cleanupCanvasesWithDeadOwners(existingChatIds);
+      if (deadOwnerCanvases.length > 0) {
+        console.log(
+          `[canvas] 🧹 清理无主画布: ${deadOwnerCanvases.length} 个 (owner chat 已删除) ` +
+            `(剩余 ${store.listSessions().length} 个 session)`,
+        );
+      }
+    } catch (e) {
+      console.warn('[canvas] cleanupCanvasesWithDeadOwners failed:', (e as Error).message);
+    }
   } catch (e) {
     throw new Error(
       `[canvas] SessionStore 初始化失败: ${(e as Error).message}。` +

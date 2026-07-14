@@ -944,6 +944,36 @@ export class SessionStore {
     }
     return toDelete;
   }
+
+  /**
+   * ★ 2026-07-14: 清理 owner 不存在的画布
+   * 交叉验证画布的 ownerChatSessionId 是否对应一个真实存在的 chat。
+   * 如果 chat 已被删除但画布残留, 删除这些画布释放槽位。
+   *
+   * @param existingChatIds 当前所有存活的 chat ID 集合
+   * @returns 被删除的 sessionId 列表
+   */
+  async cleanupCanvasesWithDeadOwners(existingChatIds: Set<string>): Promise<string[]> {
+    const toDelete: string[] = [];
+    for (const [sessionId, state] of this.states.entries()) {
+      const owner = state.ownerChatSessionId;
+      // 无归属画布 (null) 不清理 — 等待被认领
+      if (owner === null || owner === undefined) continue;
+      // temp- / legacy 已被 cleanupOrphanedCanvases 处理
+      if (owner.startsWith('temp-') || owner === 'legacy') continue;
+      // owner 不在存活 chat 列表中 → 孤儿画布
+      if (!existingChatIds.has(owner)) {
+        toDelete.push(sessionId);
+      }
+    }
+    for (const sid of toDelete) {
+      await this.deleteSession(sid);
+    }
+    if (toDelete.length > 0) {
+      console.log(`[SessionStore] cleanupCanvasesWithDeadOwners: deleted ${toDelete.length} canvases with dead owners: ${toDelete.join(', ')}`);
+    }
+    return toDelete;
+  }
 }
 
 let _instance: SessionStore | null = null;

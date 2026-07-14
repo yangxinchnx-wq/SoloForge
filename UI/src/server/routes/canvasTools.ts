@@ -268,6 +268,8 @@ async function dispatchTool(name: string, args: Record<string, unknown>): Promis
         if (description.length > 200) throw new ToolError('description too long (max 200)', 400);
         state.description = description;
       }
+      // ★ 2026-07-14: 创建后立即认领归属权, 避免无主画布堆积
+      store.claimCanvas(state.sessionId, requester);
       store.recordAccess(state.sessionId, requester);
       return summarize(state, requester);
     }
