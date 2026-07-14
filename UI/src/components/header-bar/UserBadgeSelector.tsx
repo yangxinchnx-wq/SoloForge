@@ -40,6 +40,66 @@ const MAX_AVATAR_SIZE = 2 * 1024 * 1024; // 2MB
 
 type OpenMenu = 'avatar' | 'name' | null;
 
+// ── 下拉动画 variants (复用协同副模型 SecondaryModelSelector 的方案) ──
+// 柔和推出: y 大位移 + opacity 同步淡入 + scale 微调
+//   - 开启: 380ms ease-out-expo, 慢启动消除突兀, 长尾缓停丝滑
+//   - 关闭: 140ms 快速收起
+const panelVariants = {
+  hidden: {
+    opacity: 0,
+    scale: 0.94,
+    y: 20,
+    transition: {
+      duration: 0.14,
+      ease: [0.4, 0, 1, 1] as [number, number, number, number],
+    },
+  },
+  visible: {
+    opacity: 1,
+    scale: 1,
+    y: 0,
+    transition: {
+      duration: 0.38,
+      ease: [0.16, 1, 0.3, 1] as [number, number, number, number],
+    },
+  },
+};
+
+const contentVariants = {
+  hidden: { opacity: 1 },
+  visible: {
+    opacity: 1,
+    transition: { duration: 0 },
+  },
+};
+
+const backdropVariants = {
+  hidden: { opacity: 0, transition: { duration: 0.18, ease: [0.4, 0, 1, 1] as [number, number, number, number] } },
+  visible: { opacity: 1, transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] } },
+};
+
+// 名字下拉框专用: 比面板标准动画快一倍 (开启 190ms / 关闭 70ms)
+const fastPanelVariants = {
+  hidden: {
+    opacity: 0,
+    scale: 0.94,
+    y: 10,
+    transition: {
+      duration: 0.07,
+      ease: [0.4, 0, 1, 1] as [number, number, number, number],
+    },
+  },
+  visible: {
+    opacity: 1,
+    scale: 1,
+    y: 0,
+    transition: {
+      duration: 0.19,
+      ease: [0.16, 1, 0.3, 1] as [number, number, number, number],
+    },
+  },
+};
+
 function UserBadgeSelectorImpl() {
   const { glass, isDark, rgba } = useThemedSurface();
   const [names, setNames] = useState<string[]>([]);
@@ -326,13 +386,13 @@ function UserBadgeSelectorImpl() {
     editValueRef.current = e.target.value;
   }, []);
 
-  // ── 单击/双击区分 (200ms 延迟检测) ────────────────────
+  // ── 单击/双击区分 (120ms 延迟检测) ────────────────────
   const handleNameClick = useCallback(() => {
     if (clickTimerRef.current) return;
     clickTimerRef.current = setTimeout(() => {
       clickTimerRef.current = null;
       toggleName();
-    }, 200);
+    }, 120);
   }, [toggleName]);
 
   const handleNameDoubleClick = useCallback((e: React.MouseEvent) => {
@@ -350,12 +410,6 @@ function UserBadgeSelectorImpl() {
     background: glass.brightSurfaceGradient,
     backdropFilter: 'blur(10px)',
     WebkitBackdropFilter: 'blur(10px)',
-    border: `1.5px solid ${rgba('--color-primary-rgb', glass.hairlineHoverAlpha)}`,
-    boxShadow: [
-      `inset 0 1px 0 ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.55)'}`,
-      `0 0 14px ${rgba('--color-primary-rgb', isDark ? 0.14 : 0.12)}`,
-      `0 0 0 1px ${rgba('--color-primary-rgb', isDark ? 0.08 : 0.06)}`,
-    ].join(', '),
   };
 
   const panelStyle: React.CSSProperties = {
@@ -368,7 +422,7 @@ function UserBadgeSelectorImpl() {
   return (
     <div
       ref={rootRef}
-      className={`relative flex items-center gap-3 h-11 pl-1.5 pr-4 mr-12 rounded-full ${openMenu ? 'z-50' : 'z-10'}`}
+      className={`relative flex items-center gap-3 h-11 pl-1.5 pr-4 mr-12 ${openMenu ? 'z-50' : 'z-10'}`}
       style={capsuleStyle}
     >
       {/* ── 头像容器(点击弹出下拉 · 滚轮切换) ─────────── */}
@@ -381,18 +435,24 @@ function UserBadgeSelectorImpl() {
         onClick={toggleAvatar}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleAvatar(); } }}
         onWheel={onAvatarWheel}
-        className="relative z-50 shrink-0 cursor-pointer rounded-full"
-        style={{ width: 36, height: 36 }}
+        className="relative z-50 shrink-0 cursor-pointer overflow-hidden"
+        style={{
+          width: 36,
+          height: 36,
+          borderRadius: 10,
+          boxShadow: [
+            'inset 0 0 0 0.5px rgba(0,0,0,0.20)',
+            `0 0 6px ${isDark ? 'rgba(0,0,0,0.18)' : 'rgba(0,0,0,0.06)'}`,
+            '2px 3px 5px rgba(0,0,0,0.08)',
+          ].join(', '),
+        }}
       >
         <img
           key={useCustomAvatar ? 'custom' : avatarIdx}
           src={useCustomAvatar && customAvatar ? customAvatar : avatars[avatarIdx] ?? avatars[0]}
           alt="用户头像"
-          className="w-9 h-9 rounded-full object-cover pointer-events-none"
+          className="w-9 h-9 object-cover pointer-events-none"
           title={useCustomAvatar ? '自定义头像 (上传)' : `UI/public/头像/${(avatars[avatarIdx] ?? avatars[0]).split('/').pop()}\n点击选择 · 滚轮切换`}
-          style={{
-            boxShadow: `${isDark ? '0 2px 8px rgba(0,0,0,0.30)' : '0 2px 8px rgba(0,0,0,0.08)'}, inset 0 1px 0 ${isDark ? 'rgba(255,255,255,0.30)' : 'rgba(255,255,255,0.45)'}`,
-          }}
           draggable={false}
         />
       </div>
@@ -463,168 +523,174 @@ function UserBadgeSelectorImpl() {
         </div>
       </div>
 
-      {/* ── 头像下拉框 ──────────────────────────────── */}
+      {/* ── 头像下拉框 (复用协同副模型动画方案) ──────────────────────────────── */}
       <AnimatePresence>
         {openMenu === 'avatar' && (
-          <motion.div
-            key="panel-avatar"
-            role="listbox"
-            aria-label="选择头像"
-            initial={{ opacity: 0, scale: 0.94, y: -3 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.94, y: -3 }}
-            transition={{ duration: 0.1, ease: [0.16, 1, 0.3, 1] }}
-            onMouseDown={(e) => e.stopPropagation()}
-            className="absolute right-0 top-full mt-3 p-2 flex gap-2 w-max rounded-xl"
-            style={{ ...panelStyle, transformOrigin: 'right top', zIndex: 60 }}
-          >
-              {avatars.map((src, idx) => {
-                const fileName = src.split('/').pop() ?? src;
-                const tooltip = `UI/public/头像/${fileName}\n点击选择 · 拖拽上传自定义头像`;
-                return (
-                <motion.button
-                  key={idx}
-                  type="button"
-                  role="option"
-                  aria-selected={avatarIdx === idx}
-                  aria-label={`头像 ${idx + 1}`}
-                  title={tooltip}
-                  initial={{ opacity: 0, y: -4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1], delay: idx * 0.02 }}
-                  onClick={() => selectAvatar(idx)}
-                  whileHover={{ scale: 1.08 }}
-                  whileTap={{ scale: 0.94 }}
-                  className="relative shrink-0 rounded-xl overflow-hidden cursor-pointer"
-                  style={{
-                    border: avatarIdx === idx
-                      ? `2px solid var(--color-primary)`
-                      : `2px solid transparent`,
-                    boxShadow: avatarIdx === idx
-                      ? `0 0 0 2px ${rgba('--color-primary-rgb', 0.25)}`
-                      : 'none',
-                  }}
-                >
-                  <img src={src} alt={`头像 ${idx + 1}`} className="w-12 h-12 object-cover" draggable={false} />
-                </motion.button>
-                );
-              })}
-              {/* 自定义头像 (已上传) */}
-              {customAvatar && (
-                <motion.button
-                  key="custom-avatar"
-                  type="button"
-                  role="option"
-                  aria-selected={false}
-                  aria-label="自定义头像 (右键移除)"
-                  title="点击应用 · 右键移除"
-                  initial={{ opacity: 0, y: -4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1], delay: avatars.length * 0.02 }}
-                  onClick={() => {
-                    setUseCustomAvatar(true);
-                    localStorage.setItem(STORAGE_USE_CUSTOM_AVATAR, 'true');
-                    setOpenMenu(null);
-                    window.dispatchEvent(new CustomEvent('soloforge-user-badge-updated'));
-                  }}
-                  onContextMenu={(e) => { e.preventDefault(); removeCustomAvatar(); }}
-                  whileHover={{ scale: 1.08 }}
-                  whileTap={{ scale: 0.94 }}
-                  className="relative shrink-0 rounded-xl overflow-hidden cursor-pointer"
-                  style={{ border: '2px solid var(--color-primary)' }}
-                >
-                  <img src={customAvatar} alt="自定义头像" className="w-12 h-12 object-cover" draggable={false} />
-                </motion.button>
-              )}
-              {/* 上传按钮 — 虚线轮廓, 主题色 */}
-              <motion.button
-                key="upload-avatar"
-                type="button"
-                aria-label="上传自定义头像"
-                title="上传自定义头像 (PNG / JPEG / WebP / GIF / SVG, ≤2MB)"
-                initial={{ opacity: 0, y: -4 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1], delay: (avatars.length + 1) * 0.02 }}
-                onClick={() => fileInputRef.current?.click()}
-                whileHover={{ scale: 1.08 }}
-                whileTap={{ scale: 0.94 }}
-                className="relative shrink-0 rounded-xl overflow-hidden cursor-pointer w-12 h-12 flex items-center justify-center"
-                style={{
-                  border: `2px dashed var(--color-primary)`,
-                  color: 'var(--color-primary)',
-                  background: rgba('--color-primary-rgb', 0.06),
-                }}
-              >
-                <Plus className="w-5 h-5" />
-              </motion.button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
-                onChange={handleAvatarUpload}
-                className="hidden"
-              />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ── 名字下拉框 ──────────────────────────────── */}
-      <AnimatePresence>
-        {openMenu === 'name' && (
-          <motion.div
-            key="panel-name"
-            role="listbox"
-            aria-label="选择名字"
-            initial={{ opacity: 0, scale: 0.94, y: -3 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.94, y: -3 }}
-            transition={{ duration: 0.1, ease: [0.16, 1, 0.3, 1] }}
-            onMouseDown={(e) => e.stopPropagation()}
-            style={{
-              ...panelStyle,
-              transformOrigin: '20% 0%',
-              zIndex: 60,
-            }}
-            className="absolute right-0 top-full mt-3 p-1 flex flex-col gap-0.5 max-h-64 overflow-y-auto w-max min-w-[160px] max-w-[90vw]"
-          >
-            {names.length === 0 ? (
-              <div className="px-3 py-4 text-center text-[11px] text-on-surface/55 select-none">
-                名字加载中…
-              </div>
-            ) : (
-              names.map((n, idx) => {
-                const isSelected = name === n;
-                return (
-                  <motion.button
+          <>
+            {/* 透明 backdrop 承载 click-outside */}
+            <motion.div
+              key="backdrop-avatar"
+              variants={backdropVariants}
+              initial="hidden"
+              animate="visible"
+              exit="hidden"
+              className="fixed inset-0 z-40 cursor-default"
+              onClick={() => setOpenMenu(null)}
+            />
+            <motion.div
+              key="panel-avatar"
+              role="listbox"
+              aria-label="选择头像"
+              variants={panelVariants}
+              initial="hidden"
+              animate="visible"
+              exit="hidden"
+              onMouseDown={(e) => e.stopPropagation()}
+              style={{
+                ...panelStyle,
+                transformOrigin: '50% 0%',
+                willChange: 'clip-path, transform, opacity',
+                transform: 'translateZ(0)',
+                backfaceVisibility: 'hidden',
+                WebkitBackfaceVisibility: 'hidden',
+                zIndex: 50,
+              }}
+              className="absolute right-0 top-full mt-3.5 p-2 flex gap-2 w-max rounded-2xl shadow-[0_24px_64px_rgba(0,0,0,0.15)]"
+            >
+              <motion.div variants={contentVariants} className="flex gap-2">
+                {avatars.map((src, idx) => {
+                  const fileName = src.split('/').pop() ?? src;
+                  const tooltip = `UI/public/头像/${fileName}\n点击选择 · 拖拽上传自定义头像`;
+                  return (
+                  <button
                     key={idx}
                     type="button"
                     role="option"
-                    aria-selected={isSelected}
-                    initial={{ opacity: 0, y: -4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.1, ease: [0.22, 1, 0.36, 1], delay: Math.min(idx * 0.008, 0.08) }}
-                    onClick={() => selectName(n)}
-                    whileHover={{ x: 2 }}
-                    className={`relative w-full text-left px-3 py-2 rounded-lg text-xs font-semibold flex items-center justify-between select-none cursor-pointer hover:bg-primary/10 ${
-                      isSelected
-                        ? 'text-primary font-bold'
-                        : 'text-[var(--color-on-surface)]/80 hover:text-[var(--color-on-surface)]'
-                    }`}
+                    aria-selected={avatarIdx === idx}
+                    aria-label={`头像 ${idx + 1}`}
+                    title={tooltip}
+                    onClick={() => selectAvatar(idx)}
+                    className="relative shrink-0 overflow-hidden cursor-pointer transition-transform duration-200 hover:scale-110 active:scale-95"
                   >
-                    <span>{n}</span>
-                    {isSelected && (
-                      <motion.span
-                        initial={{ scale: 0 }}
-                        animate={{ scale: 1 }}
-                        transition={{ type: 'spring', stiffness: 700, damping: 24 }}
-                        className="w-1.5 h-1.5 rounded-full bg-primary"
-                      />
-                    )}
-                  </motion.button>
-                );
-              })
-            )}
-          </motion.div>
+                    <img src={src} alt={`头像 ${idx + 1}`} className="w-12 h-12 object-cover" draggable={false} />
+                  </button>
+                  );
+                })}
+                {/* 自定义头像 (已上传) */}
+                {customAvatar && (
+                  <button
+                    key="custom-avatar"
+                    type="button"
+                    role="option"
+                    aria-selected={false}
+                    aria-label="自定义头像 (右键移除)"
+                    title="点击应用 · 右键移除"
+                    onClick={() => {
+                      setUseCustomAvatar(true);
+                      localStorage.setItem(STORAGE_USE_CUSTOM_AVATAR, 'true');
+                      setOpenMenu(null);
+                      window.dispatchEvent(new CustomEvent('soloforge-user-badge-updated'));
+                    }}
+                    onContextMenu={(e) => { e.preventDefault(); removeCustomAvatar(); }}
+                    className="relative shrink-0 overflow-hidden cursor-pointer transition-transform duration-200 hover:scale-110 active:scale-95"
+                  >
+                    <img src={customAvatar} alt="自定义头像" className="w-12 h-12 object-cover" draggable={false} />
+                  </button>
+                )}
+                {/* 上传按钮 */}
+                <button
+                  key="upload-avatar"
+                  type="button"
+                  aria-label="上传自定义头像"
+                  title="上传自定义头像 (PNG / JPEG / WebP / GIF / SVG, ≤2MB)"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="relative shrink-0 overflow-hidden cursor-pointer w-12 h-12 flex items-center justify-center transition-transform duration-200 hover:scale-110 active:scale-95"
+                  style={{
+                    color: 'var(--color-primary)',
+                    background: rgba('--color-primary-rgb', 0.06),
+                  }}
+                >
+                  <Plus className="w-5 h-5" />
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+                  onChange={handleAvatarUpload}
+                  className="hidden"
+                />
+              </motion.div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* ── 名字下拉框 (复用协同副模型动画方案) ──────────────────────────────── */}
+      <AnimatePresence>
+        {openMenu === 'name' && (
+          <>
+            {/* 透明 backdrop 承载 click-outside */}
+            <motion.div
+              key="backdrop-name"
+              variants={backdropVariants}
+              initial="hidden"
+              animate="visible"
+              exit="hidden"
+              className="fixed inset-0 z-40 cursor-default"
+              onClick={() => setOpenMenu(null)}
+            />
+            <motion.div
+              key="panel-name"
+              role="listbox"
+              aria-label="选择名字"
+              variants={fastPanelVariants}
+              initial="hidden"
+              animate="visible"
+              exit="hidden"
+              onMouseDown={(e) => e.stopPropagation()}
+              style={{
+                ...panelStyle,
+                transformOrigin: '20% 0%',
+                willChange: 'clip-path, transform, opacity',
+                transform: 'translateZ(0)',
+                backfaceVisibility: 'hidden',
+                WebkitBackfaceVisibility: 'hidden',
+                zIndex: 50,
+              }}
+              className="absolute right-0 top-full mt-3.5 p-1 flex flex-col gap-0.5 max-h-64 overflow-y-auto w-max min-w-[160px] max-w-[90vw] rounded-2xl shadow-[0_24px_64px_rgba(0,0,0,0.15)]"
+            >
+              <motion.div variants={contentVariants} className="flex flex-col gap-0.5">
+                {names.length === 0 ? (
+                  <div className="px-3 py-4 text-center text-[11px] text-on-surface/55 select-none">
+                    名字加载中…
+                  </div>
+                ) : (
+                  names.map((n, idx) => {
+                    const isSelected = name === n;
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        role="option"
+                        aria-selected={isSelected}
+                        onClick={() => selectName(n)}
+                        className={`relative w-full text-left px-3 py-2 rounded-lg text-xs font-semibold flex items-center justify-between select-none cursor-pointer hover:bg-primary/10 transition-colors duration-200 hover:translate-x-0.5 ${
+                          isSelected
+                            ? 'text-primary font-bold'
+                            : 'text-[var(--color-on-surface)]/80 hover:text-[var(--color-on-surface)]'
+                        }`}
+                      >
+                        <span>{n}</span>
+                        {isSelected && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                        )}
+                      </button>
+                    );
+                  })
+                )}
+              </motion.div>
+            </motion.div>
+          </>
         )}
       </AnimatePresence>
     </div>

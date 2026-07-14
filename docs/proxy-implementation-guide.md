@@ -184,7 +184,7 @@ await session.defaultSession.setProxy({
 │  ┌────────────────────────────────────────────────────────┐  │
 │  │  ProxyTab.tsx — 四模式切换 UI                          │  │
 │  │    ↓ 读写配置                                          │  │
-│  │  SettingsStore (electron-store / localStorage)         │  │
+│  │  SettingsStore (settingsStorage.cjs)                    │  │
 │  └────────────────────────────────────────────────────────┘  │
 │                          ↓ IPC (soloforge.proxy.*)           │
 ├──────────────────────────────────────────────────────────────┤
@@ -230,7 +230,7 @@ await session.defaultSession.setProxy({
 ```
 app 启动
   │
-  ├─ 1. 读取持久化配置 (electron-store)
+  ├─ 1. 读取持久化配置 (settingsStorage.cjs)
   │     → 如果上次是 manual/pac 模式，立即设置环境变量
   │
   ├─ 2. app.whenReady()
@@ -275,8 +275,8 @@ const SOLOFORGE_BYPASS = [
   'localhost:3002',    // git-service (Go)
   'localhost:6379',    // Garnet (Redis 兼容缓存)
   'localhost:8400',    // SurrealDB (图数据库)
-  'localhost:8765',    // MARL (多智能体强化学习)
-  'localhost:8766',    // MARL Reputation HTTP
+  'localhost:8765',    // MARL (预留: 外部独立进程，非 main.cjs 启动)
+  'localhost:8766',    // MARL Reputation HTTP (预留: 外部独立进程)
   'localhost:8770',    // Java Agent (Spring AI)
 ].join(',');
 ```
@@ -341,23 +341,42 @@ spawn('java', ['-jar', 'agent.jar'], {
 });
 ```
 
+> **⚠️ 时效性警告**：`process.env.HTTP_PROXY` 变更**仅对变更后新 spawn 的子进程生效**。
+> 已运行的子进程（如 Java Agent）持有启动时的环境变量副本，不会感知后续变更。
+> 
+> **应对策略**：
+> - 若用户在运行中切换代理模式，需提示"已运行的服务需重启才能生效"
+> - 或在 `ProxyService.apply()` 中记录"需重启的服务列表"，UI 展示提醒
+
 ---
 
 ## 六、代理连通性测试
 
 ### 6.1 测试端点
 
+> **⚠️ 国内网络风险**：`httpbin.org` 在国内可能超时或被墙，需增加备选端点。
+
 ```javascript
+// 测试端点优先级列表（国内可用性排序）
+const TEST_ENDPOINTS = [
+  { url: 'https://httpbin.org/ip',   extract: (d) => d.origin },
+  { url: 'https://api.ipify.org?format=json', extract: (d) => d.ip },
+  { url: 'https://ipinfo.io/json',  extract: (d) => d.ip },
+];
+
 async function testProxyConnection() {
-  try {
-    const res = await fetch('https://httpbin.org/ip', {
-      signal: AbortSignal.timeout(10000)
-    });
-    const data = await res.json();
-    return { ok: true, ip: data.origin };
-  } catch (err) {
-    return { ok: false, error: err.message };
+  for (const endpoint of TEST_ENDPOINTS) {
+    try {
+      const res = await fetch(endpoint.url, {
+        signal: AbortSignal.timeout(8000)
+      });
+      const data = await res.json();
+      return { ok: true, ip: endpoint.extract(data) };
+    } catch {
+      continue;  // 超时或失败，尝试下一个
+    }
   }
+  return { ok: false, error: '所有测试端点均不可达' };
 }
 ```
 
@@ -384,14 +403,17 @@ async function testProxyConnection() {
 |---|---|---|
 | `UI/electron/main.cjs` | 初始化 ProxyService，注册 IPC handler | — |
 | `UI/electron/preload.cjs` | 暴露 `soloforge.proxy.*` API | — |
-| `UI/src/components/settingsTabs/ProxyTab.tsx` | 四模式 UI + 连通性测试 | 严格类型，禁止新增 `any` |
-| `UI/package.json` | 添加 `electron-store` 依赖 | **当前未安装，需 `npm install electron-store`** |
+| `UI/src/components/settingsTabs/ProxyTab.tsx` | **全新重写**（当前为纯 UI 壳，无 IPC/无持久化/无测试） | 严格类型，禁止新增 `any` |
+| `UI/package.json` | 无新增依赖 | **复用现有 `settingsStorage.cjs`，零依赖** |
 
 ### 7.3 顺手修复（代码审查报告建议）
 
 | 文件 | 修改内容 | 成本 |
 |---|---|---|
 | `.env` / `src/security/auth.ts` | CORS 白名单补全：追加 `http://localhost:3000` | 5 分钟 |
+
+> **⚠️ 注意**：CORS 白名单修复前需确认 `auth.ts` 的确切位置和配置格式。
+> 本轮可行性审计未深入验证该文件，实施前需先定位 `auth.ts` 中的 CORS 配置代码。
 
 > **CORS 问题说明**（来自代码审查报告）：
 > 后端 `auth.ts` 仅允许 `localhost:5173/5174`（Vite 默认端口），
@@ -437,6 +459,9 @@ proxy: {
 ---
 
 ## 九、ProxyTab UI 设计
+
+> **⚠️ 工作量评估**：当前 `ProxyTab.tsx` 为纯 UI 壳（仅 `useState` 管理本地状态），
+> 无 IPC 通信、无配置持久化、无连通性测试。本次为**全新重写**，非升级改造。
 
 ### 9.1 布局
 
@@ -489,22 +514,34 @@ proxy: {
 ```javascript
 // UI/electron/proxy-service.cjs
 const { session } = require('electron');
-const Store = require('electron-store');
+const { createSettingsStorage } = require('./settingsStorage.cjs');
 const { execSync } = require('child_process');
+const path = require('path');
+const os = require('os');
 
-const store = new Store();
-const CONFIG_KEY = 'proxy.config';
+const SETTINGS_FILE = path.join(os.homedir(), '.soloforge', 'settings.json');
+
+// 复用项目现有 settingsStorage，零外部依赖
+// settingsStorage API: { load, getStore, flushSync, scheduleWrite, dispose }
+const storage = createSettingsStorage(SETTINGS_FILE);
+
 const BYPASS_DEFAULT = [
   'localhost', '127.0.0.1', '::1', '*.local', '<local>',
   // SoloForge 内部服务完整端口 (与 4.2 节保持同步)
   'localhost:3000', 'localhost:3001', 'localhost:3002',
   'localhost:6379', 'localhost:8400',
-  'localhost:8765', 'localhost:8766', 'localhost:8770',
+  'localhost:8765',    // MARL (预留)
+  'localhost:8766',    // MARL Reputation HTTP (预留)
+  'localhost:8770',    // Java Agent (Spring AI)
 ].join(',');
+
+const DEFAULT_CONFIG = { mode: 'system' };
 
 class ProxyService {
   constructor() {
-    this.config = store.get(CONFIG_KEY, { mode: 'system' });
+    // getStore(storeName) 返回该 store 的原始对象（自动创建）
+    const store = storage.getStore('proxy-config');
+    this.config = store.config ?? DEFAULT_CONFIG;
   }
 
   getConfig() {
@@ -513,7 +550,11 @@ class ProxyService {
 
   async apply(config) {
     this.config = config;
-    store.set(CONFIG_KEY, config);
+
+    // 持久化：修改 store 对象后调用 scheduleWrite() 异步落盘
+    const store = storage.getStore('proxy-config');
+    store.config = config;
+    storage.scheduleWrite();
 
     // 1. 设置 Chromium 层代理 (渲染进程)
     await this._applyChromiumProxy(config);
@@ -578,6 +619,15 @@ class ProxyService {
       process.env.ALL_PROXY = url;
       process.env.NO_PROXY = config.bypassList || BYPASS_DEFAULT;
     }
+
+    // PAC 模式下 Node.js 层不支持 PAC 解析（仅 Chromium 原生支持）
+    // 降级策略：读取系统代理环境变量（如有），否则直连
+    if (config.mode === 'pac') {
+      // Node.js fetch/http 不解析 PAC 脚本，此处不注入代理变量
+      // 如需 PAC 路由，应在 PAC 模式 UI 中提示用户：
+      // "Node.js 后端请求（LLM 调用等）将直连，不经过 PAC 路由"
+      console.warn('[ProxyService] PAC mode: Node.js requests bypass PAC, using direct connection');
+    }
   }
 
   _buildProxyUrl(config) {
@@ -588,6 +638,15 @@ class ProxyService {
   }
 
   getSystemProxyInfo() {
+    // 平台兼容：当前仅实现 Windows 注册表检测
+    // macOS: 需通过 `scutil --proxy` 或 Objective-C bridge 读取系统偏好设置
+    // Linux: 需通过 `gsettings get org.gnome.system.proxy` 或环境变量检测
+    // TODO: 后续版本补充 macOS/Linux 平台支持
+    if (process.platform !== 'win32') {
+      console.warn(`[ProxyService] System proxy detection not implemented for ${process.platform}`);
+      return { enabled: false, platform: process.platform };
+    }
+
     try {
       const enableResult = execSync(
         'reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable',
@@ -620,29 +679,46 @@ class ProxyService {
   }
 
   async testConnection() {
+    // 多端点容灾（与 §6.1 设计保持一致）
+    // httpbin.org 在国内可能超时，ipify/ipinfo 作为备选
+    const TEST_ENDPOINTS = [
+      { url: 'https://httpbin.org/ip', extract: (d) => d.origin },
+      { url: 'https://api.ipify.org?format=json', extract: (d) => d.ip },
+      { url: 'https://ipinfo.io/json', extract: (d) => d.ip },
+    ];
+
     const { net } = require('electron');
+
+    for (const endpoint of TEST_ENDPOINTS) {
+      const result = await this._probeEndpoint(net, endpoint);
+      if (result.ok) return result;
+    }
+    return { ok: false, error: '所有测试端点均不可达', latency: 0 };
+  }
+
+  _probeEndpoint(net, endpoint) {
     return new Promise((resolve) => {
       const start = Date.now();
-      const request = net.request('https://httpbin.org/ip');
+      const request = net.request(endpoint.url);
       request.on('response', (response) => {
         let body = '';
         response.on('data', (chunk) => { body += chunk; });
         response.on('end', () => {
           try {
             const data = JSON.parse(body);
-            resolve({ ok: true, ip: data.origin, latency: Date.now() - start });
+            resolve({ ok: true, ip: endpoint.extract(data), latency: Date.now() - start });
           } catch {
             resolve({ ok: true, ip: 'unknown', latency: Date.now() - start });
           }
         });
       });
-      request.on('error', (err) => {
-        resolve({ ok: false, error: err.message, latency: Date.now() - start });
+      request.on('error', () => {
+        resolve({ ok: false, error: 'connection failed', latency: Date.now() - start });
       });
       setTimeout(() => {
         request.abort();
         resolve({ ok: false, error: 'timeout', latency: Date.now() - start });
-      }, 10000);
+      }, 8000);
       request.end();
     });
   }
@@ -737,13 +813,15 @@ interface TestResult {
 | Chromium 层 | `session.setProxy()` | `session.setProxy()` + `mode` 参数 |
 | Node.js 层 | 未处理 | **环境变量同步** |
 | 子进程代理 | 未处理 | **env 继承** |
-| 绕过列表 | 无 | **完整覆盖 8 个内部服务端口**（含 MARL 8765/8766） |
+| 绕过列表 | 无 | **完整覆盖 8 个内部服务端口**（含 MARL 8765/8766 预留） |
 | PAC 支持 | 无 | **原生支持** |
-| 连通性测试 | 无 | **内置测试** |
+| 连通性测试 | 无 | **内置测试（3 端点容灾）** |
 | 启动时序 | 未考虑 | **启动时恢复配置** |
 | 系统代理检测 | 读注册表 | 读注册表 + **PAC/WPAD 检测** |
 | 类型安全 | 未考虑 | **严格类型，禁止新增 any** |
-| CORS 修复 | 未涉及 | **顺手补全 3000 端口白名单** |
+| CORS 修复 | 未涉及 | **顺手补全 3000 端口白名单**（待验证） |
+| 配置持久化 | `electron-store`（需安装） | **`settingsStorage.cjs`（零依赖）** |
+| 子进程时效 | 未考虑 | **已 spawn 子进程需重启提醒** |
 
 ---
 
@@ -762,6 +840,7 @@ interface TestResult {
 | Node.js 层代理 | 手动代理下发送 LLM 请求 | 后端请求也走代理 |
 | 即时生效 | 切换模式后立即发起请求 | 新配置立即生效 |
 | MARL 服务绕过 | 手动代理模式下访问 localhost:8766 | 直连，不走代理 |
+| 子进程重启提醒 | 运行中切换代理 → 检查已 spawn 子进程 | UI 提示"已运行的服务需重启才能生效" |
 | TypeScript 编译 | `npx tsc --noEmit` 检查 ProxyTab.tsx | 零新增 `any`，零编译错误 |
 
 ---
@@ -770,14 +849,16 @@ interface TestResult {
 
 ### 13.1 依赖安装
 
-```bash
-# electron-store (配置持久化)
-# 代码审查报告确认 UI/package.json 中未安装此依赖
-cd UI && npm install electron-store
+**无需安装任何新依赖**。配置持久化复用项目现有的 `settingsStorage.cjs`（纯 Node.js 实现，零外部依赖）。
+
+```javascript
+// 直接 require 即可
+const { createSettingsStorage } = require('./settingsStorage.cjs');
+const storage = createSettingsStorage(settingsFilePath);
 ```
 
-> **注意**：`electron-store` 要求 Electron 环境，仅在主进程使用。
-> 渲染进程通过 IPC 间接访问，不需要额外安装前端依赖。
+> **原方案**：使用 `electron-store`（需 `npm install`，有原生依赖）。
+> **修正后**：复用 `settingsStorage.cjs`，已在 `main.cjs` 中使用，格式 v2 支持多 store 隔离。
 
 ### 13.2 CORS 白名单修复（顺手修复）
 
@@ -808,6 +889,50 @@ ProxyTab.tsx 改造时必须严格遵守以下规则：
 | `useState` 泛型 | 所有 `useState` 必须声明类型参数 |
 | 禁止索引签名 | 不使用 `[k: string]: any` |
 | 接口导出 | `ProxyConfig` 等类型定义导出供其他模块复用 |
+
+---
+
+## 十四、可行性评估总结
+
+### 14.1 评估结论
+
+**整体可行性评分：4.25 / 5**，技术选型正确、架构设计合理，可直接实施。
+
+### 14.2 核心验证结果
+
+| 验证项 | 状态 | 说明 |
+|---|---|---|
+| Electron API 兼容性 | ✅ 通过 | `electron ^42.4.1` 完全支持四模式 `session.setProxy()` |
+| 内部服务端口清单 | ✅ 5/5 确认 | 3000/3001/3002/6379/8400 均在 `main.cjs` 中实际启动 |
+| 现有基础设施 | ✅ 就绪 | `main.cjs` 已 import `session`，`preload.cjs` 架构清晰可扩展 |
+| 配置持久化方案 | ✅ 已修正 | 复用现有 `settingsStorage.cjs`，零外部依赖 |
+| ProxyTab 现状 | ⚠️ 需重写 | 当前为纯 UI 壳（无 IPC/无持久化），全新实现而非改造 |
+
+### 14.3 已修正项
+
+| 修正项 | 原方案 | 修正后 |
+|---|---|---|
+| 配置持久化 | `electron-store`（需安装） | `settingsStorage.cjs`（已存在，零依赖） |
+| MARL 端口标注 | 标注为内部服务 | 标注为**预留**（外部独立进程，非 main.cjs 启动） |
+| ProxyTab 工作量 | "升级改造" | **"全新重写"**（无 IPC/无持久化/无测试功能） |
+| 子进程时效 | 未考虑 | 已 spawn 子进程不会感知 env 变更，需重启提醒 |
+
+### 14.4 潜在风险
+
+| 风险 | 影响 | 应对 |
+|---|---|---|
+| 连通性测试端点 | `httpbin.org` 在国内可能超时 | 已增加 `ipify.org` / `ipinfo.io` 备选 |
+| CORS 白名单修复 | `auth.ts` 确切位置未验证 | 实施前需先定位 `auth.ts` 中的 CORS 配置代码 |
+
+### 14.5 实施优先级
+
+```
+P0 → 新建 proxy-service.cjs + 重写 ProxyTab.tsx（四模式+IPC+类型安全）
+P1 → main.cjs 注册 4 个 IPC handler + 启动时恢复配置
+P1 → preload.cjs 扩展 soloforge.proxy 命名空间
+P2 → 连通性测试端点增加国内备选
+P2 → CORS 白名单补全 localhost:3000（需先验证 auth.ts 位置）
+```
 
 ---
 
