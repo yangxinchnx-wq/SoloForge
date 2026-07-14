@@ -359,8 +359,8 @@ class DatabaseManager:
         # 4. 初始化预设数据
         self._init_preset_data()
 
-        # 5. 向量检索由 QdrantVectorSearch (services/qdrant_client.py) 懒初始化
-        #    AI Society 进程启动时已通过独立初始化保证 Qdrant 可用, 此处不重复连接
+        # 5. 向量检索由 QdrantVectorSearch (services/qdrant_client.py) 硬性依赖
+        #    MemoryService 初始化时直接连接 Qdrant，不可用则报错（无降级）
 
         logger.info("All databases initialized successfully")
 

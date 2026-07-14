@@ -5,6 +5,14 @@
 # ⚠️  AI 社会专用数据库 ⚠️  与主项目完全隔离
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+# Vector Database - Qdrant Client (社会记忆语义检索, 硬性依赖, 无降级)
+# Qdrant 服务端: bin/qdrant/qdrant.exe (v1.18.2, 端口 6333/6334)
+qdrant-client>=1.12.0
+
+# Embedding Model - Sentence Transformers (MiniLM 384-dim 多语言嵌入)
+# 模型路径: bin/models/paraphrase-multilingual-MiniLM-L12-v2
+sentence-transformers>=3.0.0
+
 # Deep Learning - PyTorch MAPPO (强化学习资源调度)
 # CPU 版本安装: pip install torch --index-url https://download.pytorch.org/whl/cpu
 # 3.13 兼容: 2.6.0+ 官方 cp313 wheel

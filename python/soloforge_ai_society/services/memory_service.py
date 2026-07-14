@@ -3,17 +3,21 @@
 SoloForge AI Society - Memory Service (Qdrant 后端)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-升级 (2026-07-01): 从 LanceDB + TFIDF 切换到 Qdrant + MiniLM 384-dim
+升级 (2026-07-14): 移除降级逻辑，Qdrant 为硬性依赖
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 数据存储：
 - SQLite：social_memory 表（结构化数据）
 - Qdrant：ai_society_events collection（向量 + 语义搜索）
 
-兼容：
-- 旧 API (search / create / get_by_id / get_lessons / count) 保持不变
-- 内部用 QdrantVectorSearch 替换 VectorSearch (LanceDB)
-- VectorSearch.count() 不再支持，已被 SQLite 直接 COUNT 替代
+依赖：
+- qdrant-client（Python 客户端）
+- sentence-transformers（MiniLM 嵌入模型）
+- Qdrant 服务必须运行在 127.0.0.1:6333
+
+无降级：
+- Qdrant 不可用时直接报错，不再静默返回空结果
+- MiniLM 嵌入器为唯一选项，不再 fallback 到 HeuristicEmbedder
 """
 
 import logging
@@ -24,7 +28,6 @@ from ..database.manager import DatabaseManager
 from ..models.social_memory import SocialMemory, MemorySeverity, MemoryImpact
 from ..vector.qdrant_adapter import QdrantVectorSearch
 from ..vector.factory import get_embedder
-from soloforge_ai_society.services.qdrant_client import QdrantUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +51,10 @@ class MemoryService:
         """
         self.db_manager = db_manager
         self.embedder = embedder or get_embedder()
-        try:
-            self.vector_search = QdrantVectorSearch(embedder=self.embedder)
-            self._qdrant_available = True
-        except QdrantUnavailable as e:
-            logger.warning(f"[MemoryService] Qdrant unavailable, semantic search disabled: {e}")
-            self.vector_search = None
-            self._qdrant_available = False
+        # Qdrant is mandatory — no degradation. If Qdrant is not running,
+        # this will raise QdrantUnavailable and the caller must fix the environment.
+        self.vector_search = QdrantVectorSearch(embedder=self.embedder)
+        self._qdrant_available = True
         self._init_memory_table()
 
     def _init_memory_table(self) -> None:
@@ -106,24 +106,21 @@ class MemoryService:
         )
         conn.commit()
 
-        if self._qdrant_available and self.vector_search is not None:
-            try:
-                self.vector_search.upsert(
-                    text=memory.event,
-                    payload={
-                        "memory_id": memory.id,
-                        "impact": memory.impact.value,
-                        "severity": memory.severity.value,
-                        "participants": ",".join(memory.participants),
-                        "lessons": ",".join(memory.lessons),
-                        "task_id": memory.task_id or "",
-                        "domain": memory.domain or "",
-                        "outcome": memory.outcome or "",
-                        "created_at": int(memory.created_at.timestamp()),
-                    },
-                )
-            except Exception as e:
-                logger.warning(f"[MemoryService] Qdrant upsert failed: {e}")
+        # Qdrant upsert — mandatory, no silent failure
+        self.vector_search.upsert(
+            text=memory.event,
+            payload={
+                "memory_id": memory.id,
+                "impact": memory.impact.value,
+                "severity": memory.severity.value,
+                "participants": ",".join(memory.participants),
+                "lessons": ",".join(memory.lessons),
+                "task_id": memory.task_id or "",
+                "domain": memory.domain or "",
+                "outcome": memory.outcome or "",
+                "created_at": int(memory.created_at.timestamp()),
+            },
+        )
 
         logger.info(f"Created social memory: {memory.id}")
         return memory
@@ -136,15 +133,8 @@ class MemoryService:
         since_days: Optional[int] = None,
     ) -> List[SocialMemory]:
         """搜索相似记忆"""
-        if not self._qdrant_available or self.vector_search is None:
-            logger.warning("[MemoryService] Qdrant unavailable, search returns empty")
-            return []
-
-        try:
-            hits = self.vector_search.search(query, limit=top_k)
-        except Exception as e:
-            logger.warning(f"[MemoryService] Qdrant search failed: {e}")
-            return []
+        # Qdrant search — mandatory, no degradation
+        hits = self.vector_search.search(query, limit=top_k)
 
         since_ts = None
         if since_days:
