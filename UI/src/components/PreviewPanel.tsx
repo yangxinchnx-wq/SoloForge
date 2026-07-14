@@ -18,6 +18,7 @@ import {
 } from '../services/canvas/sessionApi';
 import { CanvasResourceBar } from './CanvasResourceBar';
 import { setCanvasSessionId, clearCanvasSessionId, clearByCanvasSessionId } from '../services/incrementalCanvasPusher';
+import { useLayoutMeta } from '../context/LayoutContext';
 
 // ── 设备下拉框动画 variants (与协同副模型 SecondaryModelSelector 完全一致) ──
 // 柔和推出: y 位移 + opacity 同步淡入 + scale 微调, 顶部锚点
@@ -165,6 +166,9 @@ export default function PreviewPanel({
   canvases = [], maxCanvases = 10,
   onSelectCanvas, onRenameCanvas, onDeleteCanvas,
 }: PreviewPanelProps) {
+  // ★ 2026-07-15: 获取面板宽度是否已从服务器加载完毕, 避免画布用默认尺寸启动后闪烁
+  const { previewWidthLoaded } = useLayoutMeta();
+
   // 2026-07-06 阶段3: 订阅 AST 预览流状态
   const previewEntry = usePreviewStreamStore(s => selectedChatId ? s.entries[selectedChatId] : undefined);
   const previewIsStreaming = previewEntry?.isStreaming ?? false;
@@ -281,7 +285,9 @@ export default function PreviewPanel({
   const isStoppingRef = useRef(false);
 
   // ★ 3D 设备选择: 通过 /render 端点加载 GLB 模型到当前画布
-  //   用 canvasStateRef.current 代替 canvasState, 避免闭包陷阱
+  //   画布未 running 时, 把请求暂存到 pendingSelectRef,
+  //   canvasState 切到 running 后由 useEffect 自动重发 (避免 IPC 丢失)
+  const pendingSelectRef = useRef<DevicePreset | null>(null);
   const handleSelectDevice = useCallback(async (preset: DevicePreset) => {
     if (!sessionIdRef.current || !canvasId) return;
     // 调用后端 selectModel (仅当前 canvas session) — 必须带 requester header (ACL)
@@ -289,20 +295,47 @@ export default function PreviewPanel({
       await apiSelectModel(sessionIdRef.current, preset.key, selectedChatId).catch(() => {});
     }
     // 通过 IPC selectDevice → POST /render → Flutter 加载 GLB 模型
-    // ★ 用 ref 读取最新 canvasState, 避免捕获旧 state
-    if (isElectron() && canvasStateRef.current === 'running' && preset.glbFile) {
-      try {
-        await window.soloforge!.canvas.selectDevice(
-          sessionIdRef.current,
-          preset.key,
-          preset.glbFile,
-          { w: preset.w, h: preset.h },
-        );
-      } catch (e) {
-        console.warn('[handleSelectDevice] selectDevice failed:', e);
+    // ★ running 立即发; 未 running 暂存, 等 startCanvas 成功后自动发
+    if (isElectron() && preset.glbFile) {
+      if (canvasStateRef.current === 'running') {
+        try {
+          await window.soloforge!.canvas.selectDevice(
+            sessionIdRef.current,
+            preset.key,
+            preset.glbFile,
+            { w: preset.w, h: preset.h },
+          );
+        } catch (e) {
+          console.warn('[handleSelectDevice] selectDevice failed:', e);
+        }
+      } else {
+        // 画布未启动 → 暂存, 等切换到 running 时自动发
+        pendingSelectRef.current = preset;
+        console.log('[handleSelectDevice] canvas not running, pending select saved:', preset.key);
       }
     }
   }, [canvasId, selectedChatId]);
+
+  // ★ 画布进入 running 后, 自动发暂存的 selectDevice
+  useEffect(() => {
+    if (canvasState !== 'running' || !isElectron()) return;
+    const pending = pendingSelectRef.current;
+    if (!pending || !sessionIdRef.current) return;
+    pendingSelectRef.current = null;
+    (async () => {
+      try {
+        await window.soloforge!.canvas.selectDevice(
+          sessionIdRef.current,
+          pending.key,
+          pending.glbFile!,
+          { w: pending.w, h: pending.h },
+        );
+        console.log('[handleSelectDevice] pending select flushed:', pending.key);
+      } catch (e) {
+        console.warn('[handleSelectDevice] pending flush failed:', e);
+      }
+    })();
+  }, [canvasState]);
 
   // ★ 选择设备时写入 store (按 canvasId)
   const handleSelectSizeKey = useCallback((key: string) => {
@@ -329,29 +362,24 @@ export default function PreviewPanel({
     }
   }, [effectiveCanvasId, renderMode, setDeviceInStore, handleSelectDevice]);
 
-  // ★ 下拉框改为独立悬浮窗口 (OS 级 BrowserWindow, 盖在 Flutter HWND 之上)
-  //   画布内容完全不丢失, 不隐藏画布, 不影响其他界面元素
-  //   - 打开: 计算按钮坐标 + 读取主题色 + 构造设备列表 → IPC openDevicePopup
-  //   - 关闭: 用户选择 (onDeviceSelected) 或窗口失焦 (主进程 blur hide)
-  //   - 参数 mode: 由按钮传入最新的 renderMode (避免 setState 异步导致读到旧值)
+  // ★ 下拉框: 轻量级 BrowserWindow (盖住 Flutter HWND, 不弹 DevTools)
+  //   窗口只创建一次, 后续只 setBounds + executeJavaScript 更新内容
+  //   画布不隐藏 — 只做选择, 不影响画布显示
   const toggleDeviceDropdown = (mode?: string) => {
     const effectiveMode = mode || renderMode;
-    if (!isElectron() || !window.soloforge?.canvas) {
-      console.warn('[dropdown] not electron or no canvas api');
-      return;
+    if (effectiveMode !== renderMode) {
+      setRenderMode(effectiveMode);
     }
+    if (!isElectron() || !window.soloforge?.canvas) return;
     if (showDeviceDropdown) {
       window.soloforge.canvas.closeDevicePopup?.().catch(() => {});
       setShowDeviceDropdown(false);
       return;
     }
     const btn = deviceBtnRef.current;
-    if (!btn) { console.warn('[dropdown] deviceBtnRef null'); return; }
+    if (!btn) return;
     const rect = btn.getBoundingClientRect();
-    console.log('[dropdown] btn rect', { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, innerW: window.innerWidth, innerH: window.innerHeight });
-    // ★ 用 effectiveMode 决定设备列表 (2D → DEVICES_2D, 3D → DEVICES_3D)
     const deviceList = effectiveMode === '2D' ? DEVICES_2D : DEVICES_3D;
-    // 读取当前主题色 (跟随主题切换)
     const cs = getComputedStyle(document.documentElement);
     const cssVar = (n: string, fb: string) => (cs.getPropertyValue(n).trim() || fb);
     const theme = {
@@ -361,7 +389,6 @@ export default function PreviewPanel({
       onSurface: cssVar('--color-on-surface', '#18181b'),
       outline: cssVar('--color-outline', '#d4d4d8'),
     };
-    // 按分组构造设备列表
     const groups = (['mobile', 'tablet', 'desktop', 'watch'] as SizeGroup[]).map(g => {
       const items = deviceList.filter(p => p.group === g).map(p => ({
         key: p.key, label: p.label, w: p.w, h: p.h, group: p.group,
@@ -382,18 +409,14 @@ export default function PreviewPanel({
       groups,
       theme,
     };
-    window.soloforge.canvas.openDevicePopup(payload).then(r => {
-      console.log('[dropdown] openDevicePopup result', r);
-    }).catch(e => {
-      console.error('[dropdown] openDevicePopup error', e);
-    });
+    window.soloforge.canvas.openDevicePopup(payload).catch(() => {});
     setShowDeviceDropdown(true);
   };
 
-  // ★ 监听 Electron 弹窗的设备选择回调
+  // ★ 监听 BrowserWindow 弹窗的设备选择回调
   useEffect(() => {
     if (!isElectron()) return;
-    const unsub = window.soloforge!.canvas.onDeviceSelected((data) => {
+    const unsub = window.soloforge!.canvas.onDeviceSelected((data: { key: string }) => {
       handleSelectSizeKey(data.key);
       setShowDeviceDropdown(false);
     });
@@ -407,6 +430,25 @@ export default function PreviewPanel({
   // ★ FIX 2026-07-14: 设备框 ref — reportBounds 上报设备框的精确位置, 而非外部全区域
   //   确保 Flutter HWND 与用户看到的设备框完全对齐
   const deviceFrameRef = useRef<HTMLDivElement | null>(null);
+
+  // ★ 追踪 canvas 实际区域尺寸 (无设备时用此尺寸作为画布逻辑尺寸)
+  // ★ FIX: 初始值 {0,0}, useLayoutEffect 在首帧绘制前同步读取真实尺寸, 避免刷新闪烁
+  // ★ 2026-07-15: 移到自动启动 effect 之前, 避免在依赖数组中引用未声明的变量 (TDZ)
+  const [canvasAreaSize, setCanvasAreaSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  useLayoutEffect(() => {
+    const el = canvasAreaRef.current;
+    if (!el) return;
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        setCanvasAreaSize({ w: Math.floor(r.width), h: Math.floor(r.height) });
+      }
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // 画布跟随应用默认启用 — Electron 环境下自动启动
   // 防重入: autoStartRef 防止同一生命周期内重复触发
@@ -468,11 +510,13 @@ export default function PreviewPanel({
     if (autoStartRef.current || autoStartFailedRef.current) return;
     // ★ 2026-07-13: 只在有真实画布 ID 时自动启动 (不再用 fallback ID)
     //   sessionIdRef 由 useLayoutEffect 同步更新, 保证此处的值是最新的
-    if (isElectron() && canvasState === 'idle' && selectedChatId && sessionIdRef.current && canvasReady && canvasId) {
+    // ★ 2026-07-15: 等待面板宽度从服务器加载完毕 (previewWidthLoaded) 且画布区域已正确测量 (canvasAreaSize.w > 0)
+    //   避免启动时用默认 385px 尺寸, 服务器返回保存的宽度后又要 resize, 造成闪烁
+    if (isElectron() && canvasState === 'idle' && selectedChatId && sessionIdRef.current && canvasReady && canvasId && previewWidthLoaded && canvasAreaSize.w > 0) {
       autoStartRef.current = true;
       void startCanvas();
     }
-  }, [canvasState, selectedChatId, canvasId, canvasReady]);
+  }, [canvasState, selectedChatId, canvasId, canvasReady, previewWidthLoaded, canvasAreaSize]);
 
   // ─────────────────────────────────────────
   // ★ 画布进程崩溃检测 (2026-07-08)
@@ -627,24 +671,6 @@ export default function PreviewPanel({
 
   // 2026-07-11: IncrementalCanvasPusher 已经在 useChatStore 中直接推画布,
   //   PreviewPanel 不再重复推送 — 避免双推冲突 + WebAstPreview 覆盖 Flutter 画布
-
-  // ★ 追踪 canvas 实际区域尺寸 (无设备时用此尺寸作为画布逻辑尺寸)
-  // ★ FIX: 初始值 {0,0}, useLayoutEffect 在首帧绘制前同步读取真实尺寸, 避免刷新闪烁
-  const [canvasAreaSize, setCanvasAreaSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
-  useLayoutEffect(() => {
-    const el = canvasAreaRef.current;
-    if (!el) return;
-    const update = () => {
-      const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.height > 0) {
-        setCanvasAreaSize({ w: Math.floor(r.width), h: Math.floor(r.height) });
-      }
-    };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
 
   // ★ 无设备时: 填满可用区域, 四边各留出血线
   //   有设备时: 使用设备原生尺寸
@@ -1062,10 +1088,10 @@ export default function PreviewPanel({
             </MountTransition>
           </div>
 
-          {/* 2D / 3D 渲染模式 + 设备选择 — DOM 下拉框 (与协同副模型同款 framer-motion 动画) */}
+          {/* 2D / 3D 渲染模式 + 设备选择 — 下拉框走 BrowserWindow (盖住 Flutter HWND) */}
           <div
             ref={deviceBtnRef}
-            className={`relative ${showDeviceDropdown ? 'z-50' : ''}`}
+            className="relative"
             data-device-btn
           >
             <div className="flex items-center rounded-md overflow-hidden border border-[var(--color-outline)]/30">
@@ -1122,8 +1148,8 @@ export default function PreviewPanel({
               </motion.button>
             </div>
 
-            {/* 设备下拉框已改为独立悬浮窗口 (main.cjs 的 deviceDropdownWindow),
-                盖在 Flutter HWND 之上, 画布内容不丢失。此处不再渲染 DOM 下拉框。 */}
+            {/* 设备下拉框: 轻量级 BrowserWindow (main.cjs), 盖住 Flutter HWND,
+                不弹 DevTools, 窗口复用, 画布不隐藏。此处不渲染 DOM 下拉框。 */}
           </div>
 
           {canvasError && (
