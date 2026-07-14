@@ -13,6 +13,9 @@ import { useWorkspaceStore } from './state/useWorkspaceStore';
 
 export default function App() {
   // ── 启动诊断 ──
+  // ★ 2026-07-14: 移除 POST /api/debug-log 请求
+  //   每次刷新都发 POST, 经过 patchedFetch (await ensureToken) 增加不必要的网络往返。
+  //   console.log 已足够, DevTools Console 能看到。
   useEffect(() => {
     const sf = (window as any).soloforge;
     const diag = {
@@ -22,7 +25,6 @@ export default function App() {
       hasSelectFolder: !!sf?.selectFolder,
     };
     console.log('[App] mount diagnostic:', diag);
-    try { fetch('/api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: 'App mount', ...diag }) }); } catch {}
   }, []);
 
   const {
@@ -45,9 +47,9 @@ export default function App() {
   const chatsStoreSelectedId = useChatsStore((s) => s.selectedChatId);
   const chatsCount = useChatsStore((s) => s.chats.length);
   useEffect(() => {
-    // 诊断: 每次选中对话变化时发日志
-    const chat = useChatsStore.getState().chats.find(c => c.id === chatsStoreSelectedId);
-    try { fetch('/api/debug-log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: 'chatSelect', chatsCount, selectedId: chatsStoreSelectedId, selectedTitle: chat?.title, workspaceFolder: chat?.workspaceFolder }) }); } catch {}
+    // ★ 2026-07-14: 移除 POST /api/debug-log 请求
+    //   每次选中对话变化都发 POST, 经过 patchedFetch (await ensureToken)
+    //   增加不必要的网络往返, 且会阻塞选中对话的渲染。
     if (chatsStoreSelectedId && chatsStoreSelectedId !== selectedChatId) {
       setSelectedChatId(chatsStoreSelectedId);
     }
@@ -160,10 +162,17 @@ export default function App() {
         if (!vr.ok) return;
         const vd = await vr.json();
         const items: Array<{ id: string; hasKey: boolean }> = vd?.items || [];
-        const vaultIds = items.filter(i => i.hasKey).map(i => i.id);
-        if (vaultIds.length === 0) return; // vault 中没有密钥, 无法恢复
 
-        // 4. 逐个 reveal 明文密钥
+        // ★ 2026-07-14: 只 reveal 真正缺 apiKey 的 provider 对应的 vault key
+        //   原来对所有有 key 的 vault ID 都 reveal, 浪费 N 个不必要的网络往返。
+        //   现在先求交集: provider 缺 apiKey && vault 有 key → 只 reveal 这些。
+        const needsKeyIds = new Set(providers.filter((p: any) => p.enabled && !p.apiKey).map((p: any) => p.id));
+        const vaultIds = items
+          .filter(i => i.hasKey && needsKeyIds.has(i.id))
+          .map(i => i.id);
+        if (vaultIds.length === 0) return; // 无需恢复任何 key
+
+        // 4. 逐个 reveal 明文密钥 (只 reveal 真正需要的)
         const reveals = await Promise.all(
           vaultIds.map(async (id) => {
             try {

@@ -385,11 +385,13 @@ export function createSettingsStore(config: StoreConfig): SettingsStore {
               if (typeof window !== 'undefined') {
                 window.dispatchEvent(new Event('storage'));
                 window.dispatchEvent(new CustomEvent('providers_updated'));
-                // 延迟再派发一次, 确保 React useEffect 已注册 listener
+                // ★ 2026-07-14: 用 microtask (setTimeout 0) 替代 setTimeout 50
+                //   50ms 的宏延迟在刷新关键路径上白白浪费, microtask 足够让
+                //   React useEffect 注册好 listener 后再派发。
                 setTimeout(() => {
                   window.dispatchEvent(new Event('storage'));
                   window.dispatchEvent(new CustomEvent('providers_updated'));
-                }, 50);
+                }, 0);
               }
             } catch { /* SSR/Node 环境跳过 */ }
           })

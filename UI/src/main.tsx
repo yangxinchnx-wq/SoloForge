@@ -83,8 +83,22 @@ if (typeof window !== 'undefined') {
 //   两者失败都不阻塞 UI, store 降级为空状态
 if (typeof window !== 'undefined') {
   initChatsEventBridge();
-  useChatsStore.getState().loadFromBackend();
-  useChatStore.getState().loadConversationsFromBackend();
+
+  // ★ 2026-07-14: 并行发起 chats list + conversations 加载
+  //   原来是两个独立的异步调用 (各自内部 await), 但由于 patchedFetch 的
+  //   ensureToken() 单飞门控, 它们实际是并行的。这里显式用 Promise.allSettled
+  //   确保两者都完成后才标记 ready, 便于后续可能的 UI 优化。
+  Promise.allSettled([
+    useChatsStore.getState().loadFromBackend(),
+    useChatStore.getState().loadConversationsFromBackend(),
+  ]).then(([chatResult, convResult]) => {
+    if (chatResult.status === 'rejected') {
+      console.warn('[main] chats list 加载失败:', chatResult.reason);
+    }
+    if (convResult.status === 'rejected') {
+      console.warn('[main] conversations 加载失败:', convResult.reason);
+    }
+  });
 
   // 2026-07-10: 初始化 Actor 系统 + 持久化恢复 (P3 集成)
   //   - 从 IndexedDB/localStorage 恢复热状态 (tasks, actors, messages)
@@ -112,16 +126,10 @@ if (typeof window !== 'undefined') {
     });
   }
 
-  // 2026-07-04 诊断: 全局 mousedown 捕获器 (capture 阶段), 看事件到底被谁吃了
-  // 用于排查 Header 某些区域点击无响应的问题
-  window.addEventListener('mousedown', (e: MouseEvent) => {
-    const t = e.target as HTMLElement;
-    const tag = t.tagName.toLowerCase();
-    const cls = (t.className || '').toString().slice(0, 80);
-    const edge = t.getAttribute('data-edge') || t.closest('[data-edge]')?.getAttribute('data-edge');
-    const winCtrl = !!t.closest('[data-window-controls]');
-    console.log('[global-mdown]', { tag, cls, edge, winCtrl, x: e.clientX, y: e.clientY });
-  }, true);  // capture: true - 在事件到达任何元素之前先打印
+  // ★ 2026-07-14: 移除全局 mousedown 捕获器
+  //   原来用于排查 Header 点击问题, 但每次鼠标点击都会 console.log + 序列化 DOM,
+  //   在 Electron 中 console.log 走 IPC 到主进程, 高频输出阻塞渲染进程。
+  //   问题已修复, 不再需要此诊断探针。
 }
 
 // Suppress harmless 'ResizeObserver loop completed with undelivered notifications' browser engine warnings
