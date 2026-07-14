@@ -1,38 +1,5 @@
 <!doctype html>
-<!--
-  SoloForge UI 入口 HTML
-
-  ┌─────────────────────────────────────────────────────────────┐
-  │ 重要: 此文件不应包含主题预设（THEME_PRESETS）的任何副本     │
-  ├─────────────────────────────────────────────────────────────┤
-  │ 历史(2026-07-02 之前):                                    │
-  │   此处曾有一段 56 行 inline <script>,手写 6 个主题的       │
-  │   bg / surface / primary 等 CSS 变量,用于 React mount      │
-  │   之前给 <html> 注入底色(防 FOUC)。                       │
-  │                                                             │
-  │ 问题:                                                       │
-  │   inline script 与 src/context/ThemeContext.tsx 的          │
-  │   THEME_PRESETS 是双份 source-of-truth,改一份忘改另一份    │
-  │   时,React mount 之前的 CSS 变量是旧值,导致用户看到         │
-  │   "主体色调不一致"的旧版 UI。                              │
-  │                                                             │
-  │ 当前方案(Electron-only):                                   │
-  │   1. 删除 inline script,只保留 HTML 骨架                   │
-  │   2. THEME_PRESETS 只有一份,在 ThemeContext.tsx           │
-  │   3. FOUC 防护交给 Electron 主进程:                        │
-  │      - mainWindow 用 transparent: true(必须 #00000000 底色)│
-  │      - mainWindow.once('ready-to-show') 推迟显示,         │
-  │        等 React mount + ThemeContext useEffect 跑完        │
-  │   4. 用户看不到任何"透明/桌面背景"一闪而过                │
-  │                                                             │
-  │ 强制刷新(Ctrl+Shift+R)黑屏修复(2026-07-04):               │
-  │   ready-to-show 只在窗口首次创建时触发,刷新时不触发。     │
-  │   刷新时 CSS 文件重新下载,var(--color-bg) 未定义 → 背景    │
-  │   透明 → transparent:true 窗口透出黑色桌面。              │
-  │   修复: 在 <head> 内联一段硬编码背景色 + 启动加载动画,     │
-  │   不依赖任何 CSS 变量,在 CSS bundle 下载前就生效。         │
-  └─────────────────────────────────────────────────────────────┘
--->
+<!-- SoloForge UI 入口 HTML — 主题预设只在 ThemeContext.tsx 中维护,FOUC 防护由 Electron 主进程处理 -->
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
