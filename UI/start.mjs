@@ -1,4 +1,4 @@
-// start.mjs — 一键启动 Go git-service (3002) + Node.js dev server (3000) + Electron 壳子
+// start.mjs — 一键启动 Garnet(6379) + RACER Core(3001) + Go git-service(3002) + Node.js dev server(3000) + Electron 壳子
 import { spawn, execSync } from "child_process";
 import path from "path";
 import fs from "fs";
@@ -6,6 +6,30 @@ import net from "net";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// ── 0. 启动 Garnet (6379) — RACER Core 依赖 ────────────────────
+let garnetProcess = null;
+// dev 模式下 Garnet 在打包产物路径中
+const garnetExe = path.join(__dirname, "release", "win-unpacked", "resources", "garnet", "GarnetServer.exe");
+
+function startGarnet() {
+  if (!fs.existsSync(garnetExe)) {
+    console.log("[start] GarnetServer.exe 不存在, 跳过 (假设已外部运行)");
+    return;
+  }
+  console.log("[start] 启动 Garnet (port 6379)...");
+  garnetProcess = spawn(garnetExe, ["--port", "6379"], {
+    cwd: path.dirname(garnetExe),
+    stdio: "pipe",
+    shell: false,
+    windowsHide: true,
+  });
+  garnetProcess.stdout?.on("data", (d) => process.stdout.write(`[garnet] ${d}`));
+  garnetProcess.stderr?.on("data", (d) => process.stderr.write(`[garnet] ${d}`));
+  garnetProcess.on("exit", (code) => {
+    if (code !== 0) console.error(`[start] Garnet 异常退出 (code ${code})`);
+  });
+}
 
 // ── 1. 确保 git-service.exe 已编译 ────────────────────────────
 const gitExe = path.join(__dirname, "git-service", "git-service.exe");
@@ -58,7 +82,28 @@ gitService.on("exit", (code) => {
   }
 });
 
-// ── 4. 等 git-service 就绪后启动 Node.js ──────────────────────
+// ── 4. 启动 RACER Core (3001) ─────────────────────────────────
+let coreProcess = null;
+const coreEntry = path.join(__dirname, "resources", "core", "server.mjs");
+
+function startRacerCore() {
+  if (!fs.existsSync(coreEntry)) {
+    console.warn(`[start] RACER Core 不存在 (${coreEntry}), 跳过 — /api/events/stream 将 502`);
+    return;
+  }
+  console.log("[start] 启动 RACER Core (port 3001)...");
+  coreProcess = spawn("node", [coreEntry], {
+    cwd: __dirname,
+    stdio: "inherit",
+    shell: true,
+    env: { ...process.env },
+  });
+  coreProcess.on("exit", (code) => {
+    console.log(`[start] RACER Core 已退出 (code ${code})`);
+  });
+}
+
+// ── 5. 启动 Node.js dev server (3000) ─────────────────────────
 let nodeProcess = null;
 
 function startNode() {
@@ -76,7 +121,7 @@ function startNode() {
   });
 }
 
-// ── 5. 等 Node.js 就绪后启动 Electron 壳子 ────────────────────
+// ── 6. 等 Node.js 就绪后启动 Electron 壳子 ────────────────────
 let electronProcess = null;
 
 function waitForPort(port, host = "127.0.0.1", timeoutMs = 30000) {
@@ -134,11 +179,13 @@ async function startElectron() {
   });
 }
 
-// ── 6. 优雅退出：关闭所有进程 ──────────────────────────────────
+// ── 7. 优雅退出：关闭所有进程 ──────────────────────────────────
 function cleanup() {
   console.log("\n[start] 正在关闭所有服务...");
   try { if (electronProcess) electronProcess.kill(); } catch {}
   try { if (nodeProcess) nodeProcess.kill(); } catch {}
+  try { if (coreProcess) coreProcess.kill(); } catch {}
+  try { if (garnetProcess) garnetProcess.kill(); } catch {}
   try { gitService.kill(); } catch {}
   process.exit(0);
 }
@@ -146,13 +193,17 @@ function cleanup() {
 process.on("SIGINT", cleanup);
 process.on("SIGTERM", cleanup);
 
-// 等最多 3 秒让 git-service 启动，然后无论是否 ready 都启动 Node
+// ── 启动流程: Garnet + git-service → RACER Core → Node.js → Electron ──
+startGarnet();
+
+// 等最多 3 秒让 git-service 启动，然后无论是否 ready 都启动后续服务
 let waited = 0;
 const check = setInterval(() => {
   waited += 200;
   if (gitReady || waited >= 3000) {
     clearInterval(check);
-    startNode();
-    startElectron(); // 异步等待 port 3000 就绪后启动
+    startRacerCore();  // RACER Core 依赖 Garnet
+    startNode();       // Node.js 依赖 git-service
+    startElectron();   // Electron 异步等待 port 3000 就绪后启动
   }
 }, 200);
