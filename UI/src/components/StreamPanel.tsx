@@ -121,6 +121,15 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
   const rootTaskId = streamMeta?.rootTaskId;
   const task = useRootTaskFromParts(chatId, userInput, rootTaskId);
 
+  // ★ FIX 2026-07-14: 所有 Hook 必须在任何条件 return 之前调用 (Rules of Hooks)
+  //   之前 useLastAssistantMessage + useMemo 放在了 if (isActive) return 之后,
+  //   导致 isActive 切换时 Hook 数量变化 → "Rendered more hooks than during the previous render"
+  const lastMsg = useLastAssistantMessage(chatId);
+  const usageParts = useMemo(
+    () => (lastMsg?.parts.filter(p => p.type === 'usage') as UIUsagePart[]) ?? [],
+    [lastMsg],
+  );
+
   if (!task && !summary.hasData) return null;
 
   const isDone = summary.isDone;
@@ -215,13 +224,6 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
       </div>
     );
   }
-
-  // ★ 2026-07-14 v2: 从 parts 提取 usage 数据, 显示在总结下方
-  const lastMsg = useLastAssistantMessage(chatId);
-  const usageParts = useMemo(
-    () => (lastMsg?.parts.filter(p => p.type === 'usage') as UIUsagePart[]) ?? [],
-    [lastMsg],
-  );
 
   // 完成/错误: 显示总结块 + Token 统计
   if (!isDone && !isError) return null;
