@@ -48,6 +48,12 @@ import React, { createContext, useContext, useReducer, useEffect, useRef, useMem
 
 // ── 1. State 类型定义 ─────────────────────────────────────────
 
+// ★ 2026-07-15: 预览面板宽度上限从 750 降到 600
+//   750 太宽, 导致画布区域过大, 挤压聊天区
+//   600 足以容纳大多数设备预设 (最宽 iMac 2560 会缩放) + 自由画布
+export const PREVIEW_MAX_WIDTH = 600;
+export const PREVIEW_MIN_WIDTH = 320;
+
 export interface LayoutState {
   sidebarWidth: number;
   previewWidth: number;
@@ -75,7 +81,7 @@ type Action =
 const INITIAL_STATE: LayoutState = {
   sidebarWidth: 250,
   previewWidth: 385,
-  previewMinWidth: 320,
+  previewMinWidth: PREVIEW_MIN_WIDTH,
   isResizingSidebar: false,
   isResizingPreview: false,
   dragStartSidebarWidth: 250,
@@ -250,6 +256,8 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   // ── 4.3 server 回填 previewWidth (低优先级, 不影响拖动) ──
+  // ★ 2026-07-15: 加载时钳制到 [PREVIEW_MIN_WIDTH, PREVIEW_MAX_WIDTH]
+  //   之前保存的值可能超过新上限 (如 750), 需要钳制并回写服务器
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -259,8 +267,20 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         const data = await res.json();
         const w = data?.value;
         if (cancelled) return;
-        if (typeof w === 'number' && w >= 160 && w <= 1200) {
+        if (typeof w === 'number' && w >= PREVIEW_MIN_WIDTH && w <= PREVIEW_MAX_WIDTH) {
           dispatch({ type: 'loadPreviewWidth', width: w });
+          return;
+        }
+        // 值超出范围 → 用默认值, 并回写服务器纠正
+        if (typeof w === 'number' && w > PREVIEW_MAX_WIDTH) {
+          const clamped = PREVIEW_MAX_WIDTH;
+          dispatch({ type: 'loadPreviewWidth', width: clamped });
+          // 异步回写, 不阻塞
+          fetch('/api/settings/previewWidth', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ value: clamped }),
+          }).catch(() => {});
           return;
         }
         dispatch({ type: 'previewWidthLoaded' });
@@ -297,7 +317,7 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       } else if (s.isResizingPreview) {
         const newWidth = window.innerWidth - p.x;
-        if (newWidth >= s.previewMinWidth && newWidth <= 750) {
+        if (newWidth >= s.previewMinWidth && newWidth <= PREVIEW_MAX_WIDTH) {
           dispatch({ type: 'setPreviewWidth', width: newWidth });
         }
       }
@@ -331,7 +351,7 @@ export const LayoutProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       } else if (s.isResizingPreview) {
         const finalWidth = p ? (window.innerWidth - p.x) : s.previewWidth;
-        const clamped = Math.max(s.previewMinWidth, Math.min(750, finalWidth));
+        const clamped = Math.max(s.previewMinWidth, Math.min(PREVIEW_MAX_WIDTH, finalWidth));
         if (p && clamped !== s.previewWidth) {
           dispatch({ type: 'endResizePreview', width: clamped });
           savePreviewWidth(clamped);
