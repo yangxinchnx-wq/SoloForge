@@ -35,7 +35,7 @@ const TABS: TabItem[] = [
   { id: 'local-model', label: '03. 本地模型', icon: Laptop },
   { id: 'mcp', label: '04. MCP 工具', icon: Cpu },
   { id: 'skills-rules', label: '05. 智能规则', icon: ShieldCheck },
-  { id: 'memory', label: '06. 助理', icon: Bot },
+  { id: 'memory', label: '06. 助理配置', icon: Bot },
   { id: 'proxy', label: '07. 网络代理', icon: Navigation },
   { id: 'knowledge-base', label: '08. 知识库', icon: Database },
   { id: 'channels', label: '09. 消息连接', icon: Share2 },
