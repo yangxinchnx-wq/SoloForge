@@ -11,7 +11,7 @@
  *         GET /api/java-agent/api/agents/{id} (→ 8770/api/agents/{id})
  */
 import React, { useState, useEffect, useCallback } from 'react';
-import { Bot, RefreshCw, Cpu, Activity, Zap, Workflow, ShieldCheck, X, Database, ThumbsUp, ThumbsDown, Send, Link2, Upload, FileCode, Code, Globe, ChevronDown, Plus, Pencil, Trash2, Save } from '../../utils/icons';
+import { Bot, RefreshCw, Cpu, Activity, Zap, Workflow, ShieldCheck, X, Database, ThumbsUp, ThumbsDown, Send, Link2, Upload, FileCode, Code, Globe, ChevronDown, Plus, Pencil, Trash2, Save, Code2, Terminal, Search, Eye, Wrench, Rocket, Flame, Brain, Layers, Compass, Gauge, FileText } from '../../utils/icons';
 
 interface AgentSummary {
   id: string;
@@ -70,7 +70,36 @@ const CAPABILITY_LABELS: Record<string, string> = {
   deploy: '部署发布',
   monitor: '监控运维',
   communicate: '沟通协作',
+  design: '架构设计',
+  optimize: '性能优化',
+  secure: '安全审计',
+  translate: '语言翻译',
+  summarize: '内容摘要',
+  extract: '信息提取',
+  classify: '分类标注',
+  generate: '内容生成',
+  validate: '数据校验',
+  convert: '格式转换',
+  schedule: '任务调度',
+  notify: '消息通知',
+  log: '日志分析',
+  benchmark: '基准测试',
+  cleanup: '代码清理',
+  research: '调研分析',
+  brainstorm: '头脑风暴',
+  estimate: '工时估算',
+  review_pr: 'PR审查',
+  migrate: '版本迁移',
+  fix: '缺陷修复',
+  build: '构建打包',
+  release: '发布管理',
+  config: '配置管理',
 };
+
+function getAvatarIcon(avatar: string): React.ComponentType<any> | null {
+  const found = AVATAR_OPTIONS.find(a => a.label === avatar);
+  return found ? found.icon : null;
+}
 
 function getStrategyLabel(strategy: string) {
   return STRATEGY_LABELS[strategy] || strategy;
@@ -267,11 +296,10 @@ export default function AgentCustomTab() {
                       style={{ background: 'none', border: 'none', padding: 0, textAlign: 'left' }}
                     >
                       <div className={`p-2 rounded-xl border shrink-0 ${meta.color}`}>
-                        {agent.avatar ? (
-                          <span className="text-lg">{agent.avatar}</span>
-                        ) : (
-                          <RoleIcon className="w-5 h-5" />
-                        )}
+                        {(() => {
+                          const AvatarIcon = getAvatarIcon(agent.avatar);
+                          return AvatarIcon ? <AvatarIcon className="w-5 h-5" /> : <RoleIcon className="w-5 h-5" />;
+                        })()}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-2">
@@ -413,7 +441,10 @@ function AgentDetailPanel({ detail, onClose, onEdit, onDelete, onToggle, confirm
       {/* Header */}
       <div className="flex items-center gap-3 p-4 border-b border-[var(--color-outline)]/20 bg-[var(--color-bg)]">
         <div className={`p-2.5 rounded-xl border ${meta.color}`}>
-          {detail.avatar ? <span className="text-2xl">{detail.avatar}</span> : <RoleIcon className="w-6 h-6" />}
+          {(() => {
+            const AvatarIcon = getAvatarIcon(detail.avatar || '');
+            return AvatarIcon ? <AvatarIcon className="w-6 h-6" /> : <RoleIcon className="w-6 h-6" />;
+          })()}
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
@@ -1199,11 +1230,11 @@ const ROLE_OPTIONS = [
   { value: 'REVIEWER', label: '审查者 (REVIEWER)' },
 ];
 
-const LEVEL_OPTIONS = [
-  { value: 'junior', label: '初级 (Junior)' },
-  { value: 'senior', label: '高级 (Senior)' },
-  { value: 'expert', label: '专家 (Expert)' },
-  { value: 'master', label: '大师 (Master)' },
+const WEIGHT_OPTIONS = [
+  { value: 'low', label: '轻量 (Low)' },
+  { value: 'medium', label: '中量 (Medium)' },
+  { value: 'high', label: '重量 (High)' },
+  { value: 'critical', label: '关键 (Critical)' },
 ];
 
 const STRATEGY_OPTIONS = [
@@ -1219,7 +1250,24 @@ const DOMAIN_OPTIONS = [
   { value: 'general', label: '通用' },
 ];
 
-const AVATAR_OPTIONS = ['💻', '📋', '🔍', '📝', '🎨', '🧪', '🛡️', '🚀', '🤖', '🧠', '📊', '🔧', '🌐', '📦', '🎯', '💡'];
+const AVATAR_OPTIONS = [
+  { icon: Code2, label: '代码' },
+  { icon: Terminal, label: '终端' },
+  { icon: Search, label: '搜索' },
+  { icon: FileText, label: '文档' },
+  { icon: Compass, label: '指南' },
+  { icon: ShieldCheck, label: '护盾' },
+  { icon: Rocket, label: '火箭' },
+  { icon: Bot, label: '机器人' },
+  { icon: Brain, label: '智能' },
+  { icon: Activity, label: '活动' },
+  { icon: Wrench, label: '工具' },
+  { icon: Globe, label: '全球' },
+  { icon: Layers, label: '图层' },
+  { icon: Gauge, label: '仪表' },
+  { icon: Flame, label: '火焰' },
+  { icon: Eye, label: '眼睛' },
+];
 
 function AgentEditorModal({ agent, onClose, onSave }: {
   agent: AgentDetail | null; onClose: () => void; onSave: (data: Record<string, any>) => Promise<void>;
@@ -1228,12 +1276,11 @@ function AgentEditorModal({ agent, onClose, onSave }: {
   const [form, setForm] = useState({
     id: agent?.id || '',
     name: agent?.name || '',
-    avatar: agent?.avatar || '🤖',
+    avatar: agent?.avatar || 'Bot',
     role: agent?.role || 'EXECUTOR',
     domain: agent?.domain || 'general',
-    level: agent?.level || 'senior',
+    level: agent?.level || 'medium',
     strategy: agent?.strategy || 'direct',
-    modelBinding: agent?.modelBinding || 'gpt-4o',
     temperature: agent?.temperature ?? 0.3,
     maxRounds: agent?.maxRounds ?? 8,
     systemPrompt: agent?.systemPrompt || '',
@@ -1301,24 +1348,26 @@ function AgentEditorModal({ agent, onClose, onSave }: {
           <div>
             <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">头像</label>
             <div className="flex flex-wrap gap-1.5">
-              {AVATAR_OPTIONS.map(a => (
-                <button key={a} onClick={() => update('avatar', a)}
-                  className={`w-8 h-8 rounded-lg border text-base flex items-center justify-center transition-colors cursor-pointer ${
-                    form.avatar === a ? 'border-primary/50 bg-primary/15' : 'border-[var(--color-outline)]/20 hover:bg-[var(--color-surface-bright)]/40'
-                  }`}>{a}</button>
+              {AVATAR_OPTIONS.map(({ icon: Icon, label }) => (
+                <button key={label} onClick={() => update('avatar', label)}
+                  className={`w-9 h-9 rounded-lg border flex items-center justify-center transition-colors cursor-pointer active:scale-[0.96] ${
+                    form.avatar === label ? 'border-[var(--color-primary)]/50 bg-[var(--color-primary)]/15 text-[var(--color-primary)]' : 'border-[var(--color-outline)]/20 hover:bg-[var(--color-surface-bright)]/40 text-on-surface/60'
+                  }`} title={label}>
+                  <Icon className="w-4 h-4" />
+                </button>
               ))}
             </div>
           </div>
 
-          {/* Role + Level + Strategy */}
+          {/* Role + Weight + Strategy */}
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">角色</label>
               <CustomSelect value={form.role} onChange={v => update('role', v)} options={ROLE_OPTIONS} />
             </div>
             <div>
-              <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">等级</label>
-              <CustomSelect value={form.level} onChange={v => update('level', v)} options={LEVEL_OPTIONS} />
+              <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">资源权重</label>
+              <CustomSelect value={form.level} onChange={v => update('level', v)} options={WEIGHT_OPTIONS} />
             </div>
             <div>
               <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">策略</label>
@@ -1326,17 +1375,10 @@ function AgentEditorModal({ agent, onClose, onSave }: {
             </div>
           </div>
 
-          {/* Domain + Model */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">领域</label>
-              <CustomSelect value={form.domain} onChange={v => update('domain', v)} options={DOMAIN_OPTIONS} />
-            </div>
-            <div>
-              <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">模型绑定</label>
-              <input value={form.modelBinding} onChange={e => update('modelBinding', e.target.value)}
-                className="w-full px-3 py-1.5 text-[11px] rounded-lg bg-[var(--color-bg)] border border-[var(--color-outline)]/20 text-on-surface placeholder:text-on-surface/25 focus:outline-none focus:border-primary/40" />
-            </div>
+          {/* Domain */}
+          <div>
+            <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">领域</label>
+            <CustomSelect value={form.domain} onChange={v => update('domain', v)} options={DOMAIN_OPTIONS} />
           </div>
 
           {/* Temperature + MaxRounds */}
@@ -1357,10 +1399,44 @@ function AgentEditorModal({ agent, onClose, onSave }: {
 
           {/* Capabilities */}
           <div>
-            <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1 block">能力 (逗号分隔)</label>
-            <input value={form.capabilities} onChange={e => update('capabilities', e.target.value)}
-              placeholder="read, write, search, execute, analyze"
-              className="w-full px-3 py-1.5 text-[11px] rounded-lg bg-[var(--color-bg)] border border-[var(--color-outline)]/20 text-on-surface placeholder:text-on-surface/25 focus:outline-none focus:border-primary/40 font-mono" />
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono">能力</label>
+              <button type="button" onClick={() => {
+                const all = Object.keys(CAPABILITY_LABELS);
+                const current = new Set(form.capabilities.split(',').map(s => s.trim()).filter(Boolean));
+                const allSelected = all.every(k => current.has(k));
+                update('capabilities', allSelected ? '' : all.join(', '));
+              }} className="text-[10px] text-[var(--color-primary)] hover:text-[var(--color-primary)]/70 cursor-pointer font-mono transition-colors">
+                {(() => {
+                  const all = Object.keys(CAPABILITY_LABELS);
+                  const current = new Set(form.capabilities.split(',').map(s => s.trim()).filter(Boolean));
+                  const allSelected = all.every(k => current.has(k));
+                  return allSelected ? '取消全选' : '全选';
+                })()}
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {Object.entries(CAPABILITY_LABELS).map(([key, label]) => {
+                const current = new Set(form.capabilities.split(',').map(s => s.trim()).filter(Boolean));
+                const selected = current.has(key);
+                return (
+                  <button key={key} type="button"
+                    onClick={() => {
+                      const next = new Set(current);
+                      if (next.has(key)) next.delete(key); else next.add(key);
+                      update('capabilities', Array.from(next).join(', '));
+                    }}
+                    className={`text-[10px] px-2 py-1 rounded-md border transition-colors cursor-pointer active:scale-[0.96] ${
+                      selected
+                        ? 'border-[var(--color-primary)]/30 bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-bold'
+                        : 'border-[var(--color-outline)]/20 text-on-surface/50 hover:bg-[var(--color-surface-bright)]/40'
+                    }`}>
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[9px] text-on-surface/30 mt-1 font-mono">已选 {form.capabilities.split(',').filter(Boolean).length} / {Object.keys(CAPABILITY_LABELS).length} 项</p>
           </div>
 
           {/* System Prompt */}
