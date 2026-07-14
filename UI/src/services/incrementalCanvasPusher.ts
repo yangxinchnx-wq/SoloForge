@@ -468,11 +468,20 @@ class LineTracker {
       //   2. 工具调用: {"tool":"canvas_push_ui","args":{"dslJson":"{...}"}}
       if (this.translateLang === '__json_dsl__') {
         const parsed = JSON.parse(codeToTranslate);
+        console.log('[LineTracker] __json_dsl__ parsed, keys=', Object.keys(parsed || {}), 'isFinal=', isFinal);
 
         // Case 1: 直接 DSL (有 type 字段)
         if (parsed && parsed.type) {
           this._pushed = true;
           this.pushRawDsl(parsed, codeToTranslate, isFinal);
+          return;
+        }
+
+        // Case 1b: 已包装的 DSL 格式 {ui: {...}, platform: "material"}
+        //   LLM 可能直接返回这种格式, 不需要再包装
+        if (parsed && parsed.ui) {
+          this._pushed = true;
+          this.pushWrappedDsl(parsed, codeToTranslate, isFinal);
           return;
         }
 
@@ -488,6 +497,12 @@ class LineTracker {
                 this.pushRawDsl(innerDsl, dslJsonStr, isFinal);
                 return;
               }
+              // innerDsl 也可能是已包装格式
+              if (innerDsl && innerDsl.ui) {
+                this._pushed = true;
+                this.pushWrappedDsl(innerDsl, dslJsonStr, isFinal);
+                return;
+              }
             } catch {
               // dslJson 解析失败, 静默跳过
             }
@@ -498,9 +513,16 @@ class LineTracker {
             this.pushRawDsl(parsed.args, codeToTranslate, isFinal);
             return;
           }
+          // args 本身也可能是已包装格式
+          if (parsed.args.ui) {
+            this._pushed = true;
+            this.pushWrappedDsl(parsed.args, codeToTranslate, isFinal);
+            return;
+          }
         }
 
         // 不是已知的 JSON 格式, 不推送
+        console.warn('[LineTracker] JSON DSL 格式未识别, keys=', Object.keys(parsed || {}), 'code=', codeToTranslate.slice(0, 200));
         return;
       }
 
@@ -529,6 +551,48 @@ class LineTracker {
     } finally {
       this.currentPromise = null;
     }
+  }
+
+  /**
+   * ★ 2026-07-14: 推送已包装的 DSL 格式 {ui: {...}, platform: "material"}
+   * LLM 直接返回了完整的包装格式, 不需要再包一层
+   */
+  private pushWrappedDsl(wrappedDsl: any, code: string, isFinal: boolean): void {
+    const canvasSessionId = getCanvasSessionId(this.chatSessionId);
+    // 确保 platform 字段存在
+    if (!wrappedDsl.platform) wrappedDsl.platform = 'material';
+    const dsl = wrappedDsl;
+
+    if (typeof window !== 'undefined' && window.soloforge?.canvas) {
+      ensureCanvasAndPush(canvasSessionId, dsl, this.chatSessionId).then((r) => {
+        if (!r.ok) {
+          console.warn('[LineTracker] ensureCanvasAndPush (wrapped) failed:', r.error, 'sessionId:', canvasSessionId);
+          usePreviewStreamStore.getState().recordPushError(this.chatSessionId,
+            `canvas.push: ${r.error || 'failed'}`);
+        }
+      }).catch((err: any) => {
+        console.warn('[LineTracker] ensureCanvasAndPush (wrapped) exception:', err?.message || err, 'sessionId:', canvasSessionId);
+        usePreviewStreamStore.getState().recordPushError(this.chatSessionId,
+          `canvas.push: ${err?.message || 'exception'}`);
+      });
+    }
+
+    const previewStore = usePreviewStreamStore.getState();
+    if (!previewStore.getEntry(this.chatSessionId)) {
+      previewStore.initEntry(this.chatSessionId, { language: 'json', sessionId: canvasSessionId });
+    }
+    const root = dsl.ui;
+    previewStore.updateStream(this.chatSessionId, {
+      raw: code,
+      payload: { language: 'json', framework: 'json', source_code: code, preview: { root } } as any,
+      errors: [], done: isFinal,
+    });
+    if (isFinal) {
+      previewStore.confirmPayload(this.chatSessionId, {
+        language: 'json', framework: 'json', source_code: code, preview: { root } } as any,
+      );
+    }
+    console.log(`[LineTracker] pushWrappedDsl done: isFinal=${isFinal}, root.type=${root?.type}`);
   }
 
   /**
