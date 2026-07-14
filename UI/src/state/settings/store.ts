@@ -386,6 +386,8 @@ export function createSettingsStore(config: StoreConfig): SettingsStore {
                 window.dispatchEvent(new Event('storage'));
                 window.dispatchEvent(new CustomEvent('providers_updated'));
                 // 延迟再派发一次, 确保 React useEffect 已注册 listener
+                //   ★ 50ms 是必要的: schedulePersistFlush 用 requestIdleCallback 异步写 localStorage,
+                //   buildMap() 从 localStorage 读数据。50ms 给 idle 回调足够时间落盘。
                 setTimeout(() => {
                   window.dispatchEvent(new Event('storage'));
                   window.dispatchEvent(new CustomEvent('providers_updated'));
