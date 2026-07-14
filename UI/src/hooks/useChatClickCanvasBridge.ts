@@ -226,6 +226,18 @@ export function useChatClickCanvasBridge(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId]);
 
+  // ★ 2026-07-14: 监听画布创建事件 → 刷新列表 (懒创建场景)
+  //   ensureCanvasForChat 创建画布后派发此事件, bridge 重新 resolve 拿到真实画布 ID
+  useEffect(() => {
+    const handler = () => {
+      lastResolvedFor.current = null;
+      void resolve(chatId || '');
+    };
+    window.addEventListener('soloforge-canvas-created', handler);
+    return () => window.removeEventListener('soloforge-canvas-created', handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatId]);
+
   return {
     canvasId,
     canvases,

@@ -35,6 +35,11 @@ export interface ISurrealStore {
    *   - Surreal 用 SELECT * FROM session_state
    */
   listAllSessionIds?(): Promise<string[]>;
+  /**
+   * ★ 2026-07-14: 按 owner 查询画布 sessionId 列表
+   * 用于删除对话时级联清理 SurrealDB 中不在内存的画布
+   */
+  listSessionIdsByOwner?(ownerChatSessionId: string): Promise<string[]>;
   /** ★ 2026-07-11: 删除画布会话状态 (级联清理) */
   deleteSessionState?(sessionId: string): Promise<boolean>;
   close(): Promise<void>;
@@ -265,6 +270,35 @@ class SurrealStoreImpl implements ISurrealStore {
       throw new Error(
         `[SurrealStore] listAllSessionIds() 失败: ${(e as Error).message}。` +
         `位置: SurrealStore.ts → SurrealStoreImpl.listAllSessionIds()。` +
+        `原因: SurrealDB 查询异常。`,
+      );
+    }
+  }
+
+  /**
+   * ★ 2026-07-14: 按 owner 查询画布 sessionId 列表
+   * 用于删除对话时级联清理 SurrealDB 中不在内存的画布
+   */
+  async listSessionIdsByOwner(ownerChatSessionId: string): Promise<string[]> {
+    if (!this.connected) {
+      throw new Error(
+        `[SurrealStore] listSessionIdsByOwner() 失败: SurrealDB 未连接。` +
+        `位置: SurrealStore.ts → SurrealStoreImpl.listSessionIdsByOwner(${ownerChatSessionId})。` +
+        `原因: init() 未成功完成或连接已断开。`,
+      );
+    }
+    try {
+      const result: any = await this.db.query(
+        'SELECT VALUE sessionId FROM session_state WHERE ownerChatSessionId = $owner',
+        { owner: ownerChatSessionId },
+      );
+      const rows = Array.isArray(result) ? (result[0] as any[]) : (result as any);
+      if (!Array.isArray(rows)) return [];
+      return rows.filter((s: any) => typeof s === 'string' && s.length > 0);
+    } catch (e) {
+      throw new Error(
+        `[SurrealStore] listSessionIdsByOwner() 失败: ${(e as Error).message}。` +
+        `位置: SurrealStore.ts → SurrealStoreImpl.listSessionIdsByOwner(${ownerChatSessionId})。` +
         `原因: SurrealDB 查询异常。`,
       );
     }

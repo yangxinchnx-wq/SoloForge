@@ -142,10 +142,12 @@ export default function App() {
   }, [currentPermissionMode, setMixedTasks]);
 
   // 画布 → chat 自动桥接
-  // ★ 2026-07-13: allowCreate=true — 没有画布时自动创建一个，避免 fallback ID 启动画布
+  // ★ 2026-07-14: allowCreate=false — 选中对话时不自动创建画布
+  //   画布只在用户发送消息 (handleSend) 生成 UI 代码时懒创建
+  //   避免对话还没使用就产生一堆空画布
   const bridge = useChatClickCanvasBridge({
     chatId: selectedChatId,
-    allowCreate: true,
+    allowCreate: false,
     defaultDescription: '默认画布',
   });
 

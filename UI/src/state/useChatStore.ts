@@ -34,7 +34,7 @@ import { usePreviewStreamStore } from './previewStreamStore';
 // P2-7: handleSend 拆分出的纯逻辑 (错误分类 / 越界检测 / 预览触发判定)
 import { classifyStreamError, mentionsOutsideWorkspace, detectPreviewTrigger } from './useChatStore.helpers';
 // 2026-07-11: 实时增量代码翻译 — LLM 每输出一行代码, 立即翻译推送到画布
-import { IncrementalCanvasPusher, setCanvasSessionId, peekCanvasSessionId, getCanvasSessionId, ensureCanvasAndPush } from '../services/incrementalCanvasPusher';
+import { IncrementalCanvasPusher, getCanvasSessionId, ensureCanvasAndPush, ensureCanvasForChat } from '../services/incrementalCanvasPusher';
 
 // ════════════════════════════════════════════════════════════
 // [CANVAS PROBE — 临时诊断探针, 验证后删除]
@@ -465,7 +465,8 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     // 预创建 canvasPusher 并喂入已有文本, 让 displayText 包含完整内容
     if (ctx.accumulatedText) { canvasPusher = new IncrementalCanvasPusher(ctx.activeChatId); canvasPusher.feedChunk(ctx.accumulatedText); }
 
-    { const fallbackId = `canvas-${ctx.activeChatId}`; const existing = peekCanvasSessionId(ctx.activeChatId); if (!existing || existing === fallbackId) setCanvasSessionId(ctx.activeChatId, fallbackId); }
+    // ★ 2026-07-14: 懒创建画布 — 恢复时也确保画布存在
+    await ensureCanvasForChat(ctx.activeChatId);
 
     const chatHandle = await startChat({ chatId: ctx.activeChatId, prompt: continuePrompt, mode: ctx.permissionMode, history: resumeHistory.map(m => ({ sender: m.sender, content: m.rawContent || m.content })), fileContext: ctx.selectedFile ? { name: ctx.selectedFile, content: ctx.editorContent } : undefined, mainProvider: { baseUrl: ctx.mainEntry.baseUrl, apiKey: ctx.mainEntry.apiKey, model: ctx.mainEntry.model }, subProviders: ctx.reqBody.subProviders, candidateProviders: ctx.reqBody.candidateProviders, ...(ctx.hashlineAgentEnabled ? { toolCallMode: 'hashline' } : {}), workspaceFolder: useChatsStore.getState().getChat(ctx.activeChatId)?.workspaceFolder, activeTools: ctx.activeTools, activeSkills: ctx.activeSkills, activeKnowledge: ctx.activeKnowledge, activeSettings: ctx.activeSettings, canvasId: getCanvasSessionId(ctx.activeChatId) } as any, async (evt: ChatStreamEvent) => {
       switch (evt.kind) {
@@ -625,8 +626,10 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     let accumulatedText = '';
     let canvasPusher: IncrementalCanvasPusher | null = null;
 
-    // ★ FIX 2026-07-12: 在创建 Pusher 之前同步注册 canvas sessionId
-    { const fallbackId = `canvas-${activeChatId}`; const existing = peekCanvasSessionId(activeChatId); if (!existing || existing === fallbackId) { setCanvasSessionId(activeChatId, fallbackId); console.log(`[handleSend] ✅ 预注册 canvas sessionId: ${fallbackId} for chat ${activeChatId}`); } }
+    // ★ 2026-07-14: 懒创建画布 — 发消息时才创建, 不再注册 fallback ID
+    //   ensureCanvasForChat 会调用 POST /api/canvas/sessions 创建真实画布
+    //   并派发 'soloforge-canvas-created' 事件让 bridge 刷新
+    await ensureCanvasForChat(activeChatId);
 
     const streamBridge = createStreamBridge(activeChatId, mainModel, finalContent, permissionMode);
     let streamFinalized = false;
@@ -673,7 +676,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     set({ activeChatHandle: { taskId: chatHandle.taskId, abort: () => { chatHandle.abort(); if (!streamFinalized) { streamFinalized = true; streamBridge.onDone(); } } } });
   },
 
-  handleAcceptEnable: (candidateName) => {
+  handleAcceptEnable: async (candidateName) => {
     const state = get(); const { lastReqBody, options, configs } = state; if (!lastReqBody) return;
     const entry = (options.modelProviderMap || {})[candidateName]; if (!entry || !entry.apiKey) return;
     const activeChatId = options.selectedChatId || '1';
@@ -683,8 +686,8 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     const streamBridge = createStreamBridge(activeChatId, options.mainModel || '', '', lastReqBody.mode);
     let canvasPusher2: IncrementalCanvasPusher | null = null;
     let accText2 = '';
-    // ★ FIX 2026-07-12: handleAcceptEnable 也需要预注册 sessionId
-    { const fallbackId = `canvas-${activeChatId}`; const existing = peekCanvasSessionId(activeChatId); if (!existing || existing === fallbackId) setCanvasSessionId(activeChatId, fallbackId); }
+    // ★ 2026-07-14: 懒创建画布 — handleAcceptEnable 也需要确保画布存在
+    await ensureCanvasForChat(activeChatId);
     startChat({ chatId: activeChatId, prompt: '', mode: lastReqBody.mode, history: [], mainProvider: (lastReqBody.mainProvider as any), subProviders: newSub ? [...(lastReqBody.subProviders as any[]), newSub] : (lastReqBody.subProviders as any[]), candidateProviders: (lastReqBody.candidateProviders as any[]).filter((c: any) => c.modelName !== candidateName), activeTools: lastReqBody.activeTools, activeSkills: lastReqBody.activeSkills, activeKnowledge: lastReqBody.activeKnowledge, activeSettings: configs[activeChatId] || fallbackActiveSettings } as any, (evt: ChatStreamEvent) => {
       switch (evt.kind) {
         case 'phase': { streamBridge.onPhase(evt); get().handlePhase(evt, get().conversations[activeChatId] || []); break; }

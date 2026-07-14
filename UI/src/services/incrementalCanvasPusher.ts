@@ -57,6 +57,64 @@ export function clearCanvasSessionId(chatId: string): void {
   canvasSessionIdMap.delete(chatId);
 }
 
+/**
+ * ★ 2026-07-14: 懒创建画布 — 只在真正需要推 UI 时才创建
+ *
+ * 检查 chatId 是否已有关联的真实画布 ID (非 fallback)。
+ * 如果没有, 调用 POST /api/canvas/sessions 创建一个, 并更新映射。
+ * 创建成功后派发 'soloforge-canvas-created' 事件, 让 useChatClickCanvasBridge 刷新。
+ *
+ * 用于: handleSend / resumeChat / handleAcceptEnable — 发送消息时确保画布存在
+ * 不用于: 选中对话时 (选中不应自动建画布)
+ */
+export async function ensureCanvasForChat(chatId: string): Promise<string | null> {
+  if (!chatId) return null;
+
+  // 已有真实画布 ID (非 fallback), 直接返回
+  const existing = canvasSessionIdMap.get(chatId);
+  if (existing && !existing.startsWith('canvas-')) {
+    return existing;
+  }
+
+  // 调用后端创建画布
+  try {
+    const resp = await fetch('/api/canvas/sessions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requester-Chat-Session-Id': chatId,
+      },
+      body: JSON.stringify({ description: '默认画布' }),
+    });
+    if (!resp.ok) {
+      console.warn(`[ensureCanvasForChat] POST /api/canvas/sessions → ${resp.status}`);
+      // 降级: 注册 fallback ID, 让 ensureCanvasAndPush 尝试自动启动
+      const fallback = `canvas-${chatId}`;
+      canvasSessionIdMap.set(chatId, fallback);
+      return fallback;
+    }
+    const data = await resp.json();
+    if (data.success && data.payload && data.payload.sessionId) {
+      const realId = data.payload.sessionId as string;
+      canvasSessionIdMap.set(chatId, realId);
+      console.log(`[ensureCanvasForChat] ✅ created canvas ${realId} for chat ${chatId}`);
+      // 通知 bridge 刷新, 让 PreviewPanel 拿到真实画布 ID
+      window.dispatchEvent(new CustomEvent('soloforge-canvas-created'));
+      return realId;
+    }
+    // 创建失败 (可能达上限), 降级到 fallback
+    console.warn('[ensureCanvasForChat] canvas creation returned no sessionId, using fallback');
+    const fallback = `canvas-${chatId}`;
+    canvasSessionIdMap.set(chatId, fallback);
+    return fallback;
+  } catch (e) {
+    console.warn('[ensureCanvasForChat] failed:', (e as Error).message);
+    const fallback = `canvas-${chatId}`;
+    canvasSessionIdMap.set(chatId, fallback);
+    return fallback;
+  }
+}
+
 // ── 画布 session 自动启动 + push 重试 ──
 // 当 canvas.push 返回 "session not found" 时, 自动 start session 并重试一次
 const _startedSessions = new Set<string>();

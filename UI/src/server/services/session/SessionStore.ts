@@ -832,17 +832,50 @@ export class SessionStore {
   /**
    * 级联删除: 删除指定 chat 拥有的所有画布
    * 用于删除对话时清理关联画布
+   *
+   * ★ 2026-07-14: 同时清理 SurrealDB 中不在内存的画布
+   *   服务器重启后内存清空, 但 SurrealDB 仍有数据。
+   *   只遍历内存会漏删, 需要也查 SurrealDB。
+   *
    * 返回被删除的 canvas sessionId 列表
    */
   async deleteCanvasesByOwner(ownerChatSessionId: string): Promise<string[]> {
     const toDelete: string[] = [];
+    const seen = new Set<string>();
+
+    // 1. 内存中查找
     for (const [sessionId, state] of this.states.entries()) {
       if (state.ownerChatSessionId === ownerChatSessionId) {
         toDelete.push(sessionId);
+        seen.add(sessionId);
       }
     }
+
+    // 2. SurrealDB 中查找 (内存可能不全 — 服务器重启后未恢复的场景)
+    try {
+      const surrealAny = this.surreal as ISessionPersistence & {
+        listSessionIdsByOwner?: (owner: string) => Promise<string[]>;
+      };
+      if (typeof surrealAny.listSessionIdsByOwner === 'function') {
+        const dbIds = await surrealAny.listSessionIdsByOwner(ownerChatSessionId);
+        for (const sid of dbIds) {
+          if (!seen.has(sid)) {
+            toDelete.push(sid);
+            seen.add(sid);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[SessionStore] deleteCanvasesByOwner: SurrealDB query failed:', (e as Error).message);
+    }
+
+    // 3. 逐个删除 (内存 + Garnet + SurrealDB)
     for (const sid of toDelete) {
       await this.deleteSession(sid);
+    }
+
+    if (toDelete.length > 0) {
+      console.log(`[SessionStore] deleteCanvasesByOwner(${ownerChatSessionId}): deleted ${toDelete.length} canvases: ${toDelete.join(', ')}`);
     }
     return toDelete;
   }

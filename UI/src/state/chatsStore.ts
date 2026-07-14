@@ -11,6 +11,7 @@
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import { useWorkspaceStore } from './useWorkspaceStore';
+import { clearCanvasSessionId } from '../services/incrementalCanvasPusher';
 
 export type ChatTag = 'VUE' | 'AUTH' | 'AI' | 'DB' | 'PAY' | 'HELP' | 'NEW' | 'WINDOWS' | 'HARMONY';
 export type ChatPermission = 'normal' | 'performance' | 'ultimate' | 'expert';
@@ -261,6 +262,8 @@ export const useChatsStore = create<ChatsState>()(subscribeWithSelector((set, ge
       liveStates: Object.fromEntries(Object.entries(get().liveStates).filter(([k]) => k !== id)),
       pendingMutations: get().pendingMutations + 1,
     });
+    // ★ 2026-07-14: 清理画布 session ID 映射 (避免增量推送器使用已删除的画布)
+    clearCanvasSessionId(id);
     // ★ temp- ID: 后端还没有这个 chat, DELETE 会 404.
     //   只做本地删除即可, 不发请求.
     if (id.startsWith('temp-')) {
@@ -277,6 +280,8 @@ export const useChatsStore = create<ChatsState>()(subscribeWithSelector((set, ge
         selectedChatId: data.selectedId ?? s.selectedChatId,
         pendingMutations: Math.max(0, s.pendingMutations - 1),
       }));
+      // ★ 2026-07-14: 通知画布桥刷新 (后端已级联删除该 chat 拥有的画布)
+      window.dispatchEvent(new CustomEvent('soloforge-canvas-deleted'));
     } catch (e) {
       console.error('[chatsStore] 删除失败，回滚:', (e as Error).message);
       set((s) => ({
