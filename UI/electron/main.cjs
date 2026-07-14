@@ -202,10 +202,15 @@ function waitForPort(port, timeoutMs = 15000) {
   });
 }
 
-/** 优雅退出所有子进程 */
+/** 优雅退出所有子进程 (含子进程树)
+ * ★ 2026-07-15: 改用 killProcessTree 替代裸 .kill()。
+ *   原因: 与 start.mjs 同类 bug — Windows 上 .kill() 只杀顶层进程,
+ *   子进程 (npx→tsx→node) 变成孤儿继续持有 rocksdb LOCK,
+ *   导致下次启动 SurrealDB 初始化超时崩溃。
+ */
 function killAllChildren() {
   for (const child of spawnedChildren) {
-    try { child.kill(); } catch {}
+    killProcessTree(child);
   }
 }
 
@@ -1230,31 +1235,15 @@ function registerIpc() {
     return selectDeviceToCanvas(sessionId, modelKey, file, nativeSize);
   });
 
-// ★ 新增: set-host-visible — 显示/隐藏画布宿主窗口 + Flutter 子窗口 (下拉框打开时隐藏, 避免拦截点击)
-ipcMain.handle('canvas:set-host-visible', async (_e, { visible }) => {
-try {
-// 先隐藏/显示 Flutter 子窗口 (原生 HWND, 真正拦截点击的)
-await setFlutterWindowsVisible(visible);
-// 再隐藏/显示 Electron 宿主窗口
-if (canvasHostWindow && !canvasHostWindow.isDestroyed()) {
-if (visible) {
-canvasHostWindow.show();
-} else {
-canvasHostWindow.hide();
-}
-}
-return { ok: true };
-} catch (e) {
-return { ok: false, error: e?.message || String(e) };
-}
-});
-
 // ─────────────────────────────────────────────────────────────────
-// 设备下拉框独立悬浮窗口 (解决 Flutter HWND 盖住 DOM 下拉框)
-//   dropdown 作为 mainWindow 的 child BrowserWindow, z-order 高于
-//   canvasHostWindow, 能盖住 Flutter HWND, 画布内容完全不丢失
+// 设备下拉框: 轻量级 BrowserWindow (盖住 Flutter HWND)
+//   优化 (vs 旧版):
+//   1. 不弹 DevTools — 消除主要卡顿源
+//   2. 窗口只创建一次, 后续只 setBounds + show (不重新 loadURL)
+//   3. 画布不隐藏 — 只做选择, 不影响画布显示
 // ─────────────────────────────────────────────────────────────────
 let deviceDropdownWindow = null;
+let deviceDropdownReady = false;
 
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1271,13 +1260,44 @@ function deviceIconSvg(group) {
   return svgs[group] || svgs.desktop;
 }
 
-function buildDeviceDropdownHtml(payload) {
+// 固定 HTML 模板 (只加载一次), 内容通过 #app 容器动态填充
+function buildDeviceDropdownShell() {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:var(--surface); overflow:hidden; font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; }
+  :root { --surface:#fff; --surface-bright:#f4f4f5; --primary:#3b82f6; --on-surface:#18181b; --outline:#d4d4d8; }
+  .panel { width:100%; height:100%; background:var(--surface); border-radius:16px; padding:12px; display:flex; flex-direction:column; color:var(--on-surface); overflow:hidden; }
+  .header { display:flex; align-items:center; justify-content:space-between; gap:8px; border-bottom:1px solid color-mix(in srgb, var(--outline) 20%, transparent); padding-bottom:8px; margin-bottom:8px; }
+  .badge { font-size:10px; font-family:ui-monospace,monospace; font-weight:700; background:color-mix(in srgb, var(--primary) 10%, transparent); border:1px solid color-mix(in srgb, var(--primary) 25%, transparent); color:var(--primary); padding:2px 10px; border-radius:9999px; line-height:1.2; }
+  .current { font-size:10px; color:color-mix(in srgb, var(--on-surface) 50%, transparent); font-family:ui-monospace,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .none-btn { display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border-radius:10px; font-size:10px; font-family:ui-monospace,monospace; font-weight:600; border:1px solid transparent; background:transparent; color:color-mix(in srgb, var(--on-surface) 70%, transparent); cursor:pointer; transition:background .15s; margin-bottom:6px; }
+  .none-btn:hover { background:color-mix(in srgb, var(--surface-bright) 60%, transparent); }
+  .none-btn.active { background:color-mix(in srgb, var(--primary) 15%, transparent); color:var(--primary); border-color:color-mix(in srgb, var(--primary) 40%, transparent); }
+  .list { display:flex; flex-direction:column; gap:6px; overflow-y:auto; flex:1; padding-right:4px; }
+  .group { display:flex; flex-direction:column; gap:3px; }
+  .group-label { font-size:9px; font-family:ui-monospace,monospace; font-weight:700; text-transform:uppercase; letter-spacing:.1em; color:color-mix(in srgb, var(--on-surface) 40%, transparent); padding:0 4px; line-height:1; }
+  .item { display:flex; align-items:center; gap:8px; width:100%; padding:5px 10px; border-radius:10px; font-size:10px; font-family:ui-monospace,monospace; font-weight:600; border:1px solid transparent; background:transparent; color:color-mix(in srgb, var(--on-surface) 80%, transparent); cursor:pointer; transition:background .15s; }
+  .item:hover { background:color-mix(in srgb, var(--surface-bright) 60%, transparent); color:var(--primary); }
+  .item.active { background:color-mix(in srgb, var(--primary) 15%, transparent); color:var(--primary); border-color:color-mix(in srgb, var(--primary) 40%, transparent); }
+  .item .label { flex:1; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .item .dim { color:color-mix(in srgb, var(--on-surface) 40%, transparent); font-size:9px; }
+  .item .check { color:var(--primary); font-size:10px; }
+  .empty { text-align:center; padding:20px; font-size:11px; color:color-mix(in srgb, var(--on-surface) 40%, transparent); }
+  .list::-webkit-scrollbar { width:4px; }
+  .list::-webkit-scrollbar-thumb { background:color-mix(in srgb, var(--outline) 30%, transparent); border-radius:2px; }
+</style></head>
+<body><div class="panel" id="app"></div>
+<script>
+  function fire(key) { window.soloforge && window.soloforge.canvas && window.soloforge.canvas.devicePopupSelect(key); }
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') window.soloforge.canvas.devicePopupClose(); });
+</script>
+</body></html>`;
+}
+
+// 动态填充内容 (通过 executeJavaScript 调用, 避免 re-loadURL)
+function buildDeviceDropdownContent(payload) {
   const t = payload.theme || {};
-  const surface = t.surface || '#ffffff';
-  const surfaceBright = t.surfaceBright || '#f4f4f5';
-  const primary = t.primary || '#3b82f6';
-  const onSurface = t.onSurface || '#18181b';
-  const outline = t.outline || '#d4d4d8';
   const noneActive = payload.currentKey === 'none';
   const groups = Array.isArray(payload.groups) ? payload.groups : [];
   const currentKey = payload.currentKey || '';
@@ -1296,84 +1316,42 @@ function buildDeviceDropdownHtml(payload) {
     return `<div class="group"><div class="group-label">${escapeHtml(g.label)}</div>${itemsHtml}</div>`;
   }).join('');
 
-  return `<!DOCTYPE html><html><head><meta charset="utf-8">
-<style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  html, body { width:100%; height:100%; background:var(--surface); overflow:hidden; font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; }
-  :root { --surface:${surface}; --surface-bright:${surfaceBright}; --primary:${primary}; --on-surface:${onSurface}; --outline:${outline}; }
-  .panel {
-    width:100%; height:100%;
-    background: var(--surface);
-    border: 1px solid color-mix(in srgb, var(--outline) 45%, transparent);
-    border-radius: 16px;
-    box-shadow: 0 24px 64px rgba(0,0,0,0.18);
-    padding: 16px; display: flex; flex-direction: column;
-    color: var(--on-surface);
-    transform-origin: 50% 0%;
-    animation: panelIn 0.38s cubic-bezier(0.16,1,0.3,1);
-    overflow: hidden;
-  }
-  @keyframes panelIn {
-    from { opacity:0; transform: scale(0.94) translateY(20px); clip-path: ellipse(100% 0% at 50% 0%); }
-    to   { opacity:1; transform: scale(1) translateY(0);     clip-path: ellipse(150% 150% at 50% 0%); }
-  }
-  .header { display:flex; align-items:center; justify-content:space-between; gap:8px; border-bottom:1px solid color-mix(in srgb, var(--outline) 20%, transparent); padding-bottom:10px; margin-bottom:12px; animation: itemIn .32s cubic-bezier(.16,1,.3,1) .08s both; }
-  .badge { font-size:10px; font-family:ui-monospace,monospace; font-weight:700; background:color-mix(in srgb, var(--primary) 10%, transparent); border:1px solid color-mix(in srgb, var(--primary) 25%, transparent); color:var(--primary); padding:2px 10px; border-radius:9999px; line-height:1.2; }
-  .current { font-size:10px; color:color-mix(in srgb, var(--on-surface) 50%, transparent); font-family:ui-monospace,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .none-btn { display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border-radius:12px; font-size:10px; font-family:ui-monospace,monospace; font-weight:600; border:1px solid transparent; background:transparent; color:color-mix(in srgb, var(--on-surface) 70%, transparent); cursor:pointer; transition:all .2s; margin-bottom:10px; animation:itemIn .32s cubic-bezier(.16,1,.3,1) .08s both; }
-  .none-btn:hover { background:color-mix(in srgb, var(--surface-bright) 60%, transparent); }
-  .none-btn.active { background:color-mix(in srgb, var(--primary) 15%, transparent); color:var(--primary); border-color:color-mix(in srgb, var(--primary) 40%, transparent); }
-  .list { display:flex; flex-direction:column; gap:10px; overflow-y:auto; max-height:300px; padding-right:4px; animation:itemIn .32s cubic-bezier(.16,1,.3,1) .08s both; }
-  .group { display:flex; flex-direction:column; gap:6px; }
-  .group-label { font-size:9px; font-family:ui-monospace,monospace; font-weight:700; text-transform:uppercase; letter-spacing:.1em; color:color-mix(in srgb, var(--on-surface) 40%, transparent); padding:0 4px; line-height:1; }
-  .item { display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border-radius:12px; font-size:10px; font-family:ui-monospace,monospace; font-weight:600; border:1px solid color-mix(in srgb, var(--outline) 20%, transparent); background:transparent; color:color-mix(in srgb, var(--on-surface) 80%, transparent); cursor:pointer; transition:all .2s; }
-  .item:hover { background:color-mix(in srgb, var(--surface-bright) 60%, transparent); color:var(--primary); border-color:color-mix(in srgb, var(--primary) 30%, transparent); }
-  .item.active { background:color-mix(in srgb, var(--primary) 15%, transparent); color:var(--primary); border-color:color-mix(in srgb, var(--primary) 40%, transparent); }
-  .item .label { flex:1; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .item .dim { color:color-mix(in srgb, var(--on-surface) 40%, transparent); font-size:9px; }
-  .item .check { color:var(--primary); font-size:10px; }
-  @keyframes itemIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
-  .empty { text-align:center; padding:20px; font-size:11px; color:color-mix(in srgb, var(--on-surface) 40%, transparent); }
-  .list::-webkit-scrollbar { width:4px; }
-  .list::-webkit-scrollbar-thumb { background:color-mix(in srgb, var(--outline) 30%, transparent); border-radius:2px; }
-</style></head>
-<body>
-  <div class="panel">
-    <div class="header">
-      <div class="badge">${escapeHtml(payload.renderMode || '')} · ${payload.deviceCount || 0} 款设备</div>
-      ${payload.currentLabel ? `<div class="current">当前: ${escapeHtml(payload.currentLabel)}</div>` : ''}
-    </div>
-    <button class="none-btn${noneActive ? ' active' : ''}" data-key="none">
-      <span>▢</span><span style="flex:1;text-align:left">默认尺寸 (430×932)</span>
-      ${noneActive ? '<span>✓</span>' : ''}
-    </button>
-    <div class="list">${groupsHtml || '<div class="empty">暂无设备</div>'}</div>
+  const cssVars = `:root{--surface:${t.surface||'#fff'};--surface-bright:${t.surfaceBright||'#f4f4f5'};--primary:${t.primary||'#3b82f6'};--on-surface:${t.onSurface||'#18181b'};--outline:${t.outline||'#d4d4d8'};}`;
+  const appHtml = `<div class="header">
+    <div class="badge">${escapeHtml(payload.renderMode || '')} · ${payload.deviceCount || 0} 款设备</div>
+    ${payload.currentLabel ? `<div class="current">当前: ${escapeHtml(payload.currentLabel)}</div>` : ''}
   </div>
-<script>
-  function fire(key) { window.soloforge && window.soloforge.canvas && window.soloforge.canvas.devicePopupSelect(key); }
-  document.querySelectorAll('[data-key]').forEach(el => {
-    el.addEventListener('click', () => fire(el.getAttribute('data-key')));
-  });
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') window.soloforge.canvas.devicePopupClose(); });
-</script>
-</body></html>`;
+  <button class="none-btn${noneActive ? ' active' : ''}" data-key="none">
+    <span>▢</span><span style="flex:1;text-align:left">默认尺寸 (430×932)</span>
+    ${noneActive ? '<span>✓</span>' : ''}
+  </button>
+  <div class="list">${groupsHtml || '<div class="empty">暂无设备</div>'}</div>`;
+
+  // 返回要在 BrowserWindow 里执行的 JS 代码
+  return `(function(){
+    document.documentElement.style.cssText = "${cssVars.replace(/"/g, '\\"').replace(/\n/g, '')}";
+    var app = document.getElementById('app');
+    if (app) {
+      app.innerHTML = ${JSON.stringify(appHtml)};
+      app.querySelectorAll('[data-key]').forEach(function(el){
+        el.addEventListener('click', function(){ fire(el.getAttribute('data-key')); });
+      });
+    }
+  })();`;
 }
 
 function openDeviceDropdownWindow(payload) {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    console.warn('[dropdown] mainWindow not ready');
-    return;
-  }
-  const html = buildDeviceDropdownHtml(payload || {});
+  if (!mainWindow || mainWindow.isDestroyed()) return;
   const bounds = { x: (payload.x|0), y: (payload.y|0), width: (payload.width||320), height: (payload.height||460) };
-  console.log('[dropdown] open at', bounds, 'htmlLen=', html.length);
+  // 窗口已存在 → 只 setBounds + 更新内容 + show (不重新 loadURL, 不弹 DevTools)
   if (deviceDropdownWindow && !deviceDropdownWindow.isDestroyed()) {
     deviceDropdownWindow.setBounds(bounds);
-    deviceDropdownWindow.webContents.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    deviceDropdownWindow.webContents.executeJavaScript(buildDeviceDropdownContent(payload)).catch(() => {});
     deviceDropdownWindow.show();
     deviceDropdownWindow.focus();
     return;
   }
+  // 首次创建: loadURL 一次固定模板
   deviceDropdownWindow = new BrowserWindow({
     parent: mainWindow,
     frame: false,
@@ -1391,21 +1369,16 @@ function openDeviceDropdownWindow(payload) {
       nodeIntegration: false,
     },
   });
-  deviceDropdownWindow.webContents.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+  deviceDropdownWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(buildDeviceDropdownShell()));
   deviceDropdownWindow.webContents.on('did-finish-load', () => {
-    console.log('[dropdown] did-finish-load');
+    deviceDropdownReady = true;
+    deviceDropdownWindow.webContents.executeJavaScript(buildDeviceDropdownContent(payload)).catch(() => {});
   });
-  deviceDropdownWindow.webContents.on('did-fail-load', (_e, code, desc) => {
-    console.error('[dropdown] did-fail-load', code, desc);
-  });
-  // 失焦自动关闭 (点击画布/其他区域时)
   deviceDropdownWindow.on('blur', () => {
     try { if (deviceDropdownWindow && !deviceDropdownWindow.isDestroyed()) deviceDropdownWindow.hide(); } catch {}
   });
   deviceDropdownWindow.show();
   deviceDropdownWindow.focus();
-  // 调试: 打开 devtools 看渲染是否正常
-  deviceDropdownWindow.webContents.openDevTools({ mode: 'detach' });
 }
 
 function closeDeviceDropdownWindow() {
@@ -1415,20 +1388,12 @@ function closeDeviceDropdownWindow() {
 }
 
 ipcMain.handle('canvas:open-device-popup', async (_e, payload) => {
-  try {
-    console.log('[dropdown] IPC received payload keys:', Object.keys(payload || {}));
-    console.log('[dropdown] groups type:', Array.isArray(payload?.groups), 'groups:', JSON.stringify(payload?.groups)?.substring(0, 200));
-    openDeviceDropdownWindow(payload || {});
-    return { ok: true };
-  } catch (e) {
-    console.error('[dropdown] IPC error:', e?.stack || e);
-    return { ok: false, error: e?.message || String(e) };
-  }
+  try { openDeviceDropdownWindow(payload || {}); return { ok: true }; }
+  catch (e) { return { ok: false, error: e?.message || String(e) }; }
 });
 ipcMain.handle('canvas:close-device-popup', async () => {
   closeDeviceDropdownWindow(); return { ok: true };
 });
-// dropdown 窗口回传选择结果 → 转发给 mainWindow
 ipcMain.on('canvas:device-popup-select', (_e, { key }) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('canvas:device-selected', { key });
