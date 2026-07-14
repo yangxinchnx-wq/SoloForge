@@ -926,11 +926,22 @@ export default function ModelAddTab() {
       const data = await r.json();
       if (data?.success) {
         const prov = data.provider || {};
+        // 将模型级探测结果提取为 modelId → success 映射, 持久化到 localStorage
+        // 供 Header 过滤主模型选择器: 只有测试通过的模型才显示
+        const modelProbeResults: Record<string, boolean> = {};
+        if (data.models && typeof data.models === 'object') {
+          for (const [mid, probe] of Object.entries(data.models)) {
+            if (probe && typeof probe === 'object' && 'success' in probe) {
+              modelProbeResults[mid] = (probe as any).success === true;
+            }
+          }
+        }
         setProviders(prev => prev.map(p => p.id === providerId ? {
           ...p,
           status: prov.success ? 'success' as const : 'failed' as const,
           delay: prov.latency,
           errorMessage: prov.error,
+          probeResults: modelProbeResults,
         } : p));
         // 缓存探测结果到 state (热数据库已在服务端持久化，这里同步前端 state)
         if (data.models) {
@@ -939,6 +950,8 @@ export default function ModelAddTab() {
             [providerId]: data.models,
           }));
         }
+        // 通知 Header 刷新主模型选择器
+        window.dispatchEvent(new CustomEvent('providers_updated'));
       } else {
         setProviders(prev => prev.map(p => p.id === providerId ? {
           ...p,
