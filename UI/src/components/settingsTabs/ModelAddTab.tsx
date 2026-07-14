@@ -461,15 +461,18 @@ export default function ModelAddTab() {
           setProviders(prev => {
             // 服务端为权威源（baseUrl/models/enabled 等, apiKey 永远为空）。
             // apiKey 合并优先级:
-            //   1. 本地有值 → 优先用本地 (用户当前输入)
-            //   2. 本地为空 → 从钥匙串 reveal 的明文
+            //   1. 本地有真实值 → 优先用本地 (用户当前输入)
+            //   2. 本地为空 / '__VAULT__:' 占位符 → 从钥匙串 reveal 的明文
             //   3. 都没有 → 空字符串
             const serverMap = new Map(serverProviders.map((p: any) => [p.id, p]));
             const merged = prev.map(localP => {
               const serverP = serverMap.get(localP.id);
               if (serverP) {
                 const { apiKey: _drop, ...serverRest } = serverP;
-                const finalApiKey = localP.apiKey || vaultKeys.get(localP.id) || '';
+                // ★ '__VAULT__:' 是旧版占位符, 不是真实密钥, 视为 falsy
+                const effectiveLocalKey =
+                  (localP.apiKey && localP.apiKey !== '__VAULT__:') ? localP.apiKey : '';
+                const finalApiKey = effectiveLocalKey || vaultKeys.get(localP.id) || '';
                 return { ...serverRest, apiKey: finalApiKey };
               }
               return localP;

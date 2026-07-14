@@ -61,7 +61,7 @@ const getModelStatusResolver = (): ((modelName: string) => ModelStatus) => {
         return { state: 'warning', message: '服务提供商配置待完善' };
       }
       const isEnabled = !!prov.enabled;
-      const hasApiKey = !!(prov.apiKey && prov.apiKey.trim().length > 0);
+      const hasApiKey = !!(prov.apiKey && prov.apiKey.trim().length > 0 && prov.apiKey !== '__VAULT__:');
       const isError = prov.status === 'error';
       if (!isEnabled) {
         return { state: 'offline', message: `提供商 ${prov.name} 未启用` };

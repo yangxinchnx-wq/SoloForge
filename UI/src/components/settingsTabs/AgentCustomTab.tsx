@@ -716,7 +716,7 @@ function FeedTrainingPanel({ agentId, agentName }: { agentId: string; agentName:
       if (!Array.isArray(parsed)) return;
       const models: AvailableModel[] = [];
       for (const prov of parsed) {
-        if (!prov.enabled || prov.status !== 'success' || !prov.apiKey) continue;
+        if (!prov.enabled || prov.status !== 'success' || !prov.apiKey || prov.apiKey === '__VAULT__:') continue;
         const baseUrl = prov.baseUrl || '';
         const apiKey = prov.apiKey || '';
         if (Array.isArray(prov.models)) {

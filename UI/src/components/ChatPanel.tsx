@@ -304,7 +304,7 @@ export default function ChatPanel({
         if (!Array.isArray(parsed)) return;
         const map: Record<string, { providerId: string; iconType?: string }> = {};
         parsed.forEach((prov: any) => {
-          if (!prov.enabled || !prov.apiKey) return;
+          if (!prov.enabled || !prov.apiKey || prov.apiKey === '__VAULT__:') return;
           const info = { providerId: prov.id, iconType: prov.iconType };
           if (Array.isArray(prov.models)) {
             prov.models.forEach((m: any) => {

@@ -92,7 +92,8 @@ export default function App() {
           providerName: string; enabledInSettings: boolean;
         }> = {};
         for (const prov of parsed) {
-          if (!prov.enabled || !prov.apiKey) continue;
+          // ★ '__VAULT__:' 是旧版占位符, 不是真实密钥, 跳过
+          if (!prov.enabled || !prov.apiKey || prov.apiKey === '__VAULT__:') continue;
           const enabledInSettings = prov.status === 'success';
           if (Array.isArray(prov.models)) {
             for (const m of prov.models) {
@@ -154,8 +155,11 @@ export default function App() {
         if (!Array.isArray(providers) || providers.length === 0) return;
 
         // 2. 检查是否有 provider 缺少 apiKey
-        const needsRestore = providers.some((p: any) => p.enabled && !p.apiKey);
-        if (!needsRestore) return; // 所有 provider 都有 apiKey, 无需恢复
+        //    ★ '__VAULT__:' 是旧版占位符, 不是真实密钥, 视为缺失
+        const needsRestore = providers.some(
+          (p: any) => p.enabled && (!p.apiKey || p.apiKey === '__VAULT__:')
+        );
+        if (!needsRestore) return; // 所有 provider 都有真实 apiKey, 无需恢复
 
         // 3. 从 vault 列出所有有密钥的 provider
         const vr = await fetch('/api/vault/keys');
@@ -166,7 +170,11 @@ export default function App() {
         // ★ 2026-07-14: 只 reveal 真正缺 apiKey 的 provider 对应的 vault key
         //   原来对所有有 key 的 vault ID 都 reveal, 浪费 N 个不必要的网络往返。
         //   现在先求交集: provider 缺 apiKey && vault 有 key → 只 reveal 这些。
-        const needsKeyIds = new Set(providers.filter((p: any) => p.enabled && !p.apiKey).map((p: any) => p.id));
+        const needsKeyIds = new Set(
+          providers
+            .filter((p: any) => p.enabled && (!p.apiKey || p.apiKey === '__VAULT__:'))
+            .map((p: any) => p.id)
+        );
         const vaultIds = items
           .filter(i => i.hasKey && needsKeyIds.has(i.id))
           .map(i => i.id);
@@ -193,10 +201,11 @@ export default function App() {
 
         if (cancelled) return;
 
-        // 5. 合并: 对缺少 apiKey 的 provider, 从 vault 填充
+        // 5. 合并: 对缺少 apiKey (或含 '__VAULT__:' 占位符) 的 provider, 从 vault 填充
         let changed = false;
         const updated = providers.map((p: any) => {
-          if ((!p.apiKey || !p.apiKey.trim()) && vaultKeys.has(p.id)) {
+          const isMissingKey = !p.apiKey || !p.apiKey.trim() || p.apiKey === '__VAULT__:';
+          if (isMissingKey && vaultKeys.has(p.id)) {
             changed = true;
             return { ...p, apiKey: vaultKeys.get(p.id) };
           }

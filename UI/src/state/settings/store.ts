@@ -6,7 +6,30 @@
  * - persist (localStorage / file) 改为 requestIdleCallback 异步批量写入
  * - notify() 按 key 过滤: 只通知订阅了变更 key 的 listener
  * - 不变量:cache 始终是最新值; persist 在 idle 时追赶 cache
+ *
+ * ★ SYNC_DENYLIST (2026-07-14):
+ *   cherry_providers_v2 由 ModelAddTab + OS 钥匙串 (apiKeyVault) 独立管理,
+ *   其 apiKey 是明文, 绝不能被 SettingsStore 的 sync.getAll() 用服务端
+ *   的脱敏版本 (apiKey='' 或 '__VAULT__:') 覆盖。
+ *   历史原因: 旧版代码曾通过 SettingsStore 同步 cherry_providers_v2,
+ *   导致 .soloforge_settings.json 中残留了带 '__VAULT__:' 占位符的副本,
+ *   每次刷新都会覆盖 localStorage 中的真实 apiKey → 密钥丢失。
  */
+
+/**
+ * 同步黑名单 — 这些 key 不参与 SettingsStore 的双向同步:
+ *   - 不从 persist.readAll() 读入 cache
+ *   - 不被 sync.getAll() 的服务端数据覆盖
+ *   - 不通过 enqueueSync 推送到服务端
+ *   - 不响应 onExternalChange
+ */
+const SYNC_DENYLIST: ReadonlySet<string> = new Set([
+  'cherry_providers_v2', // 由 ModelAddTab + apiKeyVault 独立管理
+]);
+
+function isDenylisted(key: string): boolean {
+  return SYNC_DENYLIST.has(key);
+}
 
 import type {
   PersistAdapter,
@@ -253,7 +276,10 @@ export function createSettingsStore(config: StoreConfig): SettingsStore {
       cache.set(key, finalValue);
       pendingPersistFlush.set(key, finalValue);
       schedulePersistFlush();
-      enqueueSync(key, finalValue);
+      // ★ 黑名单 key 不推送到服务端 (cherry_providers_v2 由 ModelAddTab 独立 POST)
+      if (!isDenylisted(key)) {
+        enqueueSync(key, finalValue);
+      }
       notifyKeys([key]);
     },
 
@@ -264,7 +290,10 @@ export function createSettingsStore(config: StoreConfig): SettingsStore {
         const prev = cache.get(k);
         cache.set(k, finalValue);
         pendingPersistFlush.set(k, finalValue);
-        enqueueSync(k, finalValue);
+        // ★ 黑名单 key 不推送到服务端
+        if (!isDenylisted(k)) {
+          enqueueSync(k, finalValue);
+        }
         if (prev !== finalValue) changedKeys.push(k);
       }
       schedulePersistFlush();
@@ -332,6 +361,9 @@ export function createSettingsStore(config: StoreConfig): SettingsStore {
       const initData = ssrInitParam ?? ssrInit;
       const persisted = persist.readAll();
       for (const [k, v] of Object.entries(persisted)) {
+        // ★ 跳过黑名单 key: cherry_providers_v2 由 ModelAddTab 独立管理,
+        //   不进入 SettingsStore cache, 避免 sync.getAll() 覆盖
+        if (isDenylisted(k)) continue;
         cache.set(k, v);
       }
       if (initData) {
@@ -344,6 +376,8 @@ export function createSettingsStore(config: StoreConfig): SettingsStore {
       }
       if (unsubscribeExternal) unsubscribeExternal();
       unsubscribeExternal = persist.onExternalChange((key, value) => {
+        // ★ 跳过黑名单 key 的外部变更通知
+        if (isDenylisted(key)) return;
         if (value === undefined) {
           cache.delete(key);
           notifyKeys([key]);
@@ -358,6 +392,9 @@ export function createSettingsStore(config: StoreConfig): SettingsStore {
             if (disposed) return;
             const changedKeys: string[] = [];
             for (const [k, v] of Object.entries(serverData)) {
+              // ★ 跳过黑名单 key: 绝不让服务端数据覆盖本地 cherry_providers_v2
+              //   (服务端副本可能含 '__VAULT__:' 占位符或空 apiKey)
+              if (isDenylisted(k)) continue;
               const localValue = cache.get(k);
               if (localValue !== v) {
                 const queueItem = queue.get(k);

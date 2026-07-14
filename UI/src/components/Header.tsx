@@ -61,7 +61,7 @@ export default function Header({
         if (Array.isArray(parsed)) {
           const enabledList: string[] = [];
           parsed.forEach((prov: any) => {
-            if (prov.enabled && prov.status === 'success' && prov.apiKey) {
+            if (prov.enabled && prov.status === 'success' && prov.apiKey && prov.apiKey !== '__VAULT__:') {
               // 模型级连通性测试结果 (modelId → success)
               const probeResults: Record<string, boolean> | undefined = prov.probeResults;
               const hasProbeResults = probeResults !== undefined && probeResults !== null;
@@ -107,7 +107,7 @@ export default function Header({
       const parsed = JSON.parse(saved);
       if (!Array.isArray(parsed)) return map;
       parsed.forEach((prov: any) => {
-        if (!prov.enabled || !prov.apiKey) return;
+        if (!prov.enabled || !prov.apiKey || prov.apiKey === '__VAULT__:') return;
         const info = { providerId: prov.id, iconType: prov.iconType };
         if (Array.isArray(prov.models)) {
           prov.models.forEach((m: any) => {
@@ -133,7 +133,7 @@ export default function Header({
         if (Array.isArray(parsed)) {
           const allList: string[] = [];
           parsed.forEach((prov: any) => {
-            if (prov.enabled && prov.apiKey) {
+            if (prov.enabled && prov.apiKey && prov.apiKey !== '__VAULT__:') {
               if (Array.isArray(prov.models)) prov.models.forEach((m: any) => { if (m.enabled) allList.push(m.id); });
               if (Array.isArray(prov.customModels)) prov.customModels.forEach((cm: any) => {
                 if (typeof cm === 'string') allList.push(cm);
