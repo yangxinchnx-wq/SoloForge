@@ -9,7 +9,7 @@
  *     6. isElectronIpcAvailable() 检测 dispatchAgent + onAgentEvent
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { startChat, isElectronIpcAvailable, _setUseRacer } from '../aiBackend';
+import { startChat, isElectronIpcAvailable } from '../aiBackend';
 
 describe('aiBackend — dev (fetch → Java Agent) path', () => {
   let originalFetch: typeof globalThis.fetch;
@@ -21,8 +21,6 @@ describe('aiBackend — dev (fetch → Java Agent) path', () => {
     if (typeof globalThis.window !== 'undefined') {
       delete (globalThis as any).window.soloforge;
     }
-    // 测试 Java Agent 路径 (USE_RACER=false)
-    _setUseRacer(false);
   });
 
   afterEach(() => {
@@ -30,8 +28,6 @@ describe('aiBackend — dev (fetch → Java Agent) path', () => {
     if (typeof globalThis.window !== 'undefined' && originalSoloforge) {
       (globalThis as any).window.soloforge = originalSoloforge;
     }
-    // 恢复默认 RACER 模式
-    _setUseRacer(true);
   });
 
   it('isElectronIpcAvailable() returns false when window.soloforge missing', () => {

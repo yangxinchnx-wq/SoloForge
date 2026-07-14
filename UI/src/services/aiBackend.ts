@@ -1,6 +1,6 @@
 /**
  * aiBackend — 统一 AI 流式后端接口
- *   dev (浏览器 / Vite dev server) → USE_RACER ? /api/agents/dispatch (RACER) : /api/java-agent/api/chat/stream (Java SSE)
+ *   dev (浏览器 / Vite dev server) → /api/java-agent/api/chat/stream (Java SSE)
  *                                  → Node.js(3000) 直连透传到 Java Spring AI Agent(8770)
  *   prod (Electron) → window.soloforge.ai.chatViaPort (MessagePortMain 零拷贝)
  *                     (注: 当前 preload.cjs 未暴露 dispatchAgent, IPC 路径为预留)
@@ -13,6 +13,9 @@
  *
  * 2026-07-08 Phase 4: 真实 SSE 流式 — 从 /api/chat/stream 读取 Server-Sent Events
  *            每个 text 事件携带 LLM delta 文本片段, 前端逐字追加渲染
+ *
+ * 2026-07-14: 移除所有 fallback 降级逻辑 (RACER / LLM Proxy)。
+ *            请求失败直接抛出具体错误信息, 不允许降级。
  */
 
 import { StreamingLatencyTracker } from './perfMonitor';
@@ -220,32 +223,6 @@ function buildPromptWithCanvasForce(prompt: string, canvasId?: string): string {
  *   POST /api/java-agent/api/chat/stream (Node.js 直连到 8770/api/chat/stream)
  *   Response: SSE stream — event:text/done/error, data:{...}
  */
-// ── RACER 模式开关: true=Node.js RACER Agent (后台训练, 不进流送区), false=Java Agent (真实执行) ──
-// 默认 Java: 真实任务走 Java 链路, 主/副模型调用 agent 都在流送区显示
-// RACER 仅作后台训练, 不干扰流送区
-let _useRacer = false;
-/** @internal 测试用: 切换 RACER / Java 路径 */
-export function _setUseRacer(v: boolean): void { _useRacer = v; }
-/** @internal 测试用: 获取当前模式 */
-export function _getUseRacer(): boolean { return _useRacer; }
-
-function buildRacerRequestBody(req: ChatRequest): any {
-  return {
-    prompt: buildPromptWithCanvasForce(req.prompt, req.canvasId),
-    chatId: req.chatId ?? `chat-${Date.now()}`,
-    packetUuid: `pkt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    history: req.history || [],
-    activeFile: req.activeFile || null,
-    mainProvider: req.mainProvider || null,
-    // 副模型列表: 并行 worker agent 使用 (winner 用 mainProvider, 其他用 subProviders)
-    subProviders: req.subProviders || [],
-    workspaceFolder: req.workspaceFolder || null,
-    activeTools: req.activeTools || [],
-    activeSkills: req.activeSkills || [],
-    activeKnowledge: req.activeKnowledge || [],
-  };
-}
-
 function buildJavaRequestBody(req: ChatRequest): any {
   const settings = req.activeSettings || {};
 
@@ -292,11 +269,9 @@ function buildJavaRequestBody(req: ChatRequest): any {
 }
 
 /**
- * 执行 Java Agent 路径 (SSE 流式)
- * 用于 USE_RACER=false 时的主路径，以及 RACER 失败时的 fallback
+ * 执行 Java Agent 路径 (SSE 流式) — 唯一请求路径
  *
- * 当 Java 后端不可用 (502/503) 时抛出 JavaUnavailableError,
- * 调用方可捕获后 fallback 到 Node.js LLM 代理路径
+ * 请求失败直接抛出具体错误信息, 不允许降级。
  */
 async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: string, onEvent: (e: ChatStreamEvent) => void): Promise<void> {
   const res = await fetch('/api/java-agent/api/chat/stream', {
@@ -311,11 +286,11 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
-    // 502/503 = Java 后端不可用, 抛出特殊错误让调用方 fallback
-    if (res.status === 502 || res.status === 503) {
-      throw new JavaUnavailableError(`HTTP ${res.status} ${errText}`);
-    }
-    onEvent({ kind: 'error', error: `HTTP ${res.status} ${errText}`, taskId });
+    // ★ 不再降级, 直接抛出具体错误
+    const errorMsg = errText
+      ? `Java Agent 请求失败: HTTP ${res.status} — ${errText}`
+      : `Java Agent 请求失败: HTTP ${res.status}`;
+    onEvent({ kind: 'error', error: errorMsg, taskId });
     return;
   }
 
@@ -412,7 +387,7 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
     } catch {}
   }
 
-  // ★ 2026-07-11: 合成 done 事件 (同 parseRacerSSE)
+  // ★ 2026-07-11: 合成 done 事件
   if (!doneSent && !signal.aborted) {
     console.log('[aiBackend] Java SSE 流结束, 后端未发 done 事件 → 合成 done');
     onEvent({ kind: 'done', taskId });
@@ -422,290 +397,27 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
 }
 
 /**
- * Parse RACER SSE stream — handles phase, text, done, error events.
- * Same wire format as Java Agent SSE, with additional phase events.
- */
-async function parseRacerSSE(
-  res: Response,
-  signal: AbortSignal,
-  taskId: string,
-  onEvent: (e: ChatStreamEvent) => void,
-): Promise<void> {
-  const reader = res.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let currentEvent = '';
-  let currentData = '';
-
-  let doneSent = false;
-  const processEvent = (): void => {
-    if (!currentEvent || !currentData || signal.aborted) return;
-    try {
-      const data = JSON.parse(currentData);
-      switch (currentEvent) {
-        case 'text':
-          if (data.content) {
-            onEvent({ kind: 'text', text: data.content, taskId });
-          }
-          break;
-        case 'phase':
-          onEvent({ kind: 'phase', phase: data.phase, taskId, ...data });
-          break;
-        case 'error':
-          onEvent({ kind: 'error', error: data.error || 'Unknown error', taskId });
-          break;
-        case 'done':
-          doneSent = true;
-          onEvent({ kind: 'done', taskId, experienceFingerprint: data.experienceFingerprint, strategy: data.strategy });
-          break;
-      }
-    } catch { /* ignore malformed JSON */ }
-  };
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-
-    for (const line of lines) {
-      if (line.startsWith('event:')) {
-        currentEvent = line.substring(6).trim();
-      } else if (line.startsWith('data:')) {
-        currentData = line.substring(5).trim();
-      } else if (line === '' || line === '\r') {
-        processEvent();
-        currentEvent = '';
-        currentData = '';
-      }
-    }
-  }
-
-  // Process any remaining event in buffer
-  processEvent();
-
-  // ★ 2026-07-11: 如果后端没发 done 事件就关闭了连接, 必须合成一个
-  //   否则 useChatStore 的 done handler 不会执行 → tryLocalTranslateAndPush 不会被调用
-  //   → 画布永远收不到推送
-  if (!doneSent && !signal.aborted) {
-    console.log('[aiBackend] SSE 流结束, 后端未发 done 事件 → 合成 done');
-    onEvent({ kind: 'done', taskId });
-  }
-}
-
-/**
- * Java 后端不可用错误 (502/503)
- * 用于触发 fallback 到 Node.js LLM 代理路径
- */
-class JavaUnavailableError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'JavaUnavailableError';
-  }
-}
-
-/**
- * 执行 Node.js LLM 代理路径 (/api/llm/stream)
- * 当 Java 后端不可用时的 fallback
- *
- * 直接用前端配置的 provider (baseUrl/apiKey/model) 调用 LLM 代理,
- * 不经过 Java Agent 编排 (无 Function Calling/Agent 循环),
- * 但保证基本的 LLM 对话能力可用
- */
-async function executeLLMProxyPath(req: ChatRequest, signal: AbortSignal, taskId: string, onEvent: (e: ChatStreamEvent) => void): Promise<void> {
-  if (!req.mainProvider) {
-    onEvent({ kind: 'error', error: 'Java Agent 不可达且未配置 mainProvider, 无法 fallback 到 LLM 代理。请启动 Java 后端 (8770) 或配置模型。', taskId });
-    return;
-  }
-
-  console.log('[aiBackend] Falling back to Node.js LLM proxy (/api/llm/stream)');
-
-  // ★ 2026-07-14: LLM proxy 路径也注入画布尺寸约束
-  const llmReqBody: Record<string, any> = {
-    userGoal: buildPromptWithCanvasForce(req.prompt, req.canvasId),
-    baseUrl: req.mainProvider.baseUrl,
-    apiKey: req.mainProvider.apiKey,
-    model: req.mainProvider.model,
-  };
-
-  if (req.activeSettings?.personality) {
-    llmReqBody.systemPrompt = `你是 SoloForge AI 助手。性格: ${req.activeSettings.personality}。请用中文回答用户问题。`;
-  }
-
-  const res = await fetch('/api/llm/stream', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(llmReqBody),
-    signal,
-  });
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    onEvent({ kind: 'error', error: `HTTP ${res.status} ${errText}`, taskId });
-    return;
-  }
-
-  const reader = res.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let doneSent = false;
-  // ★ 启动 LLM 流式延迟追踪
-  const latencyTracker = new StreamingLatencyTracker();
-  latencyTracker.start(`llm-proxy:${req.mainProvider?.model || 'unknown'}`);
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) latencyTracker.recordChunk(value.byteLength);
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith('data:')) continue;
-      const data = trimmed.slice(5).trim();
-      if (!data) continue;
-      try {
-        const chunk = JSON.parse(data);
-        if (chunk.error) {
-          onEvent({ kind: 'error', error: chunk.error, taskId });
-          return;
-        }
-        if (chunk.done) {
-          doneSent = true;
-          // ★ done 帧可能携带 usage (Node LLM 代理在流式最后一帧合并)
-          if (chunk.usage) {
-            onEvent({ kind: 'usage', usage: chunk.usage, taskId });
-          }
-          onEvent({ kind: 'done', taskId });
-          return;
-        }
-        if (chunk.delta) {
-          onEvent({ kind: 'text', text: chunk.delta, taskId });
-        }
-      } catch { /* ignore parse errors */ }
-    }
-  }
-
-  if (!doneSent && !signal.aborted) {
-    onEvent({ kind: 'done', taskId });
-  }
-  // ★ 结束延迟追踪
-  latencyTracker.finish();
-}
-
-/**
  * dev (fetch SSE 流式) 实现
- * 流程:
- *   1) USE_RACER=true 时优先走 Node.js RACER Agent (/api/agents/dispatch)
- *   2) RACER 非超时失败时自动 fallback 到 Java Agent (/api/java-agent/api/chat/stream)
- *   3) RACER 超时 (AbortError) 不 fallback — 说明后端整体不可用
- *   4) USE_RACER=false 时直接走 Java Agent
- *   5) Java Agent 不可用 (502/503) 时 fallback 到 Node.js LLM 代理 (/api/llm/stream)
+ * ★ 2026-07-14: 移除所有 fallback 降级逻辑, 只走 Java Agent 路径。
+ *   请求失败直接抛出具体错误信息, 不允许降级。
  */
 async function startChatViaFetch(req: ChatRequest, onEvent: (e: ChatStreamEvent) => void): Promise<ChatHandle> {
-  const backend = _useRacer ? 'racer' : 'java';
-  const taskId = `${backend}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const taskId = `java-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const controller = new AbortController();
   const signal = controller.signal;
 
   const timeoutMs = 120_000;
   const timeoutId = setTimeout(() => {
     controller.abort();
-    onEvent({ kind: 'error', error: `${backend === 'racer' ? 'RACER Agent' : 'Java Agent'} request timeout (${timeoutMs / 1000}s)`, taskId });
+    onEvent({ kind: 'error', error: `Java Agent 请求超时 (${timeoutMs / 1000}s)`, taskId });
   }, timeoutMs);
 
   (async () => {
     try {
-      if (_useRacer) {
-        // ── RACER path: Node.js AgentDecisionOrchestrator (SSE streaming) ──
-        //   RACER 是后台训练链路, phase 事件不进流送区 (避免种子 agent 名污染)
-        //   只透传 text/done/error, phase 事件全部丢弃
-        //   Non-timeout errors auto-fallback to Java Agent
-        const racerOnEvent: typeof onEvent = (e) => {
-          if (e.kind === 'phase') return; // 阻断 RACER phase 事件进流送区
-          onEvent(e);
-        };
-        try {
-          const res = await fetch('/api/agents/dispatch', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Accept': 'text/event-stream',
-            },
-            body: JSON.stringify(buildRacerRequestBody(req)),
-            signal,
-          });
-
-          if (!res.ok) {
-            const errText = await res.text().catch(() => '');
-            let errMsg = `HTTP ${res.status}`;
-            try { errMsg = JSON.parse(errText).error || errMsg; } catch { errMsg = errText || errMsg; }
-            throw new Error(errMsg);
-          }
-
-          const contentType = res.headers.get('content-type') || '';
-          if (contentType.includes('text/event-stream') && res.body) {
-            // ── SSE streaming path ──
-            await parseRacerSSE(res, signal, taskId, racerOnEvent);
-          } else {
-            // ── Fallback: JSON response (server didn't return SSE) ──
-            const result = await res.json();
-            if (result.output) {
-              racerOnEvent({ kind: 'text', text: result.output, taskId });
-            }
-            racerOnEvent({ kind: 'done', taskId });
-          }
-        } catch (racerErr: any) {
-          if (racerErr?.name === 'AbortError') {
-            return;
-          }
-          // RACER 非超时错误 → fallback 到 Java Agent (Java 路径会正常推 phase 事件)
-          const reason = racerErr?.message || String(racerErr);
-          console.log(`[aiBackend] RACER failed (${reason}), falling back to Java Agent`);
-          try {
-            await executeJavaPath(req, signal, taskId, onEvent);
-          } catch (javaErr: any) {
-            if (javaErr?.name === 'AbortError') return;
-            if (javaErr instanceof JavaUnavailableError) {
-              // Java 也不可用 → fallback 到 LLM 代理
-              console.log(`[aiBackend] Java Agent also unavailable, falling back to LLM proxy`);
-              try {
-                await executeLLMProxyPath(req, signal, taskId, onEvent);
-              } catch (llmErr: any) {
-                if (llmErr?.name === 'AbortError') return;
-                onEvent({ kind: 'error', error: `RACER failed (${reason}), Java unavailable, LLM proxy also failed: ${llmErr?.message || llmErr}`, taskId });
-              }
-            } else {
-              onEvent({ kind: 'error', error: `RACER failed (${reason}), Java fallback also failed: ${javaErr?.message || javaErr}`, taskId });
-            }
-          }
-        }
-
-      } else {
-        // ── Java path: legacy Spring AI Agent ──
-        try {
-          await executeJavaPath(req, signal, taskId, onEvent);
-        } catch (javaErr: any) {
-          if (javaErr?.name === 'AbortError') return;
-          // Java 不可用 → fallback 到 Node.js LLM 代理
-          if (javaErr instanceof JavaUnavailableError) {
-            console.log(`[aiBackend] Java Agent unavailable (${javaErr.message}), falling back to LLM proxy`);
-            try {
-              await executeLLMProxyPath(req, signal, taskId, onEvent);
-            } catch (llmErr: any) {
-              if (llmErr?.name === 'AbortError') return;
-              onEvent({ kind: 'error', error: `Java Agent 不可达, LLM 代理也失败: ${llmErr?.message || llmErr}`, taskId });
-            }
-          } else {
-            throw javaErr;
-          }
-        }
-      }
+      await executeJavaPath(req, signal, taskId, onEvent);
     } catch (err: any) {
       if (err?.name === 'AbortError') return;
+      // ★ 不降级, 直接抛出具体错误
       onEvent({ kind: 'error', error: err?.message || String(err), taskId });
     } finally {
       clearTimeout(timeoutId);
