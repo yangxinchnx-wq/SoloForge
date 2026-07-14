@@ -136,11 +136,12 @@ export async function bootstrapCanvasSessionLayer(
       getSurrealStoreAsync(),
       new Promise((_, reject) =>
         setTimeout(() => reject(new Error(
-          `SurrealDB 初始化超时 (8 秒)。` +
+          `SurrealDB 初始化超时 (15 秒)。` +
           `位置: bootstrap/canvas.ts → bootstrapCanvasSessionLayer() → 步骤3 SurrealDB 初始化。` +
           `原因: rocksdb 连接 hang, 可能是路径冲突或磁盘 I/O 阻塞。` +
-          `请检查 data/canvas_sessions_db 目录是否被其他进程锁定。`,
-        )), 8000),
+          `请检查 data/canvas_sessions_db 目录是否被其他进程锁定, ` +
+          `或删除该目录下的 LOCK 文件后重启。`,
+        )), 15000),
       ),
     ]);
     const ok = store.isAvailable();
