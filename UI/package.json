@@ -31,6 +31,11 @@
       "build/icon/**/*",
       "package.json"
     ],
+    "asarUnpack": [
+      "node_modules/node-llama-cpp/**",
+      "node_modules/@npc-llama-cpp/**",
+      "node_modules/lifecycle-utils/**"
+    ],
     "extraResources": [
       {
         "from": "resources/canvas/canvas-dist",
@@ -118,6 +123,7 @@
     "http-proxy-middleware": "^4.1.1",
     "ioredis": "^5.11.1",
     "keytar": "^7.9.0",
+    "node-llama-cpp": "^3.19.0",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "recharts": "^3.8.1",

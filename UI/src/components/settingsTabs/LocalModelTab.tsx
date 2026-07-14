@@ -50,31 +50,6 @@ interface ChatMessage {
   content: string;
 }
 
-// ── window.soloforge.localLLM 类型声明 ────────────────────────────
-
-declare global {
-  interface Window {
-    soloforge: {
-      localLLM: {
-        list: () => Promise<{ ok: boolean; models: ModelEntry[] }>;
-        add: (path: string) => Promise<{ ok: boolean; error?: string; model?: ModelEntry }>;
-        remove: (path: string) => Promise<{ ok: boolean }>;
-        delete: (path: string) => Promise<{ ok: boolean; error?: string }>;
-        browse: () => Promise<{ ok: boolean; canceled?: boolean; path?: string }>;
-        load: (path: string, params: { n_ctx: number; n_threads: number; n_gpu_layers: number }) => Promise<{ ok: boolean; error?: string; model_name?: string }>;
-        unload: () => Promise<{ ok: boolean }>;
-        status: () => Promise<ModelStatus>;
-        device: () => Promise<DeviceInfo>;
-        metrics: () => Promise<Metrics>;
-        startServer: () => Promise<{ ok: boolean; error?: string; port?: number }>;
-        stopServer: () => Promise<{ ok: boolean }>;
-        serverRunning: () => Promise<{ running: boolean }>;
-        serverUrl: () => Promise<{ url: string }>;
-      };
-    };
-  }
-}
-
 // ── 组件 ──────────────────────────────────────────────────────────
 
 export default function LocalModelTab() {
@@ -107,7 +82,7 @@ export default function LocalModelTab() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [chatStreaming, setChatStreaming] = useState(false);
-  const chatAbortRef = useRef<AbortController | null>(null);
+  const chatStreamRef = useRef<{ abort: () => Promise<any> } | null>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
   // 确认对话框
@@ -180,12 +155,15 @@ export default function LocalModelTab() {
   };
 
   const handleStopServer = async () => {
+    chatStreamRef.current?.abort();
+    chatStreamRef.current = null;
     await window.soloforge.localLLM.stopServer();
     setServerRunning(false);
     setStatus(null);
     setSelectedPath('');
     setChatMessages([]);
     setMetrics(null);
+    setChatStreaming(false);
     setInfo('推理服务已停止');
   };
 
@@ -267,12 +245,15 @@ export default function LocalModelTab() {
   };
 
   const handleUnload = async () => {
+    chatStreamRef.current?.abort();
+    chatStreamRef.current = null;
     setLoading(true);
     await window.soloforge.localLLM.unload();
     await refreshStatus();
     setSelectedPath('');
     setChatMessages([]);
     setMetrics(null);
+    setChatStreaming(false);
     setLoading(false);
     setInfo('模型已卸载');
   };
@@ -332,110 +313,88 @@ export default function LocalModelTab() {
 
   // ── 聊天测试 ────────────────────────────────────────────────
 
-  const sendChat = async () => {
+  const sendChat = () => {
     if (!chatInput.trim() || chatStreaming) return;
     if (!status?.loaded) {
       setError('请先加载模型');
       return;
     }
 
-    const userMsg: ChatMessage = { role: 'user', content: chatInput.trim() };
+    const userText = chatInput.trim();
+    const userMsg: ChatMessage = { role: 'user', content: userText };
     setChatMessages((prev) => [...prev, userMsg]);
     setChatInput('');
     setChatStreaming(true);
     setError(null);
 
     // 添加空的 assistant 消息，逐步填充
+    let assistantContent = '';
     setChatMessages((prev) => [...prev, { role: 'assistant', content: '' }]);
 
-    try {
-      const { url } = await window.soloforge.localLLM.serverUrl();
-      const allMessages = [...chatMessages, userMsg].map((m) => ({
-        role: m.role,
-        content: m.content,
-      }));
+    // 创建 IPC 流式聊天
+    const stream = window.soloforge.localLLM.chat(userText, {
+      temperature,
+      top_p: topP,
+      max_tokens: maxTokens,
+      repeat_penalty: repeatPenalty,
+    });
+    chatStreamRef.current = stream;
 
-      const controller = new AbortController();
-      chatAbortRef.current = controller;
+    // 清理函数
+    let unsubToken: (() => void) | null = null;
+    let unsubDone: (() => void) | null = null;
+    let unsubError: (() => void) | null = null;
 
-      const response = await fetch(`${url}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: allMessages,
-          temperature,
-          top_p: topP,
-          max_tokens: maxTokens,
-          repeat_penalty: repeatPenalty,
-          stream: true,
-        }),
-        signal: controller.signal,
+    unsubToken = stream.onToken((token) => {
+      assistantContent += token;
+      setChatMessages((prev) => {
+        const updated = [...prev];
+        updated[updated.length - 1] = {
+          role: 'assistant',
+          content: assistantContent,
+        };
+        return updated;
       });
+    });
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('No response body');
-
-      const decoder = new TextDecoder();
-      let assistantContent = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const text = decoder.decode(value, { stream: true });
-        const lines = text.split('\n');
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6).trim();
-            if (data === '[DONE]') continue;
-            try {
-              const chunk = JSON.parse(data);
-              const delta = chunk.choices?.[0]?.delta?.content;
-              if (delta) {
-                assistantContent += delta;
-                setChatMessages((prev) => {
-                  const updated = [...prev];
-                  updated[updated.length - 1] = {
-                    role: 'assistant',
-                    content: assistantContent,
-                  };
-                  return updated;
-                });
-              }
-            } catch {
-              // skip parse errors
-            }
-          }
-        }
-      }
-
-      // 获取性能指标
-      const m = await window.soloforge.localLLM.metrics();
-      setMetrics(m);
-    } catch (e: any) {
-      if (e.name === 'AbortError') {
-        setInfo('已停止生成');
-      } else {
-        setError(e.message || '推理失败');
-      }
-    } finally {
+    unsubDone = stream.onDone(() => {
       setChatStreaming(false);
-      chatAbortRef.current = null;
-    }
+      chatStreamRef.current = null;
+      unsubToken?.();
+      unsubDone?.();
+      unsubError?.();
+      // 获取性能指标
+      window.soloforge.localLLM.metrics().then(setMetrics).catch(() => {});
+    });
+
+    unsubError = stream.onError((err) => {
+      setError(err || '推理失败');
+      setChatStreaming(false);
+      chatStreamRef.current = null;
+      unsubToken?.();
+      unsubDone?.();
+      unsubError?.();
+    });
+
+    // 开始推理
+    stream.start().catch((e: any) => {
+      setError(e?.message || '启动推理失败');
+      setChatStreaming(false);
+      chatStreamRef.current = null;
+      unsubToken?.();
+      unsubDone?.();
+      unsubError?.();
+    });
   };
 
   const stopChat = () => {
-    chatAbortRef.current?.abort();
+    chatStreamRef.current?.abort();
   };
 
   const clearChat = () => {
     setChatMessages([]);
     setMetrics(null);
+    window.soloforge.localLLM.chatReset();
   };
 
   // ── 渲染 ────────────────────────────────────────────────────

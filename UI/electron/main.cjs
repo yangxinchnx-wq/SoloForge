@@ -29,7 +29,7 @@ const fs = require('fs');
 const { ProxyService } = require('./proxy-service.cjs');
 const proxyService = new ProxyService();
 
-// ── Local LLM Manager（本地大模型管理） ──
+// ── Local LLM Manager（本地大模型管理, v2: node-llama-cpp） ──
 const localLLM = require('./local-llm-manager.cjs');
 localLLM.init();
 
@@ -1130,111 +1130,8 @@ Write-Output "OK"`;
   try { await execPs(script); } catch {}
 }
 
-// ★ 设备选择弹窗 — 用独立 BrowserWindow 避免被 Flutter 原生窗口遮挡
-let devicePopupWin = null;
-
-ipcMain.handle('canvas:open-device-popup', async (_e, { x, y, items, activeKey }) => {
-  // 关闭已有弹窗
-  if (devicePopupWin && !devicePopupWin.isDestroyed()) {
-    devicePopupWin.destroy();
-    devicePopupWin = null;
-  }
-
-  const w = 260;
-  const h = Math.min(400, items.length * 28 + 60);
-
-  devicePopupWin = new BrowserWindow({
-    parent: mainWindow,
-    x: Math.round(x),
-    y: Math.round(y),
-    width: w,
-    height: h,
-    frame: false,
-    transparent: true,
-    skipTaskbar: true,
-    resizable: false,
-    minimizable: false,
-    maximizable: false,
-    hasShadow: true,
-    focusable: true,
-    alwaysOnTop: true,
-    webPreferences: {
-      contextIsolation: false,
-      nodeIntegration: false,
-    },
-  });
-
-  // 构建 HTML
-  const itemHtml = items.map(it => {
-    const active = it.key === activeKey;
-    const glb = it.glbFile || '';
-    return `<div class="item${active ? ' active' : ''}" data-key="${it.key}" data-glb="${glb}">
-      <span class="ico">${it.icon || ''}</span>
-      <span class="label">${it.label}</span>
-      <span class="size">${it.w}×${it.h}</span>
-    </div>`;
-  }).join('');
-
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-    * { margin:0; padding:0; box-sizing:border-box; }
-    body { background:rgba(28,28,30,0.98); color:#e0e0e0; font-family:'SF Mono',Consolas,monospace; font-size:11px; padding:6px; border-radius:10px; border:1px solid rgba(255,255,255,0.08); overflow:hidden; }
-    .fill { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:6px; cursor:pointer; margin-bottom:4px; font-weight:600; }
-    .fill:hover { background:rgba(255,255,255,0.06); }
-    .fill.active { background:rgba(100,140,255,0.15); color:#8ab4ff; }
-    .sep { height:1px; background:rgba(255,255,255,0.06); margin:4px 0; }
-    .group { color:rgba(255,255,255,0.25); font-size:9px; padding:4px 8px 2px; text-transform:uppercase; letter-spacing:0.5px; }
-    .item { display:flex; align-items:center; gap:8px; padding:5px 8px; border-radius:6px; cursor:pointer; }
-    .item:hover { background:rgba(255,255,255,0.06); }
-    .item.active { background:rgba(100,140,255,0.15); color:#8ab4ff; }
-    .label { flex:1; }
-    .size { color:rgba(255,255,255,0.3); font-size:9px; }
-  </style></head><body>
-    <div class="fill${activeKey==='fill'?' active':''}" data-key="fill">⤢ 填满当前宽度</div>
-    <div class="sep"></div>
-    ${itemHtml}
-    <script>
-      document.querySelectorAll('[data-key]').forEach(function(el) {
-        el.addEventListener('click', function() {
-          document.title = 'SELECT:' + el.getAttribute('data-key') + ':' + (el.getAttribute('data-glb')||'');
-        });
-      });
-    </script>
-  </body></html>`;
-
-  devicePopupWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
-
-  // 通过 title 变化接收选择结果
-  devicePopupWin.webContents.on('page-title-updated', (_e2, title) => {
-    if (title.startsWith('SELECT:')) {
-      const parts = title.split(':');
-      const key = parts[1];
-      const glb = parts[2] || '';
-      mainWindow.webContents.send('canvas:device-selected', { key, glbFile: glb });
-      if (devicePopupWin && !devicePopupWin.isDestroyed()) {
-        devicePopupWin.destroy();
-        devicePopupWin = null;
-      }
-    }
-  });
-
-  // 失焦关闭
-  devicePopupWin.on('blur', () => {
-    if (devicePopupWin && !devicePopupWin.isDestroyed()) {
-      devicePopupWin.destroy();
-      devicePopupWin = null;
-    }
-  });
-
-  return { ok: true };
-});
-
-ipcMain.handle('canvas:close-device-popup', async () => {
-  if (devicePopupWin && !devicePopupWin.isDestroyed()) {
-    devicePopupWin.destroy();
-    devicePopupWin = null;
-  }
-  return { ok: true };
-});
+// ★ 设备选择弹窗实现已移至文件下方 (buildDeviceDropdownHtml + openDeviceDropdownWindow)
+//   旧版 devicePopupWin 实现 (期望 items 数组) 已删除, 避免与新版 (payload.groups) 冲突
 
 async function screenshotCanvas(sessionId) {
   const s = canvasSessions.get(sessionId);
@@ -1350,6 +1247,196 @@ return { ok: true };
 } catch (e) {
 return { ok: false, error: e?.message || String(e) };
 }
+});
+
+// ─────────────────────────────────────────────────────────────────
+// 设备下拉框独立悬浮窗口 (解决 Flutter HWND 盖住 DOM 下拉框)
+//   dropdown 作为 mainWindow 的 child BrowserWindow, z-order 高于
+//   canvasHostWindow, 能盖住 Flutter HWND, 画布内容完全不丢失
+// ─────────────────────────────────────────────────────────────────
+let deviceDropdownWindow = null;
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function deviceIconSvg(group) {
+  const sw = 'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"';
+  const svgs = {
+    mobile: `<svg width="12" height="12" viewBox="0 0 24 24" ${sw}><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>`,
+    tablet: `<svg width="12" height="12" viewBox="0 0 24 24" ${sw}><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>`,
+    desktop: `<svg width="12" height="12" viewBox="0 0 24 24" ${sw}><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`,
+    watch: `<svg width="12" height="12" viewBox="0 0 24 24" ${sw}><circle cx="12" cy="12" r="6"/><polyline points="12,10 12,12 13,13"/><path d="M16.13 7.66l-.81-4.05a2 2 0 0 0-2-1.61h-2.68a2 2 0 0 0-2 1.61l-.78 4.05"/><path d="M7.88 16.36l.8 4a2 2 0 0 0 2 1.61h2.72a2 2 0 0 0 2-1.61l.81-4.05"/></svg>`,
+  };
+  return svgs[group] || svgs.desktop;
+}
+
+function buildDeviceDropdownHtml(payload) {
+  const t = payload.theme || {};
+  const surface = t.surface || '#ffffff';
+  const surfaceBright = t.surfaceBright || '#f4f4f5';
+  const primary = t.primary || '#3b82f6';
+  const onSurface = t.onSurface || '#18181b';
+  const outline = t.outline || '#d4d4d8';
+  const noneActive = payload.currentKey === 'none';
+  const groups = Array.isArray(payload.groups) ? payload.groups : [];
+  const currentKey = payload.currentKey || '';
+
+  const groupsHtml = groups.map(g => {
+    const items = Array.isArray(g.items) ? g.items : [];
+    const itemsHtml = items.map(it => {
+      const active = it.key === currentKey;
+      return `<button class="item${active ? ' active' : ''}" data-key="${escapeHtml(it.key)}">
+        ${deviceIconSvg(it.group)}
+        <span class="label">${escapeHtml(it.label)}</span>
+        <span class="dim">${it.w}×${it.h}</span>
+        ${active ? '<span class="check">✓</span>' : ''}
+      </button>`;
+    }).join('');
+    return `<div class="group"><div class="group-label">${escapeHtml(g.label)}</div>${itemsHtml}</div>`;
+  }).join('');
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; background:var(--surface); overflow:hidden; font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; }
+  :root { --surface:${surface}; --surface-bright:${surfaceBright}; --primary:${primary}; --on-surface:${onSurface}; --outline:${outline}; }
+  .panel {
+    width:100%; height:100%;
+    background: var(--surface);
+    border: 1px solid color-mix(in srgb, var(--outline) 45%, transparent);
+    border-radius: 16px;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.18);
+    padding: 16px; display: flex; flex-direction: column;
+    color: var(--on-surface);
+    transform-origin: 50% 0%;
+    animation: panelIn 0.38s cubic-bezier(0.16,1,0.3,1);
+    overflow: hidden;
+  }
+  @keyframes panelIn {
+    from { opacity:0; transform: scale(0.94) translateY(20px); clip-path: ellipse(100% 0% at 50% 0%); }
+    to   { opacity:1; transform: scale(1) translateY(0);     clip-path: ellipse(150% 150% at 50% 0%); }
+  }
+  .header { display:flex; align-items:center; justify-content:space-between; gap:8px; border-bottom:1px solid color-mix(in srgb, var(--outline) 20%, transparent); padding-bottom:10px; margin-bottom:12px; animation: itemIn .32s cubic-bezier(.16,1,.3,1) .08s both; }
+  .badge { font-size:10px; font-family:ui-monospace,monospace; font-weight:700; background:color-mix(in srgb, var(--primary) 10%, transparent); border:1px solid color-mix(in srgb, var(--primary) 25%, transparent); color:var(--primary); padding:2px 10px; border-radius:9999px; line-height:1.2; }
+  .current { font-size:10px; color:color-mix(in srgb, var(--on-surface) 50%, transparent); font-family:ui-monospace,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .none-btn { display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border-radius:12px; font-size:10px; font-family:ui-monospace,monospace; font-weight:600; border:1px solid transparent; background:transparent; color:color-mix(in srgb, var(--on-surface) 70%, transparent); cursor:pointer; transition:all .2s; margin-bottom:10px; animation:itemIn .32s cubic-bezier(.16,1,.3,1) .08s both; }
+  .none-btn:hover { background:color-mix(in srgb, var(--surface-bright) 60%, transparent); }
+  .none-btn.active { background:color-mix(in srgb, var(--primary) 15%, transparent); color:var(--primary); border-color:color-mix(in srgb, var(--primary) 40%, transparent); }
+  .list { display:flex; flex-direction:column; gap:10px; overflow-y:auto; max-height:300px; padding-right:4px; animation:itemIn .32s cubic-bezier(.16,1,.3,1) .08s both; }
+  .group { display:flex; flex-direction:column; gap:6px; }
+  .group-label { font-size:9px; font-family:ui-monospace,monospace; font-weight:700; text-transform:uppercase; letter-spacing:.1em; color:color-mix(in srgb, var(--on-surface) 40%, transparent); padding:0 4px; line-height:1; }
+  .item { display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border-radius:12px; font-size:10px; font-family:ui-monospace,monospace; font-weight:600; border:1px solid color-mix(in srgb, var(--outline) 20%, transparent); background:transparent; color:color-mix(in srgb, var(--on-surface) 80%, transparent); cursor:pointer; transition:all .2s; }
+  .item:hover { background:color-mix(in srgb, var(--surface-bright) 60%, transparent); color:var(--primary); border-color:color-mix(in srgb, var(--primary) 30%, transparent); }
+  .item.active { background:color-mix(in srgb, var(--primary) 15%, transparent); color:var(--primary); border-color:color-mix(in srgb, var(--primary) 40%, transparent); }
+  .item .label { flex:1; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .item .dim { color:color-mix(in srgb, var(--on-surface) 40%, transparent); font-size:9px; }
+  .item .check { color:var(--primary); font-size:10px; }
+  @keyframes itemIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+  .empty { text-align:center; padding:20px; font-size:11px; color:color-mix(in srgb, var(--on-surface) 40%, transparent); }
+  .list::-webkit-scrollbar { width:4px; }
+  .list::-webkit-scrollbar-thumb { background:color-mix(in srgb, var(--outline) 30%, transparent); border-radius:2px; }
+</style></head>
+<body>
+  <div class="panel">
+    <div class="header">
+      <div class="badge">${escapeHtml(payload.renderMode || '')} · ${payload.deviceCount || 0} 款设备</div>
+      ${payload.currentLabel ? `<div class="current">当前: ${escapeHtml(payload.currentLabel)}</div>` : ''}
+    </div>
+    <button class="none-btn${noneActive ? ' active' : ''}" data-key="none">
+      <span>▢</span><span style="flex:1;text-align:left">默认尺寸 (430×932)</span>
+      ${noneActive ? '<span>✓</span>' : ''}
+    </button>
+    <div class="list">${groupsHtml || '<div class="empty">暂无设备</div>'}</div>
+  </div>
+<script>
+  function fire(key) { window.soloforge && window.soloforge.canvas && window.soloforge.canvas.devicePopupSelect(key); }
+  document.querySelectorAll('[data-key]').forEach(el => {
+    el.addEventListener('click', () => fire(el.getAttribute('data-key')));
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') window.soloforge.canvas.devicePopupClose(); });
+</script>
+</body></html>`;
+}
+
+function openDeviceDropdownWindow(payload) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    console.warn('[dropdown] mainWindow not ready');
+    return;
+  }
+  const html = buildDeviceDropdownHtml(payload || {});
+  const bounds = { x: (payload.x|0), y: (payload.y|0), width: (payload.width||320), height: (payload.height||460) };
+  console.log('[dropdown] open at', bounds, 'htmlLen=', html.length);
+  if (deviceDropdownWindow && !deviceDropdownWindow.isDestroyed()) {
+    deviceDropdownWindow.setBounds(bounds);
+    deviceDropdownWindow.webContents.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    deviceDropdownWindow.show();
+    deviceDropdownWindow.focus();
+    return;
+  }
+  deviceDropdownWindow = new BrowserWindow({
+    parent: mainWindow,
+    frame: false,
+    skipTaskbar: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    hasShadow: false,
+    alwaysOnTop: true,
+    x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      sandbox: false,
+      nodeIntegration: false,
+    },
+  });
+  deviceDropdownWindow.webContents.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+  deviceDropdownWindow.webContents.on('did-finish-load', () => {
+    console.log('[dropdown] did-finish-load');
+  });
+  deviceDropdownWindow.webContents.on('did-fail-load', (_e, code, desc) => {
+    console.error('[dropdown] did-fail-load', code, desc);
+  });
+  // 失焦自动关闭 (点击画布/其他区域时)
+  deviceDropdownWindow.on('blur', () => {
+    try { if (deviceDropdownWindow && !deviceDropdownWindow.isDestroyed()) deviceDropdownWindow.hide(); } catch {}
+  });
+  deviceDropdownWindow.show();
+  deviceDropdownWindow.focus();
+  // 调试: 打开 devtools 看渲染是否正常
+  deviceDropdownWindow.webContents.openDevTools({ mode: 'detach' });
+}
+
+function closeDeviceDropdownWindow() {
+  if (deviceDropdownWindow && !deviceDropdownWindow.isDestroyed()) {
+    deviceDropdownWindow.hide();
+  }
+}
+
+ipcMain.handle('canvas:open-device-popup', async (_e, payload) => {
+  try {
+    console.log('[dropdown] IPC received payload keys:', Object.keys(payload || {}));
+    console.log('[dropdown] groups type:', Array.isArray(payload?.groups), 'groups:', JSON.stringify(payload?.groups)?.substring(0, 200));
+    openDeviceDropdownWindow(payload || {});
+    return { ok: true };
+  } catch (e) {
+    console.error('[dropdown] IPC error:', e?.stack || e);
+    return { ok: false, error: e?.message || String(e) };
+  }
+});
+ipcMain.handle('canvas:close-device-popup', async () => {
+  closeDeviceDropdownWindow(); return { ok: true };
+});
+// dropdown 窗口回传选择结果 → 转发给 mainWindow
+ipcMain.on('canvas:device-popup-select', (_e, { key }) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('canvas:device-selected', { key });
+  }
+  closeDeviceDropdownWindow();
+});
+ipcMain.on('canvas:device-popup-close', () => {
+  closeDeviceDropdownWindow();
 });
 
   // ★ 新增: transformDevice — 拖拽/旋转/缩放 3D 设备
@@ -2530,8 +2617,8 @@ app.on('before-quit', () => {
     stopWatchdog(s);
     if (s.process && !s.process.killed) killProcessTree(s.process);
   }
-  // 退出 Local LLM 服务
-  localLLM.cleanup();
+  // 退出 Local LLM 服务 (async, fire-and-forget on quit)
+  localLLM.cleanup().catch(() => {});
   // 生产模式: 退出所有后端服务
   killAllChildren();
 });

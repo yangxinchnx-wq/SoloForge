@@ -38,11 +38,18 @@ contextBridge.exposeInMainWorld('soloforge', {
     setHostVisible: (visible) =>
       ipcRenderer.invoke('canvas:set-host-visible', { visible }),
     // ★ 新增: openDevicePopup — 打开设备选择弹窗 (独立 BrowserWindow, 不被 Flutter 遮挡)
-    openDevicePopup: (x, y, items, activeKey) =>
-      ipcRenderer.invoke('canvas:open-device-popup', { x, y, items, activeKey }),
+    //   payload: { x, y, width, height, renderMode, currentKey, currentLabel, deviceCount, groups, theme }
+    openDevicePopup: (payload) =>
+      ipcRenderer.invoke('canvas:open-device-popup', payload),
     // ★ 新增: closeDevicePopup — 关闭设备选择弹窗
     closeDevicePopup: () =>
       ipcRenderer.invoke('canvas:close-device-popup'),
+    // ★ dropdown 窗口内部使用: 回传选择结果
+    devicePopupSelect: (key) =>
+      ipcRenderer.send('canvas:device-popup-select', { key }),
+    // ★ dropdown 窗口内部使用: 请求关闭 (Esc)
+    devicePopupClose: () =>
+      ipcRenderer.send('canvas:device-popup-close'),
     // ★ 新增: onDeviceSelected — 监听设备选择事件
     onDeviceSelected: (callback) => {
       const handler = (_e, data) => callback(data);
@@ -128,7 +135,7 @@ contextBridge.exposeInMainWorld('soloforge', {
     testConnection: ()  => ipcRenderer.invoke('proxy:test'),
     getSystemInfo:  ()  => ipcRenderer.invoke('proxy:system-info'),
   },
-  // ── 本地 LLM 管理 ──
+  // ── 本地 LLM 管理 (v2: node-llama-cpp, 无 Python 进程) ──
   localLLM: {
     // 模型列表 CRUD
     list:        ()         => ipcRenderer.invoke('local-llm:list'),
@@ -143,10 +150,47 @@ contextBridge.exposeInMainWorld('soloforge', {
     status:      ()         => ipcRenderer.invoke('local-llm:status'),
     device:      ()         => ipcRenderer.invoke('local-llm:device'),
     metrics:     ()         => ipcRenderer.invoke('local-llm:metrics'),
-    // 服务管理
+    // 服务管理 (初始化/释放 llama.cpp binding)
     startServer: ()         => ipcRenderer.invoke('local-llm:start-server'),
     stopServer:  ()         => ipcRenderer.invoke('local-llm:stop-server'),
     serverRunning: ()       => ipcRenderer.invoke('local-llm:server-running'),
-    serverUrl:   ()         => ipcRenderer.invoke('local-llm:server-url'),
+
+    // 流式聊天 — IPC 事件推送 (替代 HTTP SSE)
+    // 用法:
+    //   const s = window.soloforge.localLLM.chat('Hello', { temperature: 0.3 });
+    //   s.onToken(t => console.log(t));
+    //   s.onDone(() => console.log('done'));
+    //   s.onError(e => console.error(e));
+    //   s.start();   // 开始推理
+    //   s.abort();   // 中止生成
+    //   window.soloforge.localLLM.chatReset();  // 清空会话历史
+    chat: (text, params) => {
+      const streamId = `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const tokenCh  = `local-llm:token:${streamId}`;
+      const doneCh   = `local-llm:done:${streamId}`;
+      const errorCh  = `local-llm:error:${streamId}`;
+
+      return {
+        streamId,
+        onToken: (cb) => {
+          const h = (_e, data) => cb(data);
+          ipcRenderer.on(tokenCh, h);
+          return () => ipcRenderer.removeListener(tokenCh, h);
+        },
+        onDone: (cb) => {
+          const h = () => cb();
+          ipcRenderer.on(doneCh, h);
+          return () => ipcRenderer.removeListener(doneCh, h);
+        },
+        onError: (cb) => {
+          const h = (_e, err) => cb(err);
+          ipcRenderer.on(errorCh, h);
+          return () => ipcRenderer.removeListener(errorCh, h);
+        },
+        start: () => ipcRenderer.invoke('local-llm:chat', { text, params, streamId }),
+        abort: () => ipcRenderer.invoke('local-llm:chat-abort', { streamId }),
+      };
+    },
+    chatReset: () => ipcRenderer.invoke('local-llm:chat-reset'),
   },
 });
