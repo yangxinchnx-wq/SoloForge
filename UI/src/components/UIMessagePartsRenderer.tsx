@@ -367,8 +367,9 @@ const SubTaskProgressPartView = memo(function SubTaskProgressPartView({ part }: 
 // ── SubTask Step: icon cross-fade on status change ──
 
 const SubTaskStepPartView = memo(function SubTaskStepPartView({ part }: { part: UISubTaskStepPart }) {
-  // ★ 运行中默认展开详情; 完成/出错后 2 秒自动折叠
-  const [detailExpanded, setDetailExpanded] = useState(part.status !== 'done' && part.status !== 'error');
+  // ★ EXECUTE 步骤默认折叠 (内容通常很长); 其他步骤运行中默认展开
+  const isExecute = part.step === 'EXECUTE';
+  const [detailExpanded, setDetailExpanded] = useState(!isExecute && part.status !== 'done' && part.status !== 'error');
 
   useEffect(() => {
     if (part.status === 'done' || part.status === 'error') {

@@ -41,6 +41,8 @@ const SOURCE_LABELS: Record<SubTaskSource, string> = {
 
 function SubTaskNodeImpl({ subTask, mainModel, chatId, defaultOpen = true }: SubTaskNodeProps) {
   const [open, setOpen] = useState(defaultOpen);
+  // ★ 流式文本默认折叠, 避免 EXECUTE 阶段大量 LLM 输出撑满屏幕
+  const [textExpanded, setTextExpanded] = useState(false);
   const isDone = subTask.status === 'done';
   const isRunning = subTask.status === 'running';
   const isError = subTask.status === 'error';
@@ -112,15 +114,29 @@ function SubTaskNodeImpl({ subTask, mainModel, chatId, defaultOpen = true }: Sub
               )}
             </div>
 
-            {/* 流式文本缓冲区 — LLM 逐字输出展示 */}
+            {/* 流式文本缓冲区 — LLM 逐字输出展示 (默认折叠) */}
             {textBuffer && (
               <div className={`px-3 pb-2 border-t border-outline/5 transition-opacity duration-150 ${isTextStale ? 'opacity-60' : 'opacity-100'}`}>
-                <div className="pt-2 text-[11px] text-on-surface/70 leading-relaxed whitespace-pre-wrap break-words font-mono">
-                  {textBuffer}
+                <div
+                  className="pt-2 flex items-center gap-1 cursor-pointer select-none hover:text-on-surface/70 transition-colors"
+                  onClick={() => setTextExpanded(prev => !prev)}
+                >
+                  <ChevronDown className={`w-3 h-3 text-on-surface/30 transition-transform shrink-0 ${textExpanded ? 'rotate-0' : '-rotate-90'}`} />
+                  <span className="text-[10px] text-on-surface/40 font-mono">
+                    {textExpanded ? '折叠输出' : `展开输出 (${textBuffer.length} 字符)`}
+                  </span>
                   {isRunning && !isDone && (
-                    <span className="inline-block w-1.5 h-3 bg-blue-400 animate-pulse ml-0.5 align-middle" />
+                    <Loader2 className="w-2.5 h-2.5 text-blue-400 animate-spin shrink-0" />
                   )}
                 </div>
+                {textExpanded && (
+                  <div className="mt-1 ml-1 pl-2 border-l border-outline/10 text-[11px] text-on-surface/70 leading-relaxed whitespace-pre-wrap break-words font-mono max-h-[300px] overflow-y-auto">
+                    {textBuffer}
+                    {isRunning && !isDone && (
+                      <span className="inline-block w-1.5 h-3 bg-blue-400 animate-pulse ml-0.5 align-middle" />
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
