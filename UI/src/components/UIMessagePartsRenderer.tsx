@@ -367,12 +367,14 @@ const SubTaskProgressPartView = memo(function SubTaskProgressPartView({ part }: 
 // ── SubTask Step: icon cross-fade on status change ──
 
 const SubTaskStepPartView = memo(function SubTaskStepPartView({ part }: { part: UISubTaskStepPart }) {
-  // ★ 运行中默认展开详情; 完成/出错后自动折叠
+  // ★ 运行中默认展开详情; 完成/出错后 2 秒自动折叠
   const [detailExpanded, setDetailExpanded] = useState(part.status !== 'done' && part.status !== 'error');
 
   useEffect(() => {
     if (part.status === 'done' || part.status === 'error') {
-      setDetailExpanded(false);
+      // ★ FIX: 2 秒后折叠, 让用户有时间看到结果
+      const timer = setTimeout(() => setDetailExpanded(false), 2000);
+      return () => clearTimeout(timer);
     }
   }, [part.status]);
 

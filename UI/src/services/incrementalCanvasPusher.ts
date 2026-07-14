@@ -366,12 +366,17 @@ function buildDisplayText(text: string, blocks: CodeBlockInfo[]): string {
 
   let result = '';
   let lastEnd = 0;
+  // ★ FIX: 多个已完成代码块只显示一次「已渲染到画布」, 不重复
+  let renderedLabelShown = false;
 
   for (const block of blocks) {
     result += text.slice(lastEnd, block.openFenceStart);
     const langLabel = block.lang || 'code';
     if (block.complete) {
-      result += `已渲染到画布 (${langLabel})`;
+      if (!renderedLabelShown) {
+        result += `已渲染到画布 (${langLabel})`;
+        renderedLabelShown = true;
+      }
       lastEnd = block.closeFenceEnd;
     } else {
       result += `正在渲染到画布...`;
