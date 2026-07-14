@@ -135,6 +135,8 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
   const [selectedSkillToEdit, setSelectedSkillToEdit] = useState<string | null>(null);
   const [skillRulesContent, setSkillRulesContent] = useState('');
   const [isSavingSkillRules, setIsSavingSkillRules] = useState(false);
+  // ★ 加载态: 切换技能时先显示 loading, 避免旧内容闪现造成抖动
+  const [isLoadingSkillRules, setIsLoadingSkillRules] = useState(false);
 
   // ★ 性格自定义编辑子面板 (仿照 Skills 子面板)
   const [selectedPersonalityToEdit, setSelectedPersonalityToEdit] = useState<string | null>(null);
@@ -370,6 +372,9 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
   };
 
   const fetchSkillRules = async (skillId: string) => {
+    setIsLoadingSkillRules(true);
+    // ★ 立即清空旧内容, 避免上一个技能的内容在新请求期间短暂闪现
+    setSkillRulesContent('');
     try {
       const res = await fetch(`/api/custom-rules?skill=${skillId}`);
       const data = await res.json();
@@ -380,6 +385,8 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
       }
     } catch (err) {
       console.error(err);
+    } finally {
+      setIsLoadingSkillRules(false);
     }
   };
 
@@ -439,17 +446,17 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
   };
 
   // Dragging states — 初始位置直接居中, 避免 useEffect 延迟设置导致"从别处飞过来"
-  const [size, setSize] = useState({ width: 380, height: 460 });
+  const [size, setSize] = useState({ width: 520, height: 620 });
   const [position, setPosition] = useState(() => {
     if (typeof window !== 'undefined') {
       return {
-        x: Math.max(20, (window.innerWidth - 380) / 2),
-        y: Math.max(25, (window.innerHeight - 460) / 2),
+        x: Math.max(20, (window.innerWidth - 520) / 2),
+        y: Math.max(25, (window.innerHeight - 620) / 2),
       };
     }
     return { x: 120, y: 80 };
   });
-  const [subSize, setSubSize] = useState({ width: 340, height: 460 });
+  const [subSize, setSubSize] = useState({ width: 440, height: 620 });
 
   useEffect(() => {
     setSubSize(prev => ({ ...prev, height: size.height }));
@@ -492,10 +499,10 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
 
   const subPanelX = useMemo(() => {
     if (typeof window === 'undefined') return position.x + size.width + 12;
-    const rightCoord = position.x + size.width + 352;
+    const rightCoord = position.x + size.width + 452;
     if (rightCoord > window.innerWidth) {
       // Show on the left
-      return Math.max(8, position.x - 350);
+      return Math.max(8, position.x - 450);
     }
     return position.x + size.width + 12;
   }, [position.x, size.width]);
@@ -504,8 +511,8 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
   useEffect(() => {
     if (selectedSkillToEdit) {
       if (typeof window !== 'undefined') {
-        const isLeft = (position.x + size.width + 352) > window.innerWidth;
-        const defaultRelX = isLeft ? -352 : (size.width + 12);
+        const isLeft = (position.x + size.width + 452) > window.innerWidth;
+        const defaultRelX = isLeft ? -452 : (size.width + 12);
         setSubRelativePos({ x: defaultRelX, y: 0 });
       }
     }
@@ -789,7 +796,7 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
           backgroundColor: activeTheme.surface,
           borderColor: activeTheme.outline,
         }}
-        className="sf-anim sf-anim-fade-scale pointer-events-auto border rounded-2xl shadow-[0_8px_24px_rgba(0,0,0,0.35)] overflow-hidden flex flex-col cursor-default relative backdrop-blur-md bg-opacity-95"
+        className="pointer-events-auto border rounded-2xl shadow-[0_8px_24px_rgba(0,0,0,0.35)] overflow-hidden flex flex-col cursor-default relative backdrop-blur-md bg-opacity-95"
         onMouseDown={handleMouseDown}
       >
 
@@ -1171,23 +1178,27 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
               </button>
             </div>
 
-            {/* Sub-panel Editor Body */}
+              {/* Sub-panel Editor Body */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar-now">
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-[10px] text-primary font-bold font-mono select-none">
                   <span>写入行为规范与约束 (Markdown)</span>
-                  {isSavingSkillRules ? (
+                  {isLoadingSkillRules ? null : isSavingSkillRules ? (
                     <span className="text-[8px] font-mono animate-pulse text-primary/70">自动保存中...</span>
                   ) : (
                     <span className="text-[8px] font-mono text-emerald-400">● 已同步至硬盘</span>
                   )}
                 </div>
-                <textarea
-                  value={skillRulesContent}
-                  onChange={(e) => handleSaveSkillRules(selectedSkillToEdit, e.target.value)}
-                  placeholder="# 在此输入大语言模型做工时的定制化规划与约束准则"
-                  className="w-full h-44 text-[11px] bg-bg border border-outline/30 rounded-lg p-2 focus:border-primary/50 text-on-surface font-mono outline-none resize-none overflow-y-auto no-scrollbar-now cursor-default"
-                />
+                {isLoadingSkillRules ? (
+                  <div className="w-full h-44 rounded-lg" />
+                ) : (
+                  <textarea
+                    value={skillRulesContent}
+                    onChange={(e) => handleSaveSkillRules(selectedSkillToEdit, e.target.value)}
+                    placeholder="# 在此输入大语言模型做工时的定制化规划与约束准则"
+                    className="w-full h-44 text-[11px] bg-bg border border-outline/30 rounded-lg p-2 focus:border-primary/50 text-on-surface font-mono outline-none resize-none overflow-y-auto no-scrollbar-now cursor-default"
+                  />
+                )}
               </div>
 
               {/* Open File / System Folder Connection button */}
