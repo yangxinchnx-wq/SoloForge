@@ -58,17 +58,19 @@ const SystemProxyIcon = (props: IconProps) => (
   </svg>
 );
 
-/** 直连模式：两点直通箭头 */
+/** 直连模式：直连线缆（两端接口 + 直通线） */
 const DirectConnIcon = (props: IconProps) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props}>
-    {/* 左端节点 */}
-    <circle cx="5" cy="12" r="2" />
-    {/* 连接线 */}
-    <path d="M7.2 12h6.6" />
-    {/* 箭头 */}
-    <path d="M11 9.5l3 2.5-3 2.5" />
-    {/* 右端节点 */}
-    <circle cx="19" cy="12" r="2" />
+    {/* 左端接口块 */}
+    <rect x="2" y="8.5" width="5.5" height="7" rx="1.5" />
+    {/* 左端引脚 */}
+    <path d="M7.5 11v2" />
+    {/* 直通线缆 */}
+    <path d="M7.5 12h9" />
+    {/* 右端引脚 */}
+    <path d="M16.5 11v2" />
+    {/* 右端接口块 */}
+    <rect x="16.5" y="8.5" width="5.5" height="7" rx="1.5" />
   </svg>
 );
 
