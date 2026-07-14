@@ -111,6 +111,16 @@ export async function ensureCanvasForChat(chatId: string): Promise<string | null
         console.log(`[ensureCanvasForChat] 📐 copied frame size ${fallbackFrame.width}×${fallbackFrame.height} from ${fallbackKey} → ${realId}`);
       }
 
+      // ★ FIX 2026-07-14: 把 fallback key 的设备信息也复制到真实 key
+      //   用户在 bridge 未就绪时选了设备, device 存在 fallback key 下,
+      //   现在映射已更新为真实 ID, 需要迁移 device 到新 key,
+      //   否则 getDeviceConstraint(realId) 查不到设备 → LLM 不知道画布尺寸
+      const fallbackDevice = devState.getDevice(fallbackKey);
+      if (fallbackDevice) {
+        devState.setDevice(realId, fallbackDevice);
+        console.log(`[ensureCanvasForChat] 📱 copied device ${fallbackDevice.sizeKey} from ${fallbackKey} → ${realId}`);
+      }
+
       // 通知 bridge 刷新, 让 PreviewPanel 拿到真实画布 ID
       window.dispatchEvent(new CustomEvent('soloforge-canvas-created'));
       return realId;

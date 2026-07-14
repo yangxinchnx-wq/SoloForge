@@ -187,6 +187,13 @@ const FILL_PRESET: DevicePreset = {
   key: 'fill', group: 'desktop', groupLabel: '', icon: Maximize2, label: '填满当前宽度', w: 0, h: 0,
 };
 
+// ★ FIX 2026-07-14: 无设备选择时的默认画布尺寸 (iPhone 15 Pro Max: 430×932)
+//   用户未选择设备时, 画布按此尺寸渲染, LLM 也被告知此尺寸
+const DEFAULT_CANVAS_PRESET: DevicePreset = {
+  key: 'default', group: 'mobile', groupLabel: '手机', icon: Smartphone,
+  label: 'iPhone 15 Pro Max', w: 430, h: 932,
+};
+
 function findDevicePreset(key: string): DevicePreset {
   if (key === 'fill') return FILL_PRESET;
   return [...DEVICES_2D, ...DEVICES_3D].find(p => p.key === key) || FILL_PRESET;
@@ -304,7 +311,8 @@ export default function PreviewPanel({
 
   // ★ 从设备信息反推当前 preset (用于兼容现有逻辑)
   const activeSizeKey = currentDevice?.sizeKey ?? 'none';
-  const activePreset = currentDevice ? findDevicePreset(currentDevice.sizeKey) : null;
+  // ★ FIX 2026-07-14: 无设备时使用默认尺寸 430×932, 而非 null (填满模式)
+  const activePreset = currentDevice ? findDevicePreset(currentDevice.sizeKey) : DEFAULT_CANVAS_PRESET;
   const activeDeviceList = renderMode === '2D' ? DEVICES_2D : DEVICES_3D;
 
   // ★ canvasStateRef — 提前声明, 供 handleSelectDevice / 崩溃检测使用 (避免 TDZ)
@@ -651,31 +659,12 @@ export default function PreviewPanel({
   // 2026-07-11: IncrementalCanvasPusher 已经在 useChatStore 中直接推画布,
   //   PreviewPanel 不再重复推送 — 避免双推冲突 + WebAstPreview 覆盖 Flutter 画布
 
-  // ★ FIX 2026-07-14: 追踪 canvas 实际区域尺寸 (替代硬编码 640 高度)
-  const [canvasAreaSize, setCanvasAreaSize] = useState<{ w: number; h: number }>({ w: 360, h: 640 });
-  useEffect(() => {
-    const el = canvasAreaRef.current;
-    if (!el) return;
-    const update = () => {
-      const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.height > 0) {
-        setCanvasAreaSize({ w: Math.floor(r.width), h: Math.floor(r.height) });
-      }
-    };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  // 计算画布实际宽高（无设备约束时填满 PreviewPanel 宽度 + 实际高度）
+  // ★ FIX 2026-07-14: 无设备时默认 430×932 (iPhone 15 Pro Max), 而非填满可用空间
+  //   确保 canvas.start() 使用的尺寸与 LLM 被告知的尺寸完全一致
   const computeFrame = useCallback((preset: DevicePreset | null) => {
     if (preset && preset.w > 0) return { w: preset.w, h: preset.h };
-    return {
-      w: Math.max(320, Math.floor(width - 32)),
-      h: Math.max(400, canvasAreaSize.h - 16),
-    };
-  }, [width, canvasAreaSize]);
+    return { w: 430, h: 932 };
+  }, []);
 
   // ★ 2026-07-14: 将画布实际帧尺寸写入 store, 供 aiBackend (LLM prompt 注入) + incrementalCanvasPusher (canvas.start 参数) 读取
   // ★ FIX 2026-07-14: 同时写入 fallback key, 确保时序不一致时 aiBackend 也能找到
@@ -1175,7 +1164,7 @@ export default function PreviewPanel({
                         }`}
                       >
                         <Maximize2 className="w-3 h-3 shrink-0" />
-                        <span className="flex-1 text-left">无设备约束</span>
+                        <span className="flex-1 text-left">默认尺寸 (430×932)</span>
                         {activeSizeKey === 'none' && <Check className="w-2.5 h-2.5 shrink-0" />}
                       </button>
                     </motion.div>
@@ -1264,7 +1253,15 @@ export default function PreviewPanel({
                     transition: 'all 250ms cubic-bezier(0.16, 1, 0.3, 1)',
                   } as React.CSSProperties;
                 }
-                return { width: '100%', height: '100%' } as React.CSSProperties;
+                // ★ FIX: 无设备时也使用 430×932 缩放显示 (不再填满)
+                const dW = 430, dH = 932;
+                const dScale = Math.min(availW / dW, availH / dH, 1);
+                return {
+                  width: `${Math.round(dW * dScale)}px`,
+                  height: `${Math.round(dH * dScale)}px`,
+                  overflow: 'hidden',
+                  transition: 'all 250ms cubic-bezier(0.16, 1, 0.3, 1)',
+                } as React.CSSProperties;
               })()}
             >
               {renderPlaceholder()}

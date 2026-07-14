@@ -903,7 +903,8 @@ export default function AgentSettingsModal({ chatId, chatTitle, onClose }: Agent
                         ? activeSettings.enabledSkills.filter(id => id !== sk.id)
                         : [...activeSettings.enabledSkills, sk.id];
                       handleUpdateSettings({ enabledSkills: newSkills });
-                      setSelectedSkillToEdit(sk.id);
+                      // ★ 修复: 禁用技能时关闭编辑面板, 启用技能时打开编辑面板
+                      setSelectedSkillToEdit(isEnabled ? null : sk.id);
                     }}
                     className={`flex items-center justify-between gap-1.5 p-1.5 rounded-lg border text-left cursor-pointer transition-all ${
                       isEnabled 

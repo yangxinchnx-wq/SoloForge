@@ -120,7 +120,18 @@ export const useCanvasDeviceStore = create<CanvasDeviceStoreState>()(
 export function getDeviceConstraint(canvasId?: string): CanvasDeviceInfo | null {
   const state = useCanvasDeviceStore.getState();
   if (canvasId) {
-    return state.getDevice(canvasId);
+    const device = state.getDevice(canvasId);
+    if (device) return device;
+
+    // ★ FIX 2026-07-14: 精确 key 找不到时, 尝试 fallback key
+    //   场景: device 存储在 "canvas-{chatId}" 下, 但 LLM 查询用的是 "canvas_N"
+    //   ensureCanvasForChat 创建真实 canvasId 后, device 可能还没迁移到新 key
+    if (canvasId.startsWith('canvas_')) {
+      for (const [key, dev] of Object.entries(state.devices)) {
+        if (key.startsWith('canvas-') && dev) return dev;
+      }
+    }
+    return null;
   }
   // 返回第一个有设备约束的画布
   const entries = Object.entries(state.devices);
@@ -136,7 +147,7 @@ export function getDeviceConstraint(canvasId?: string): CanvasDeviceInfo | null 
  * 优先级:
  *   1. 有设备约束 → 返回设备原生尺寸
  *   2. 有 frameSizes 记录 → 返回 PreviewPanel 计算的实际帧尺寸
- *   3. 都没有 → 返回默认值 { width: 360, height: 640 }
+ *   3. 都没有 → 返回默认值 { width: 430, height: 932 } (iPhone 15 Pro Max)
  *
  * @param canvasId 画布 sessionId (如 canvas_1)
  */
@@ -181,6 +192,6 @@ export function getCanvasSize(canvasId?: string): CanvasFrameSize {
     return allFrames[0];
   }
 
-  // 3. 默认值
-  return { width: 360, height: 640 };
+  // 3. 默认值 — 与 PreviewPanel DEFAULT_CANVAS_PRESET 一致 (430×932)
+  return { width: 430, height: 932 };
 }

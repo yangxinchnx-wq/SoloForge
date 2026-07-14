@@ -203,7 +203,7 @@ export function detectForceCanvas(prompt: string): string | null {
  * 优先级:
  *   1. 有设备约束 → 返回设备尺寸 + 设备类型布局建议
  *   2. 无设备约束 → 返回画布实际帧尺寸 (PreviewPanel 计算的)
- *   3. 都没有 → 返回默认尺寸 360×640
+ *   3. 都没有 → 返回默认尺寸 430×932 (iPhone 15 Pro Max)
  */
 function buildCanvasSizeHint(canvasId?: string): string {
   const device = getDeviceConstraint(canvasId);
@@ -223,20 +223,22 @@ function buildCanvasSizeHint(canvasId?: string): string {
 屏幕尺寸: ${device.width}×${device.height}px
 设备类型: ${device.group}${device.renderMode === '3D' ? ' (3D 模式)' : ''}
 
-**重要**: 你生成的 UI 必须适配此设备尺寸。
-- 宽度不超过 ${device.width}px, 高度不超过 ${device.height}px
+**重要**: 你生成的 UI 必须严格适配此设备尺寸。
+- 宽度必须不超过 ${device.width}px, 高度必须不超过 ${device.height}px
+- 所有坐标和尺寸都基于 ${device.width}×${device.height} 的画布
 - 布局要考虑 ${screenHint}
 - ${groupHint}`;
   }
 
-  // 无设备约束: 使用画布实际帧尺寸
+  // 无设备约束: 使用画布实际帧尺寸 (默认 430×932)
   const size = getCanvasSize(canvasId);
   return `## 画布尺寸约束
 当前画布尺寸: ${size.width}×${size.height}px
-设备类型: 无设备约束 (自由布局)
+设备类型: 默认尺寸 (iPhone 15 Pro Max)
 
-**重要**: 你生成的 UI 必须适配此画布尺寸。
-- 根节点宽度建议不超过 ${size.width}px, 高度建议不超过 ${size.height}px
+**重要**: 你生成的 UI 必须严格适配此画布尺寸。
+- 根节点宽度必须不超过 ${size.width}px, 高度必须不超过 ${size.height}px
+- 所有坐标和尺寸都基于 ${size.width}×${size.height} 的画布
 - 使用响应式布局: 优先用 flex/column/row 自动撑满, 避免硬编码过大尺寸
 - 字体大小: 标题 18-24px, 正文 14-16px, 辅助文字 12px
 - 间距: padding 12-16px, 元素间距 8-12px
