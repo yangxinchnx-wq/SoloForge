@@ -6,12 +6,169 @@
     "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
     "defaultUrl": "https://token-plan-cn.xiaomimimo.com/v1",
     "apiFormat": "openai",
-    "models": [],
+    "models": [
+      {
+        "id": "mimo-v2.5",
+        "name": "mimo-v2.5",
+        "enabled": true,
+        "metadata": {
+          "contextWindow": 32768,
+          "maxOutput": 4096,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ],
+          "supportsTools": true,
+          "supportsJson": true,
+          "supportsStreaming": true,
+          "supportsVision": false,
+          "owner": "xiaomi",
+          "description": "MiMo v2.5 对话模型",
+          "raw": {
+            "id": "mimo-v2.5",
+            "object": "model",
+            "owned_by": "xiaomi"
+          }
+        }
+      },
+      {
+        "id": "mimo-v2.5-asr",
+        "name": "mimo-v2.5-asr",
+        "enabled": false,
+        "metadata": {
+          "contextWindow": 32768,
+          "maxOutput": 4096,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ],
+          "supportsTools": true,
+          "supportsJson": true,
+          "supportsStreaming": true,
+          "supportsVision": false,
+          "owner": "xiaomi",
+          "description": "MiMo v2.5 对话模型",
+          "raw": {
+            "id": "mimo-v2.5-asr",
+            "object": "model",
+            "owned_by": "xiaomi"
+          }
+        }
+      },
+      {
+        "id": "mimo-v2.5-pro",
+        "name": "mimo-v2.5-pro",
+        "enabled": true,
+        "metadata": {
+          "contextWindow": 32768,
+          "maxOutput": 4096,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ],
+          "supportsTools": true,
+          "supportsJson": true,
+          "supportsStreaming": true,
+          "supportsVision": false,
+          "owner": "xiaomi",
+          "description": "MiMo v2.5 Pro 旗舰",
+          "raw": {
+            "id": "mimo-v2.5-pro",
+            "object": "model",
+            "owned_by": "xiaomi"
+          }
+        }
+      },
+      {
+        "id": "mimo-v2.5-tts",
+        "name": "mimo-v2.5-tts",
+        "enabled": false,
+        "metadata": {
+          "contextWindow": 32768,
+          "maxOutput": 4096,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ],
+          "supportsTools": true,
+          "supportsJson": true,
+          "supportsStreaming": true,
+          "supportsVision": false,
+          "owner": "xiaomi",
+          "description": "MiMo v2.5 对话模型",
+          "raw": {
+            "id": "mimo-v2.5-tts",
+            "object": "model",
+            "owned_by": "xiaomi"
+          }
+        }
+      },
+      {
+        "id": "mimo-v2.5-tts-voiceclone",
+        "name": "mimo-v2.5-tts-voiceclone",
+        "enabled": false,
+        "metadata": {
+          "contextWindow": 32768,
+          "maxOutput": 4096,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ],
+          "supportsTools": true,
+          "supportsJson": true,
+          "supportsStreaming": true,
+          "supportsVision": false,
+          "owner": "xiaomi",
+          "description": "MiMo v2.5 对话模型",
+          "raw": {
+            "id": "mimo-v2.5-tts-voiceclone",
+            "object": "model",
+            "owned_by": "xiaomi"
+          }
+        }
+      },
+      {
+        "id": "mimo-v2.5-tts-voicedesign",
+        "name": "mimo-v2.5-tts-voicedesign",
+        "enabled": false,
+        "metadata": {
+          "contextWindow": 32768,
+          "maxOutput": 4096,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ],
+          "supportsTools": true,
+          "supportsJson": true,
+          "supportsStreaming": true,
+          "supportsVision": false,
+          "owner": "xiaomi",
+          "description": "MiMo v2.5 对话模型",
+          "raw": {
+            "id": "mimo-v2.5-tts-voicedesign",
+            "object": "model",
+            "owned_by": "xiaomi"
+          }
+        }
+      }
+    ],
     "customModels": [],
     "source": "keychain",
-    "status": "idle",
+    "status": "success",
     "__bootstrapped": false,
-    "scanned": false,
+    "scanned": true,
     "apiKey": ""
   },
   {

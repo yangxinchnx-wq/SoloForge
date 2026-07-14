@@ -16,7 +16,8 @@
  *   NS:  soloforge_core
  *   DB:  canvas_state
  *
- * 如果 SurrealDB 不可用, 所有操作降级为 noop (不抛错)
+ * ★ 2026-07-14: 不再降级为 noop。任何失败都直接抛错,
+ *   错误信息用中文说明具体原因和具体位置。
  */
 
 import type { ChatMessage, ChatSettingsItem } from '../chat/ConversationStore';
@@ -45,24 +46,6 @@ export interface IConversationWarmStore {
   loadChatList(): Promise<{ chats: ChatItem[]; selectedId: string | null; liveStates: Record<string, ChatLiveState>; counter: number } | null>;
 
   close(): Promise<void>;
-}
-
-// ── Noop 实现 ────────────────────────────────────────────────
-
-class NoopWarmStore implements IConversationWarmStore {
-  async init(): Promise<boolean> { return false; }
-  isAvailable(): boolean { return false; }
-  async saveMessages(): Promise<boolean> { return false; }
-  async loadMessages(): Promise<ChatMessage[] | null> { return null; }
-  async deleteMessages(): Promise<boolean> { return false; }
-  async loadAllMessages(): Promise<Record<string, ChatMessage[]>> { return {}; }
-  async saveConfig(): Promise<boolean> { return false; }
-  async loadConfig(): Promise<ChatSettingsItem | null> { return null; }
-  async deleteConfig(): Promise<boolean> { return false; }
-  async loadAllConfigs(): Promise<Record<string, ChatSettingsItem>> { return {}; }
-  async saveChatList(): Promise<boolean> { return false; }
-  async loadChatList(): Promise<null> { return null; }
-  async close(): Promise<void> { /* noop */ }
 }
 
 // ── 真实 SurrealDB 实现 ──────────────────────────────────────
@@ -97,16 +80,23 @@ class SurrealWarmStoreImpl implements IConversationWarmStore {
 
         console.log('[ConvSurreal] schema: conversation + chat_config + chat_meta (SCHEMALESS)');
       } catch (e) {
-        console.warn('[ConvSurreal] DEFINE failed (continuing):', (e as Error).message);
+        throw new Error(
+          `[ConvSurreal] init() 定义表结构失败: ${(e as Error).message}。` +
+          `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.init() → DEFINE TABLE/INDEX。` +
+          `原因: SurrealDB rocksdb 可能损坏或路径不可写 (${relPath})。`,
+        );
       }
 
       this.connected = true;
       console.log('[ConvSurreal] ✅ connected (warm store for conversations)');
       return true;
     } catch (e) {
-      console.warn('[ConvSurreal] init failed:', (e as Error).message);
       this.connected = false;
-      return false;
+      throw new Error(
+        `[ConvSurreal] init() 连接 SurrealDB 失败: ${(e as Error).message}。` +
+        `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.init() → db.connect()。` +
+        `原因: rocksdb 路径不可访问、磁盘满、或 surrealdb/@surrealdb/node 引擎版本不兼容。`,
+      );
     }
   }
 
@@ -115,7 +105,13 @@ class SurrealWarmStoreImpl implements IConversationWarmStore {
   // ── 消息 ─────────────────────────────────────────────────
 
   async saveMessages(chatId: string, messages: ChatMessage[]): Promise<boolean> {
-    if (!this.connected) return false;
+    if (!this.connected) {
+      throw new Error(
+        `[ConvSurreal] saveMessages() 失败: SurrealDB 未连接。` +
+        `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.saveMessages(${chatId})。` +
+        `原因: init() 未成功完成或连接已断开。`,
+      );
+    }
     try {
       const data = { chatId, messages, updatedAt: Date.now() };
       // UPDATE WHERE 命中则返, 没命中则 INSERT
@@ -137,13 +133,22 @@ class SurrealWarmStoreImpl implements IConversationWarmStore {
         throw insertErr;
       }
     } catch (e) {
-      console.warn('[ConvSurreal] saveMessages failed:', (e as Error).message);
-      return false;
+      throw new Error(
+        `[ConvSurreal] saveMessages() 失败: ${(e as Error).message}。` +
+        `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.saveMessages(${chatId})。` +
+        `原因: SurrealDB 写入异常。`,
+      );
     }
   }
 
   async loadMessages(chatId: string): Promise<ChatMessage[] | null> {
-    if (!this.connected) return null;
+    if (!this.connected) {
+      throw new Error(
+        `[ConvSurreal] loadMessages() 失败: SurrealDB 未连接。` +
+        `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.loadMessages(${chatId})。` +
+        `原因: init() 未成功完成或连接已断开。`,
+      );
+    }
     try {
       const result: any = await this.db.query(
         'SELECT messages FROM conversation WHERE chatId = $cid LIMIT 1',
@@ -152,23 +157,43 @@ class SurrealWarmStoreImpl implements IConversationWarmStore {
       const rows = Array.isArray(result) ? (result[0] as any[]) : [];
       if (!rows || rows.length === 0) return null;
       return rows[0].messages ?? null;
-    } catch {
-      return null;
+    } catch (e) {
+      throw new Error(
+        `[ConvSurreal] loadMessages() 失败: ${(e as Error).message}。` +
+        `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.loadMessages(${chatId})。` +
+        `原因: SurrealDB 查询异常。`,
+      );
     }
   }
 
   async deleteMessages(chatId: string): Promise<boolean> {
-    if (!this.connected) return false;
+    if (!this.connected) {
+      throw new Error(
+        `[ConvSurreal] deleteMessages() 失败: SurrealDB 未连接。` +
+        `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.deleteMessages(${chatId})。` +
+        `原因: init() 未成功完成或连接已断开。`,
+      );
+    }
     try {
       await this.db.query('DELETE FROM conversation WHERE chatId = $cid', { cid: chatId });
       return true;
-    } catch {
-      return false;
+    } catch (e) {
+      throw new Error(
+        `[ConvSurreal] deleteMessages() 失败: ${(e as Error).message}。` +
+        `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.deleteMessages(${chatId})。` +
+        `原因: SurrealDB 删除异常。`,
+      );
     }
   }
 
   async loadAllMessages(): Promise<Record<string, ChatMessage[]>> {
-    if (!this.connected) return {};
+    if (!this.connected) {
+      throw new Error(
+        `[ConvSurreal] loadAllMessages() 失败: SurrealDB 未连接。` +
+        `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.loadAllMessages()。` +
+        `原因: init() 未成功完成或连接已断开。`,
+      );
+    }
     try {
       const result: any = await this.db.query('SELECT chatId, messages FROM conversation', {});
       const rows = Array.isArray(result) ? (result[0] as any[]) : [];
@@ -179,15 +204,25 @@ class SurrealWarmStoreImpl implements IConversationWarmStore {
         }
       }
       return out;
-    } catch {
-      return {};
+    } catch (e) {
+      throw new Error(
+        `[ConvSurreal] loadAllMessages() 失败: ${(e as Error).message}。` +
+        `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.loadAllMessages()。` +
+        `原因: SurrealDB 查询异常。`,
+      );
     }
   }
 
   // ── 配置 ─────────────────────────────────────────────────
 
   async saveConfig(chatId: string, config: ChatSettingsItem): Promise<boolean> {
-    if (!this.connected) return false;
+    if (!this.connected) {
+      throw new Error(
+        `[ConvSurreal] saveConfig() 失败: SurrealDB 未连接。` +
+        `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.saveConfig(${chatId})。` +
+        `原因: init() 未成功完成或连接已断开。`,
+      );
+    }
     try {
       const data = { chatId, config, updatedAt: Date.now() };
       const upd: any = await this.db.query(
@@ -208,13 +243,22 @@ class SurrealWarmStoreImpl implements IConversationWarmStore {
         throw insertErr;
       }
     } catch (e) {
-      console.warn('[ConvSurreal] saveConfig failed:', (e as Error).message);
-      return false;
+      throw new Error(
+        `[ConvSurreal] saveConfig() 失败: ${(e as Error).message}。` +
+        `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.saveConfig(${chatId})。` +
+        `原因: SurrealDB 写入异常。`,
+      );
     }
   }
 
   async loadConfig(chatId: string): Promise<ChatSettingsItem | null> {
-    if (!this.connected) return null;
+    if (!this.connected) {
+      throw new Error(
+        `[ConvSurreal] loadConfig() 失败: SurrealDB 未连接。` +
+        `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.loadConfig(${chatId})。` +
+        `原因: init() 未成功完成或连接已断开。`,
+      );
+    }
     try {
       const result: any = await this.db.query(
         'SELECT config FROM chat_config WHERE chatId = $cid LIMIT 1',
@@ -223,23 +267,43 @@ class SurrealWarmStoreImpl implements IConversationWarmStore {
       const rows = Array.isArray(result) ? (result[0] as any[]) : [];
       if (!rows || rows.length === 0) return null;
       return rows[0].config ?? null;
-    } catch {
-      return null;
+    } catch (e) {
+      throw new Error(
+        `[ConvSurreal] loadConfig() 失败: ${(e as Error).message}。` +
+        `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.loadConfig(${chatId})。` +
+        `原因: SurrealDB 查询异常。`,
+      );
     }
   }
 
   async deleteConfig(chatId: string): Promise<boolean> {
-    if (!this.connected) return false;
+    if (!this.connected) {
+      throw new Error(
+        `[ConvSurreal] deleteConfig() 失败: SurrealDB 未连接。` +
+        `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.deleteConfig(${chatId})。` +
+        `原因: init() 未成功完成或连接已断开。`,
+      );
+    }
     try {
       await this.db.query('DELETE FROM chat_config WHERE chatId = $cid', { cid: chatId });
       return true;
-    } catch {
-      return false;
+    } catch (e) {
+      throw new Error(
+        `[ConvSurreal] deleteConfig() 失败: ${(e as Error).message}。` +
+        `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.deleteConfig(${chatId})。` +
+        `原因: SurrealDB 删除异常。`,
+      );
     }
   }
 
   async loadAllConfigs(): Promise<Record<string, ChatSettingsItem>> {
-    if (!this.connected) return {};
+    if (!this.connected) {
+      throw new Error(
+        `[ConvSurreal] loadAllConfigs() 失败: SurrealDB 未连接。` +
+        `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.loadAllConfigs()。` +
+        `原因: init() 未成功完成或连接已断开。`,
+      );
+    }
     try {
       const result: any = await this.db.query('SELECT chatId, config FROM chat_config', {});
       const rows = Array.isArray(result) ? (result[0] as any[]) : [];
@@ -250,8 +314,12 @@ class SurrealWarmStoreImpl implements IConversationWarmStore {
         }
       }
       return out;
-    } catch {
-      return {};
+    } catch (e) {
+      throw new Error(
+        `[ConvSurreal] loadAllConfigs() 失败: ${(e as Error).message}。` +
+        `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.loadAllConfigs()。` +
+        `原因: SurrealDB 查询异常。`,
+      );
     }
   }
 
@@ -263,7 +331,13 @@ class SurrealWarmStoreImpl implements IConversationWarmStore {
     liveStates: Record<string, ChatLiveState>,
     counter: number,
   ): Promise<boolean> {
-    if (!this.connected) return false;
+    if (!this.connected) {
+      throw new Error(
+        `[ConvSurreal] saveChatList() 失败: SurrealDB 未连接。` +
+        `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.saveChatList()。` +
+        `原因: init() 未成功完成或连接已断开。`,
+      );
+    }
     try {
       const data = { id: 'chatlist', chats, selectedId, liveStates, counter, updatedAt: Date.now() };
       // 单行记录, id 固定为 'chatlist'
@@ -285,8 +359,11 @@ class SurrealWarmStoreImpl implements IConversationWarmStore {
         throw insertErr;
       }
     } catch (e) {
-      console.warn('[ConvSurreal] saveChatList failed:', (e as Error).message);
-      return false;
+      throw new Error(
+        `[ConvSurreal] saveChatList() 失败: ${(e as Error).message}。` +
+        `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.saveChatList()。` +
+        `原因: SurrealDB 写入异常。`,
+      );
     }
   }
 
@@ -296,7 +373,13 @@ class SurrealWarmStoreImpl implements IConversationWarmStore {
     liveStates: Record<string, ChatLiveState>;
     counter: number;
   } | null> {
-    if (!this.connected) return null;
+    if (!this.connected) {
+      throw new Error(
+        `[ConvSurreal] loadChatList() 失败: SurrealDB 未连接。` +
+        `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.loadChatList()。` +
+        `原因: init() 未成功完成或连接已断开。`,
+      );
+    }
     try {
       const result: any = await this.db.query(
         'SELECT * FROM chat_meta WHERE id = $rid LIMIT 1',
@@ -311,8 +394,12 @@ class SurrealWarmStoreImpl implements IConversationWarmStore {
         liveStates: row.liveStates && typeof row.liveStates === 'object' ? row.liveStates : {},
         counter: typeof row.counter === 'number' ? row.counter : 0,
       };
-    } catch {
-      return null;
+    } catch (e) {
+      throw new Error(
+        `[ConvSurreal] loadChatList() 失败: ${(e as Error).message}。` +
+        `位置: ConversationSurrealStore.ts → SurrealWarmStoreImpl.loadChatList()。` +
+        `原因: SurrealDB 查询异常。`,
+      );
     }
   }
 
@@ -335,19 +422,25 @@ async function createWarmStore(): Promise<IConversationWarmStore> {
   try {
     const mainMod = await import('surrealdb' as string);
     SurrealCtor = (mainMod as any).Surreal || (mainMod as any).default;
-    if (!SurrealCtor) throw new Error('surrealdb has no Surreal export');
+    if (!SurrealCtor) throw new Error('surrealdb 包没有导出 Surreal 类');
   } catch (e) {
-    console.warn('[ConvSurreal] surrealdb unavailable, using noop:', (e as Error).message);
-    return new NoopWarmStore();
+    throw new Error(
+      `[ConvSurreal] 加载 surrealdb 依赖失败: ${(e as Error).message}。` +
+      `位置: ConversationSurrealStore.ts → createWarmStore() → import('surrealdb')。` +
+      `原因: surrealdb 包未安装或损坏。请执行 npm install surrealdb。`,
+    );
   }
   try {
     const nodeMod = await import('@surrealdb/node' as string);
     const createNodeEngines = (nodeMod as any).createNodeEngines || (nodeMod as any).default?.createNodeEngines;
-    if (!createNodeEngines) throw new Error('@surrealdb/node has no createNodeEngines');
+    if (!createNodeEngines) throw new Error('@surrealdb/node 包没有导出 createNodeEngines');
     engines = createNodeEngines();
   } catch (e) {
-    console.warn('[ConvSurreal] @surrealdb/node engines unavailable, using noop:', (e as Error).message);
-    return new NoopWarmStore();
+    throw new Error(
+      `[ConvSurreal] 加载 @surrealdb/node 依赖失败: ${(e as Error).message}。` +
+      `位置: ConversationSurrealStore.ts → createWarmStore() → import('@surrealdb/node')。` +
+      `原因: @surrealdb/node 包未安装或损坏。请执行 npm install @surrealdb/node。`,
+    );
   }
   return new SurrealWarmStoreImpl(SurrealCtor, engines);
 }
@@ -363,10 +456,16 @@ export async function getConversationWarmStore(): Promise<IConversationWarmStore
   return _initPromise;
 }
 
-// 同步获取 (可能返回 noop, 如果异步 init 尚未完成)
-let _syncFallback: IConversationWarmStore | null = null;
+/**
+ * ★ 2026-07-14: 同步获取不再返回 fallback noop。
+ * 如果异步初始化尚未完成, 直接抛错。
+ */
 export function getConversationWarmStoreSync(): IConversationWarmStore {
   if (_instance) return _instance;
-  if (!_syncFallback) _syncFallback = new NoopWarmStore();
-  return _syncFallback;
+  throw new Error(
+    `[ConvSurreal] getConversationWarmStoreSync() 同步获取失败: SurrealDB 异步初始化尚未完成。` +
+    `位置: ConversationSurrealStore.ts → getConversationWarmStoreSync()。` +
+    `原因: 调用方在 SurrealDB init() 完成前同步访问了温存储。` +
+    `请改用 await getConversationWarmStore(), 或确保 bootstrap 已完成后再调用。`,
+  );
 }
