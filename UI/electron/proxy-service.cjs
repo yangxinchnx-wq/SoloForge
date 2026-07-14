@@ -118,7 +118,7 @@ class ProxyService {
         break;
 
       default:
-        console.warn(`[ProxyService] Unknown proxy mode: ${config.mode}, falling back to system`);
+        console.warn(`[代理服务] 未知代理模式: ${config.mode}，回退到系统代理`);
         await ses.setProxy({ mode: 'system' });
     }
   }
@@ -130,7 +130,7 @@ class ProxyService {
   _buildProxyRules(config) {
     const { protocol, server, port } = config;
     if (!server || !port) {
-      console.warn('[ProxyService] manual proxy missing server/port, skipping rules');
+      console.warn('[代理服务] 手动代理缺少服务器地址/端口，跳过规则构建');
       return '';
     }
     if (protocol === 'socks4' || protocol === 'socks5') {
@@ -188,8 +188,8 @@ class ProxyService {
     // 如需 PAC 路由，应在 UI 中提示用户："Node.js 后端请求将直连，不经过 PAC 路由"
     if (config.mode === 'pac') {
       console.warn(
-        '[ProxyService] PAC mode: Node.js requests bypass PAC (Chromium-only feature).\n' +
-        '  Backend API calls (LLM dispatch etc.) will use direct connection.'
+        '[代理服务] PAC 模式: Node.js 请求绕过 PAC（仅 Chromium 支持）。\n' +
+        '  后端 API 调用（LLM 调度等）将使用直连。'
       );
       return;
     }
@@ -218,7 +218,7 @@ class ProxyService {
   getSystemProxyInfo() {
     // 非Windows平台：返回未实现标记
     if (process.platform !== 'win32') {
-      console.warn(`[ProxyService] System proxy detection not implemented for ${process.platform}`);
+      console.warn(`[代理服务] ${process.platform} 平台暂未实现系统代理检测`);
       return { enabled: false, platform: process.platform };
     }
 
@@ -251,7 +251,7 @@ class ProxyService {
 
       return { enabled: true, server: proxyServer, pacUrl };
     } catch (err) {
-      console.warn('[ProxyService] Failed to read system proxy:', err.message);
+      console.warn('[代理服务] 读取系统代理失败:', err.message);
       return { enabled: false };
     }
   }
@@ -294,7 +294,7 @@ class ProxyService {
             } catch {
               resolve({
                 ok: true,
-                ip: 'unknown',
+                ip: '未知',
                 latency: Date.now() - start,
               });
             }
@@ -303,16 +303,16 @@ class ProxyService {
         request.on('error', () => {
           resolve({
             ok: false,
-            error: 'connection failed',
+            error: '连接失败',
             latency: Date.now() - start,
           });
         });
         // 8 秒超时
         setTimeout(() => {
-          try { request.abort(); } catch { /* already aborted */ }
+          try { request.abort(); } catch { /* 已取消 */ }
           resolve({
             ok: false,
-            error: 'timeout',
+            error: '超时',
             latency: Date.now() - start,
           });
         }, 8000);
