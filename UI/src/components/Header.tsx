@@ -48,14 +48,13 @@ export default function Header({
   }, [sidebarWidth, mixedTasks]);
 
   // ── Providers 持久化读取(主模型可用列表 + 副模型候选 + 图标映射) ──────────────
-  // 只显示在「设置 → 云端模型」中:
-  //   1. 服务商测试通过 (status === 'success') 且启用
-  //   2. 模型已启用 (m.enabled)
-  //   3. 模型级连通性测试通过 (probeResults[modelId] === true)
-  //      — 若 probeResults 为 undefined (尚未检测), 向后兼容, 仍然显示
-  //   4. 当前已选中的主模型 (mainModel) 始终显示, 即使未通过模型级检测
+  // 主模型选择器只显示同时满足以下两关的模型:
+  //   第一关: 模型级连通性测试通过 (probeResults[modelId] === true)
+  //   第二关: 在设置中已选中启用 (m.enabled)
+  // 两个条件缺一不可。通过测试但没选中 → 不显示 (没打算启用)。
+  // 向后兼容: probeResults 为 undefined (尚未检测) → 不做模型级过滤
   // 同时构建 modelIconMap: modelId → { providerId, iconType } 用于主选择器图标对齐
-  const getDynamicModels = (currentMainModel?: string): string[] => {
+  const getDynamicModels = (): string[] => {
     try {
       const saved = localStorage.getItem('cherry_providers_v2');
       if (saved) {
@@ -65,26 +64,19 @@ export default function Header({
           parsed.forEach((prov: any) => {
             if (prov.enabled && prov.status === 'success' && prov.apiKey) {
               // 模型级连通性测试结果 (modelId → success)
-              // undefined = 尚未测试 → 向后兼容, 不做过滤
-              // {} = 已测试 → 只显示 success === true 的模型
               const probeResults: Record<string, boolean> | undefined = prov.probeResults;
               const hasProbeResults = probeResults !== undefined && probeResults !== null;
 
+              // 第一关: 模型级测试通过 (无 probeResults 时向后兼容, 视为通过)
               const isModelTested = (modelId: string): boolean => {
-                if (!hasProbeResults) return true; // 向后兼容: 无 probeResults 时不过滤
+                if (!hasProbeResults) return true;
                 return probeResults![modelId] === true;
-              };
-
-              const shouldShow = (modelId: string): boolean => {
-                // 当前选中的主模型始终显示
-                if (currentMainModel && modelId === currentMainModel) return true;
-                // 否则只有测试通过的才显示
-                return isModelTested(modelId);
               };
 
               if (Array.isArray(prov.models)) {
                 prov.models.forEach((m: any) => {
-                  if (m.enabled && shouldShow(m.id)) enabledList.push(m.id);
+                  // 第一关 (测试通过) + 第二关 (已选中) 缺一不可
+                  if (m.enabled && isModelTested(m.id)) enabledList.push(m.id);
                 });
               }
               if (Array.isArray(prov.customModels)) {
@@ -92,7 +84,8 @@ export default function Header({
                   const cmId = typeof cm === 'string' ? cm : (cm?.id ?? '');
                   if (!cmId) return;
                   const cmEnabled = typeof cm === 'string' ? true : cm.enabled !== false;
-                  if (cmEnabled && shouldShow(cmId)) enabledList.push(cmId);
+                  // 第一关 (测试通过) + 第二关 (已选中) 缺一不可
+                  if (cmEnabled && isModelTested(cmId)) enabledList.push(cmId);
                 });
               }
             }
@@ -158,13 +151,13 @@ export default function Header({
     return [];
   };
 
-  const [availableModels, setAvailableModels] = useState<string[]>(() => getDynamicModels(mainModel));
+  const [availableModels, setAvailableModels] = useState<string[]>(() => getDynamicModels());
   const [allAvailableModelsList, setAllAvailableModelsList] = useState<string[]>(() => getDynamicSecondarySubmodels());
   const [modelIconMap, setModelIconMap] = useState<Record<string, { providerId: string; iconType?: string }>>(() => getModelIconMap());
 
   useEffect(() => {
     const refreshLists = () => {
-      const models = getDynamicModels(mainModel);
+      const models = getDynamicModels();
       setAvailableModels(models);
       setAllAvailableModelsList(getDynamicSecondarySubmodels());
       setModelIconMap(getModelIconMap());
