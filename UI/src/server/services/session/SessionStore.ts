@@ -787,6 +787,12 @@ export class SessionStore {
       if (garnet && typeof (garnet as any).deleteSessionState === 'function') {
         await (garnet as any).deleteSessionState(sessionId).catch(() => {});
       }
+      // ★ FIX: 也删除 DSL 热数据 (hot:sf:session:{id}:dsl)
+      //   PreviewPanel 刷新时会从 Garnet 恢复 DSL, 如果不删, 旧内容会"冒出来"
+      if (garnet && (garnet as any).client) {
+        const dslKey = `hot:sf:session:${sessionId}:dsl`;
+        await (garnet as any).client.del(dslKey).catch(() => {});
+      }
     } catch (err) { console.warn('[SessionStore] GarnetStore 清理失败:', err); }
 
     // ★ 2026-07-11: SurrealStore 现在有 deleteSessionState 方法
@@ -814,6 +820,11 @@ export class SessionStore {
       if (garnet && typeof (garnet as any).deleteSessionState === 'function') {
         const ok = await (garnet as any).deleteSessionState(sessionId).catch(() => false);
         if (ok) cleaned = true;
+      }
+      // ★ FIX: 也删除 DSL 热数据
+      if (garnet && (garnet as any).client) {
+        const dslKey = `hot:sf:session:${sessionId}:dsl`;
+        await (garnet as any).client.del(dslKey).catch(() => {});
       }
     } catch (err) { console.warn('[SessionStore] GarnetStore 清理失败:', err); }
 

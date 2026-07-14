@@ -263,25 +263,37 @@ export const useChatsStore = create<ChatsState>()(subscribeWithSelector((set, ge
       pendingMutations: get().pendingMutations + 1,
     });
 
-    // ★ FIX: 彻底清理画布前端缓存 — 停 Electron 子进程 + 清 _startedSessions + 清 canvasDeviceStore
-    //   后端 deleteCanvasesByOwner 只清 Garnet + SurrealDB, 不清前端 Electron 子进程和设备缓存。
-    //   之前只调了 clearCanvasSessionId(id) (删 chatId→canvasId 映射), 但:
-    //   - Electron 子进程 (Flutter 画布窗口) 仍在运行 → 画布画面不消失
-    //   - _startedSessions 仍有旧 canvasId → 同 ID 画布重建时不会 auto-start
-    //   - canvasDeviceStore 仍有旧 canvasId 的设备尺寸 → LLM 拿到过时约束
+    // ★ FIX v2: 彻底清理画布前端缓存 — 从后端查全部画布再逐个清
+    //   后端 deleteCanvasesByOwner 会清 Garnet+SurrealDB, 但不清前端
+    //   Electron 子进程和 canvasDeviceStore。之前只依赖 peekCanvasSessionId,
+    //   但该映射可能尚未建立, 导致子进程没停、设备缓存没清。
     try {
-      const { peekCanvasSessionId, clearByCanvasSessionId } = await import('../services/incrementalCanvasPusher');
-      const canvasId = peekCanvasSessionId(id);
-      if (canvasId) {
-        // 1. 停掉 Electron 子进程 (Flutter 画布窗口)
-        if (typeof window !== 'undefined' && window.soloforge?.canvas) {
-          window.soloforge.canvas.stop(canvasId).catch(() => {});
+      const { clearByCanvasSessionId } = await import('../services/incrementalCanvasPusher');
+
+      // 查后端拿该 chat 拥有的所有画布 (在 DELETE 之前查, 之后画布就没了)
+      let ownedCanvasIds: string[] = [];
+      try {
+        const resp = await fetch(
+          `/api/canvas/resources?requesterChatSessionId=${encodeURIComponent(id)}`,
+        );
+        const data = await resp.json();
+        if (data.success && data.payload?.canvases) {
+          ownedCanvasIds = data.payload.canvases
+            .filter((c: { isOwner: boolean; sessionId: string }) => c.isOwner)
+            .map((c: { sessionId: string }) => c.sessionId);
         }
-        // 2. 清 incrementalCanvasPusher 的 _startedSessions + 所有映射到该 canvasId 的 chatId
-        clearByCanvasSessionId(canvasId);
-        // 3. 清 canvasDeviceStore (设备尺寸/渲染模式记录, localStorage 持久化的)
-        const { useCanvasDeviceStore } = await import('../state/canvasDeviceStore');
-        useCanvasDeviceStore.getState().removeDevice(canvasId);
+      } catch { /* 后端可能不可达, 跳过 */ }
+
+      const { useCanvasDeviceStore } = await import('../state/canvasDeviceStore');
+      for (const cid of ownedCanvasIds) {
+        // 停 Electron 子进程
+        if (typeof window !== 'undefined' && window.soloforge?.canvas) {
+          window.soloforge.canvas.stop(cid).catch(() => {});
+        }
+        // 清 _startedSessions + 所有映射
+        clearByCanvasSessionId(cid);
+        // 清 canvasDeviceStore
+        useCanvasDeviceStore.getState().removeDevice(cid);
       }
     } catch (e) {
       console.warn('[chatsStore] canvas cleanup failed:', (e as Error).message);

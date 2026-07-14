@@ -433,47 +433,71 @@ export default function HistoryAndEditorPanel({
     // 清除 liveState
     useChatsStore.getState().clearLiveState(id);
 
-    // ★ FIX: 清除画布数据 — 停子进程 + 删后端 + 清前端缓存 + 刷新 bridge
-    //   之前 handleClearSession 只清了对话/流送/终端/预览, 但画布数据
-    //   (后端 Garnet + SurrealDB 中的 devices/DSL/state + Electron 子进程
-    //   + incrementalCanvasPusher 映射 + canvasDeviceStore) 完全没清,
-    //   导致画布内容清除后仍"冒出来"。
+    // ★ FIX v2: 彻底清除画布数据 — 从后端查全部画布再逐个删
+    //   之前只依赖 peekCanvasSessionId, 但该映射可能在清除时尚未建立
+    //   (PreviewPanel useEffect 还没跑), 导致画布没被删, 刷新后又冒出来。
+    //   现在直接查后端 GET /api/canvas/resources 拿到该 chat 拥有的所有画布,
+    //   逐个 DELETE (后端会同时删 Garnet state + DSL + SurrealDB),
+    //   并停 Electron 子进程 + 清前端缓存。
+    //   同时删后端对话消息 (DELETE /api/conversations/:chatId), 刷新后不再恢复。
     try {
-      const { peekCanvasSessionId, clearCanvasSessionId, clearByCanvasSessionId } =
+      const { clearCanvasSessionId, clearByCanvasSessionId } =
         await import('../services/incrementalCanvasPusher');
       const { useCanvasDeviceStore } = await import('../state/canvasDeviceStore');
 
-      const canvasId = peekCanvasSessionId(id);
-      if (canvasId) {
-        // 1. 停掉 Electron 子进程 (Flutter 画布窗口)
+      // 1. 查后端拿该 chat 拥有的所有画布
+      let ownedCanvasIds: string[] = [];
+      try {
+        const resp = await fetch(
+          `/api/canvas/resources?requesterChatSessionId=${encodeURIComponent(id)}`,
+        );
+        const data = await resp.json();
+        if (data.success && data.payload?.canvases) {
+          ownedCanvasIds = data.payload.canvases
+            .filter((c: { isOwner: boolean; sessionId: string }) => c.isOwner)
+            .map((c: { sessionId: string }) => c.sessionId);
+        }
+      } catch (e) {
+        console.warn('[handleClearSession] list canvases failed:', (e as Error).message);
+      }
+
+      // 2. 逐个删除画布 — 停子进程 + DELETE 后端(含 Garnet state+DSL + SurrealDB) + 清前端缓存
+      for (const canvasId of ownedCanvasIds) {
+        // 停 Electron 子进程
         if (typeof window !== 'undefined' && window.soloforge?.canvas) {
           window.soloforge.canvas.stop(canvasId).catch(() => {});
         }
-        // 2. 调后端 DELETE — 清理内存 states/dirty + Garnet 热存储 + SurrealDB 持久层
+        // DELETE 后端 — 清内存 + Garnet(state+dsl) + SurrealDB
         try {
           await fetch(`/api/canvas/sessions/${encodeURIComponent(canvasId)}`, {
             method: 'DELETE',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Requester-Chat-Session-Id': id,
-            },
+            headers: { 'X-Requester-Chat-Session-Id': id },
           });
         } catch (e) {
           console.warn('[handleClearSession] canvas delete failed:', (e as Error).message);
         }
-        // 3. 清前端缓存 — incrementalCanvasPusher (chatId→canvasId 映射 + _startedSessions)
+        // 清前端缓存
         clearByCanvasSessionId(canvasId);
-        clearCanvasSessionId(id);
-        // 4. 清前端缓存 — canvasDeviceStore (设备尺寸/渲染模式记录)
         useCanvasDeviceStore.getState().removeDevice(canvasId);
       }
+
+      // 3. 清 chatId→canvasId 映射 (即使上面没查到画布也要清, 防止残留 fallback 映射)
+      clearCanvasSessionId(id);
+
+      // 4. 删后端对话消息 — 防止刷新后聊天历史降级恢复画布内容
+      try {
+        await fetch(`/api/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      } catch (e) {
+        console.warn('[handleClearSession] delete conversations failed:', (e as Error).message);
+      }
+
       // 5. 刷新画布列表 — 通知 bridge 重新 resolve (会创建新画布)
       window.dispatchEvent(new CustomEvent('soloforge-canvas-deleted'));
     } catch (e) {
       console.warn('[handleClearSession] canvas cleanup failed:', (e as Error).message);
     }
 
-    console.log('[HistoryAndEditorPanel] 已清除会话', id, '的上下文/流送/画布/终端');
+    console.log('[HistoryAndEditorPanel] 已清除会话', id, '的上下文/流送/画布/终端/对话消息');
   }, []);
 
   // ── 删除对话 ────────────────────────────────────────────────
