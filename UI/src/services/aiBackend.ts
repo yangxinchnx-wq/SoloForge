@@ -273,7 +273,7 @@ function buildJavaRequestBody(req: ChatRequest): any {
  *
  * 请求失败直接抛出具体错误信息, 不允许降级。
  */
-async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: string, onEvent: (e: ChatStreamEvent) => void): Promise<void> {
+async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: string, onEvent: (e: ChatStreamEvent) => void | Promise<void>): Promise<void> {
   const res = await fetch('/api/java-agent/api/chat/stream', {
     method: 'POST',
     headers: {
@@ -356,7 +356,8 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
               onEvent({ kind: 'error', error: data.error || 'Unknown error', taskId });
             } else if (currentEvent === 'done') {
               doneSent = true;
-              onEvent({ kind: 'done', taskId, agentId: data.agentId });
+              // ★ 2026-07-14: await onEvent for done — 确保 flush()/tryLocalTranslateAndPush() 完成
+              await onEvent({ kind: 'done', taskId, agentId: data.agentId });
             }
           } catch (e) {
             // [DEBUG SSE] 不再静默吞错, 打印解析失败的信息
@@ -382,7 +383,7 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
         onEvent({ kind: 'usage', usage: { promptTokens: data.promptTokens ?? 0, completionTokens: data.completionTokens ?? 0, totalTokens: data.totalTokens ?? 0, cachedTokens: data.cachedTokens }, taskId });
       } else if (currentEvent === 'done') {
         doneSent = true;
-        onEvent({ kind: 'done', taskId, agentId: data.agentId });
+        await onEvent({ kind: 'done', taskId, agentId: data.agentId });
       }
     } catch {}
   }
@@ -390,7 +391,7 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
   // ★ 2026-07-11: 合成 done 事件
   if (!doneSent && !signal.aborted) {
     console.log('[aiBackend] Java SSE 流结束, 后端未发 done 事件 → 合成 done');
-    onEvent({ kind: 'done', taskId });
+    await onEvent({ kind: 'done', taskId });
   }
   // ★ 结束延迟追踪, emit LatencySample
   latencyTracker.finish();
@@ -401,7 +402,7 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
  * ★ 2026-07-14: 移除所有 fallback 降级逻辑, 只走 Java Agent 路径。
  *   请求失败直接抛出具体错误信息, 不允许降级。
  */
-async function startChatViaFetch(req: ChatRequest, onEvent: (e: ChatStreamEvent) => void): Promise<ChatHandle> {
+async function startChatViaFetch(req: ChatRequest, onEvent: (e: ChatStreamEvent) => void | Promise<void>): Promise<ChatHandle> {
   const taskId = `java-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const controller = new AbortController();
   const signal = controller.signal;
@@ -487,7 +488,7 @@ async function startChatViaIpc(req: ChatRequest, onEvent: (e: ChatStreamEvent) =
 /**
  * 统一入口: dev/prod 自动适配
  */
-export function startChat(req: ChatRequest, onEvent: (e: ChatStreamEvent) => void): Promise<ChatHandle> {
+export function startChat(req: ChatRequest, onEvent: (e: ChatStreamEvent) => void | Promise<void>): Promise<ChatHandle> {
   if (isElectronIpcAvailable()) {
     return startChatViaIpc(req, onEvent);
   }

@@ -509,6 +509,11 @@ class LineTracker {
       if (result.node) {
         this._pushed = true;
         this.pushToCanvas(result.node, codeToTranslate, isFinal);
+      } else {
+        // ★ 2026-07-14: 翻译返回 null node — 打印详细错误帮助诊断
+        console.warn(`[LineTracker] translateCodeAsync 返回 null node: lang=${this.translateLang}, codeLen=${codeToTranslate.length}, error=${result.error || 'unknown'}, isFinal=${isFinal}`);
+        // 打印前 200 字符代码片段, 帮助定位翻译器问题
+        console.warn(`[LineTracker] code preview: ${codeToTranslate.slice(0, 200)}...`);
       }
     } catch (err: any) {
       // ★ 2026-07-14: 不再静默吞错, 打印详细错误帮助诊断
@@ -677,12 +682,19 @@ export class IncrementalCanvasPusher {
     this.flushing = true;
 
     const blocks = parseCodeBlocks(this.rawText);
+    console.log(`[IncrementalCanvasPusher] flush: rawText.length=${this.rawText.length}, blocks=${blocks.length}, handled=${this._handled}`);
 
     const finalTasks: Array<{ tracker: LineTracker; block: CodeBlockInfo }> = [];
     for (const block of blocks) {
-      if (!block.translatorLang) continue;
+      if (!block.translatorLang) {
+        console.log(`[IncrementalCanvasPusher] flush skip: lang=${block.lang}, translatorLang=null`);
+        continue;
+      }
       // ★ json DSL 不需要 isLanguageSupported 检查
-      if (block.translatorLang !== '__json_dsl__' && !isLanguageSupported(block.translatorLang)) continue;
+      if (block.translatorLang !== '__json_dsl__' && !isLanguageSupported(block.translatorLang)) {
+        console.log(`[IncrementalCanvasPusher] flush skip: translatorLang=${block.translatorLang} not supported`);
+        continue;
+      }
       if (!block.code.trim()) continue;
 
       const tracker = this.trackers.get(block.openFenceStart);
@@ -707,6 +719,9 @@ export class IncrementalCanvasPusher {
         this.pushedBlockStarts.add(block.openFenceStart);
       }
       this._handled = finalTasks.some(t => t.tracker.pushed);
+      console.log(`[IncrementalCanvasPusher] flush 完成: _handled=${this._handled}`);
+    } else {
+      console.log(`[IncrementalCanvasPusher] flush: 无可翻译的代码块`);
     }
 
     this.flushing = false;

@@ -109,7 +109,15 @@ export function usePreviewBridge(): void {
       const language = detail.language || detectLanguage(detail.message);
       const userGoal = detail.message;
 
-      // Clear old entry for this chat
+      // ★ 2026-07-14: 不再无条件 clearEntry — 如果增量翻译已写入数据, 保留它
+      //   原代码 clearEntry 会清空 pushToCanvas 写入的 ast, 导致画布空白
+      //   只有在 entry 不存在或已过期时才清理
+      const existingEntry = usePreviewStreamStore.getState().getEntry(detail.chatId);
+      if (existingEntry?.ast || existingEntry?.payload) {
+        // 已有数据 — 增量翻译/本地翻译已处理, 不需要 LLM 预览流
+        console.log('[usePreviewBridge] entry 已有数据, 跳过 LLM 预览流');
+        return;
+      }
       usePreviewStreamStore.getState().clearEntry(detail.chatId);
 
       // 延迟 1.5s 启动预览流, 避免与主聊天同时请求 LLM 导致 429 速率限制
