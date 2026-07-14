@@ -367,53 +367,88 @@ const SubTaskProgressPartView = memo(function SubTaskProgressPartView({ part }: 
 // ── SubTask Step: icon cross-fade on status change ──
 
 const SubTaskStepPartView = memo(function SubTaskStepPartView({ part }: { part: UISubTaskStepPart }) {
+  // ★ 运行中默认展开详情; 完成/出错后自动折叠
+  const [detailExpanded, setDetailExpanded] = useState(part.status !== 'done' && part.status !== 'error');
+
+  useEffect(() => {
+    if (part.status === 'done' || part.status === 'error') {
+      setDetailExpanded(false);
+    }
+  }, [part.status]);
+
+  const handleToggle = useCallback(() => setDetailExpanded(prev => !prev), []);
+  const hasDetail = Boolean(part.detail);
+
   return (
-    <div className="flex items-center gap-1.5 pl-2">
-      <ChevronRight className="w-2.5 h-2.5 text-on-surface/20" />
-      <div className="relative w-3 h-3 shrink-0">
-        <AnimatePresence initial={false} mode="popLayout">
-          {part.status === 'done' && (
-            <motion.div
-              key="done"
-              initial={{ scale: 0.25, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.25, opacity: 0 }}
-              transition={SPRING}
-              className="absolute inset-0"
-            >
-              <CheckCircle2 className="w-3 h-3 text-green-400" />
-            </motion.div>
-          )}
-          {part.status === 'error' && (
-            <motion.div
-              key="error"
-              initial={{ scale: 0.25, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.25, opacity: 0 }}
-              transition={SPRING}
-              className="absolute inset-0"
-            >
-              <AlertCircle className="w-3 h-3 text-red-400" />
-            </motion.div>
-          )}
-          {part.status !== 'done' && part.status !== 'error' && (
-            <motion.div
-              key="running"
-              initial={{ scale: 0.25, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.25, opacity: 0 }}
-              transition={SPRING}
-              className="absolute inset-0"
-            >
-              <Loader2 className="w-3 h-3 text-blue-400 animate-spin" />
-            </motion.div>
-          )}
-        </AnimatePresence>
+    <div className="pl-2">
+      <div
+        className={`flex items-center gap-1.5 ${hasDetail ? 'cursor-pointer select-none' : ''}`}
+        onClick={hasDetail ? handleToggle : undefined}
+      >
+        {hasDetail ? (
+          detailExpanded
+            ? <ChevronDown className="w-2.5 h-2.5 text-on-surface/30 shrink-0" />
+            : <ChevronRight className="w-2.5 h-2.5 text-on-surface/30 shrink-0" />
+        ) : (
+          <ChevronRight className="w-2.5 h-2.5 text-on-surface/20 shrink-0" />
+        )}
+        <div className="relative w-3 h-3 shrink-0">
+          <AnimatePresence initial={false} mode="popLayout">
+            {part.status === 'done' && (
+              <motion.div
+                key="done"
+                initial={{ scale: 0.25, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.25, opacity: 0 }}
+                transition={SPRING}
+                className="absolute inset-0"
+              >
+                <CheckCircle2 className="w-3 h-3 text-green-400" />
+              </motion.div>
+            )}
+            {part.status === 'error' && (
+              <motion.div
+                key="error"
+                initial={{ scale: 0.25, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.25, opacity: 0 }}
+                transition={SPRING}
+                className="absolute inset-0"
+              >
+                <AlertCircle className="w-3 h-3 text-red-400" />
+              </motion.div>
+            )}
+            {part.status !== 'done' && part.status !== 'error' && (
+              <motion.div
+                key="running"
+                initial={{ scale: 0.25, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.25, opacity: 0 }}
+                transition={SPRING}
+                className="absolute inset-0"
+              >
+                <Loader2 className="w-3 h-3 text-blue-400 animate-spin" />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+        <span className="text-[10px] font-mono text-on-surface/60 shrink-0">{part.step}</span>
       </div>
-      <span className="text-[10px] font-mono text-on-surface/60 shrink-0">{part.step}</span>
-      {part.detail && (
-        <span className="text-[10px] text-on-surface/40 break-words [text-wrap:pretty]">{part.detail}</span>
-      )}
+      <AnimatePresence initial={false}>
+        {hasDetail && detailExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: EASE }}
+            className="overflow-hidden"
+          >
+            <div className="text-[10px] text-on-surface/40 break-words [text-wrap:pretty] pl-5 pt-0.5">
+              {part.detail}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 });
@@ -589,18 +624,44 @@ const AuditDonePartView = memo(function AuditDonePartView({ part }: { part: UIAu
 // ── Delivery: concentric radius ──
 
 const DeliveryPartView = memo(function DeliveryPartView({ part }: { part: UIDeliveryPart }) {
+  // ★ 交付结果默认折叠, 点击展开
+  const [expanded, setExpanded] = useState(false);
+  const handleToggle = useCallback(() => setExpanded(prev => !prev), []);
+
   return (
     <div
-      className="px-3 py-2.5 rounded-2xl bg-green-500/5"
+      className="px-3 py-2 rounded-2xl bg-green-500/5"
       style={{ boxShadow: '0 0 0 1px rgba(34, 197, 94, 0.12)' }}
     >
-      <div className="flex items-center gap-1.5 mb-1">
+      <button
+        onClick={handleToggle}
+        className="flex items-center gap-1.5 w-full text-left select-none"
+      >
         <Box className="w-3.5 h-3.5 text-green-400 shrink-0" />
         <span className="text-[10px] font-bold text-green-400">交付结果</span>
-      </div>
-      <div className="text-[12px] leading-relaxed text-on-surface/80 whitespace-pre-wrap break-words [text-wrap:pretty]">
-        {part.result}
-      </div>
+        <motion.div
+          animate={{ rotate: expanded ? 90 : 0 }}
+          transition={SPRING}
+          className="ml-auto shrink-0"
+        >
+          <ChevronRight className="w-3 h-3 text-green-400/50" />
+        </motion.div>
+      </button>
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: EASE }}
+            className="overflow-hidden"
+          >
+            <div className="text-[12px] leading-relaxed text-on-surface/80 whitespace-pre-wrap break-words [text-wrap:pretty] mt-1">
+              {part.result}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 });
