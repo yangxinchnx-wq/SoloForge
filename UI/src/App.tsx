@@ -134,6 +134,79 @@ export default function App() {
     };
   }, []);
 
+  // ── 启动时从 OS 钥匙串恢复 apiKey 到 localStorage ──────────────
+  // 修复「密钥重启后丢失」问题:
+  //   - localStorage 中的 apiKey 可能因 leveldb 未落盘 / 清缓存而丢失
+  //   - vault (OS keychain) 是安全备份, 重启后仍存在
+  //   - 但 vault 恢复逻辑原来只在 ModelAddTab (设置页) 挂载时执行
+  //   - 如果用户重启后不打开设置页, vault 中的密钥永远不会被恢复
+  //   - 此 effect 在 App 启动时主动拉取 vault keys, 填补 localStorage 中的空缺
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        // 1. 读取当前 localStorage 中的 providers
+        const saved = localStorage.getItem('cherry_providers_v2');
+        if (!saved) return; // 没有 providers 数据, 无法恢复
+        const providers = JSON.parse(saved);
+        if (!Array.isArray(providers) || providers.length === 0) return;
+
+        // 2. 检查是否有 provider 缺少 apiKey
+        const needsRestore = providers.some((p: any) => p.enabled && !p.apiKey);
+        if (!needsRestore) return; // 所有 provider 都有 apiKey, 无需恢复
+
+        // 3. 从 vault 列出所有有密钥的 provider
+        const vr = await fetch('/api/vault/keys');
+        if (!vr.ok) return;
+        const vd = await vr.json();
+        const items: Array<{ id: string; hasKey: boolean }> = vd?.items || [];
+        const vaultIds = items.filter(i => i.hasKey).map(i => i.id);
+        if (vaultIds.length === 0) return; // vault 中没有密钥, 无法恢复
+
+        // 4. 逐个 reveal 明文密钥
+        const reveals = await Promise.all(
+          vaultIds.map(async (id) => {
+            try {
+              const rr = await fetch(`/api/vault/keys/${encodeURIComponent(id)}/reveal`);
+              if (!rr.ok) return null;
+              const d = await rr.json();
+              return { id, key: d?.apiKey || '' };
+            } catch {
+              return null;
+            }
+          })
+        );
+        const vaultKeys = new Map<string, string>();
+        for (const rv of reveals) {
+          if (rv && rv.key) vaultKeys.set(rv.id, rv.key);
+        }
+        if (vaultKeys.size === 0) return;
+
+        if (cancelled) return;
+
+        // 5. 合并: 对缺少 apiKey 的 provider, 从 vault 填充
+        let changed = false;
+        const updated = providers.map((p: any) => {
+          if ((!p.apiKey || !p.apiKey.trim()) && vaultKeys.has(p.id)) {
+            changed = true;
+            return { ...p, apiKey: vaultKeys.get(p.id) };
+          }
+          return p;
+        });
+
+        if (!changed) return;
+
+        // 6. 写回 localStorage + 通知
+        localStorage.setItem('cherry_providers_v2', JSON.stringify(updated));
+        window.dispatchEvent(new CustomEvent('providers_updated'));
+        console.log('[App] vault key restore: recovered', vaultKeys.size, 'key(s) from OS keychain');
+      } catch (e) {
+        console.warn('[App] vault key restore failed:', (e as Error).message);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   // normal 模式下禁用 mixedTasks
   useEffect(() => {
     if (currentPermissionMode === 'normal') {

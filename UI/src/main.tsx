@@ -175,6 +175,20 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>,
 );
 
+// ── 退出前 flush: 确保 SettingsStore 的 pending 写入落盘 ──────────
+// Electron 的 localStorage (leveldb) 在异常退出 (kill / crash / 断电) 时
+// 可能丢失最后几条写入。beforeunload / pagehide 时主动 flush, 最大化持久化成功率。
+// 场景: 用户在设置页输入 apiKey → 关闭窗口 → leveldb 未落盘 → 重启后丢失
+if (typeof window !== 'undefined') {
+  const flushSettings = () => {
+    try {
+      getDefaultStore().flushSync();
+    } catch {}
+  };
+  window.addEventListener('beforeunload', flushSettings, { capture: true });
+  window.addEventListener('pagehide', flushSettings, { capture: true });
+}
+
 // 启动时预取默认字体（OPPOSans）。等 ThemeProvider 把 @font-face 注入 <head> 后，
 // 浏览器已经看到 <link rel="preload" as="font">，会优先下载，避免首屏中文先以 Inter 渲染再回弹
 if (typeof window !== 'undefined' && DEFAULT_FONT_URL) {
