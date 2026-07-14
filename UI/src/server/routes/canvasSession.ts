@@ -129,14 +129,8 @@ export async function handleGetSession(req: Request, res: Response): Promise<Res
   const id = String(req.params.id || '');
   if (!id) return err(res, 400, 'session id required');
   const store = getSessionStore();
-  // 先用 sync 看是否在内存
-  let state = store.listCanvases().find(c => c.sessionId === id);
-  if (!state) {
-    // 尝试从 Surreal 恢复
-    const loaded = await store.loadFromSurrealById(id);
-    if (!loaded) return err(res, 404, 'canvas not found');
-    state = loaded;
-  }
+  const state = await findCanvasWithRecovery(id);
+  if (!state) return err(res, 404, 'canvas not found');
   if (!ensureRead(req, res, state)) return res;  // already written
   // 记录访问 (用于自动切回)
   const requester = getRequesterChatSessionId(req);
@@ -359,18 +353,25 @@ export async function handleDeleteSession(req: Request, res: Response): Promise<
   const id = String(req.params.id || '');
   if (!id) return err(res, 400, 'session id required');
   const store = getSessionStore();
-  const state = store.listCanvases().find(c => c.sessionId === id);
-  if (!state) return err(res, 404, 'canvas not found');
-  // ★ FIX 2026-07-14: 不再检查 ensureManage — 允许任何 requester 删除任何画布
-  //   原 ACL (仅 owner 可删) 在多 chat 场景下导致用户无法清理无归属/别人的画布
-  //   删除是破坏性操作, 前端已有 confirm 二次确认, 后端不再二次鉴权
+  // ★ FIX 2026-07-14: 先鉴权再查内存 — 保证 401 优先于 404
   const requester = getRequesterChatSessionId(req);
   if (!requester) return err(res, 401, 'X-Requester-Chat-Session-Id header required');
+  const state = store.listCanvases().find(c => c.sessionId === id);
   try {
-    const ok2 = await store.deleteSession(id);
-    if (!ok2) return err(res, 404, 'canvas not found');
-    if (requester) emitCanvasChange(state, requester, 'delete');
-    return ok(res, { deleted: id });
+    if (state) {
+      // Session 在内存中 — 完整删除 (内存 + Garnet + SurrealDB)
+      const ok2 = await store.deleteSession(id);
+      if (!ok2) return err(res, 404, 'canvas not found');
+      emitCanvasChange(state, requester, 'delete');
+      return ok(res, { deleted: id });
+    } else {
+      // ★ 2026-07-14: Session 不在内存中 (服务器重启后 SurrealDB 恢复失败)
+      //   1. 尝试清理持久层 (Garnet + SurrealDB)
+      //   2. 无论持久层是否有, 返回 200 — DELETE 幂等: "不存在" = "已删除"
+      //   前端会清理本地缓存 (Electron 子进程 / incrementalCanvasPusher / canvasDeviceStore)
+      await store.deleteSessionFromPersistence(id);
+      return ok(res, { deleted: id, notInMemory: true });
+    }
   } catch (e) {
     return err(res, 500, `delete failed: ${(e as Error).message}`);
   }

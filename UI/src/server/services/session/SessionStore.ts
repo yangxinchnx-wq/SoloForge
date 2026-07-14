@@ -796,6 +796,34 @@ export class SessionStore {
   }
 
   /**
+   * ★ 2026-07-14: 仅清理持久层 (Garnet + SurrealDB), 不检查内存
+   * 用于: 服务器重启后内存清空, 但前端仍有旧 session 需要删除的场景
+   * 返回是否有持久层被清理 (Garnet 或 SurrealDB 任一成功即 true)
+   */
+  async deleteSessionFromPersistence(sessionId: string): Promise<boolean> {
+    let cleaned = false;
+    try {
+      const { getGarnetStore } = await import('../persistence/GarnetStore');
+      const garnet = getGarnetStore();
+      if (garnet && typeof (garnet as any).deleteSessionState === 'function') {
+        const ok = await (garnet as any).deleteSessionState(sessionId).catch(() => false);
+        if (ok) cleaned = true;
+      }
+    } catch (err) { console.warn('[SessionStore] GarnetStore 清理失败:', err); }
+
+    try {
+      const { getSurrealStore } = await import('../persistence/SurrealStore');
+      const surreal = getSurrealStore();
+      if (surreal && typeof (surreal as any).deleteSessionState === 'function') {
+        const ok = await (surreal as any).deleteSessionState(sessionId).catch(() => false);
+        if (ok) cleaned = true;
+      }
+    } catch (err) { console.warn('[SessionStore] SurrealStore 清理失败:', err); }
+
+    return cleaned;
+  }
+
+  /**
    * 级联删除: 删除指定 chat 拥有的所有画布
    * 用于删除对话时清理关联画布
    * 返回被删除的 canvas sessionId 列表
