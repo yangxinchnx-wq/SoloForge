@@ -1121,12 +1121,15 @@ export default function PreviewPanel({
                   const scale = Math.min(availW / activePreset.w, availH / activePreset.h, 1);
                   const scaledW = Math.round(activePreset.w * scale);
                   const scaledH = Math.round(activePreset.h * scale);
-                  return {
-                    width: `${scaledW}px`,
-                    height: `${scaledH}px`,
-                    overflow: 'hidden',
-                    transition: 'all 250ms cubic-bezier(0.16, 1, 0.3, 1)',
-                  } as React.CSSProperties;
+                return {
+                  width: `${scaledW}px`,
+                  height: `${scaledH}px`,
+                  overflow: 'hidden',
+                  border: '1px solid rgba(0, 0, 0, 0.45)',
+                  boxShadow: '0 0 12px rgba(0, 0, 0, 0.25), 0 2px 8px rgba(0, 0, 0, 0.15)',
+                  borderRadius: '4px',
+                  transition: 'all 250ms cubic-bezier(0.16, 1, 0.3, 1)',
+                } as React.CSSProperties;
                 }
                 // ★ 无设备时填满可用区域 (四边各留 BLEED/2 出血线)
                 return {
@@ -1134,6 +1137,9 @@ export default function PreviewPanel({
                   height: `calc(100% - ${BLEED}px)`,
                   margin: `${BLEED / 2}px`,
                   overflow: 'hidden',
+                  border: '1px solid rgba(0, 0, 0, 0.45)',
+                  boxShadow: '0 0 12px rgba(0, 0, 0, 0.25), 0 2px 8px rgba(0, 0, 0, 0.15)',
+                  borderRadius: '4px',
                   transition: 'all 250ms cubic-bezier(0.16, 1, 0.3, 1)',
                 } as React.CSSProperties;
               })()}
