@@ -886,6 +886,31 @@ export class SessionStore {
     out.sort((a, b) => b.lastUpdated - a.lastUpdated);
     return out;
   }
+
+  /**
+   * ★ FIX 2026-07-14 v4: 清理孤儿画布
+   * 删除所有 ownerChatSessionId 以 "temp-" 开头的画布 (临时 chat ID 已被替换,
+   * 这些画布永远不会被任何真实 chat 认领, 是纯垃圾数据)。
+   * 同时也删除 ownerChatSessionId 为 "legacy" 的旧数据。
+   *
+   * @returns 被删除的 sessionId 列表
+   */
+  async cleanupOrphanedCanvases(): Promise<string[]> {
+    const toDelete: string[] = [];
+    for (const [sessionId, state] of this.states.entries()) {
+      const owner = state.ownerChatSessionId;
+      if (owner && (owner.startsWith('temp-') || owner === 'legacy')) {
+        toDelete.push(sessionId);
+      }
+    }
+    for (const sid of toDelete) {
+      await this.deleteSession(sid);
+    }
+    if (toDelete.length > 0) {
+      console.log(`[SessionStore] cleanupOrphanedCanvases: deleted ${toDelete.length} orphaned canvases: ${toDelete.join(', ')}`);
+    }
+    return toDelete;
+  }
 }
 
 let _instance: SessionStore | null = null;
