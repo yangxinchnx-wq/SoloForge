@@ -1346,7 +1346,13 @@ function openDeviceDropdownWindow(payload) {
   // 窗口已存在 → 只 setBounds + 更新内容 + show (不重新 loadURL, 不弹 DevTools)
   if (deviceDropdownWindow && !deviceDropdownWindow.isDestroyed()) {
     deviceDropdownWindow.setBounds(bounds);
-    deviceDropdownWindow.webContents.executeJavaScript(buildDeviceDropdownContent(payload)).catch(() => {});
+    // 已加载过 shell → 直接 executeJavaScript; 否则等 did-finish-load
+    if (deviceDropdownReady) {
+      deviceDropdownWindow.webContents.executeJavaScript(buildDeviceDropdownContent(payload)).catch(() => {});
+    } else {
+      // 首次加载还没完成, 把 payload 暂存, did-finish-load 时再填充
+      deviceDropdownWindow._pendingPayload = payload;
+    }
     deviceDropdownWindow.show();
     deviceDropdownWindow.focus();
     return;
@@ -1372,10 +1378,13 @@ function openDeviceDropdownWindow(payload) {
   deviceDropdownWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(buildDeviceDropdownShell()));
   deviceDropdownWindow.webContents.on('did-finish-load', () => {
     deviceDropdownReady = true;
-    deviceDropdownWindow.webContents.executeJavaScript(buildDeviceDropdownContent(payload)).catch(() => {});
+    const pending = deviceDropdownWindow._pendingPayload || payload;
+    deviceDropdownWindow.webContents.executeJavaScript(buildDeviceDropdownContent(pending)).catch(() => {});
+    deviceDropdownWindow._pendingPayload = null;
   });
   deviceDropdownWindow.on('blur', () => {
-    try { if (deviceDropdownWindow && !deviceDropdownWindow.isDestroyed()) deviceDropdownWindow.hide(); } catch {}
+    // 失焦销毁 (点击画布/其他区域时关闭), 避免隐藏后状态不一致
+    closeDeviceDropdownWindow();
   });
   deviceDropdownWindow.show();
   deviceDropdownWindow.focus();
@@ -1383,8 +1392,23 @@ function openDeviceDropdownWindow(payload) {
 
 function closeDeviceDropdownWindow() {
   if (deviceDropdownWindow && !deviceDropdownWindow.isDestroyed()) {
-    deviceDropdownWindow.hide();
+    deviceDropdownWindow.destroy();
   }
+  deviceDropdownWindow = null;
+  deviceDropdownReady = false;
+}
+
+// 启动时清理所有残留的设备下拉框窗口 (防 hot reload 后双窗口)
+function cleanupStaleDropdownWindows() {
+  try {
+    const all = BrowserWindow.getAllWindows();
+    for (const w of all) {
+      // 下拉框窗口特征: parent=mainWindow + skipTaskbar + !resizable
+      if (w !== mainWindow && w !== canvasHostWindow && w.getParentWindow() === mainWindow) {
+        try { w.destroy(); } catch {}
+      }
+    }
+  } catch {}
 }
 
 ipcMain.handle('canvas:open-device-popup', async (_e, payload) => {
@@ -2556,6 +2580,8 @@ mainWindow.on('unmaximize', () => {
   mainWindow.webContents.send('window:maximize-state-changed', false);
 });
   registerIpc();
+  // ★ 清理 hot reload 残留的下拉框窗口 (防双窗口)
+  cleanupStaleDropdownWindows();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

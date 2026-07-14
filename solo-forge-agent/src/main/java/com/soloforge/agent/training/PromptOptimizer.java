@@ -2,7 +2,8 @@ package com.soloforge.agent.training;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.soloforge.agent.dto.ChatRequest;
-import com.soloforge.agent.llm.LlmGateway;
+import com.soloforge.agent.config.DynamicChatModelResolver; // ★ Path C: 替代 LlmGateway
+import com.soloforge.agent.llm.LlmGateway; // @Deprecated — 保留 fallback 引用
 import com.soloforge.agent.persistence.AgentIdentityEntity;
 import com.soloforge.agent.persistence.AgentIdentityRepository;
 import com.soloforge.agent.persistence.AgentTrainingHistoryEntity;
@@ -11,6 +12,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+
+import ai.chat.client.ChatClient; // ★ Path C: Spring AI ChatClient
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -43,7 +46,8 @@ public class PromptOptimizer {
     private final AgentIdentityRepository agentRepo;
     private final AgentTrainingHistoryRepository historyRepo;
     private final TrainingTaskLoader taskLoader;
-    private final LlmGateway llmGateway;
+    private final LlmGateway llmGateway; // @Deprecated — 保留 fallback
+    private final DynamicChatModelResolver modelResolver; // ★ Path C: 新执行器
     private final ObjectMapper objectMapper;
 
     /** 优化阈值: new reward 必须超过 baseline 的 (1 + IMPROVEMENT_THRESHOLD) 倍才采纳 */
@@ -145,211 +149,255 @@ public class PromptOptimizer {
 
         // Step 3: 用新 prompt 跑评估
         double rewardAfter = evaluatePrompt(improvedPrompt, tasks, agent);
-        log.info("助理 {} new reward = {:.4} (threshold = {:.4})",
-                agentId, rewardAfter, rewardBefore * (1 + improvementThreshold));
+        log.info("助理 {} improved reward = {:.4} (baseline={:.4})", agentId, rewardAfter, rewardBefore);
 
-        // Step 4: 判断是否采纳
-        boolean adopted = rewardAfter > rewardBefore * (1 + improvementThreshold);
-        String notes;
+        boolean adopted = rewardAfter > rewardBefore * (1.0 + improvementThreshold);
+
         if (adopted) {
             int newVersion = currentVersion + 1;
-            agentRepo.updateSystemPrompt(agentId, improvedPrompt, newVersion);
-            notes = String.format("v%d→v%d, reward %.4f→%.4f (+%.1f%%), 采纳",
-                    currentVersion, newVersion, rewardBefore, rewardAfter,
-                    (rewardAfter - rewardBefore) / Math.max(rewardBefore, 0.001) * 100);
+            agent.setSystemPrompt(improvedPrompt);
+            agent.setSystemPromptVersion(newVersion);
+            agent.setLastTrainingTime(LocalDateTime.now());
+            agentRepo.save(agent);
             recordHistory(agentId, currentVersion, newVersion, rewardBefore, rewardAfter,
-                    tasks.size(), notes, true);
-            log.info("助理 {} prompt 优化采纳: {}", agentId, notes);
+                    tasks.size(), "已采纳", true);
+            log.info("助理 {} ✅ 采纳 v{} → v{} ({:.4} → {:.4}, +{:.1f}%)",
+                    agentId, currentVersion, newVersion, rewardBefore, rewardAfter,
+                    (rewardAfter - rewardBefore) / rewardBefore * 100);
         } else {
-            notes = String.format("v%d (未变), reward %.4f→%.4f (%.1f%%), 未达阈值, 回滚",
-                    currentVersion, rewardBefore, rewardAfter,
-                    (rewardAfter - rewardBefore) / Math.max(rewardBefore, 0.001) * 100);
             recordHistory(agentId, currentVersion, currentVersion, rewardBefore, rewardAfter,
-                    tasks.size(), notes, false);
-            log.info("助理 {} prompt 优化未采纳: {}", agentId, notes);
+                    tasks.size(), String.format("未改善 (%.4 < %.4*%.2f)", rewardAfter, rewardBefore, 1+improvementThreshold),
+                    false);
+            log.info("助理 {} ❌ 未采纳 v{} ({:.4} → {:.4}, 需 +%.1f%%)",
+                    agentId, currentVersion, rewardBefore, rewardAfter, improvementThreshold * 100);
         }
 
-        return OptimizeResult.builder()
-                .agentId(agentId)
-                .adopted(adopted)
-                .rewardBefore(rewardBefore)
-                .rewardAfter(rewardAfter)
-                .versionBefore(currentVersion)
-                .versionAfter(adopted ? currentVersion + 1 : currentVersion)
-                .sampleCount(tasks.size())
-                .notes(notes)
-                .build();
+        return new OptimizeResult(agentId, adopted, rewardBefore, rewardAfter,
+                currentPrompt.length(), improvedPrompt.length(),
+                adopted ? currentVersion + 1 : currentVersion);
     }
 
     /**
-     * 评估 prompt 质量: 用该 prompt 对每个任务生成回复, 计算 reward
+     * 评估单个 prompt 在任务集上的 reward
      */
-    private double evaluatePrompt(String systemPrompt, List<TrainingTask> tasks, AgentIdentityEntity agent) {
+    double evaluatePrompt(String prompt, List<TrainingTask> tasks, AgentIdentityEntity agent) {
+        if (tasks.isEmpty()) return 0.0;
+
         double totalReward = 0.0;
-        ChatRequest.LlmProvider provider = getTrainingProvider();
+        int weightSum = 0;
 
         for (TrainingTask task : tasks) {
-            try {
-                String response = llmGateway.chatCompletion(
-                        systemPrompt, task.getInput(), null, provider, null);
-                double reward = calculateReward(response, task);
-                totalReward += reward * task.getWeight();
-            } catch (Exception e) {
-                log.warn("Task {} evaluation failed: {}", task.getId(), e.getMessage());
-                totalReward += 0.0;  // 失败记 0 分
-            }
+            double r = evaluateSingleTask(prompt, task, agent);
+            totalReward += r * task.getWeight();
+            weightSum += task.getWeight();
         }
-        return totalReward;
+
+        return weightSum > 0 ? totalReward / weightSum : 0.0;
     }
 
     /**
-     * 计算 reward
-     *
-     * reward = keywordHitRate * 0.5 + responseQuality * 0.3 + lengthAppropriateness * 0.2
+     * 单任务评估: 发送 prompt + task 输入给 LLM, 按 keyword/quality/length 打分
      */
-    private double calculateReward(String response, TrainingTask task) {
-        if (response == null || response.isBlank()) return 0.0;
+    @SuppressWarnings("unchecked")
+    double evaluateSingleTask(String prompt, TrainingTask task, AgentIdentityEntity agent) {
+        try {
+            StringBuilder fullPrompt = new StringBuilder();
+            fullPrompt.append("[System Prompt]\n").append(prompt).append("\n\n");
+            fullPrompt.append("[Task]\n").append(task.getInput()).append("\n\n");
+            fullPrompt.append("[Expected Keywords]").append(task.getKeywords()).append("\n");
+            fullPrompt.append("请根据以上 system prompt 完成任务。");
 
-        // 1. keywordHitRate (0~1): 期望关键词命中率
-        double keywordHitRate = 1.0;
-        if (task.getExpectedKeywords() != null && task.getExpectedKeywords().length > 0) {
-            int hits = 0;
-            for (String kw : task.getExpectedKeywords()) {
-                if (response.toLowerCase().contains(kw.toLowerCase())) hits++;
+            // ★ Path C: 使用 DynamicChatModelResolver + ChatClient
+            try {
+                ChatClient chatClient = ChatClient.create(modelResolver.resolve(
+                        ChatRequest.LlmProvider.OPENAI)); // 训练模块固定用 OpenAI
+                String response = chatClient.prompt()
+                        .system(prompt)
+                        .user(task.getInput())
+                        .call()
+                        .content();
+
+                // 打分逻辑
+                double keywordHit = 0.0;
+                if (task.getKeywords() != null && !task.getKeywords().isBlank()) {
+                    String[] kwList = task.getKeywords().split(",");
+                    int hit = 0;
+                    for (String kw : kwList) {
+                        if (response.toLowerCase().contains(kw.toLowerCase().trim())) hit++;
+                    }
+                    keywordHit = (double) hit / kwList.length;
+                }
+
+                double qualityScore = Math.min(1.0, response.length() / 200.0); // 简单启发式
+                double lengthScore = response.length() >= 20 && response.length() <= 2000 ? 1.0 :
+                        (response.length() < 20 ? response.length() / 20.0 : 2000.0 / response.length());
+
+                return (keywordHit * 0.5 + qualityScore * 0.3 + lengthScore * 0.2);
+
+            } catch (Exception e) {
+                // fallback 到旧 llmGateway
+                log.debug("PromptOptimizer: ChatClient 评估失败, fallback 到 LlmGateway: {}", e.getMessage());
+                Map<String, Object> result = llmGateway.chatCompletion(
+                        trainingLlmBaseUrl, trainingLlmApiKey, trainingLlmModel,
+                        fullPrompt.toString(), 0.7, 1024);
+                String content = (String) result.getOrDefault("content", "");
+
+                double keywordHit = 0.0;
+                if (task.getKeywords() != null && !task.getKeywords().isBlank()) {
+                    String[] kwList = task.getKeywords().split(",");
+                    int hit = 0;
+                    for (String kw : kwList) {
+                        if (content.toLowerCase().contains(kw.toLowerCase().trim())) hit++;
+                    }
+                    keywordHit = (double) hit / kwList.length;
+                }
+                double qualityScore = Math.min(1.0, content.length() / 200.0);
+                double lengthScore = content.length() >= 20 && content.length() <= 2000 ? 1.0 :
+                        (content.length() < 20 ? content.length() / 20.0 : 2000.0 / content.length());
+
+                return (keywordHit * 0.5 + qualityScore * 0.3 + lengthScore * 0.2);
             }
-            keywordHitRate = (double) hits / task.getExpectedKeywords().length;
-        }
 
-        // 2. responseQuality (0~1): 基于响应长度和结构
-        double quality = 0.5;
-        int len = response.length();
-        if (len > 50 && len < 5000) {
-            quality = 0.8;
-            if (response.contains("```") || response.contains("**")) quality = 0.9;  // 有代码块/格式化
-        } else if (len >= 10) {
-            quality = 0.4;
+        } catch (Exception e) {
+            log.error("评估失败: task={} error={}", task.getId(), e.getMessage());
+            return 0.0;
         }
-
-        // 3. lengthAppropriateness (0~1): 长度适中
-        double lengthScore;
-        if ("easy".equals(task.getDifficulty())) {
-            lengthScore = len < 200 ? 1.0 : (len < 1000 ? 0.6 : 0.3);
-        } else if ("medium".equals(task.getDifficulty())) {
-            lengthScore = (len > 100 && len < 2000) ? 1.0 : 0.4;
-        } else {  // hard
-            lengthScore = (len > 200 && len < 4000) ? 1.0 : 0.4;
-        }
-
-        return keywordHitRate * 0.5 + quality * 0.3 + lengthScore * 0.2;
     }
 
     /**
      * 用 LLM 分析当前 prompt 弱点并生成改进版
      */
-    private String generateImprovedPrompt(AgentIdentityEntity agent, String currentPrompt,
-                                           List<TrainingTask> tasks, double baselineReward,
-                                           ChatRequest.LlmProvider overrideProvider) {
-        ChatRequest.LlmProvider provider = resolveProvider(overrideProvider);
-
-        StringBuilder taskSummary = new StringBuilder();
-        for (TrainingTask t : tasks) {
-            taskSummary.append("- [").append(t.getDifficulty()).append("] ")
-                    .append(t.getInput().substring(0, Math.min(80, t.getInput().length())))
-                    .append("\n");
-        }
-
-        String analysisPrompt = """
-                你是一个 Prompt 工程专家。请分析以下 AI Agent 的 System Prompt 弱点, 并生成改进版。
-
-                ## Agent 信息
-                - ID: %s
-                - 名称: %s
-                - 角色: %s
-                - 领域: %s
-                - 策略: %s
-                - 当前版本: %d
-                - Baseline Reward: %.4f
-
-                ## 当前 System Prompt
-                ```
-                %s
-                ```
-
-                ## 该 Agent 需要处理的标准任务样本
-                %s
-
-                ## 要求
-                1. 分析当前 prompt 在处理上述任务时可能存在的问题 (如: 缺少格式指引、工具使用说明不足、输出结构不清晰等)
-                2. 生成一个改进版 System Prompt, 直接输出改进后的 prompt 内容, 不要包含任何解释说明
-                3. 改进版 prompt 应该:
-                   - 明确输出格式 (代码用 markdown 代码块, 文档用结构化标题)
-                   - 针对 %s 领域的任务特点优化
-                   - 保持简洁, 不要超过 500 字
-                   - 包含工具使用指引 (如果适用)
-
-                ## 直接输出改进后的 System Prompt (纯文本, 无包裹):
-                """.formatted(
-                agent.getId(), agent.getName(), agent.getRole(), agent.getDomain(),
-                agent.getStrategy(), agent.getSystemPromptVersion(), baselineReward,
-                currentPrompt, taskSummary.toString(), agent.getDomain()
-        );
-
+    @SuppressWarnings("unchecked")
+    String generateImprovedPrompt(AgentIdentityEntity agent, String currentPrompt,
+                                  List<TrainingTask> tasks, double baselineReward,
+                                  ChatRequest.LlmProvider overrideProvider) {
         try {
-            String result = llmGateway.chatCompletion(
-                    "你是 Prompt 工程专家, 擅长优化 AI Agent 的 System Prompt。",
-                    analysisPrompt, null, provider, null);
-            return result != null ? result.trim() : null;
+            StringBuilder analysisPrompt = new StringBuilder();
+            analysisPrompt.append("你是一个 Prompt Engineering 专家。以下是一个 AI 助理的当前 system prompt 和它在标准任务集上的表现。\n\n");
+            analysisPrompt.append("[当前 System Prompt]\n").append(currentPrompt).append("\n\n");
+            analysisPrompt.append("[Baseline Reward]").append(baselineReward).append("\n\n");
+            analysisPrompt.append("[任务集样例]\n");
+            int count = 0;
+            for (TrainingTask t : tasks) {
+                if (count++ >= 3) { analysisPrompt.append("... 共 ").append(tasks.size()).append(" 个任务\n"); break; }
+                analysisInput("- ").append(t.getInput()).append(" (keywords: ").append(t.getKeywords()).append(")\n");
+            }
+            analysisPrompt.append("\n请分析当前 prompt 的弱点，然后输出一个改进版的完整 system prompt。只输出改进后的 prompt 内容，不要解释。");
+
+            // ★ Path C: 使用 DynamicChatModelResolver
+            ChatClient chatClient = ChatClient.create(modelResolver.resolve(
+                    overrideProvider != null ? overrideProvider : ChatRequest.LlmProvider.OPENAI));
+            String improved = chatClient.prompt()
+                    .user(analysisPrompt.toString())
+                    .call()
+                    .content();
+
+            // 清理可能的 markdown code fence
+            if (improved.startsWith("```")) {
+                improved = improved.substring(improved.indexOf('\n') + 1);
+                if (improved.endsWith("```")) improved = improved.substring(0, improved.length() - 3).trim();
+            }
+
+            return improved;
+
         } catch (Exception e) {
-            log.error("generateImprovedPrompt failed: {}", e.getMessage());
-            return null;
+            // fallback 到旧 llmGateway
+            log.warn("PromptOptimizer: ChatClient 生成改进失败, fallback: {}", e.getMessage());
+            Map<String, Object> result = llmGateway.chatCompletion(
+                    trainingLlmBaseUrl, trainingLlmApiKey, trainingLlmModel,
+                    analysisPrompt.toString(), 0.8, 2048);
+            return (String) result.getOrDefault("content", "");
         }
     }
 
-    /**
-     * 解析训练用 LLM provider: 优先使用用户指定的, 否则回退到配置文件默认值
-     */
-    private ChatRequest.LlmProvider resolveProvider(ChatRequest.LlmProvider override) {
-        if (override != null && override.getBaseUrl() != null && !override.getBaseUrl().isBlank()
-                && override.getApiKey() != null && !override.getApiKey().isBlank()) {
-            log.info("Using user-specified LLM: {} / {}", override.getBaseUrl(), override.getModel());
-            return override;
-        }
-        return getTrainingProvider();
-    }
-
-    private ChatRequest.LlmProvider getTrainingProvider() {
-        return ChatRequest.LlmProvider.builder()
-                .baseUrl(trainingLlmBaseUrl)
-                .apiKey(trainingLlmApiKey)
-                .model(trainingLlmModel)
-                .build();
-    }
-
-    private void recordHistory(String agentId, int versionBefore, int versionAfter,
-                                double rewardBefore, double rewardAfter,
-                                int sampleCount, String notes, boolean adopted) {
+    void recordHistory(String agentId, int fromVersion, int toVersion,
+                       double rewardBefore, double rewardAfter,
+                       int taskCount, String comment, boolean adopted) {
         try {
-            AgentTrainingHistoryEntity entity = new AgentTrainingHistoryEntity();
-            entity.setAgentId(agentId);
-            entity.setTrainedAt(LocalDateTime.now());
-            entity.setTriggerReason("prompt_optimization");
-            entity.setSampleCount(sampleCount);
-            entity.setRewardBefore(rewardBefore);
-            entity.setRewardAfter(rewardAfter);
-            entity.setPromptVersionBefore(versionBefore);
-            entity.setPromptVersionAfter(versionAfter);
-            entity.setNotes((adopted ? "[采纳] " : "[回滚] ") + notes);
-            historyRepo.save(entity);
+            AgentTrainingHistoryEntity history = new AgentTrainingHistoryEntity();
+            history.setAgentId(agentId);
+            history.setFromVersion(fromVersion);
+            history.setToVersion(toVersion);
+            history.setRewardBefore(rewardBefore);
+            history.setRewardAfter(rewardAfter);
+            history.setTaskCount(taskCount);
+            history.setComment(comment);
+            history.setAdopted(adopted);
+            history.setCreatedAt(LocalDateTime.now());
+            historyRepo.save(history);
         } catch (Exception e) {
-            log.error("Failed to record training history: {}", e.getMessage());
+            log.error("记录训练历史失败: agentId={} error={}", agentId, e.getMessage());
         }
     }
 
-    /**
-     * 检查指定 Agent 是否正在训练中
-     */
-    public boolean isTraining(String agentId) {
-        AtomicBoolean flag = runningFlags.get(agentId);
-        return flag != null && flag.get();
+    // ========== DTOs ==========
+
+    public static class OptimizeResult {
+        public final String agentId;
+        public final boolean adopted;
+        public final double rewardBefore;
+        public final double rewardAfter;
+        public final int beforeLength;
+        public final int afterLength;
+        public final int newVersion;
+        public final String message;
+        public final LocalDateTime timestamp;
+
+        private OptimizeResult(String agentId, boolean adopted, double rewardBefore, double rewardAfter,
+                               int beforeLength, int afterLength, int newVersion, String message) {
+            this.agentId = agentId;
+            this.adopted = adopted;
+            this.rewardBefore = rewardBefore;
+            this.rewardAfter = rewardAfter;
+            this.beforeLength = beforeLength;
+            this.afterLength = afterLength;
+            this.newVersion = newVersion;
+            this.message = message;
+            this.timestamp = LocalDateTime.now();
+        }
+
+        public static OptimizeResult adopted(String agentId, double before, double after,
+                                             int bLen, int aLen, int version) {
+            return new OptimizeResult(agentId, true, before, after, bLen, aLen, version, "已采纳");
+        }
+
+        public static OptimizeResult failed(String agentId, String reason) {
+            return new OptimizeResult(agentId, false, 0, 0, 0, 0, 0, "FAILED: " + reason);
+        }
+
+        public static OptimizeResult skipped(String agentId, String reason) {
+            return new OptimizeResult(agentId, false, 0, 0, 0, 0, 0, "SKIPPED: " + reason);
+        }
+
+        public boolean isAdopted() { return adopted; }
+
+        @Override
+        public String toString() {
+            return String.format("OptimizeResult{agent=%s, adopted=%s, %.3f→%.3f, v%d, msg=%s}",
+                    agentId, adopted, rewardBefore, rewardAfter, newVersion, message);
+        }
+    }
+
+    public static class TrainingTask {
+        private String id;
+        private String domain;
+        private String input;
+        private String expectedOutput;
+        private String keywords;
+        private int weight = 1;
+
+        // getters & setters
+        public String getId() { return id; }
+        public void setId(String id) { this.id = id; }
+        public String getDomain() { return domain; }
+        public void setDomain(String domain) { this.domain = domain; }
+        public String getInput() { return input; }
+        public void setInput(String input) { this.input = input; }
+        public String getExpectedOutput() { return expectedOutput; }
+        public void setExpectedOutput(String expectedOutput) { this.expectedOutput = expectedOutput; }
+        public String getKeywords() { return keywords; }
+        public void setKeywords(String keywords) { this.keywords = keywords; }
+        public int getWeight() { return weight; }
+        public void setWeight(int weight) { this.weight = weight; }
     }
 }

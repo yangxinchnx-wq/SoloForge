@@ -37,16 +37,11 @@ spring:
   application:
     name: solo-forge-agent
 
-  # Spring AI OpenAI 兼容配置（默认占位，实际从请求体动态注入）
-  # [已替代] 对应功能已由 src/llm/llmProxy.ts 的多 provider 动态路由覆盖
+  # Spring AI 2.0 配置 — 动态多 Provider 由 LlmConfig.java 管理
+  # [Path C] 不再使用静态 spring.ai.* 配置，改为请求级动态注入
+  # ChatModel Bean 在 LlmConfig 中按 provider 名称注册，运行时按需路由
   ai:
-    openai:
-      api-key: ${SOLOFORGE_LLM_API_KEY:placeholder}
-      base-url: ${SOLOFORGE_LLM_BASE_URL:https://api.openai.com}
-      chat:
-        options:
-          model: ${SOLOFORGE_LLM_MODEL:gpt-4o}
-          temperature: 0.3
+    chatbot:
 
   # Garnet (Redis 协议) - ChatMemory 持久化
   # [已替代] Node.js RACER 使用 SurrealDB 持久化，Redis 仅 Java Agent fallback 时使用

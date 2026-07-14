@@ -17,6 +17,10 @@ import java.util.stream.Stream;
 /**
  * 代码搜索工具 (正则匹配)
  */
+/**
+ * @deprecated Path C: 已迁移至 {@link com.soloforge.agent.tools.SoloForgeTools#searchCode}
+ */
+@Deprecated
 @Slf4j
 @Component
 public class SearchCodeTool {

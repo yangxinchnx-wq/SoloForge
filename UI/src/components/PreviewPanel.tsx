@@ -365,17 +365,24 @@ export default function PreviewPanel({
   // ★ 下拉框: 轻量级 BrowserWindow (盖住 Flutter HWND, 不弹 DevTools)
   //   窗口只创建一次, 后续只 setBounds + executeJavaScript 更新内容
   //   画布不隐藏 — 只做选择, 不影响画布显示
+  //   - 不传 mode (箭头按钮): 切换开关
+  //   - 传 mode (2D/3D 按钮): 已打开则刷新内容, 未打开则打开
   const toggleDeviceDropdown = (mode?: string) => {
-    const effectiveMode = mode || renderMode;
+    const effectiveMode = (mode || renderMode) as '2D' | '3D';
     if (effectiveMode !== renderMode) {
       setRenderMode(effectiveMode);
     }
     if (!isElectron() || !window.soloforge?.canvas) return;
-    if (showDeviceDropdown) {
-      window.soloforge.canvas.closeDevicePopup?.().catch(() => {});
-      setShowDeviceDropdown(false);
-      return;
+    // 箭头按钮点击 (无 mode): 已开则关, 已关则开
+    if (!mode) {
+      if (showDeviceDropdown) {
+        window.soloforge.canvas.closeDevicePopup?.().catch(() => {});
+        setShowDeviceDropdown(false);
+        return;
+      }
     }
+    // 2D/3D 按钮带 mode: 只刷新内容, 不重复打开
+    // (main.cjs 复用同一窗口, 重复 openDevicePopup 只是刷新内容, 不会产生第二个窗口)
     const btn = deviceBtnRef.current;
     if (!btn) return;
     const rect = btn.getBoundingClientRect();
@@ -1098,14 +1105,15 @@ export default function PreviewPanel({
               <button
                 onClick={() => {
                   setRenderMode('2D');
-                  toggleDeviceDropdown('2D');
+                  // ★ 只切模式; 下拉框已打开则用新模式刷新内容, 不主动开关
+                  if (showDeviceDropdown) toggleDeviceDropdown('2D');
                 }}
                 className={`flex items-center gap-1 px-2 py-1 text-[10px] font-mono font-semibold transition-colors ${
                   renderMode === '2D'
                     ? 'bg-[var(--color-primary)]/15 text-[var(--color-primary)]'
                     : 'bg-[var(--color-surface-bright)]/60 text-[var(--color-on-surface)]/50 hover:text-[var(--color-on-surface)]'
                 }`}
-                title="2D 模式 — 点击选择设备"
+                title="2D 模式"
               >
                 <SquareIcon className="w-3 h-3" />
                 <span>2D</span>
@@ -1113,14 +1121,14 @@ export default function PreviewPanel({
               <button
                 onClick={() => {
                   setRenderMode('3D');
-                  toggleDeviceDropdown('3D');
+                  if (showDeviceDropdown) toggleDeviceDropdown('3D');
                 }}
                 className={`flex items-center gap-1 px-2 py-1 text-[10px] font-mono font-semibold transition-colors border-l border-[var(--color-outline)]/30 ${
                   renderMode === '3D'
                     ? 'bg-[var(--color-primary)]/15 text-[var(--color-primary)]'
                     : 'bg-[var(--color-surface-bright)]/60 text-[var(--color-on-surface)]/50 hover:text-[var(--color-on-surface)]'
                 }`}
-                title="3D 模式 — 点击选择设备"
+                title="3D 模式"
               >
                 <Box className="w-3 h-3" />
                 <span>3D</span>

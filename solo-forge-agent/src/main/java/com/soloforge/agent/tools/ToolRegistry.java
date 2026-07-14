@@ -1,5 +1,12 @@
 package com.soloforge.agent.tools;
 
+/**
+ * @deprecated Use {@link SoloForgeTools} with {@code @Tool} annotations instead.
+ *             Replaced by Spring AI 2.0 auto Schema generation in Path C migration (2026-07-15).
+ *             This class will be removed in a future release. Retained for fallback reference.
+ */
+@Deprecated
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

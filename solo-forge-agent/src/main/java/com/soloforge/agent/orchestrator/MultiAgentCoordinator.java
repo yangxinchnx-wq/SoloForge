@@ -2,7 +2,8 @@ package com.soloforge.agent.orchestrator;
 
 import com.soloforge.agent.dto.ChatRequest;
 import com.soloforge.agent.dto.ChatSettings;
-import com.soloforge.agent.executor.AgentExecutor;
+import com.soloforge.agent.executor.AgentExecutor; // @Deprecated — 保留 fallback
+import com.soloforge.agent.executor.SpringAiAgentExecutor; // ★ Path C: 新执行器
 import com.soloforge.agent.persistence.AgentIdentityEntity;
 import com.soloforge.agent.persistence.AgentIdentityRepository;
 import lombok.RequiredArgsConstructor;
@@ -27,7 +28,8 @@ import java.util.concurrent.Executors;
 @RequiredArgsConstructor
 public class MultiAgentCoordinator {
 
-    private final AgentExecutor agentExecutor;
+    private final AgentExecutor agentExecutor; // @Deprecated — 保留用于 fallback
+    private final SpringAiAgentExecutor springAiAgentExecutor; // ★ Path C: 新执行器
     private final AgentIdentityRepository agentRepo;
 
     private final ExecutorService parallelExecutor = Executors.newFixedThreadPool(4);
@@ -47,7 +49,8 @@ public class MultiAgentCoordinator {
         List<CompletableFuture<String>> futures = agentIds.stream()
             .map(agentId -> CompletableFuture.supplyAsync(() -> {
                 ChatSettings agentSettings = copySettings(settings, agentId);
-                return agentExecutor.execute(task, agentSettings, provider, null, null);
+                return springAiAgentExecutor.execute(task,
+                        ChatRequest.builder().settings(agentSettings).provider(provider).build());
             }, parallelExecutor))
             .toList();
 
@@ -75,30 +78,31 @@ public class MultiAgentCoordinator {
 
         // 1. Planner 拆解
         ChatSettings plannerSettings = copySettings(settings, "plan_agent");
-        String plan = agentExecutor.execute(
-            "请拆解以下任务,给出明确的步骤:\n" + task, plannerSettings, provider, null, null);
+        String plan = springAiAgentExecutor.execute(
+            "请拆解以下任务,给出明确的步骤:\n" + task,
+            ChatRequest.builder().settings(plannerSettings).provider(provider).build());
         log.info("Planner output: {} chars", plan.length());
 
         // 2. Executor 执行
         ChatSettings executorSettings = copySettings(settings, "code_agent");
-        String execution = agentExecutor.execute(
+        String execution = springAiAgentExecutor.execute(
             "按照以下计划执行任务:\n" + plan + "\n\n原始任务: " + task,
-            executorSettings, provider, null, null);
+            ChatRequest.builder().settings(executorSettings).provider(provider).build());
         log.info("Executor output: {} chars", execution.length());
 
         // 3. Reviewer 审查
         ChatSettings reviewerSettings = copySettings(settings, "debug_agent");
-        String review = agentExecutor.execute(
+        String review = springAiAgentExecutor.execute(
             "审查以下执行结果,指出问题:\n\n计划:\n" + plan + "\n\n执行结果:\n" + execution,
-            reviewerSettings, provider, null, null);
+            ChatRequest.builder().settings(reviewerSettings).provider(provider).build());
         log.info("Reviewer output: {} chars", review.length());
 
         // 4. 如果审查发现问题,重新执行 (简化版: 直接返回综合结果)
         if (review.contains("问题") || review.contains("错误")) {
             ChatSettings reexecSettings = copySettings(settings, "code_agent");
-            String reexec = agentExecutor.execute(
+            String reexec = springAiAgentExecutor.execute(
                 "根据审查意见修复:\n\n执行结果:\n" + execution + "\n\n审查意见:\n" + review,
-                reexecSettings, provider, null, null);
+                ChatRequest.builder().settings(reexecSettings).provider(provider).build());
             return "## 计划\n" + plan + "\n\n## 执行(修复后)\n" + reexec + "\n\n## 审查\n" + review;
         }
 
@@ -126,7 +130,8 @@ public class MultiAgentCoordinator {
                     ? task
                     : "任务: " + task + "\n\n其他 Agent 的观点:\n" + String.join("\n---\n", positions)
                         + "\n\n请给出你的观点,可以赞同或反驳其他 Agent。";
-                String position = agentExecutor.execute(prompt, agentSettings, provider, null, null);
+                String position = springAiAgentExecutor.execute(prompt,
+                        ChatRequest.builder().settings(agentSettings).provider(provider).build());
                 positions.add("[" + agentId + "] " + position);
             }
 

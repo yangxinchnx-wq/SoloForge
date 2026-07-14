@@ -12,6 +12,10 @@ import java.util.stream.Collectors;
 /**
  * 命令执行工具
  */
+/**
+ * @deprecated Path C: 已迁移至 {@link com.soloforge.agent.tools.SoloForgeTools#executeCommand}
+ */
+@Deprecated
 @Slf4j
 @Component
 public class ExecuteCmdTool {

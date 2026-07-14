@@ -25,7 +25,6 @@ interface CanvasApi {
   ensureHost: () => Promise<{ ok: boolean; created?: boolean; hwnd?: number; bounds?: any; error?: string }>;
   pushUI: (sessionId: string, dsl: any, deviceId?: string | null) => Promise<{ ok: boolean; error?: string }>;
   selectDevice: (sessionId: string, modelKey: string, file: string, nativeSize: { w: number; h: number }) => Promise<{ ok: boolean; error?: string }>;
-  setHostVisible: (visible: boolean) => Promise<{ ok: boolean; error?: string }>;
   openDevicePopup: (payload: {
     x: number; y: number; width: number; height: number;
     renderMode: string; currentKey: string; currentLabel?: string; deviceCount: number;
@@ -33,6 +32,8 @@ interface CanvasApi {
     theme: { surface: string; surfaceBright: string; primary: string; onSurface: string; outline: string };
   }) => Promise<{ ok: boolean; error?: string }>;
   closeDevicePopup: () => Promise<{ ok: boolean }>;
+  devicePopupSelect: (key: string) => void;
+  devicePopupClose: () => void;
   onDeviceSelected: (callback: (data: { key: string; glbFile?: string }) => void) => () => void;
   transformDevice: (sessionId: string, deviceId: string, transform: any) => Promise<{ ok: boolean; error?: string }>;
   clearDevices: (sessionId: string) => Promise<{ ok: boolean; error?: string }>;

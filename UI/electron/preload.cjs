@@ -34,23 +34,15 @@ contextBridge.exposeInMainWorld('soloforge', {
     // ★ 新增: selectDevice — 加载 3D 设备模型到画布 (POST /render)
     selectDevice: (sessionId, modelKey, file, nativeSize) =>
       ipcRenderer.invoke('canvas:select-device', { sessionId, modelKey, file, nativeSize }),
-    // ★ 新增: setHostVisible — 显示/隐藏画布宿主窗口 (下拉框打开时隐藏)
-    setHostVisible: (visible) =>
-      ipcRenderer.invoke('canvas:set-host-visible', { visible }),
-    // ★ 新增: openDevicePopup — 打开设备选择弹窗 (独立 BrowserWindow, 不被 Flutter 遮挡)
-    //   payload: { x, y, width, height, renderMode, currentKey, currentLabel, deviceCount, groups, theme }
+    // ★ 设备下拉框 (轻量 BrowserWindow, 盖住 Flutter HWND)
     openDevicePopup: (payload) =>
       ipcRenderer.invoke('canvas:open-device-popup', payload),
-    // ★ 新增: closeDevicePopup — 关闭设备选择弹窗
     closeDevicePopup: () =>
       ipcRenderer.invoke('canvas:close-device-popup'),
-    // ★ dropdown 窗口内部使用: 回传选择结果
     devicePopupSelect: (key) =>
       ipcRenderer.send('canvas:device-popup-select', { key }),
-    // ★ dropdown 窗口内部使用: 请求关闭 (Esc)
     devicePopupClose: () =>
       ipcRenderer.send('canvas:device-popup-close'),
-    // ★ 新增: onDeviceSelected — 监听设备选择事件
     onDeviceSelected: (callback) => {
       const handler = (_e, data) => callback(data);
       ipcRenderer.on('canvas:device-selected', handler);

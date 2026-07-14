@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.soloforge.agent.dto.ChatRequest;
 import com.soloforge.agent.dto.ChatSettings;
 import com.soloforge.agent.executor.AgentExecutor;
+import com.soloforge.agent.executor.SpringAiAgentExecutor;
 import com.soloforge.agent.persistence.AgentIdentityEntity;
 import com.soloforge.agent.persistence.AgentIdentityRepository;
 import lombok.RequiredArgsConstructor;
@@ -41,7 +42,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class SubModelWorker {
 
     private final AgentSelector agentSelector;
-    private final AgentExecutor agentExecutor;
+    private final AgentExecutor agentExecutor; // @Deprecated — 保留用于 fallback
+    private final SpringAiAgentExecutor springAiAgentExecutor; // ★ Path C: 新的执行器
     private final AgentIdentityRepository agentRepo;
     private final ObjectMapper objectMapper;
 
@@ -115,7 +117,10 @@ public class SubModelWorker {
                 log.info("SubModelWorker[stream]: subModel={} agent={} task='{}'",
                     subProvider.getModel(), agentId,
                     message.length() > 60 ? message.substring(0, 60) + "..." : message);
-                return agentExecutor.executeStream(message, workerSettings, subProvider, history, fileContext, emitter);
+                // ★ Path C: 使用 Spring AI 2.0 执行器（替代原 AgentExecutor）
+                return springAiAgentExecutor.executeStream(message,
+                        ChatRequest.builder().settings(workerSettings).provider(subProvider)
+                                .history(history).fileContext(fileContext).build());
             } catch (Exception e) {
                 log.error("SubModelWorker setup error: {}", e.getMessage(), e);
                 return Flux.just("错误: " + e.getMessage());
@@ -155,7 +160,10 @@ public class SubModelWorker {
             log.info("SubModelWorker[sync]: subModel={} agent={} task='{}'",
                 subProvider.getModel(), agentId,
                 message.length() > 60 ? message.substring(0, 60) + "..." : message);
-            return agentExecutor.execute(message, workerSettings, subProvider, history, fileContext);
+            // ★ Path C: 使用 Spring AI 2.0 执行器（替代原 AgentExecutor）
+            return springAiAgentExecutor.execute(message,
+                    ChatRequest.builder().settings(workerSettings).provider(subProvider)
+                            .history(history).fileContext(fileContext).build());
         } catch (Exception e) {
             log.error("SubModelWorker sync error: {}", e.getMessage(), e);
             return "错误: " + e.getMessage();
@@ -180,7 +188,10 @@ public class SubModelWorker {
                     // 发 agent 事件, subModel 字段用主模型名
                     sendAgentEvent(emitter, mainProvider.getModel(), agent);
                 }
-                return agentExecutor.executeStream(message, settings, mainProvider, history, fileContext, emitter);
+                // ★ Path C: 使用 Spring AI 2.0 执行器（替代原 AgentExecutor）
+                return springAiAgentExecutor.executeStream(message,
+                        ChatRequest.builder().settings(settings).provider(mainProvider)
+                                .history(history).fileContext(fileContext).build());
             } catch (Exception e) {
                 log.error("Main model execution error: {}", e.getMessage(), e);
                 return Flux.just("错误: " + e.getMessage());

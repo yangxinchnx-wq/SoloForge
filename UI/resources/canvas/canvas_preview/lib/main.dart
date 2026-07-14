@@ -723,15 +723,18 @@ class _CanvasAppState extends State<CanvasApp> {
   /// 所以这里只做查看器, 不做编辑/纹理贴图等复杂功能。
   Widget _buildDevice3DScene(BuildContext context) {
     if (_devices.isEmpty) {
-      return const Center(
-        child: Text(
-          '3D 设备场景\n从右侧选择设备预设',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: Color(0x66FFFFFF),
-            fontSize: 12,
-            fontWeight: FontWeight.w300,
-            height: 1.6,
+      return Container(
+        color: const Color(0xFF3A3A3C),
+        child: const Center(
+          child: Text(
+            '3D 设备场景\n从右侧选择设备预设',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Color(0xAAFFFFFF),
+              fontSize: 12,
+              fontWeight: FontWeight.w300,
+              height: 1.6,
+            ),
           ),
         ),
       );
@@ -761,7 +764,7 @@ class _CanvasAppState extends State<CanvasApp> {
 
     // 构造 HTML: 引入 model-viewer web component, 加载 GLB
     // - JS 内联: 避免跨域 + 离线可用
-    // - 透明背景: 透出 Flutter 画布背景
+    // - 灰色背景: 避免纯白误报 (用户看不到模型时分不清是没加载还是白模型)
     // - auto-rotate: 自动旋转展示
     // - camera-controls: 允许用户拖拽/缩放
     final html = '''<!DOCTYPE html>
@@ -773,19 +776,19 @@ class _CanvasAppState extends State<CanvasApp> {
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
       width: 100%; height: 100%;
-      background: transparent;
+      background: #3a3a3c;
       overflow: hidden;
     }
     model-viewer {
       width: 100vw;
       height: 100vh;
-      background: transparent;
-      --poster-color: transparent;
+      background: #3a3a3c;
+      --poster-color: #3a3a3c;
     }
     #loading {
       position: fixed; top: 50%; left: 50%;
       transform: translate(-50%, -50%);
-      color: rgba(255,255,255,0.5);
+      color: rgba(255,255,255,0.7);
       font-family: monospace; font-size: 12px;
       z-index: 1;
     }
@@ -803,7 +806,7 @@ class _CanvasAppState extends State<CanvasApp> {
     shadow-intensity="1"
     environment-image="neutral"
     exposure="1"
-    style="background-color: transparent;">
+    style="background-color: #3a3a3c;">
   </model-viewer>
   <script>
     const mv = document.querySelector('model-viewer');

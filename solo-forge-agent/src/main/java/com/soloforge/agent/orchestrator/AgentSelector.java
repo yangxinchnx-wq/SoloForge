@@ -1,11 +1,13 @@
 package com.soloforge.agent.orchestrator;
 
 import com.soloforge.agent.dto.ChatRequest;
-import com.soloforge.agent.llm.LlmGateway;
+import com.soloforge.agent.config.DynamicChatModelResolver;
 import com.soloforge.agent.persistence.AgentIdentityEntity;
 import com.soloforge.agent.persistence.AgentIdentityRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -24,7 +26,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class AgentSelector {
 
-    private final LlmGateway llmGateway;
+    private final DynamicChatModelResolver modelResolver; // ★ Path C: 替代 LlmGateway
     private final AgentIdentityRepository agentRepo;
 
     /**
@@ -57,7 +59,14 @@ public class AgentSelector {
             "可用助理列表:\n" + agentList;
 
         try {
-            String result = llmGateway.chatCompletion(systemPrompt, task, List.of(), subProvider, null);
+            // ★ Path C: 使用 Spring AI 2.0 ChatClient 替代 LlmGateway.chatCompletion()
+            ChatModel chatModel = modelResolver.resolve(subProvider);
+            String result = ChatClient.builder(chatModel).build()
+                    .prompt()
+                    .system(systemPrompt)
+                    .user(task)
+                    .call()
+                    .content();
             if (result == null || result.isBlank()) {
                 log.warn("助理选择器返回为空, 回退到第一个助理");
                 return agents.get(0).getId();

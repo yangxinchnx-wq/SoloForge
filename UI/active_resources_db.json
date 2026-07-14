@@ -1,13 +1,5 @@
 {
   "tools": [
-    "windows-mcp",
-    "win_reg_read",
-    "win_service_ctrl",
-    "win_task_scheduler",
-    "win_event_log",
-    "win_powershell",
-    "win_firewall",
-    "win_perfmon",
     "obscura",
     "browser_devtools",
     "browser_console",
@@ -22,7 +14,15 @@
     "bu_resume",
     "bu_state",
     "bu_screenshot",
-    "bu_history"
+    "bu_history",
+    "windows-mcp",
+    "win_reg_read",
+    "win_service_ctrl",
+    "win_task_scheduler",
+    "win_event_log",
+    "win_powershell",
+    "win_firewall",
+    "win_perfmon"
   ],
   "knowledge": [],
   "skills": [],

@@ -1,5 +1,8 @@
 package com.soloforge.agent.tools;
 
+/** @deprecated Use {@link SoloForgeTools#readFile(String)} with {@code @Tool} annotation instead. */
+@Deprecated
+
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;

@@ -1,5 +1,13 @@
 package com.soloforge.agent.llm;
 
+/**
+ * @deprecated Use {@link com.soloforge.agent.config.DynamicChatModelResolver} and
+ *             {@link org.springframework.ai.chat.model.ChatModel} instead.
+ *             Replaced by Spring AI 2.0 ChatClient in Path C migration (2026-07-15).
+ *             This class will be removed in a future release. Retained for fallback reference.
+ */
+@Deprecated
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.soloforge.agent.dto.ChatRequest;
 import lombok.extern.slf4j.Slf4j;

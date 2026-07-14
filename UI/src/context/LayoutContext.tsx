@@ -80,12 +80,13 @@ type Action =
 
 const INITIAL_STATE: LayoutState = {
   sidebarWidth: 250,
-  previewWidth: 385,
+  // ★ 2026-07-15: 默认 472px → 自由画布宽度 = 472 - 24(p-3) - 8(BLEED) = 440px
+  previewWidth: 472,
   previewMinWidth: PREVIEW_MIN_WIDTH,
   isResizingSidebar: false,
   isResizingPreview: false,
   dragStartSidebarWidth: 250,
-  dragStartPreviewWidth: 385,
+  dragStartPreviewWidth: 472,
   previewWidthLoaded: false,
 };
 
