@@ -36,6 +36,34 @@ import { classifyStreamError, mentionsOutsideWorkspace, detectPreviewTrigger } f
 // 2026-07-11: 实时增量代码翻译 — LLM 每输出一行代码, 立即翻译推送到画布
 import { IncrementalCanvasPusher, getCanvasSessionId, ensureCanvasAndPush, ensureCanvasForChat, universalNodeToFlutterDSL, normalizeDsl } from '../services/incrementalCanvasPusher';
 
+// ★ 2026-07-14: 深度搜索 JSON 中的 DSL 节点 (与 incrementalCanvasPusher 中的一致)
+function deepFindDslInJson(obj: any, depth: number = 0): any | null {
+  if (!obj || typeof obj !== 'object' || depth > 5) return null;
+  if (typeof obj.type === 'string' && obj.type.length > 0) return obj;
+  const wrapperKeys = ['ui', 'dsl', 'widget', 'root', 'page', 'view', 'component', 'element', 'node', 'tree', 'body', 'content', 'child', 'data'];
+  for (const key of wrapperKeys) {
+    if (obj[key] && typeof obj[key] === 'object') {
+      const found = deepFindDslInJson(obj[key], depth + 1);
+      if (found) return found;
+    }
+  }
+  for (const val of Object.values(obj)) {
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      const found = deepFindDslInJson(val, depth + 1);
+      if (found) return found;
+    }
+  }
+  for (const val of Object.values(obj)) {
+    if (Array.isArray(val)) {
+      for (const item of val) {
+        const found = deepFindDslInJson(item, depth + 1);
+        if (found) return found;
+      }
+    }
+  }
+  return null;
+}
+
 // ════════════════════════════════════════════════════════════
 // [CANVAS PROBE — 临时诊断探针, 验证后删除]
 // 在 done 事件时注入一个带标记的 HTML 代码块, 追踪它经过:
@@ -420,6 +448,34 @@ async function tryLocalTranslateAndPush(text: string, chatSessionId: string): Pr
       }
 
       console.warn('[tryLocalTranslateAndPush] JSON DSL 格式未识别, keys=', Object.keys(dsl || {}), 'code=', code.slice(0, 200));
+
+      // ★ 2026-07-14: 深度搜索 fallback — 从任意 JSON 中提取 DSL
+      const found = deepFindDslInJson(dsl);
+      if (found) {
+        console.log('[tryLocalTranslateAndPush] deepFindDsl found, type=', found.type);
+        const canvasSessionId = getCanvasSessionId(chatSessionId);
+        const flutterDsl = { ui: found, platform: 'material' };
+        if (typeof window !== 'undefined' && window.soloforge?.canvas) {
+          const result = await ensureCanvasAndPush(canvasSessionId, flutterDsl, chatSessionId);
+          if (!result.ok) console.warn('[tryLocalTranslateAndPush] deepFindDsl IPC push failed:', result.error);
+        }
+        const previewStore = usePreviewStreamStore.getState();
+        if (!previewStore.getEntry(chatSessionId)) {
+          previewStore.initEntry(chatSessionId, { language: 'json', sessionId: canvasSessionId });
+        }
+        const root = found;
+        previewStore.updateStream(chatSessionId, {
+          raw: code,
+          payload: { language: 'json', framework: 'json', source_code: code, preview: { root } } as any,
+          errors: [], done: true,
+        });
+        previewStore.confirmPayload(chatSessionId, {
+          language: 'json', framework: 'json', source_code: code, preview: { root } } as any,
+        );
+        console.log('[tryLocalTranslateAndPush] ✓ JSON DSL (deepFind) 推送成功');
+        return true;
+      }
+
       return false;
     } catch (err) {
       console.warn('[tryLocalTranslateAndPush] JSON DSL 解析失败:', err);
@@ -800,10 +856,14 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
           if (!streamFinalized) { streamFinalized = true; streamBridge.onDone(evt.agentId); } activeStreamContext = null; set({ isGenerating: false, isPaused: false, activeChatHandle: null, streamState: { ...emptyStreamState } });
           const expFp = (evt as any).experienceFingerprint as string | undefined;
           if (expFp) set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.experienceFingerprint = expFp; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl } }; });
-          if (canvasPusher) await canvasPusher.flush();
-          const pusherHandled = canvasPusher?.wasHandled() ?? false;
-          let localPushed = pusherHandled;
-          if (!pusherHandled) localPushed = await tryLocalTranslateAndPush(accumulatedText, activeChatId);
+if (canvasPusher) await canvasPusher.flush();
+const pusherHandled = canvasPusher?.wasHandled() ?? false;
+let localPushed = pusherHandled;
+if (!pusherHandled) localPushed = await tryLocalTranslateAndPush(accumulatedText, activeChatId);
+// ★ 2026-07-14: 诊断日志 — 跟踪画布推送结果
+console.log('[useChatStore] done event: pusherHandled=', pusherHandled, 'localPushed=', localPushed, 'accumulatedText.length=', accumulatedText.length);
+const _finalEntry = usePreviewStreamStore.getState().getEntry(activeChatId);
+console.log('[useChatStore] previewStreamStore entry:', _finalEntry ? { hasAst: !!_finalEntry.ast, hasPayload: !!_finalEntry.payload, isStreaming: _finalEntry.isStreaming, language: _finalEntry.language } : 'null');
           const pr = detectPreviewTrigger(accumulatedText, localPushed, detectPreviewFromResponse);
           const fdt = canvasPusher?.getDisplayText() ?? pr.cleanText;
           const cd = fdt.replace(/\s*<<<PREVIEW_NEEDED:\w+>>>\s*$/, '');

@@ -305,6 +305,48 @@ const STYLE_KEY_MAP: Record<string, string> = {
   shadow: 'boxShadow',
 };
 
+/**
+ * ★ 2026-07-14: 深度搜索 JSON 中的 DSL 节点
+ * 递归查找第一个包含 type 字段的对象, 作为 DSL root
+ * 用于处理 LLM 返回的各种未知 JSON 包装格式
+ */
+function deepFindDsl(obj: any, depth: number = 0): any | null {
+  if (!obj || typeof obj !== 'object' || depth > 5) return null;
+
+  // 直接有 type 字段 → 就是 DSL
+  if (typeof obj.type === 'string' && obj.type.length > 0) {
+    return obj;
+  }
+
+  // 常见包装 key
+  const wrapperKeys = ['ui', 'dsl', 'widget', 'root', 'page', 'view', 'component', 'element', 'node', 'tree', 'body', 'content', 'child', 'data'];
+  for (const key of wrapperKeys) {
+    if (obj[key] && typeof obj[key] === 'object') {
+    	const found = deepFindDsl(obj[key], depth + 1);
+    	if (found) return found;
+    }
+  }
+
+  // 遍历所有值
+  for (const val of Object.values(obj)) {
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+    	const found = deepFindDsl(val, depth + 1);
+    	if (found) return found;
+    }
+  }
+  // 遍历数组
+  for (const val of Object.values(obj)) {
+    if (Array.isArray(val)) {
+    	for (const item of val) {
+        const found = deepFindDsl(item, depth + 1);
+        if (found) return found;
+      }
+    }
+  }
+
+  return null;
+}
+
 export function normalizeDsl(node: any): any {
   if (!node || typeof node !== 'object') return node;
 
@@ -592,7 +634,16 @@ class LineTracker {
           }
         }
 
-        // 不是已知的 JSON 格式, 不推送
+        // ★ 2026-07-14: 深度搜索 fallback — 从任意 JSON 中提取 DSL
+        const found = deepFindDsl(parsed);
+        if (found) {
+          console.log('[LineTracker] deepFindDsl found DSL, type=', found.type, 'keys=', Object.keys(found));
+          this._pushed = true;
+          this.pushRawDsl(found, codeToTranslate, isFinal);
+          return;
+        }
+
+        // 真的不是已知的 JSON 格式
         console.warn('[LineTracker] JSON DSL 格式未识别, keys=', Object.keys(parsed || {}), 'code=', codeToTranslate.slice(0, 200));
         return;
       }
@@ -826,6 +877,15 @@ export class IncrementalCanvasPusher {
 
     const blocks = parseCodeBlocks(this.rawText);
     console.log(`[IncrementalCanvasPusher] flush: rawText.length=${this.rawText.length}, blocks=${blocks.length}, handled=${this._handled}`);
+    // ★ 2026-07-14: 打印 rawText 前 200 字符, 帮助诊断 LLM 返回了什么
+    if (this.rawText.length > 0) {
+      console.log(`[IncrementalCanvasPusher] flush rawText preview:`, this.rawText.slice(0, 200));
+    }
+    // ★ 2026-07-14: 打印每个 block 的信息
+    for (let i = 0; i < blocks.length; i++) {
+      const b = blocks[i];
+      console.log(`[IncrementalCanvasPusher] block[${i}]: lang=${b.lang}, translatorLang=${b.translatorLang}, complete=${b.complete}, codeLen=${b.code.length}, code preview=${b.code.slice(0, 100)}`);
+    }
 
     const finalTasks: Array<{ tracker: LineTracker; block: CodeBlockInfo }> = [];
     for (const block of blocks) {
