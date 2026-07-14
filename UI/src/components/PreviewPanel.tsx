@@ -361,7 +361,13 @@ export default function PreviewPanel({
     }
   }, [effectiveCanvasId, renderMode, setDeviceInStore, handleSelectDevice]);
 
-  // ★ 下拉框就是简单的浮层, 不隐藏 Flutter 画布, 不影响其他界面元素
+  // ★ 下拉框打开时隐藏 Flutter 原生窗口 (HWND 会盖住 fixed DOM 元素)
+  //   不加暗化遮罩, 不影响其他界面元素, 仅画布区域临时空白
+  useEffect(() => {
+    if (!isElectron()) return;
+    window.soloforge?.canvas.setHostVisible?.(!showDeviceDropdown).catch(() => {});
+  }, [showDeviceDropdown]);
+
   const toggleDeviceDropdown = useCallback(() => {
     setShowDeviceDropdown(s => !s);
   }, []);
