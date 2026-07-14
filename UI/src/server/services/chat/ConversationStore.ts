@@ -145,15 +145,12 @@ export class ConversationStore {
 
       const warm = await getConversationWarmStore();
       if (!warm.isAvailable()) {
-        // 温存储不可用, 只加载到内存 (降级模式)
-        for (const [chatId, msgs] of Object.entries(conversations)) {
-          if (Array.isArray(msgs)) this.conversations.set(chatId, msgs);
-        }
-        for (const [chatId, cfg] of Object.entries(configs)) {
-          if (cfg && typeof cfg === 'object') this.configs.set(chatId, cfg);
-        }
-        console.warn('[ConvStore] 温存储不可用, 数据仅加载到内存 (降级模式)');
-        return;
+        // ★ 2026-07-14: 不再降级, 温存储不可用直接抛错
+        throw new Error(
+          `[ConvStore] 旧 JSON 迁移失败: SurrealDB 温存储不可用。` +
+          `位置: ConversationStore.ts → migrateFromOldJson() → getConversationWarmStore().isAvailable()。` +
+          `原因: SurrealDB 初始化失败, 拒绝仅加载到内存的降级模式。`,
+        );
       }
 
       // 写入 SurrealDB

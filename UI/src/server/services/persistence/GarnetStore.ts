@@ -5,6 +5,9 @@
  * - 24 小时 TTL
  * - Key 规范: hot:sf:session:{id}:state
  * - 读取时做类型守卫, 损坏数据不崩溃
+ *
+ * ★ 2026-07-14: 不再降级。所有操作失败都直接抛错,
+ *   错误信息用中文说明具体原因和具体位置。
  */
 
 import Redis from 'ioredis';
@@ -28,7 +31,11 @@ export class GarnetStore {
     });
 
     this.client.on('error', (err: Error) => {
-      console.warn('[GarnetStore] connection error:', err.message);
+      console.error(
+        `[GarnetStore] Redis 连接错误: ${err.message}。` +
+        `位置: GarnetStore.ts → constructor → client.on('error')。` +
+        `原因: Garnet 服务未启动 (端口 ${this.config.garnetPort}) 或网络不可达。`,
+      );
     });
 
     this.client.on('connect', () => {
@@ -50,8 +57,11 @@ export class GarnetStore {
       this.corruptKeys.delete(key);
       return true;
     } catch (e) {
-      console.warn('[GarnetStore] setSessionState failed:', (e as Error).message);
-      return false;
+      throw new Error(
+        `[GarnetStore] setSessionState() 失败: ${(e as Error).message}。` +
+        `位置: GarnetStore.ts → setSessionState(${state.sessionId})。` +
+        `原因: Garnet (Redis) 写入失败, 可能是连接断开或服务未启动。`,
+      );
     }
   }
 
@@ -59,7 +69,7 @@ export class GarnetStore {
    * 读取会话状态
    *
    * 三段式校验:
-   * 1. JSON 解析失败 → 返回 null
+   * 1. JSON 解析失败 → 返回 null (数据损坏, 不抛错因为这不是系统错误)
    * 2. 严格类型守卫失败 → 尝试软修复
    * 3. 软修复失败 → 记录 corrupt key, 返回 null
    */
@@ -103,8 +113,11 @@ export class GarnetStore {
       this.corruptKeys.add(key);
       return null;
     } catch (e) {
-      console.warn('[GarnetStore] getSessionState failed:', (e as Error).message);
-      return null;
+      throw new Error(
+        `[GarnetStore] getSessionState() 失败: ${(e as Error).message}。` +
+        `位置: GarnetStore.ts → getSessionState(${sessionId})。` +
+        `原因: Garnet (Redis) 读取失败, 可能是连接断开或服务未启动。`,
+      );
     }
   }
 
@@ -118,7 +131,11 @@ export class GarnetStore {
       this.corruptKeys.delete(key);
       return true;
     } catch (e) {
-      return false;
+      throw new Error(
+        `[GarnetStore] deleteSessionState() 失败: ${(e as Error).message}。` +
+        `位置: GarnetStore.ts → deleteSessionState(${sessionId})。` +
+        `原因: Garnet (Redis) 删除失败, 可能是连接断开或服务未启动。`,
+      );
     }
   }
 
@@ -136,7 +153,11 @@ export class GarnetStore {
         })
         .filter((id: string) => id.length > 0);
     } catch (e) {
-      return [];
+      throw new Error(
+        `[GarnetStore] listActiveSessions() 失败: ${(e as Error).message}。` +
+        `位置: GarnetStore.ts → listActiveSessions()。` +
+        `原因: Garnet (Redis) KEYS 命令失败, 可能是连接断开或服务未启动。`,
+      );
     }
   }
 
@@ -147,8 +168,12 @@ export class GarnetStore {
     try {
       const reply = await this.client.ping();
       return reply === 'PONG';
-    } catch {
-      return false;
+    } catch (e) {
+      throw new Error(
+        `[GarnetStore] ping() 失败: ${(e as Error).message}。` +
+        `位置: GarnetStore.ts → ping()。` +
+        `原因: Garnet (Redis) PING 命令失败, 服务可能未启动或不可达。`,
+      );
     }
   }
 

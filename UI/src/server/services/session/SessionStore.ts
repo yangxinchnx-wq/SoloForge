@@ -589,22 +589,28 @@ export class SessionStore {
   /**
    * s2.4: 冷启动恢复 — 从 SurrealDB 拉所有已知 session
    *
-   * SurrealStore 提供 listAllSessionIds?() 方法 (在 SurrealStore 里实现)
-   * 没实现时返回空数组, 优雅降级
+   * ★ 2026-07-14: 不再优雅降级。listAllSessionIds 未实现或调用失败直接抛错。
    */
   async restoreAllFromSurreal(): Promise<{ restored: number; total: number; results: Array<{ sessionId: string; status: string }> }> {
     const surrealAny = this.surreal as ISessionPersistence & {
       listAllSessionIds?: () => Promise<string[]>;
     };
     if (typeof surrealAny.listAllSessionIds !== 'function') {
-      return { restored: 0, total: 0, results: [] };
+      throw new Error(
+        `[SessionStore] restoreAllFromSurreal() 失败: SurrealStore 未实现 listAllSessionIds 方法。` +
+        `位置: SessionStore.ts → restoreAllFromSurreal() → listAllSessionIds 检查。` +
+        `原因: SurrealStore 初始化返回了不可用的实例 (noop 或未连接)。`,
+      );
     }
     let ids: string[] = [];
     try {
       ids = await surrealAny.listAllSessionIds();
     } catch (e) {
-      console.warn('[SessionStore] restoreAllFromSurreal list failed:', (e as Error).message);
-      return { restored: 0, total: 0, results: [] };
+      throw new Error(
+        `[SessionStore] restoreAllFromSurreal() 失败: ${(e as Error).message}。` +
+        `位置: SessionStore.ts → restoreAllFromSurreal() → listAllSessionIds() 调用。` +
+        `原因: SurrealDB 查询异常, 可能是连接断开或 rocksdb 损坏。`,
+      );
     }
     console.log(`[SessionStore] restoreAllFromSurreal found ids=${JSON.stringify(ids)}, inMemory=${JSON.stringify(Array.from(this.states.keys()))}`);
     let restored = 0;

@@ -9,12 +9,8 @@
  *   3. 挂载 /api/canvas/sessions/* + /api/canvas/persistence/* 路由
  *   4. 注册优雅退出钩子（SIGINT/SIGTERM/before-quit → flushAll）
  *
- * 设计原则：
- *   - 任何持久层失败都不能阻塞 3000 启动（内存 + 路由必须可用）
- *   - Garnet 未启动时降级为内存模式（仍能工作，断电丢数据）
- *   - Surreal 包未装 / DB 不可写时降级 noop（已有 SurrealStore 内部实现）
- *   - 单例：getSessionStore() / getGarnetStore() / getSurrealStore() 多次调用
- *     拿到的都是同一个实例，跨路由共享
+ * ★ 2026-07-14: 不再降级。Garnet / SurrealDB 初始化失败直接抛错,
+ *   错误信息用中文说明具体原因和具体位置。服务器不会在缺依赖的情况下静默启动。
  *
  * 调用方：UI/server.ts  在 app.use(express.json()) 之后立即调用
  * ---------------------------------------------------------------------------
@@ -33,64 +29,67 @@ import { registerCanvasToolRoutes } from '../routes/canvasTools';
 export interface CanvasBootstrapResult {
   /** 是否成功挂载路由（成功 = true） */
   ok: boolean;
-  /** Garnet 是否实际可用（false = 降级为内存模式） */
+  /** Garnet 是否实际可用 */
   garnetReady: boolean;
-  /** SurrealDB 是否实际可用（false = 降级为 noop） */
+  /** SurrealDB 是否实际可用 */
   surrealReady: boolean;
   /** 失败原因（成功时为空字符串） */
   error: string;
 }
 
 /**
- * 启动画布会话层。**不抛异常**，任何错误都降级为部分可用。
+ * 启动画布会话层。
  *
- * Async 因为需要 await 真实 SurrealStore init (避免 sync fallback 死锁)
+ * ★ 2026-07-14: 不再降级。任何持久层初始化失败都会抛出错误,
+ *   错误信息包含中文说明的具体原因和具体位置。
+ *
+ * Async 因为需要 await 真实 SurrealStore init
  */
 export async function bootstrapCanvasSessionLayer(
   app: Express,
 ): Promise<CanvasBootstrapResult> {
   let garnetReady = false;
   let surrealReady = false;
-  const errors: string[] = [];
 
   // ── 1. Garnet 热存储（Redis 协议，6379） ──────────────────────────
   // 注意：GarnetStore 构造时即连接 Redis（Garnet 协议兼容）。
   // 连接成功/失败的日志由 GarnetStore 内部 event handler 输出。
-  // 此处仅做存在性检查，不阻塞启动。
+  // 此处做存在性检查 + ping 探活, 失败直接抛错。
   try {
-    getGarnetStore();
+    const store = getGarnetStore();
     // 用 setTimeout 0 等一 tick 让 ioredis 尝试 connect，再用 ping 探活
-    setTimeout(() => {
-      try {
-        const probe = (getGarnetStore() as unknown as {
-          client?: { ping?: () => Promise<string>; status?: string };
-        }).client;
-        if (probe?.status === 'ready' && probe.ping) {
-          probe
-            .ping()
-            .then(() => {
-              garnetReady = true;
-              console.log('[canvas] ✅ Garnet 热存储可用 (6379)');
-            })
-            .catch((e: Error) => {
-              console.warn('[canvas] ⚠️  Garnet ping 失败，运行于内存模式:', e.message);
-            });
-        } else {
-          console.warn(
-            `[canvas] ⚠️  Garnet 未就绪 (status=${probe?.status ?? 'unknown'})，运行于内存模式`,
-          );
+    await new Promise<void>((resolve, reject) => {
+      setTimeout(async () => {
+        try {
+          const probe = (store as unknown as {
+            client?: { ping?: () => Promise<string>; status?: string };
+          }).client;
+          if (probe?.status === 'ready' && probe.ping) {
+            await probe.ping();
+            garnetReady = true;
+            console.log('[canvas] ✅ Garnet 热存储可用 (6379)');
+            resolve();
+          } else {
+            throw new Error(
+              `Garnet 连接状态为 ${probe?.status ?? 'unknown'} (非 ready)。` +
+              `位置: bootstrap/canvas.ts → bootstrapCanvasSessionLayer() → Garnet ping 探活。` +
+              `原因: Garnet 服务未启动或正在启动中, 请检查 Garnet 进程 (端口 6379)。`,
+            );
+          }
+        } catch (e) {
+          reject(e);
         }
-      } catch (e) {
-        console.warn('[canvas] ⚠️  Garnet 探活失败:', (e as Error).message);
-      }
-    }, 50);
+      }, 50);
+    });
   } catch (e) {
-    errors.push(`garnet: ${(e as Error).message}`);
-    console.warn('[canvas] ⚠️  GarnetStore 初始化失败:', (e as Error).message);
+    throw new Error(
+      `[canvas] Garnet 初始化失败: ${(e as Error).message}。` +
+      `位置: bootstrap/canvas.ts → bootstrapCanvasSessionLayer() → 步骤1 Garnet 探活。` +
+      `原因: Garnet (Redis 兼容) 服务未启动或不可达 (端口 6379)。`,
+    );
   }
 
-  // ── 2. 立即挂载路由（不等 Surreal 完成 — 路由只读 in-memory map,
-  //    Surreal 是后台持久化, 路由不需要等它） ─────────────────
+  // ── 2. 立即挂载路由（路由只读 in-memory map, 不依赖持久层） ─────
   try {
     registerCanvasSessionRoutes(app);
     registerCanvasToolRoutes(app);
@@ -112,70 +111,80 @@ export async function bootstrapCanvasSessionLayer(
     console.log('         POST   /api/canvas/persistence/force-flush');
     console.log('         POST   /api/canvas/persistence/restore-all');
   } catch (e) {
-    const msg = `route registration failed: ${(e as Error).message}`;
-    errors.push(msg);
-    console.error('[canvas] ❌ 路由挂载失败:', msg);
-    return { ok: false, garnetReady, surrealReady, error: msg };
+    throw new Error(
+      `[canvas] 路由挂载失败: ${(e as Error).message}。` +
+      `位置: bootstrap/canvas.ts → bootstrapCanvasSessionLayer() → 步骤2 registerCanvasSessionRoutes/registerCanvasToolRoutes。` +
+      `原因: Express 路由注册异常, 可能是路由文件有语法错误或导入失败。`,
+    );
   }
 
-  // ── 3. 后台 SurrealDB 初始化（不阻塞路由） ─────────────────────
-  // ⚠️ 必须用 **async** 版本: sync getter 第一次返回 _synchronousFallback
+  // ── 3. SurrealDB 初始化（必须成功, 不再降级 noop） ─────────────
+  // ⚠️ 必须用 **async** 版本: sync getter 第一次返回 fallback
   //    (noop), 而 SessionStore 构造时就绑死了 surreal 引用。如果先
   //    getSessionStore() 再 getSurrealStoreAsync, SessionStore 拿到的是
   //    fallback。正确顺序: 先 await Surreal 真实 init, 再触发 SessionStore 构造。
   //
   // 用一个共享 Promise 让 SessionStore 等到 Surreal 真的 init 完成才建:
-  const surrealInitPromise: Promise<boolean> = Promise.race<boolean>([
-    getSurrealStoreAsync().then((s) => {
-      const ok = s.isAvailable();
-      if (ok) console.log('[canvas] ✅ SurrealDB 温存储可用 (远程 8000)');
-      else console.warn('[canvas] ⚠️  SurrealDB 不可用 (降级 noop，仅内存+日志)');
-      return ok;
-    }),
-    new Promise<boolean>((_, reject) =>
-      setTimeout(() => reject(new Error('surreal init timeout (8s)')), 8000),
-    ),
-  ]).catch((e: Error) => {
-    console.warn('[canvas] ⚠️  SurrealDB 初始化失败 (降级 noop):', e.message);
-    return false;
-  });
+  try {
+    const store = await Promise.race<Promise<import('../services/persistence/SurrealStore').ISurrealStore>>([
+      getSurrealStoreAsync(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(
+          `SurrealDB 初始化超时 (8 秒)。` +
+          `位置: bootstrap/canvas.ts → bootstrapCanvasSessionLayer() → 步骤3 SurrealDB 初始化。` +
+          `原因: rocksdb 连接 hang, 可能是路径冲突或磁盘 I/O 阻塞。` +
+          `请检查 data/canvas_sessions_db 目录是否被其他进程锁定。`,
+        )), 8000),
+      ),
+    ]);
+    const ok = store.isAvailable();
+    if (!ok) {
+      throw new Error(
+        `SurrealDB init() 返回不可用 (isAvailable=false)。` +
+        `位置: bootstrap/canvas.ts → bootstrapCanvasSessionLayer() → 步骤3 getSurrealStoreAsync().isAvailable()。` +
+        `原因: SurrealDB 连接已建立但内部状态异常。`,
+      );
+    }
+    surrealReady = ok;
+    console.log('[canvas] ✅ SurrealDB 温存储可用 (rocksdb embedded)');
+  } catch (e) {
+    throw new Error(
+      `[canvas] SurrealDB 初始化失败: ${(e as Error).message}。` +
+      `位置: bootstrap/canvas.ts → bootstrapCanvasSessionLayer() → 步骤3 SurrealDB 初始化。` +
+      `原因: surrealdb/@surrealdb/node 包缺失或 rocksdb 连接失败。`,
+    );
+  }
 
   // ── 4. SessionStore 单例（在 Surreal 真实 init 完成后才创建，
   //    确保 this.surreal 拿到的是真实例而不是 fallback） ──────
-  void surrealInitPromise.then((ok) => {
-    surrealReady = ok;
-    try {
-      const store = getSessionStore();
+  try {
+    const store = getSessionStore();
+    console.log(
+      `[canvas] ✅ SessionStore 就绪 (surreal=real, sessions=${store.listSessions().length})`,
+    );
+    // ── 4b. 冷启动自动恢复 ────────────────────────────────────
+    // Surreal rocksdb 里有数据 (UI/data/canvas_sessions_db/*.sst) 但内存是空的,
+    // 必须主动调一次 restoreAllFromSurreal 把历史 session 拉回来。
+    // 不做这一步 → 重启后 listCanvases() 永远是空, 用户画的东西全丢。
+    const r = await store.restoreAllFromSurreal();
+    if (r.total > 0) {
       console.log(
-        `[canvas] ✅ SessionStore 就绪 (surreal=${ok ? 'real' : 'noop'}, sessions=${store.listSessions().length})`,
+        `[canvas] ♻️  冷启动恢复: restored=${r.restored}/${r.total} ` +
+          `(内存现 ${store.listSessions().length} 个 session)`,
       );
-      // ── 4b. 冷启动自动恢复 ────────────────────────────────────
-      // Surreal rocksdb 里有数据 (UI/data/canvas_sessions_db/*.sst) 但内存是空的,
-      // 必须主动调一次 restoreAllFromSurreal 把历史 session 拉回来。
-      // 不做这一步 → 重启后 listCanvases() 永远是空, 用户画的东西全丢。
-      store
-        .restoreAllFromSurreal()
-        .then((r) => {
-          if (r.total > 0) {
-            console.log(
-              `[canvas] ♻️  冷启动恢复: restored=${r.restored}/${r.total} ` +
-                `(内存现 ${store.listSessions().length} 个 session)`,
-            );
-            r.results.forEach((row) => {
-              if (row.status !== 'in-memory') {
-                console.log(`         ${row.sessionId}: ${row.status}`);
-              }
-            });
-          }
-        })
-        .catch((e: Error) => {
-          console.warn('[canvas] ⚠️  冷启动恢复失败:', e.message);
-        });
-    } catch (e) {
-      errors.push(`sessionStore: ${(e as Error).message}`);
-      console.error('[canvas] ❌ SessionStore 初始化失败:', (e as Error).message);
+      r.results.forEach((row) => {
+        if (row.status !== 'in-memory') {
+          console.log(`         ${row.sessionId}: ${row.status}`);
+        }
+      });
     }
-  });
+  } catch (e) {
+    throw new Error(
+      `[canvas] SessionStore 初始化失败: ${(e as Error).message}。` +
+      `位置: bootstrap/canvas.ts → bootstrapCanvasSessionLayer() → 步骤4 getSessionStore() + restoreAllFromSurreal()。` +
+      `原因: SessionStore 构造异常或 SurrealDB 冷启动恢复失败。`,
+    );
+  }
 
   // ── 5. 优雅退出钩子 ───────────────────────────────────────────
   registerShutdownHooks();
@@ -184,7 +193,7 @@ export async function bootstrapCanvasSessionLayer(
     ok: true,
     garnetReady,
     surrealReady,
-    error: errors.length ? errors.join('; ') : '',
+    error: '',
   };
 }
 
