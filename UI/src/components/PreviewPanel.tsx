@@ -161,7 +161,7 @@ function findDevicePreset(key: string): DevicePreset {
 }
 
 export default function PreviewPanel({
-  width = 385, isResizing = false, dragStartWidth = 385,
+  width = 472, isResizing = false, dragStartWidth = 472,
   selectedChatId, canvasId, canvasReady,
   canvases = [], maxCanvases = 10,
   onSelectCanvas, onRenameCanvas, onDeleteCanvas,
