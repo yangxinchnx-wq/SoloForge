@@ -60,7 +60,7 @@ export const WindowControls: React.FC = () => {
     border: 'none',
     outline: 'none',
     cursor: 'pointer',
-    transition: 'background 120ms ease, color 120ms ease',
+    transition: 'background 120ms ease, color 120ms ease, transform 80ms ease',
     padding: 0,
     WebkitAppRegion: 'no-drag',
   } as React.CSSProperties;
@@ -80,13 +80,16 @@ export const WindowControls: React.FC = () => {
         onClick={onMinimize}
         style={btnBase}
         onMouseEnter={(e) => {
-          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
+          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
           e.currentTarget.style.color = '#e6ebf0';
         }}
         onMouseLeave={(e) => {
           e.currentTarget.style.background = 'transparent';
           e.currentTarget.style.color = '#a8b0b8';
+          e.currentTarget.style.transform = 'scale(1)';
         }}
+        onMouseDown={(e) => { e.currentTarget.style.transform = 'scale(0.88)'; }}
+        onMouseUp={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
       >
         <Minus className="w-3.5 h-3.5" strokeWidth={1.5} />
       </button>
@@ -98,13 +101,16 @@ export const WindowControls: React.FC = () => {
         onClick={onToggleMaximize}
         style={btnBase}
         onMouseEnter={(e) => {
-          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.06)';
+          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
           e.currentTarget.style.color = '#e6ebf0';
         }}
         onMouseLeave={(e) => {
           e.currentTarget.style.background = 'transparent';
           e.currentTarget.style.color = '#a8b0b8';
+          e.currentTarget.style.transform = 'scale(1)';
         }}
+        onMouseDown={(e) => { e.currentTarget.style.transform = 'scale(0.88)'; }}
+        onMouseUp={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
       >
         {isMaximized ? <Copy className="w-[13px] h-[13px]" strokeWidth={1.5} /> : <Square className="w-[13px] h-[13px]" strokeWidth={1.5} />}
       </button>
@@ -122,7 +128,10 @@ export const WindowControls: React.FC = () => {
         onMouseLeave={(e) => {
           e.currentTarget.style.background = 'transparent';
           e.currentTarget.style.color = '#a8b0b8';
+          e.currentTarget.style.transform = 'scale(1)';
         }}
+        onMouseDown={(e) => { e.currentTarget.style.transform = 'scale(0.88)'; }}
+        onMouseUp={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
       >
         <X className="w-4 h-4" strokeWidth={1.5} />
       </button>
