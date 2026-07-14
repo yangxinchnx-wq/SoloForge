@@ -525,7 +525,7 @@ export default function GitPanel({ onClose }: GitPanelProps) {
               }`}
             >
               <GitCommitHorizontal className="w-3.5 h-3.5" />
-              <span>变更 {git.statusData.files.length > 0 && `(${git.statusData.files.length})`}</span>
+              <span>变更 {git.statusData?.files?.length > 0 && `(${git.statusData.files.length})`}</span>
             </button>
             <button
               onClick={() => setViewMode('history')}
