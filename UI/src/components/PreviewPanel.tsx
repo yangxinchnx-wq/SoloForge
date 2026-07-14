@@ -10,6 +10,7 @@ import { useCanvasDeviceStore, type CanvasDeviceInfo } from '../state/canvasDevi
 import { MountTransition } from './MountTransition';
 import { usePreviewStreamStore, restoreDslFromHotStore, restoreDslFromChatHistory } from '../state/previewStreamStore';
 import WebAstPreview from './WebAstPreview';
+import { scaleDsl } from '../services/canvas/scaleDsl';
 import {
   selectModel as apiSelectModel,
   deleteCanvas as apiDeleteCanvas,
@@ -215,6 +216,9 @@ export default function PreviewPanel({
         source_code: restored.sourceCode,
         preview: { root: restored.dsl },
       } as any);
+      // ★ FIX 2026-07-15: 恢复 DSL 时也记录当前画布尺寸为设计尺寸
+      const { w: rW, h: rH } = computeFrame(activePreset);
+      ps.setDesignSize(selectedChatId, { width: rW, height: rH });
       console.log(`[PreviewPanel] DSL restored from ${restored.language}, sourceLen=${restored.sourceCode.length}`);
     };
 
@@ -329,7 +333,9 @@ export default function PreviewPanel({
   //   画布内容完全不丢失, 不隐藏画布, 不影响其他界面元素
   //   - 打开: 计算按钮坐标 + 读取主题色 + 构造设备列表 → IPC openDevicePopup
   //   - 关闭: 用户选择 (onDeviceSelected) 或窗口失焦 (主进程 blur hide)
-  const toggleDeviceDropdown = () => {
+  //   - 参数 mode: 由按钮传入最新的 renderMode (避免 setState 异步导致读到旧值)
+  const toggleDeviceDropdown = (mode?: string) => {
+    const effectiveMode = mode || renderMode;
     if (!isElectron() || !window.soloforge?.canvas) {
       console.warn('[dropdown] not electron or no canvas api');
       return;
@@ -343,6 +349,8 @@ export default function PreviewPanel({
     if (!btn) { console.warn('[dropdown] deviceBtnRef null'); return; }
     const rect = btn.getBoundingClientRect();
     console.log('[dropdown] btn rect', { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, innerW: window.innerWidth, innerH: window.innerHeight });
+    // ★ 用 effectiveMode 决定设备列表 (2D → DEVICES_2D, 3D → DEVICES_3D)
+    const deviceList = effectiveMode === '2D' ? DEVICES_2D : DEVICES_3D;
     // 读取当前主题色 (跟随主题切换)
     const cs = getComputedStyle(document.documentElement);
     const cssVar = (n: string, fb: string) => (cs.getPropertyValue(n).trim() || fb);
@@ -355,10 +363,10 @@ export default function PreviewPanel({
     };
     // 按分组构造设备列表
     const groups = (['mobile', 'tablet', 'desktop', 'watch'] as SizeGroup[]).map(g => {
-      const items = activeDeviceList.filter(p => p.group === g).map(p => ({
+      const items = deviceList.filter(p => p.group === g).map(p => ({
         key: p.key, label: p.label, w: p.w, h: p.h, group: p.group,
       }));
-      const label = activeDeviceList.find(p => p.group === g)?.groupLabel ?? g;
+      const label = deviceList.find(p => p.group === g)?.groupLabel ?? g;
       return { label, items };
     }).filter(g => g.items.length > 0);
     const panelW = 320, panelH = 460;
@@ -367,10 +375,10 @@ export default function PreviewPanel({
       y: rect.bottom + 14,
       width: panelW,
       height: panelH,
-      renderMode,
+      renderMode: effectiveMode,
       currentKey: activeSizeKey,
       currentLabel: activePreset?.w ? activePreset.label : undefined,
-      deviceCount: activeDeviceList.length,
+      deviceCount: deviceList.length,
       groups,
       theme,
     };
@@ -665,8 +673,9 @@ export default function PreviewPanel({
     }
   }, [effectiveCanvasId, activePreset, computeFrame, setFrameSizeInStore, selectedChatId]);
 
-  // ★ FIX 2026-07-15: 拖动面板时实时 resize Flutter 窗口 + 重新推送 DSL, 确保 canvas 内容跟随自适应
-  //   resize 只改窗口大小, 已渲染内容不会自动重排 → 需要把当前 DSL 重新 push 一次
+  // ★ FIX 2026-07-15: 拖动面板时实时 resize + scaleDsl 等比例缩放, 确保 canvas 内容自适应
+  //   1. resize Flutter 窗口到新尺寸
+  //   2. 用 scaleDsl 按比例缩放当前 DSL, 重新 push 让 Flutter 按新尺寸重排
   useEffect(() => {
     if (!isElectron()) return;
     if (canvasState !== 'running') return;
@@ -677,13 +686,17 @@ export default function PreviewPanel({
     const raf = requestAnimationFrame(() => {
       // 1. resize Flutter 窗口
       window.soloforge?.canvas.resize(sessionIdRef.current, w, h).catch(() => {});
-      // 2. 重新推送当前 DSL, 让 Flutter 按新尺寸重排内容
+      // 2. scaleDsl 等比例缩放后重新 push
       const entry = usePreviewStreamStore.getState().entries[selectedChatId ?? ''];
       const payload = entry?.payload;
-      if (payload) {
-        const dsl = (payload as any)?.preview?.root ?? (payload as any)?.dsl ?? null;
-        if (dsl) {
-          const wrapped = { ui: dsl, platform: 'material' };
+      const designSize = entry?.designSize;
+      if (payload && designSize && designSize.width > 0 && designSize.height > 0) {
+        const rawDsl = (payload as any)?.preview?.root ?? (payload as any)?.dsl ?? null;
+        if (rawDsl) {
+          const scaleX = w / designSize.width;
+          const scaleY = h / designSize.height;
+          const scaledDsl = scaleDsl(rawDsl, scaleX, scaleY);
+          const wrapped = { ui: scaledDsl, platform: 'material' };
           window.soloforge?.canvas.push(sessionIdRef.current, wrapped).catch(() => {});
         }
       }
@@ -1059,7 +1072,7 @@ export default function PreviewPanel({
               <button
                 onClick={() => {
                   setRenderMode('2D');
-                  toggleDeviceDropdown();
+                  toggleDeviceDropdown('2D');
                 }}
                 className={`flex items-center gap-1 px-2 py-1 text-[10px] font-mono font-semibold transition-colors ${
                   renderMode === '2D'
@@ -1074,7 +1087,7 @@ export default function PreviewPanel({
               <button
                 onClick={() => {
                   setRenderMode('3D');
-                  toggleDeviceDropdown();
+                  toggleDeviceDropdown('3D');
                 }}
                 className={`flex items-center gap-1 px-2 py-1 text-[10px] font-mono font-semibold transition-colors border-l border-[var(--color-outline)]/30 ${
                   renderMode === '3D'
@@ -1087,7 +1100,7 @@ export default function PreviewPanel({
                 <span>3D</span>
               </button>
               <motion.button
-                onClick={toggleDeviceDropdown}
+                onClick={() => toggleDeviceDropdown()}
                 whileTap={{ scale: 0.94 }}
                 transition={{ type: 'spring', stiffness: 600, damping: 28 }}
                 className={`flex items-center px-1.5 py-1 text-[10px] font-mono transition-colors border-l border-[var(--color-outline)]/30 ${

@@ -757,6 +757,8 @@ class LineTracker {
       previewStore.confirmPayload(this.chatSessionId, {
         language: 'json', framework: 'json', source_code: code, preview: { root } } as any,
       );
+      // ★ FIX 2026-07-15: 记录设计尺寸 = 当前画布尺寸, 供拖拽缩放计算比例
+      this.recordDesignSize();
     }
     console.log(`[LineTracker] pushWrappedDsl done: isFinal=${isFinal}, root.type=${root?.type}`);
   }
@@ -812,6 +814,8 @@ class LineTracker {
         source_code: code,
         preview: { root: normalized },
       } as any);
+      // ★ FIX 2026-07-15: 记录设计尺寸
+      this.recordDesignSize();
     }
 
     console.log(`[LineTracker] ${isFinal ? '最终' : '增量'}JSON DSL推送`, {
@@ -874,6 +878,8 @@ class LineTracker {
         source_code: code,
         preview: { root: ast },
       } as any);
+      // ★ FIX 2026-07-15: 记录设计尺寸
+      this.recordDesignSize();
     }
 
     console.log(`[LineTracker] ${isFinal ? '最终' : '增量'}翻译推送`, {
@@ -881,6 +887,19 @@ class LineTracker {
       codeLen: code.length,
       sessionId: canvasSessionId,
     });
+  }
+
+  /**
+   * ★ FIX 2026-07-15: 记录当前 DSL 的设计尺寸 = 画布实际尺寸
+   * LLM 生成新内容时调用, 作为后续拖拽缩放的基准
+   */
+  private recordDesignSize(): void {
+    const canvasSessionId = getCanvasSessionId(this.chatSessionId);
+    const size = getCanvasSize(canvasSessionId);
+    if (size.width > 0 && size.height > 0) {
+      usePreviewStreamStore.getState().setDesignSize(this.chatSessionId, size);
+      console.log(`[LineTracker] designSize recorded: ${size.width}×${size.height} for chat ${this.chatSessionId}`);
+    }
   }
 
   get pushed(): boolean { return this._pushed; }

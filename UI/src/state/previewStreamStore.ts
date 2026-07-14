@@ -41,6 +41,8 @@ export interface PreviewStreamEntry {
   sessionId?: string;
   /** 关联的 deviceId（可选） */
   deviceId?: string;
+  /** ★ FIX 2026-07-15: DSL 生成时的画布设计尺寸, 用于拖拽缩放比例计算 */
+  designSize?: { width: number; height: number };
 }
 
 interface PreviewStreamState {
@@ -56,6 +58,8 @@ interface PreviewStreamState {
   confirmPayload: (chatId: string, payload: PreviewPayload | null) => void;
   /** 记录推送错误 */
   recordPushError: (chatId: string, error: string) => void;
+  /** ★ FIX 2026-07-15: 设置 DSL 设计尺寸 (LLM 生成新内容时调用) */
+  setDesignSize: (chatId: string, size: { width: number; height: number }) => void;
   /** 清空某个 chat 的 entry */
   clearEntry: (chatId: string) => void;
   /** 清空全部 */
@@ -165,6 +169,16 @@ export const usePreviewStreamStore = create<PreviewStreamState>()(
         if (!prev) return s;
         return {
           entries: { ...s.entries, [chatId]: { ...prev, pushError: error } },
+        };
+      });
+    },
+
+    setDesignSize: (chatId, size) => {
+      set((s) => {
+        const prev = s.entries[chatId];
+        if (!prev) return s;
+        return {
+          entries: { ...s.entries, [chatId]: { ...prev, designSize: size } },
         };
       });
     },
