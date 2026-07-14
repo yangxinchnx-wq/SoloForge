@@ -2165,9 +2165,17 @@ function createWindow() {
     width: 1440,
     height: 900,
     show: false,
-    // titleBarStyle:'hidden' → 原生 caption buttons (最小化/最大化/关闭), 无标题文字
-    //   自定义 Header 仍在, 右侧留出空间给原生按钮
+    // titleBarStyle:'hidden' + titleBarOverlay → 原生 caption buttons, 无标题文字
+    //   overlay 让按钮图标颜色可控 (深色背景下默认白色图标看不见)
+    //   color: 透明背景 → Header 底色透出来
+    //   symbolColor: 浅灰图标 → 在深色背景上清晰可见
+    //   height: 52 → 和 Header 高度一致
     titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: 'rgba(5, 5, 5, 0)',
+      symbolColor: '#a8b0b8',
+      height: 52,
+    },
     backgroundColor: '#050505',
     hasShadow: false,
     minimizable: true,
@@ -2381,21 +2389,19 @@ app.whenReady().then(async () => {
   // ★ no-store 响应头已在 applyCsp() 中统一注入 (CSP + cache-control 合并)
   //   此处不再重复设置 onHeadersReceived,避免覆盖 CSP 头
 
-  // ★ 直接删 user-data-dir 里的所有持久化数据 (绕过 session API 限制)
+  // ★ 直接删 user-data-dir 里的持久化缓存数据 (绕过 session API 限制)
   //   session.clearCache() / clearStorageData() 都不删 localStorage / IndexedDB
   //   (它们用的是不同的 storage backend),必须用 fs.rm 直接删 user-data-dir
-  //   这里包括:
-  //   - Code Cache / Cache / GPUCache: V8 字节码 / HTTP 缓存
-  //   - Local Storage / Session Storage: React zustand persist 用,旧 store 数据锁住 UI
-  //   - IndexedDB: 大对象持久化(canvas session / chats / 历史)
-  //   - WebStorage: 同 Local Storage 的另一种存储
-  //   - settings-store.json: 如果有 Electron 主进程写入的设置
+  //   注意: Local Storage 和 WebStorage 都不能删!
+  //   - Local Storage: cherry_providers_v2 (大模型密钥) + soloforge_workspaces 需要持久化
+  //   - WebStorage: 某些 Electron/Chromium 版本中是 Local Storage 的别名, 删了 = 删 localStorage
+  //   删除会导致「密钥重启后丢失」问题
   try {
     const userDataDir = app.getPath('userData');
     const targets = [
       'Code Cache', 'Cache', 'GPUCache', 'DawnGraphiteCache', 'DawnWebGPUCache',
-      // Local Storage 保留: soloforge_workspaces 需要持久化
-      'Session Storage', 'IndexedDB', 'WebStorage',
+      // Local Storage + WebStorage 保留: 大模型密钥 + workspace 需要持久化
+      'Session Storage', 'IndexedDB',
       'Service Worker', 'Service Worker Database', 'Shared Dictionary',
       'File System', 'blob_storage', 'Network',
       'settings-store.json',
