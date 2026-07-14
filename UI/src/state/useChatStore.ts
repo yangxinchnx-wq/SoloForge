@@ -178,6 +178,8 @@ interface StreamBridge {
   onPhase: (evt: any) => void;
   onAgent: (agentId: string, name: string, avatar: string | undefined, mainModel?: string, subModels?: string[], role?: string, domain?: string, subModel?: string) => void;
   onDone: (agentId?: string) => void;
+  /** ★ 暂停时调用 — 推送 PAUSED 相位而非 DONE, 避免流送区显示'生成完成' */
+  onPause: () => void;
   onError: (error: string) => void;
   /** ★ Token 使用统计 (一轮对话结束时由 usage 事件触发) */
   onUsage: (usage: { promptTokens: number; completionTokens: number; totalTokens: number; cachedTokens?: number }) => void;
@@ -252,6 +254,15 @@ function createStreamBridge(chatId: string, mainModel: string, userInput: string
       }
       if (textAccumulated) ctx.pushStreamEvent('delivery', { content: textAccumulated });
       ctx.pushStreamEvent('phase_change', { content: 'DONE', detail: '生成完成', status: 'success' });
+    },
+    onPause() {
+      // ★ 暂停时推送 PAUSED 相位, 区别于 DONE (生成完成)
+      if (hasError) return;
+      if (!hasPhaseEvents && !isFirstText && singleModelSubId) {
+        ctx.pushStreamEvent('subtask_done', { subTaskId: singleModelSubId, content: textAccumulated, progress: 100, status: 'success' });
+      }
+      if (textAccumulated) ctx.pushStreamEvent('delivery', { content: textAccumulated });
+      ctx.pushStreamEvent('phase_change', { content: 'PAUSED', detail: '已暂停 — 点击播放按钮继续', status: 'paused' });
     },
     onError(error: string) { hasError = true; ctx.pushStreamEvent('phase_change', { content: 'ERROR', detail: error, status: 'error' }); },
     onUsage(usage) {
@@ -599,7 +610,7 @@ interface ChatStoreState {
   conversations: Record<string, ChatMessage[]>; configs: Record<string, ChatSettingsItem>;
   showSettingsPopup: boolean; chatsList: any[];
   pendingAttachment: { fileName: string; text: string } | null; isPendingAttachmentExpanded: boolean;
-  isGenerating: boolean; isPaused: boolean; activeChatHandle: { taskId: string; abort: () => void } | null; lastReqBody: any; hashlineAgentEnabled: boolean;
+  isGenerating: boolean; isPaused: boolean; activeChatHandle: { taskId: string; abort: () => void; pause?: () => void } | null; lastReqBody: any; hashlineAgentEnabled: boolean;
   streamState: StreamState; inputValue: string; showModeDropdown: boolean;
   workspaceApproval: { chatId: string; message: string } | null;
   options: ChatRuntimeOptions;
@@ -665,8 +676,8 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
   setShowSettingsPopup: (v) => set({ showSettingsPopup: v }), setChatsList: (v) => set({ chatsList: v }),
   setPendingAttachment: (v) => set({ pendingAttachment: v }), setIsPendingAttachmentExpanded: (v) => set({ isPendingAttachmentExpanded: v }),
   setIsGenerating: (v) => set({ isGenerating: v }),
-  // ★ 暂停: 中止 fetch, 但保留 activeStreamContext (含已生成文本) 供恢复使用
-  pauseChat: () => { const h = get().activeChatHandle; if (h) h.abort(); set({ isGenerating: false, isPaused: true, activeChatHandle: null }); },
+  // ★ 暂停: 中止 fetch + 推送 PAUSED 相位 (非 DONE), 保留 activeStreamContext 供恢复使用
+  pauseChat: () => { const h = get().activeChatHandle; if (h) { if (h.pause) h.pause(); else h.abort(); } set({ isGenerating: false, isPaused: true, activeChatHandle: null }); },
   // ★ 恢复: 无参数=纯继续; 有参数=把"已生成内容+新指令"合并发给 LLM 一起算
   resumeChat: async (additionalInstruction?: string) => {
     const ctx = activeStreamContext;
@@ -697,6 +708,9 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     // 预创建 canvasPusher 并喂入已有文本, 让 displayText 包含完整内容
     if (ctx.accumulatedText) { canvasPusher = new IncrementalCanvasPusher(ctx.activeChatId); canvasPusher.feedChunk(ctx.accumulatedText); }
 
+    // ★ FIX: 恢复前清理旧的 previewStreamStore entry, 避免残留数据干扰新推送
+    usePreviewStreamStore.getState().clearEntry(ctx.activeChatId);
+
     // ★ 2026-07-14: 懒创建画布 — 恢复时也确保画布存在
     await ensureCanvasForChat(ctx.activeChatId);
 
@@ -718,12 +732,25 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
         case 'done': {
           if (!streamFinalized) { streamFinalized = true; streamBridge.onDone(evt.agentId); } activeStreamContext = null;
           set({ isGenerating: false, isPaused: false, activeChatHandle: null, streamState: { ...emptyStreamState } });
+          // ★ FIX: 恢复路径 done 事件补齐与 handleSend 相同的后处理
+          const expFp = (evt as any).experienceFingerprint as string | undefined;
+          if (expFp) set((s) => { const cl = s.conversations[ctx.activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.experienceFingerprint = expFp; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [ctx.activeChatId]: nl } }; });
           if (canvasPusher) await canvasPusher.flush();
+          const pusherHandled = canvasPusher?.wasHandled() ?? false;
+          let localPushed = pusherHandled;
+          if (!pusherHandled) localPushed = await tryLocalTranslateAndPush(resumeAccumulated, ctx.activeChatId);
+          if (!pusherHandled && !localPushed) { usePreviewStreamStore.getState().clearEntry(ctx.activeChatId); }
+          console.log('[useChatStore] resume done: pusherHandled=', pusherHandled, 'localPushed=', localPushed, 'resumeAccumulated.length=', resumeAccumulated.length);
+          const pr = detectPreviewTrigger(resumeAccumulated, localPushed, detectPreviewFromResponse);
+          const fdt = canvasPusher?.getDisplayText() ?? pr.cleanText;
+          const cd = fdt.replace(/\s*<<<PREVIEW_NEEDED:\w+>>>\s*$/, '');
+          set((s) => { const cl = s.conversations[ctx.activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.content = cd; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [ctx.activeChatId]: nl } }; });
+          if (pr.shouldPreview && typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('soloforge-preview-trigger', { detail: { chatId: ctx.activeChatId, message: continuePrompt, language: pr.previewLang, provider: ctx.mainEntry ? { baseUrl: ctx.mainEntry.baseUrl, apiKey: ctx.mainEntry.apiKey, model: ctx.mainEntry.model } : undefined } }));
           break;
         }
       }
     });
-    set({ activeChatHandle: { taskId: chatHandle.taskId, abort: () => { chatHandle.abort(); if (!streamFinalized) { streamFinalized = true; streamBridge.onDone(); } } } });
+    set({ activeChatHandle: { taskId: chatHandle.taskId, abort: () => { chatHandle.abort(); if (!streamFinalized) { streamFinalized = true; streamBridge.onDone(); } }, pause: () => { chatHandle.abort(); streamBridge.onPause(); } } });
   },
   // ★ 丢弃暂停的生成: 清除上下文 + 移除残留的部分 assistant 消息, 回到空闲态
   discardPausedGeneration: () => {
@@ -918,7 +945,7 @@ console.log('[useChatStore] previewStreamStore entry:', _finalEntry ? { hasAst: 
         }
       }
     });
-    set({ activeChatHandle: { taskId: chatHandle.taskId, abort: () => { chatHandle.abort(); if (!streamFinalized) { streamFinalized = true; streamBridge.onDone(); } } } });
+    set({ activeChatHandle: { taskId: chatHandle.taskId, abort: () => { chatHandle.abort(); if (!streamFinalized) { streamFinalized = true; streamBridge.onDone(); } }, pause: () => { chatHandle.abort(); streamBridge.onPause(); } } });
   },
 
   handleAcceptEnable: async (candidateName) => {
