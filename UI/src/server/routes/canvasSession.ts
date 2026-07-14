@@ -103,6 +103,23 @@ function ensureWrite(req: Request, res: Response, canvas: SessionState): boolean
 }
 
 /**
+ * ★ 查找画布 — 内存优先, 未命中时从 Surreal 恢复
+ * 写操作必须用这个查找, 否则冷启动后画布不在内存 → 404
+ * (handleGetSession 已有此逻辑, 写操作 handler 需同步)
+ */
+async function findCanvasWithRecovery(id: string): Promise<SessionState | null> {
+  const store = getSessionStore();
+  let state = store.listCanvases().find(c => c.sessionId === id);
+  if (!state) {
+    // 尝试从 Surreal 恢复
+    const loaded = await store.loadFromSurrealById(id);
+    if (!loaded) return null;
+    state = loaded;
+  }
+  return state;
+}
+
+/**
  * P0: 触发画布通知 (非 owner 写/删/改名时通知 owner)
  * 60s cooldown 在 NotificationBus 内
  */
@@ -205,13 +222,13 @@ export function handleListResources(req: Request, res: Response): Response {
  * body: { modelKey: string }
  * 写操作 - 仅 owner
  */
-export function handleSelectModel(req: Request, res: Response): Response {
+export async function handleSelectModel(req: Request, res: Response): Promise<Response> {
   const id = String(req.params.id || '');
   const { modelKey } = req.body || {};
   if (!id) return err(res, 400, 'session id required');
   if (typeof modelKey !== 'string') return err(res, 400, 'modelKey (string) required');
   const store = getSessionStore();
-  const state = store.listCanvases().find(c => c.sessionId === id);
+  const state = await findCanvasWithRecovery(id);
   if (!state) return err(res, 404, 'canvas not found (use POST /api/canvas/sessions to create)');
   if (!ensureWriteDevice(req, res, state, 'write_device')) return res;
   const requester = getRequesterChatSessionId(req);
@@ -227,7 +244,7 @@ export function handleSelectModel(req: Request, res: Response): Response {
  * body: { deviceId: string | null }
  * 写操作 - 仅 owner
  */
-export function handleSetSelectedDevice(req: Request, res: Response): Response {
+export async function handleSetSelectedDevice(req: Request, res: Response): Promise<Response> {
   const id = String(req.params.id || '');
   const { deviceId } = req.body || {};
   if (!id) return err(res, 400, 'session id required');
@@ -235,7 +252,7 @@ export function handleSetSelectedDevice(req: Request, res: Response): Response {
     return err(res, 400, 'deviceId (string | null) required');
   }
   const store = getSessionStore();
-  const state = store.listCanvases().find(c => c.sessionId === id);
+  const state = await findCanvasWithRecovery(id);
   if (!state) return err(res, 404, 'canvas not found');
   if (!ensureWriteDevice(req, res, state, 'write_device')) return res;
   const requester = getRequesterChatSessionId(req);
@@ -251,7 +268,7 @@ export function handleSetSelectedDevice(req: Request, res: Response): Response {
  * body: DeviceInstance
  * 写操作 - 仅 owner
  */
-export function handleAddDevice(req: Request, res: Response): Response {
+export async function handleAddDevice(req: Request, res: Response): Promise<Response> {
   const id = String(req.params.id || '');
   const device = req.body as DeviceInstance;
   if (!id) return err(res, 400, 'session id required');
@@ -259,7 +276,7 @@ export function handleAddDevice(req: Request, res: Response): Response {
     return err(res, 400, 'invalid DeviceInstance body');
   }
   const store = getSessionStore();
-  const state = store.listCanvases().find(c => c.sessionId === id);
+  const state = await findCanvasWithRecovery(id);
   if (!state) return err(res, 404, 'canvas not found');
   if (!ensureWriteDevice(req, res, state, 'write_device')) return res;
   const requester = getRequesterChatSessionId(req);
@@ -274,12 +291,12 @@ export function handleAddDevice(req: Request, res: Response): Response {
  * DELETE /api/canvas/sessions/:id/devices/:deviceId
  * 写操作 - 仅 owner
  */
-export function handleRemoveDevice(req: Request, res: Response): Response {
+export async function handleRemoveDevice(req: Request, res: Response): Promise<Response> {
   const id = String(req.params.id || '');
   const deviceId = String(req.params.deviceId || '');
   if (!id || !deviceId) return err(res, 400, 'session id and deviceId required');
   const store = getSessionStore();
-  const state = store.listCanvases().find(c => c.sessionId === id);
+  const state = await findCanvasWithRecovery(id);
   if (!state) return err(res, 404, 'canvas not found');
   if (!ensureWriteDevice(req, res, state, 'remove_device')) return res;
   const requester = getRequesterChatSessionId(req);
@@ -295,7 +312,7 @@ export function handleRemoveDevice(req: Request, res: Response): Response {
  * body: Partial<DeviceInstance>
  * 写操作 - 仅 owner
  */
-export function handleUpdateTransform(req: Request, res: Response): Response {
+export async function handleUpdateTransform(req: Request, res: Response): Promise<Response> {
   const id = String(req.params.id || '');
   const deviceId = String(req.params.deviceId || '');
   const transform = req.body as Partial<DeviceInstance>;
@@ -304,7 +321,7 @@ export function handleUpdateTransform(req: Request, res: Response): Response {
     return err(res, 400, 'transform body (object) required');
   }
   const store = getSessionStore();
-  const state = store.listCanvases().find(c => c.sessionId === id);
+  const state = await findCanvasWithRecovery(id);
   if (!state) return err(res, 404, 'canvas not found');
   if (!ensureWriteDevice(req, res, state, 'write_device')) return res;
   const requester = getRequesterChatSessionId(req);
@@ -322,7 +339,7 @@ export function handleUpdateTransform(req: Request, res: Response): Response {
  * 写操作 - 仅 owner
  * body: { description?: string }
  */
-export function handleRenameSession(req: Request, res: Response): Response {
+export async function handleRenameSession(req: Request, res: Response): Promise<Response> {
   const id = String(req.params.id || '');
   if (!id) return err(res, 400, 'session id required');
   const body = (req.body && typeof req.body === 'object') ? req.body as { description?: unknown } : {};
@@ -330,7 +347,7 @@ export function handleRenameSession(req: Request, res: Response): Response {
     return err(res, 400, 'description must be string');
   }
   const store = getSessionStore();
-  const state = store.listCanvases().find(c => c.sessionId === id);
+  const state = await findCanvasWithRecovery(id);
   if (!state) return err(res, 404, 'canvas not found');
   if (!ensureManage(req, res, state)) return res;
   const requester = getRequesterChatSessionId(req);
@@ -487,7 +504,7 @@ export async function handleClearAll(_req: Request, res: Response): Promise<Resp
  *   body: { dXRatio?, dYRatio?, dRotationX?, dRotationY?, dRotationZ?, scaleDelta? }
  *   群组增量变换 — 只作用于当前 selectedDevices
  */
-export function handleSetSelectedDevices(req: Request, res: Response): Response {
+export async function handleSetSelectedDevices(req: Request, res: Response): Promise<Response> {
   const id = String(req.params.id || '');
   if (!id) return err(res, 400, 'session id required');
   const body = req.body || {};
@@ -499,7 +516,7 @@ export function handleSetSelectedDevices(req: Request, res: Response): Response 
   }
   const primaryId = typeof body.primaryId === 'string' ? body.primaryId : undefined;
   const store = getSessionStore();
-  const state = store.listCanvases().find(c => c.sessionId === id);
+  const state = await findCanvasWithRecovery(id);
   if (!state) return err(res, 404, 'canvas not found');
   if (!ensureWriteDevice(req, res, state, 'write_device')) return res;
   const requester = getRequesterChatSessionId(req);
@@ -510,7 +527,7 @@ export function handleSetSelectedDevices(req: Request, res: Response): Response 
   return ok(res);
 }
 
-export function handleTransformGroup(req: Request, res: Response): Response {
+export async function handleTransformGroup(req: Request, res: Response): Promise<Response> {
   const id = String(req.params.id || '');
   if (!id) return err(res, 400, 'session id required');
   const body = req.body || {};
@@ -521,7 +538,7 @@ export function handleTransformGroup(req: Request, res: Response): Response {
     return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
   };
   const store = getSessionStore();
-  const state = store.listCanvases().find(c => c.sessionId === id);
+  const state = await findCanvasWithRecovery(id);
   if (!state) return err(res, 404, 'canvas not found');
   if (!ensureWriteDevice(req, res, state, 'write_device')) return res;
   const requester = getRequesterChatSessionId(req);
@@ -547,7 +564,7 @@ export function handleTransformGroup(req: Request, res: Response): Response {
  *   - null = 回退到共享 UI (所有设备同屏)
  *   - 有值 = 该设备使用独立 UI session
  */
-export function handleSetDeviceUiSession(req: Request, res: Response): Response {
+export async function handleSetDeviceUiSession(req: Request, res: Response): Promise<Response> {
   const id = String(req.params.id || '');
   const deviceId = String(req.params.deviceId || '');
   if (!id || !deviceId) return err(res, 400, 'session id and deviceId required');
@@ -556,7 +573,7 @@ export function handleSetDeviceUiSession(req: Request, res: Response): Response 
     return err(res, 400, 'uiSessionId must be string or null');
   }
   const store = getSessionStore();
-  const state = store.listCanvases().find(c => c.sessionId === id);
+  const state = await findCanvasWithRecovery(id);
   if (!state) return err(res, 404, 'canvas not found');
   if (!ensureWriteDevice(req, res, state, 'write_device')) return res;
   const requester = getRequesterChatSessionId(req);
