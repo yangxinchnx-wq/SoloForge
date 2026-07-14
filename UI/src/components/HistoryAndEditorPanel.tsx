@@ -433,6 +433,46 @@ export default function HistoryAndEditorPanel({
     // 清除 liveState
     useChatsStore.getState().clearLiveState(id);
 
+    // ★ FIX: 清除画布数据 — 停子进程 + 删后端 + 清前端缓存 + 刷新 bridge
+    //   之前 handleClearSession 只清了对话/流送/终端/预览, 但画布数据
+    //   (后端 Garnet + SurrealDB 中的 devices/DSL/state + Electron 子进程
+    //   + incrementalCanvasPusher 映射 + canvasDeviceStore) 完全没清,
+    //   导致画布内容清除后仍"冒出来"。
+    try {
+      const { peekCanvasSessionId, clearCanvasSessionId, clearByCanvasSessionId } =
+        await import('../services/incrementalCanvasPusher');
+      const { useCanvasDeviceStore } = await import('../state/canvasDeviceStore');
+
+      const canvasId = peekCanvasSessionId(id);
+      if (canvasId) {
+        // 1. 停掉 Electron 子进程 (Flutter 画布窗口)
+        if (typeof window !== 'undefined' && window.soloforge?.canvas) {
+          window.soloforge.canvas.stop(canvasId).catch(() => {});
+        }
+        // 2. 调后端 DELETE — 清理内存 states/dirty + Garnet 热存储 + SurrealDB 持久层
+        try {
+          await fetch(`/api/canvas/sessions/${encodeURIComponent(canvasId)}`, {
+            method: 'DELETE',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Requester-Chat-Session-Id': id,
+            },
+          });
+        } catch (e) {
+          console.warn('[handleClearSession] canvas delete failed:', (e as Error).message);
+        }
+        // 3. 清前端缓存 — incrementalCanvasPusher (chatId→canvasId 映射 + _startedSessions)
+        clearByCanvasSessionId(canvasId);
+        clearCanvasSessionId(id);
+        // 4. 清前端缓存 — canvasDeviceStore (设备尺寸/渲染模式记录)
+        useCanvasDeviceStore.getState().removeDevice(canvasId);
+      }
+      // 5. 刷新画布列表 — 通知 bridge 重新 resolve (会创建新画布)
+      window.dispatchEvent(new CustomEvent('soloforge-canvas-deleted'));
+    } catch (e) {
+      console.warn('[handleClearSession] canvas cleanup failed:', (e as Error).message);
+    }
+
     console.log('[HistoryAndEditorPanel] 已清除会话', id, '的上下文/流送/画布/终端');
   }, []);
 
