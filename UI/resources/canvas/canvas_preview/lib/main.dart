@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'ui_parser.dart';
 import 'platform_renderer.dart';
@@ -282,6 +283,41 @@ class _CanvasAppState extends State<CanvasApp> {
     }
   }
 
+  /// ★ 离线 assets 服务: 从 Flutter asset bundle 读取文件返回给 WebView
+  ///
+  /// 用途: WebView 里的 HTML 通过 <script src="/assets/model-viewer.min.js">
+  ///      加载本地的 model-viewer web component, 避免依赖 CDN
+  Future<void> _handleAssetFile(HttpRequest request, String path) async {
+    try {
+      // /assets/model-viewer.min.js → assets/model-viewer.min.js
+      final assetKey = path.substring(1); // 去掉前导 /
+      final byteData = await rootBundle.load(assetKey);
+      final bytes = byteData.buffer.asUint8List(
+        byteData.offsetInBytes, byteData.lengthInBytes);
+
+      // 根据扩展名设置 Content-Type
+      if (assetKey.endsWith('.js')) {
+        request.response.headers.contentType =
+          ContentType.parse('application/javascript');
+      } else if (assetKey.endsWith('.css')) {
+        request.response.headers.contentType = ContentType.text;
+      } else if (assetKey.endsWith('.html')) {
+        request.response.headers.contentType = ContentType.html;
+      } else {
+        request.response.headers.contentType = ContentType.binary;
+      }
+      request.response.headers.add('Access-Control-Allow-Origin', '*');
+      request.response.add(bytes);
+      await request.response.close();
+    } catch (e) {
+      _writeLog('[assets] serve error: $e (path=$path)');
+      try {
+        request.response.statusCode = 404;
+        await request.response.close();
+      } catch (_) {}
+    }
+  }
+
 
   Future<void> _handleRequest(HttpRequest request) async {
     try {
@@ -330,6 +366,13 @@ class _CanvasAppState extends State<CanvasApp> {
       //    InAppWebView 里的 model-viewer 通过 http://127.0.0.1:port/models/3d/xxx.glb 加载 GLB
       if (request.method == 'GET' && path.startsWith('/models/')) {
         await _handleModelFile(request, path);
+        return;
+      }
+
+      // ★ 离线 assets 服务: /assets/xxx → Flutter asset bundle
+      //    用于 WebView 加载 model-viewer.min.js (离线, 不依赖 CDN)
+      if (request.method == 'GET' && path.startsWith('/assets/')) {
+        await _handleAssetFile(request, path);
         return;
       }
 
@@ -651,11 +694,16 @@ class _CanvasAppState extends State<CanvasApp> {
     );
   }
 
-  /// 3D 设备场景 (2D 占位卡片可视化)
+  /// 3D 设备场景: 用 InAppWebView + model-viewer 加载真实 GLB 模型
   ///
-  /// 真实 GLB 模型渲染需要 three_d + FFI + WebGL 上下文 (未完成模块),
-  /// 当前用 2D Stack + Transform 矩阵让选中的设备以卡片形式可视化显示在画布上。
-  /// 按 group (mobile/tablet/desktop/watch) 区分形状 + 颜色, nativeSize 决定比例。
+  /// 工作流:
+  ///   1. selectDevice 时记录 _currentGlbPath (相对 modelsDir/3d/)
+  ///   2. _buildDevice3DScene 据此构造 HTML, 用 model-viewer 标签加载 GLB
+  ///   3. GLB 文件由内置 HTTP 服务 /models/3d/xxx.glb 提供
+  ///   4. 文件变化时 _reloadModel 通过 JS 切换 model-viewer.src 实现热加载
+  ///
+  /// 用户原话: "只要能把模型加载出来就行了，不需要做任何修改"
+  /// 所以这里只做查看器, 不做编辑/纹理贴图等复杂功能。
   Widget _buildDevice3DScene(BuildContext context) {
     if (_devices.isEmpty) {
       return const Center(
@@ -672,6 +720,118 @@ class _CanvasAppState extends State<CanvasApp> {
       );
     }
 
+    // ★ 有 GLB 路径: 用 InAppWebView + model-viewer 加载真实 3D 模型
+    final glbPath = _currentGlbPath;
+    if (glbPath != null && glbPath.isNotEmpty) {
+      return _buildModelViewer(glbPath);
+    }
+
+    // 兜底: 没指定 GLB 文件时显示 2D 占位卡片 (保留向后兼容)
+    return _buildPlaceholderScene();
+  }
+
+  /// 用 InAppWebView 加载包含 model-viewer 的 HTML 页面
+  Widget _buildModelViewer(String glbPath) {
+    final port = widget.port;
+    final modelUrl = 'http://127.0.0.1:$port/models/3d/$glbPath';
+
+    // 构造 HTML: 引入 model-viewer web component, 加载 GLB
+    // - model-viewer.min.js 从本地 assets 加载 (离线, 不依赖 CDN)
+    // - transparentBackground: true 让 WebView 背景透明, 透出 Flutter 画布背景
+    // - auto-rotate: 自动旋转展示
+    // - camera-controls: 允许用户拖拽/缩放
+    final html = '''<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      background: transparent;
+      overflow: hidden;
+    }
+    model-viewer {
+      width: 100vw;
+      height: 100vh;
+      background: transparent;
+      --poster-color: transparent;
+    }
+  </style>
+  <script type="module" src="http://127.0.0.1:$port/assets/model-viewer.min.js"></script>
+</head>
+<body>
+  <model-viewer
+    src="$modelUrl"
+    alt="3D device model"
+    auto-rotate
+    rotation-per-second="30deg"
+    camera-controls
+    shadow-intensity="1"
+    environment-image="neutral"
+    exposure="1"
+    style="background-color: transparent;">
+  </model-viewer>
+  <script>
+    // 监听 model-viewer 加载错误 (文件不存在/格式错误)
+    const mv = document.querySelector('model-viewer');
+    if (mv) {
+      mv.addEventListener('error', (e) => {
+        console.log('[mv-error] ' + (e.detail?.message || 'unknown'));
+      });
+      mv.addEventListener('load', () => {
+        console.log('[mv-load] ok src=' + mv.src);
+      });
+      mv.addEventListener('preload', () => {
+        console.log('[mv-preload] ' + mv.src);
+      });
+    }
+    // 全局错误捕获
+    window.addEventListener('error', (e) => {
+      console.log('[window-error] ' + (e.message || ''));
+    });
+  </script>
+</body>
+</html>''';
+
+    return InAppWebView(
+      initialData: InAppWebViewInitialData(
+        data: html,
+        mimeType: 'text/html',
+        encoding: 'utf-8',
+        baseUrl: WebUri('http://127.0.0.1:$port/'),
+      ),
+      initialSettings: InAppWebViewSettings(
+        transparentBackground: true,
+        allowsInlineMediaPlayback: true,
+        mediaPlaybackRequiresUserGesture: false,
+        allowFileAccessFromFileURLs: true,
+        allowUniversalAccessFromFileURLs: true,
+        javaScriptEnabled: true,
+        domStorageEnabled: true,
+      ),
+      onWebViewCreated: (controller) {
+        _webviewController = controller;
+        _writeLog('[webview] created, modelUrl=$modelUrl');
+      },
+      onLoadStart: (controller, url) {
+        _writeLog('[webview] load start: $url');
+      },
+      onLoadStop: (controller, url) {
+        _writeLog('[webview] load stop: $url');
+      },
+      onLoadError: (controller, url, code, message) {
+        _writeLog('[webview] load error: code=$code msg=$message url=$url');
+      },
+      onConsoleMessage: (controller, consoleMessage) {
+        _writeLog('[webview-console] ${consoleMessage.message}');
+      },
+    );
+  }
+
+  /// 兜底 2D 占位卡片场景 (无 GLB 文件时)
+  Widget _buildPlaceholderScene() {
     return LayoutBuilder(
       builder: (context, constraints) {
         return Stack(

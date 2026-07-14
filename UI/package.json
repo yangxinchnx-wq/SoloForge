@@ -28,6 +28,8 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "build/icon/**/*",
+      "public/**/*",
       "package.json"
     ],
     "extraResources": [
@@ -78,13 +80,15 @@
           ]
         }
       ],
-      "icon": null
+      "icon": "build/icon/icon.ico"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "shortcutName": "SoloForge",
+      "installerIcon": "build/icon/icon.ico",
+      "uninstallerIcon": "build/icon/icon.ico",
       "installerSidebar": null
     }
   },
@@ -131,6 +135,7 @@
     "esbuild": "^0.28.0",
     "puppeteer-core": "^25.3.0",
     "react-is": "^18.3.1",
+    "sharp": "^0.35.3",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
