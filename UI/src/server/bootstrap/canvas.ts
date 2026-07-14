@@ -57,30 +57,36 @@ export async function bootstrapCanvasSessionLayer(
   // 此处做存在性检查 + ping 探活, 失败直接抛错。
   try {
     const store = getGarnetStore();
-    // 用 setTimeout 0 等一 tick 让 ioredis 尝试 connect，再用 ping 探活
-    await new Promise<void>((resolve, reject) => {
-      setTimeout(async () => {
-        try {
-          const probe = (store as unknown as {
-            client?: { ping?: () => Promise<string>; status?: string };
-          }).client;
-          if (probe?.status === 'ready' && probe.ping) {
-            await probe.ping();
-            garnetReady = true;
-            console.log('[canvas] ✅ Garnet 热存储可用 (6379)');
-            resolve();
-          } else {
-            throw new Error(
-              `Garnet 连接状态为 ${probe?.status ?? 'unknown'} (非 ready)。` +
-              `位置: bootstrap/canvas.ts → bootstrapCanvasSessionLayer() → Garnet ping 探活。` +
-              `原因: Garnet 服务未启动或正在启动中, 请检查 Garnet 进程 (端口 6379)。`,
-            );
-          }
-        } catch (e) {
-          reject(e);
-        }
-      }, 50);
-    });
+    // ★ 等待 Garnet (ioredis) 连接就绪: 轮询 status, 最多等 5 秒
+    //   ioredis 的 lazyConnect=false 会自动连接, 但连接是异步的。
+    //   之前用 50ms setTimeout 太短, status 还是 'connecting' 就报错了。
+    //   现在用轮询等待, 确保 status 变为 'ready' 后再 ping。
+    const client = (store as unknown as {
+      client?: { ping?: () => Promise<string>; status?: string };
+    }).client;
+    if (!client) {
+      throw new Error(
+        `GarnetStore 内部 Redis client 不存在。` +
+        `位置: bootstrap/canvas.ts → bootstrapCanvasSessionLayer() → 步骤1 Garnet 探活。` +
+        `原因: GarnetStore 构造失败。`,
+      );
+    }
+    const deadline = Date.now() + 5000;
+    while (client.status !== 'ready' && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    if (client.status !== 'ready') {
+      throw new Error(
+        `Garnet 连接状态为 ${client.status} (等待 5 秒后仍未就绪)。` +
+        `位置: bootstrap/canvas.ts → bootstrapCanvasSessionLayer() → 步骤1 Garnet 等待就绪。` +
+        `原因: Garnet 服务未启动 (端口 6379) 或正在启动中超时。`,
+      );
+    }
+    if (client.ping) {
+      await client.ping();
+    }
+    garnetReady = true;
+    console.log('[canvas] ✅ Garnet 热存储可用 (6379)');
   } catch (e) {
     throw new Error(
       `[canvas] Garnet 初始化失败: ${(e as Error).message}。` +
@@ -177,6 +183,16 @@ export async function bootstrapCanvasSessionLayer(
           console.log(`         ${row.sessionId}: ${row.status}`);
         }
       });
+    }
+    // ★ FIX 2026-07-14 v4: 恢复完成后清理孤儿画布
+    //   这些画布的 ownerChatSessionId 是 temp-xxx (已被真实 ID 替换),
+    //   永远不会被任何 chat 认领, 是纯垃圾数据, 删掉释放画布槽位。
+    const orphaned = await store.cleanupOrphanedCanvases();
+    if (orphaned.length > 0) {
+      console.log(
+        `[canvas] 🧹 清理孤儿画布: ${orphaned.length} 个 ` +
+          `(剩余 ${store.listSessions().length} 个 session)`,
+      );
     }
   } catch (e) {
     throw new Error(
