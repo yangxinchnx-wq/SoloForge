@@ -2159,95 +2159,12 @@ function createSplashWindow() {
   const splashHtml = `<!DOCTYPE html>
 <html><head><style>
   *{margin:0;padding:0;box-sizing:border-box}
-  html,body{width:100%;height:100%;overflow:hidden;background:#fff}
-  .scene{position:relative;width:100%;height:100%;display:flex;flex-direction:column;
-         align-items:center;justify-content:center;gap:20px}
-
-  /* ── 旋转光环 ── */
-  .ring{position:absolute;width:240px;height:240px;border-radius:50%;
-        border:2px solid transparent;
-        border-top:2px solid rgba(56,189,248,.6);
-        border-right:2px solid rgba(99,102,241,.4);
-        animation:spin 2s linear infinite;
-        filter:drop-shadow(0 0 8px rgba(56,189,248,.3))}
-  .ring.r2{width:280px;height:280px;
-        border-top:2px solid rgba(99,102,241,.5);
-        border-left:2px solid rgba(168,85,247,.3);
-        animation-duration:3s;animation-direction:reverse}
-  @keyframes spin{to{transform:rotate(360deg)}}
-
-  /* ── Logo 容器 ── */
-  .logo-box{position:relative;width:160px;height:160px;
-            animation:entry .8s cubic-bezier(.22,1,.36,1) both}
-  @keyframes entry{
-    0%  {transform:scale(.6) rotate(-8deg);opacity:0;filter:blur(12px)}
-    60% {transform:scale(1.05) rotate(1deg);opacity:1;filter:blur(0)}
-    100%{transform:scale(1) rotate(0);opacity:1;filter:blur(0)}
-  }
-  .logo-box img{width:100%;height:100%;object-fit:contain;
-                filter:drop-shadow(0 0 20px rgba(56,189,248,.25));
-                animation:glow 2.8s ease-in-out infinite}
-  @keyframes glow{
-    0%,100%{filter:drop-shadow(0 0 16px rgba(56,189,248,.2))}
-    50%    {filter:drop-shadow(0 0 32px rgba(99,102,241,.45))}
-  }
-
-  /* ── 闪光 ── */
-  .flash{position:absolute;width:200px;height:200px;border-radius:50%;
-         background:radial-gradient(circle,rgba(56,189,248,.18) 0%,transparent 70%);
-         animation:flash 2.8s ease-in-out infinite}
-  @keyframes flash{
-    0%,100%{transform:scale(.8);opacity:.3}
-    50%    {transform:scale(1.4);opacity:.7}
-  }
-
-  /* ── 电粒子 ── */
-  .sparks{position:absolute;width:300px;height:300px;pointer-events:none}
-  .spark{position:absolute;left:50%;top:50%;width:3px;height:3px;border-radius:50%;
-         background:#38bdf8;box-shadow:0 0 6px #38bdf8;
-         animation:fly 2s ease-out infinite}
-  .spark:nth-child(1){animation-delay:0s;--a:0deg;--d:90px}
-  .spark:nth-child(2){animation-delay:.25s;--a:45deg;--d:80px}
-  .spark:nth-child(3){animation-delay:.5s;--a:90deg;--d:95px}
-  .spark:nth-child(4){animation-delay:.75s;--a:135deg;--d:85px}
-  .spark:nth-child(5){animation-delay:1s;--a:180deg;--d:90px}
-  .spark:nth-child(6){animation-delay:1.25s;--a:225deg;--d:80px}
-  .spark:nth-child(7){animation-delay:1.5s;--a:270deg;--d:95px}
-  .spark:nth-child(8){animation-delay:1.75s;--a:315deg;--d:85px}
-  @keyframes fly{
-    0%  {transform:translate(-50%,-50%) rotate(var(--a)) translateY(0);
-         opacity:1;filter:blur(0)}
-    100%{transform:translate(-50%,-50%) rotate(var(--a)) translateY(calc(-1 * var(--d)));
-         opacity:0;filter:blur(1px)}
-  }
-
-  /* ── 加载条 ── */
-  .loader{width:120px;height:3px;border-radius:2px;background:rgba(0,0,0,.06);
-          overflow:hidden;margin-top:12px}
-  .loader::after{content:'';display:block;width:40%;height:100%;border-radius:2px;
-                 background:linear-gradient(90deg,#38bdf8,#6366f1);
-                 animation:slide 1.4s ease-in-out infinite}
-  @keyframes slide{0%{transform:translateX(-100%)}100%{transform:translateX(350%)}}
-
-  /* ── 文字 ── */
-  .title{font:600 14px/1 system-ui,sans-serif;color:#1e293b;letter-spacing:2px;
-         opacity:0;animation:fadeUp .6s .6s ease-out both}
-  @keyframes fadeUp{0%{transform:translateY(8px);opacity:0}100%{transform:translateY(0);opacity:1}}
+  html,body{width:100%;height:100%;overflow:hidden;background:#fff;
+            display:flex;align-items:center;justify-content:center}
+  img{width:200px;height:200px;object-fit:contain;
+      filter:drop-shadow(0 2px 12px rgba(0,0,0,.1))}
 </style></head><body>
-  <div class="scene">
-    <div class="ring"></div>
-    <div class="ring r2"></div>
-    <div class="flash"></div>
-    <div class="sparks">
-      <div class="spark"></div><div class="spark"></div><div class="spark"></div><div class="spark"></div>
-      <div class="spark"></div><div class="spark"></div><div class="spark"></div><div class="spark"></div>
-    </div>
-    <div class="logo-box">
-      ${logoDataUrl ? `<img src="${logoDataUrl}" alt="SoloForge">` : ''}
-    </div>
-    <div class="title">SOLOFORGE</div>
-    <div class="loader"></div>
-  </div>
+  ${logoDataUrl ? `<img src="${logoDataUrl}" alt="SoloForge">` : ''}
 </body></html>`;
 
   splashWindow = new BrowserWindow({
