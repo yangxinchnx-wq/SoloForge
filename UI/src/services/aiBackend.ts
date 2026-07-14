@@ -230,11 +230,11 @@ function buildCanvasSizeHint(canvasId?: string): string {
 - ${groupHint}`;
   }
 
-  // 无设备约束: 使用画布实际帧尺寸 (默认 430×932)
+  // 无设备约束: 使用画布实际帧尺寸 (PreviewPanel 动态计算, 填满可用区域)
   const size = getCanvasSize(canvasId);
   return `## 画布尺寸约束
 当前画布尺寸: ${size.width}×${size.height}px
-设备类型: 默认尺寸 (iPhone 15 Pro Max)
+设备类型: 自由画布 (无设备约束)
 
 **重要**: 你生成的 UI 必须严格适配此画布尺寸。
 - 根节点宽度必须不超过 ${size.width}px, 高度必须不超过 ${size.height}px

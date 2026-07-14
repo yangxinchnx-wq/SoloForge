@@ -101,7 +101,12 @@ declare global {
         pushUI: (sessionId: string, dsl: any, deviceId?: string | null) => Promise<{ ok: boolean; error?: string }>;
         selectDevice: (sessionId: string, modelKey: string, file: string, nativeSize: { w: number; h: number }) => Promise<{ ok: boolean; error?: string }>;
         setHostVisible: (visible: boolean) => Promise<{ ok: boolean; error?: string }>;
-        openDevicePopup: (x: number, y: number, items: Array<{key:string; label:string; w:number; h:number; glbFile?:string; icon?:string}>, activeKey: string) => Promise<{ ok: boolean }>;
+        openDevicePopup: (payload: {
+          x: number; y: number; width: number; height: number;
+          renderMode: string; currentKey: string; currentLabel?: string; deviceCount: number;
+          groups: Array<{ label: string; items: Array<{ key: string; label: string; w: number; h: number; group: string }> }>;
+          theme: { surface: string; surfaceBright: string; primary: string; onSurface: string; outline: string };
+        }) => Promise<{ ok: boolean; error?: string }>;
         closeDevicePopup: () => Promise<{ ok: boolean }>;
         onDeviceSelected: (callback: (data: { key: string; glbFile?: string }) => void) => () => void;
         transformDevice: (sessionId: string, deviceId: string, transform: any) => Promise<{ ok: boolean; error?: string }>;
@@ -295,12 +300,9 @@ export default function PreviewPanel({
   const [customColor, setCustomColor] = useState<string>('#FFFFFF');
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showDeviceDropdown, setShowDeviceDropdown] = useState(false);
-  // ★ 下拉框 fixed 定位坐标 (基于按钮 getBoundingClientRect, 避免 overflow-hidden 裁剪)
-  const [devicePanelPos, setDevicePanelPos] = useState<{ top: number; right: number }>({ top: 0, right: 0 });
 
-  // ★ 设备下拉框 ref (用于点击外部关闭 + Esc 关闭, 与协同副模型一致)
+  // ★ 设备按钮 ref — toggleDeviceDropdown 据此计算独立悬浮窗口坐标
   const deviceBtnRef = useRef<HTMLDivElement | null>(null);
-  const devicePanelRef = useRef<HTMLDivElement | null>(null);
 
   // ★ 从 store 读取当前画布的设备信息 (按 canvasId 独立存储)
   const deviceStore = useCanvasDeviceStore();
@@ -311,8 +313,8 @@ export default function PreviewPanel({
 
   // ★ 从设备信息反推当前 preset (用于兼容现有逻辑)
   const activeSizeKey = currentDevice?.sizeKey ?? 'none';
-  // ★ FIX 2026-07-14: 无设备时使用默认尺寸 430×932, 而非 null (填满模式)
-  const activePreset = currentDevice ? findDevicePreset(currentDevice.sizeKey) : DEFAULT_CANVAS_PRESET;
+  // ★ 无设备时 preset = null, 画布填满可用区域 (动态尺寸)
+  const activePreset = currentDevice ? findDevicePreset(currentDevice.sizeKey) : null;
   const activeDeviceList = renderMode === '2D' ? DEVICES_2D : DEVICES_3D;
 
   // ★ canvasStateRef — 提前声明, 供 handleSelectDevice / 崩溃检测使用 (避免 TDZ)
@@ -369,65 +371,54 @@ export default function PreviewPanel({
     }
   }, [effectiveCanvasId, renderMode, setDeviceInStore, handleSelectDevice]);
 
-  // ★ 下拉框打开时隐藏 Flutter 原生窗口 (HWND 会盖住 fixed DOM 元素)
-  //   不加暗化遮罩, 不影响其他界面元素, 仅画布区域临时空白
-  useEffect(() => {
-    if (!isElectron()) return;
-    window.soloforge?.canvas.setHostVisible?.(!showDeviceDropdown).catch(() => {});
-  }, [showDeviceDropdown]);
-
-  const toggleDeviceDropdown = useCallback(() => {
-    setShowDeviceDropdown(s => !s);
-  }, []);
-
-  // ★ 设备下拉框 Esc 关闭 (与协同副模型一致)
-  useEffect(() => {
-    if (!showDeviceDropdown) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        setShowDeviceDropdown(false);
-      }
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [showDeviceDropdown]);
-
-  // ★ 设备下拉框点击外部关闭 (与协同副模型一致)
-  useEffect(() => {
-    if (!showDeviceDropdown) return;
-    const onDown = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (deviceBtnRef.current?.contains(target)) return;
-      if (devicePanelRef.current?.contains(target)) return;
+  // ★ 下拉框改为独立悬浮窗口 (OS 级 BrowserWindow, 盖在 Flutter HWND 之上)
+  //   画布内容完全不丢失, 不隐藏画布, 不影响其他界面元素
+  //   - 打开: 计算按钮坐标 + 读取主题色 + 构造设备列表 → IPC openDevicePopup
+  //   - 关闭: 用户选择 (onDeviceSelected) 或窗口失焦 (主进程 blur hide)
+  const toggleDeviceDropdown = () => {
+    if (!isElectron() || !window.soloforge?.canvas) return;
+    if (showDeviceDropdown) {
+      window.soloforge.canvas.closeDevicePopup?.().catch(() => {});
       setShowDeviceDropdown(false);
+      return;
+    }
+    const btn = deviceBtnRef.current;
+    if (!btn) return;
+    const rect = btn.getBoundingClientRect();
+    // 读取当前主题色 (跟随主题切换)
+    const cs = getComputedStyle(document.documentElement);
+    const cssVar = (n: string, fb: string) => (cs.getPropertyValue(n).trim() || fb);
+    const theme = {
+      surface: cssVar('--color-surface', '#ffffff'),
+      surfaceBright: cssVar('--color-surface-bright', '#f4f4f5'),
+      primary: cssVar('--color-primary', '#3b82f6'),
+      onSurface: cssVar('--color-on-surface', '#18181b'),
+      outline: cssVar('--color-outline', '#d4d4d8'),
     };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [showDeviceDropdown]);
-
-  // ★ 打开下拉框时计算 fixed 定位坐标 (避免被祖先 overflow-hidden 裁剪)
-  useEffect(() => {
-    if (!showDeviceDropdown) return;
-    const updatePos = () => {
-      const btn = deviceBtnRef.current;
-      if (!btn) return;
-      const rect = btn.getBoundingClientRect();
-      // 面板右对齐到按钮右边, 顶部在按钮下方 14px (mt-3.5)
-      setDevicePanelPos({
-        top: rect.bottom + 14,
-        right: window.innerWidth - rect.right,
-      });
+    // 按分组构造设备列表
+    const groups = (['mobile', 'tablet', 'desktop', 'watch'] as SizeGroup[]).map(g => {
+      const items = activeDeviceList.filter(p => p.group === g).map(p => ({
+        key: p.key, label: p.label, w: p.w, h: p.h, group: p.group,
+      }));
+      const label = activeDeviceList.find(p => p.group === g)?.groupLabel ?? g;
+      return { label, items };
+    }).filter(g => g.items.length > 0);
+    const panelW = 320, panelH = 460;
+    const payload = {
+      x: Math.max(8, rect.right - panelW),
+      y: rect.bottom + 14,
+      width: panelW,
+      height: panelH,
+      renderMode,
+      currentKey: activeSizeKey,
+      currentLabel: activePreset?.w ? activePreset.label : undefined,
+      deviceCount: activeDeviceList.length,
+      groups,
+      theme,
     };
-    updatePos();
-    // 窗口滚动/resize 时重新计算
-    window.addEventListener('resize', updatePos);
-    window.addEventListener('scroll', updatePos, true);
-    return () => {
-      window.removeEventListener('resize', updatePos);
-      window.removeEventListener('scroll', updatePos, true);
-    };
-  }, [showDeviceDropdown]);
+    window.soloforge.canvas.openDevicePopup(payload).catch(() => {});
+    setShowDeviceDropdown(true);
+  };
 
   // ★ 监听 Electron 弹窗的设备选择回调
   useEffect(() => {
@@ -667,12 +658,34 @@ export default function PreviewPanel({
   // 2026-07-11: IncrementalCanvasPusher 已经在 useChatStore 中直接推画布,
   //   PreviewPanel 不再重复推送 — 避免双推冲突 + WebAstPreview 覆盖 Flutter 画布
 
-  // ★ FIX 2026-07-14: 无设备时默认 430×932 (iPhone 15 Pro Max), 而非填满可用空间
+  // ★ 追踪 canvas 实际区域尺寸 (无设备时用此尺寸作为画布逻辑尺寸)
+  const [canvasAreaSize, setCanvasAreaSize] = useState<{ w: number; h: number }>({ w: 430, h: 932 });
+  useEffect(() => {
+    const el = canvasAreaRef.current;
+    if (!el) return;
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        setCanvasAreaSize({ w: Math.floor(r.width), h: Math.floor(r.height) });
+      }
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // ★ 无设备时: 填满可用区域, 留 4px 出血线 (每边 2px)
+  //   有设备时: 使用设备原生尺寸
   //   确保 canvas.start() 使用的尺寸与 LLM 被告知的尺寸完全一致
+  const BLEED = 4; // 出血线 (px)
   const computeFrame = useCallback((preset: DevicePreset | null) => {
     if (preset && preset.w > 0) return { w: preset.w, h: preset.h };
-    return { w: 430, h: 932 };
-  }, []);
+    return {
+      w: Math.max(320, canvasAreaSize.w - BLEED),
+      h: Math.max(400, canvasAreaSize.h - BLEED),
+    };
+  }, [canvasAreaSize]);
 
   // ★ 2026-07-14: 将画布实际帧尺寸写入 store, 供 aiBackend (LLM prompt 注入) + incrementalCanvasPusher (canvas.start 参数) 读取
   // ★ FIX 2026-07-14: 同时写入 fallback key, 确保时序不一致时 aiBackend 也能找到
@@ -1107,125 +1120,8 @@ export default function PreviewPanel({
               </motion.button>
             </div>
 
-            {/* 设备下拉框 — framer-motion clip-path ellipse 扩散动画 (与协同副模型一致) */}
-            <AnimatePresence>
-              {showDeviceDropdown && (
-                <>
-                  {/* 透明 backdrop: 仅承载 click-outside, 不影响界面 */}
-                  <motion.div
-                    key="device-backdrop"
-                    variants={deviceBackdropVariants}
-                    initial="hidden"
-                    animate="visible"
-                    exit="hidden"
-                    className="fixed inset-0 z-40 cursor-default"
-                    onClick={() => setShowDeviceDropdown(false)}
-                  />
-
-                  {/* 椭圆弹出面板 — fixed 定位避免被祖先 overflow-hidden 裁剪 */}
-                  <motion.div
-                    key="device-panel"
-                    ref={devicePanelRef}
-                    variants={devicePanelVariants}
-                    initial="hidden"
-                    animate="visible"
-                    exit="hidden"
-                    style={{
-                      position: 'fixed',
-                      top: `${devicePanelPos.top}px`,
-                      right: `${devicePanelPos.right}px`,
-                      transformOrigin: '50% 0%',
-                      willChange: 'clip-path, transform, opacity',
-                      transform: 'translateZ(0)',
-                      backfaceVisibility: 'hidden',
-                      WebkitBackfaceVisibility: 'hidden',
-                      // ★ 强制不透明背景, 避免被 Flutter HWND 盖住时透出底层内容
-                      backgroundColor: 'var(--color-surface)',
-                    }}
-                    className="w-80 bg-[var(--color-surface)] border border-[var(--color-outline)]/45 rounded-2xl shadow-[0_24px_64px_rgba(0,0,0,0.15)] p-4 flex flex-col font-sans z-50 text-left cursor-default max-h-[500px]"
-                    role="dialog"
-                    aria-label="设备选择"
-                  >
-                    {/* 标题栏 */}
-                    <motion.div
-                      variants={deviceContentVariants}
-                      className="flex items-center justify-between border-b border-[var(--color-outline)]/20 pb-2.5 mb-3"
-                    >
-                      <div className="text-[10px] bg-[var(--color-primary)]/10 border border-[var(--color-primary)]/25 text-[var(--color-primary)] px-2.5 py-0.5 rounded-full font-mono font-bold leading-none">
-                        {renderMode} · {activeDeviceList.length} 款设备
-                      </div>
-                      {activePreset && activePreset.w > 0 && (
-                        <div className="text-[10px] text-[var(--color-on-surface)]/50 font-mono truncate ml-2">
-                          当前: {activePreset.label}
-                        </div>
-                      )}
-                    </motion.div>
-
-                    {/* 无设备约束 */}
-                    <motion.div variants={deviceContentVariants} className="mb-2.5">
-                      <button
-                        onClick={() => { handleSelectSizeKey('none'); setShowDeviceDropdown(false); }}
-                        className={`flex items-center gap-2 w-full px-2.5 py-1.5 rounded-xl text-[10px] font-mono font-semibold transition-all duration-200 ${
-                          activeSizeKey === 'none'
-                            ? 'bg-[var(--color-primary)]/15 text-[var(--color-primary)] border border-[var(--color-primary)]/40'
-                            : 'text-[var(--color-on-surface)]/70 hover:bg-[var(--color-surface-bright)]/60 border border-transparent'
-                        }`}
-                      >
-                        <Maximize2 className="w-3 h-3 shrink-0" />
-                        <span className="flex-1 text-left">默认尺寸 (430×932)</span>
-                        {activeSizeKey === 'none' && <Check className="w-2.5 h-2.5 shrink-0" />}
-                      </button>
-                    </motion.div>
-
-                    {/* 设备分组列表 */}
-                    <motion.div
-                      variants={deviceContentVariants}
-                      className="flex flex-col gap-2.5 overflow-y-auto max-h-[320px] pr-1 scrollbar-thin"
-                    >
-                      {(['mobile', 'tablet', 'desktop', 'watch'] as SizeGroup[]).map(group => {
-                        const presets = activeDeviceList.filter(p => p.group === group);
-                        if (presets.length === 0) return null;
-                        return (
-                          <div key={group} className="flex flex-col gap-1.5">
-                            <div className="text-[9px] font-mono font-bold uppercase tracking-widest text-[var(--color-on-surface)]/40 px-1 leading-none">
-                              {presets[0].groupLabel}
-                            </div>
-                            {presets.map(p => {
-                              const Icon = p.icon;
-                              const active = p.key === activeSizeKey;
-                              return (
-                                <button
-                                  key={p.key}
-                                  onClick={() => {
-                                    handleSelectSizeKey(p.key);
-                                    setShowDeviceDropdown(false);
-                                  }}
-                                  className={`group/item flex items-center gap-2 w-full px-2.5 py-1.5 rounded-xl text-[10px] font-mono font-semibold transition-all duration-200 border ${
-                                    active
-                                      ? 'bg-[var(--color-primary)]/15 text-[var(--color-primary)] border-[var(--color-primary)]/40'
-                                      : 'text-[var(--color-on-surface)]/80 hover:bg-[var(--color-surface-bright)]/60 hover:text-[var(--color-primary)] border-[var(--color-outline)]/20 hover:border-[var(--color-primary)]/30'
-                                  }`}
-                                >
-                                  <Icon className="w-3 h-3 shrink-0" />
-                                  <span className="flex-1 text-left truncate">{p.label}</span>
-                                  <span className="text-[var(--color-on-surface)]/40 text-[9px]">{p.w}×{p.h}</span>
-                                  {active && <Check className="w-2.5 h-2.5 shrink-0" />}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        );
-                      })}
-                      {activeDeviceList.length === 0 && (
-                        <div className="text-center py-5 text-[var(--color-on-surface)]/40 text-[11px] leading-relaxed border border-dashed border-[var(--color-outline)]/30 rounded-xl bg-[var(--color-surface-bright)]/40 select-none font-sans">
-                          当前模式暂无可用设备
-                        </div>
-                      )}
-                    </motion.div>
-                  </motion.div>
-                </>
-              )}
-            </AnimatePresence>
+            {/* 设备下拉框已改为独立悬浮窗口 (main.cjs 的 deviceDropdownWindow),
+                盖在 Flutter HWND 之上, 画布内容不丢失。此处不再渲染 DOM 下拉框。 */}
           </div>
 
           {canvasError && (
@@ -1262,12 +1158,10 @@ export default function PreviewPanel({
                     transition: 'all 250ms cubic-bezier(0.16, 1, 0.3, 1)',
                   } as React.CSSProperties;
                 }
-                // ★ FIX: 无设备时也使用 430×932 缩放显示 (不再填满)
-                const dW = 430, dH = 932;
-                const dScale = Math.min(availW / dW, availH / dH, 1);
+                // ★ 无设备时填满可用区域 (留出血线)
                 return {
-                  width: `${Math.round(dW * dScale)}px`,
-                  height: `${Math.round(dH * dScale)}px`,
+                  width: `calc(100% - ${BLEED}px)`,
+                  height: `calc(100% - ${BLEED}px)`,
                   overflow: 'hidden',
                   transition: 'all 250ms cubic-bezier(0.16, 1, 0.3, 1)',
                 } as React.CSSProperties;
@@ -1284,9 +1178,13 @@ export default function PreviewPanel({
                 />
               )}
               {/* 设备尺寸标签 */}
-              {activePreset && activePreset.w > 0 && (
+              {activePreset && activePreset.w > 0 ? (
                 <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-[9px] font-mono text-on-surface/40 whitespace-nowrap pointer-events-none">
                   {activePreset.label} · {activePreset.w}×{activePreset.h}
+                </div>
+              ) : (
+                <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-[9px] font-mono text-on-surface/40 whitespace-nowrap pointer-events-none">
+                  自由画布 · {canvasAreaSize.w - BLEED}×{canvasAreaSize.h - BLEED}
                 </div>
               )}
             </div>
