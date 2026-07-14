@@ -393,6 +393,8 @@ class LineTracker {
   private throttleMs: number = 50;
   private translating: boolean = false;
   private _pushed: boolean = false;
+  // ★ 2026-07-14: 跟踪当前正在进行的翻译 Promise, 防止增量与最终翻译竞态
+  private currentPromise: Promise<void> | null = null;
 
   constructor(lang: string, chatSessionId: string) {
     this.translateLang = lang;
@@ -420,9 +422,24 @@ class LineTracker {
   }
 
   /**
+   * ★ 2026-07-14: 等待当前正在进行的翻译完成
+   * 用于 flush() 时确保增量翻译不会覆盖最终翻译结果
+   */
+  async waitForCurrentTranslation(): Promise<void> {
+    if (this.currentPromise) {
+      await this.currentPromise;
+    }
+  }
+
+  /**
    * 执行异步翻译 + 推画布
    */
   async translateAndPush(isFinal: boolean): Promise<void> {
+    // ★ 2026-07-14: 如果有正在进行的翻译, 等待它完成再启动新的
+    //   防止增量翻译 (done=false) 覆盖最终翻译 (done=true) 的结果
+    if (this.currentPromise) {
+      await this.currentPromise;
+    }
     if (this.translating && !isFinal) return;
     if (!this.code.trim()) return;
 
@@ -435,6 +452,10 @@ class LineTracker {
       this.lastTranslatedLen = this.code.length;
     }
 
+    // ★ 2026-07-14: 用 currentPromise 包裹整个翻译过程
+    //   flush() 会先 waitForCurrentTranslation() 再调 translateAndPush(true)
+    //   确保增量翻译不会在最终翻译之后完成并覆盖 done=true
+    const doTranslate = async () => {
     try {
       // ★ 2026-07-11: json DSL 直接解析推送, 不走翻译器
       // ★ FIX 2026-07-12: 同时处理两种 JSON 格式:
@@ -490,6 +511,14 @@ class LineTracker {
     } finally {
       this.translating = false;
     }
+    }; // end doTranslate
+
+    this.currentPromise = doTranslate();
+    try {
+      await this.currentPromise;
+    } finally {
+      this.currentPromise = null;
+    }
   }
 
   /**
@@ -516,10 +545,13 @@ class LineTracker {
     }
 
     const previewStore = usePreviewStreamStore.getState();
-    previewStore.initEntry(this.chatSessionId, {
-      language: 'json',
-      sessionId: canvasSessionId,
-    });
+    // ★ 2026-07-14: 仅在 entry 不存在时 initEntry, 避免重置已有数据
+    if (!previewStore.getEntry(this.chatSessionId)) {
+      previewStore.initEntry(this.chatSessionId, {
+        language: 'json',
+        sessionId: canvasSessionId,
+      });
+    }
     previewStore.updateStream(this.chatSessionId, {
       raw: code,
       payload: {
@@ -572,12 +604,14 @@ class LineTracker {
       });
     }
 
-    // 同步 previewStreamStore
+    // 同步 previewStreamStore — ★ 2026-07-14: 仅在 entry 不存在时 initEntry, 避免重置已有数据
     const previewStore = usePreviewStreamStore.getState();
-    previewStore.initEntry(this.chatSessionId, {
-      language: this.translateLang,
-      sessionId: canvasSessionId,
-    });
+    if (!previewStore.getEntry(this.chatSessionId)) {
+      previewStore.initEntry(this.chatSessionId, {
+        language: this.translateLang,
+        sessionId: canvasSessionId,
+      });
+    }
     previewStore.updateStream(this.chatSessionId, {
       raw: code,
       payload: {
@@ -659,6 +693,8 @@ export class IncrementalCanvasPusher {
 
     if (finalTasks.length > 0) {
       console.log(`[IncrementalCanvasPusher] 最终一致性检查: ${finalTasks.length} 个代码块`);
+      // ★ 2026-07-14: 先等待所有增量翻译完成, 防止竞态覆盖
+      await Promise.all(finalTasks.map(({ tracker }) => tracker.waitForCurrentTranslation()));
       const promises = finalTasks.map(({ tracker }) => tracker.translateAndPush(true));
       await Promise.all(promises);
 
