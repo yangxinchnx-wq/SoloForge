@@ -445,8 +445,10 @@ async function startServer() {
   //   - 优雅退出时自动 flushAll 到持久层
   // ============================================================
   // ★ 2026-07-14: bootstrapCanvasSessionLayer 现在会抛错 (不再降级),
-  //   必须用 .then/.catch 处理。成功后才触发 ChatStore/ConvStore 冷启动恢复。
-  const canvasBootstrap = bootstrapCanvasSessionLayer(app);
+  //   必须 await 完成。成功后才触发 ChatStore/ConvStore 冷启动恢复。
+  // ★ FIX 2026-07-14 v4: 改为 await, 确保 SurrealDB init 在 Vite 中间件之前完成。
+  //   原来用 .then() 不 await → Vite 依赖扫描阻塞事件循环 → SurrealDB 连接超时。
+  await bootstrapCanvasSessionLayer(app);
 
   // ============================================================
   // Chat Session API (3000 本地路由, 三层架构)
@@ -494,21 +496,13 @@ async function startServer() {
   // ★ 三层架构: 冷启动从温存储 (SurrealDB) 恢复对话消息
   //   必须在 canvasBootstrap 完成后调用 (SurrealStore 需先 init)
 
-  // ★ 2026-07-14: 等 canvas bootstrap 完成 (SurrealStore init + Garnet ready) 后,
-  //   再触发 ChatStore / ConvStore 冷启动恢复。bootstrap 失败直接退出。
-  canvasBootstrap
-    .then(() => {
-      void getChatStore().restoreFromWarm().catch((e: Error) => {
-        console.warn('[server] ChatStore 冷启动恢复失败:', e.message);
-      });
-      void getConversationStore().restoreFromWarm().catch((e: Error) => {
-        console.warn('[server] ConversationStore 冷启动恢复失败:', e.message);
-      });
-    })
-    .catch((e: Error) => {
-      console.error('[server] Canvas 基础设施初始化失败, 服务器无法启动:', e.message);
-      process.exit(1);
-    });
+  // ★ 2026-07-14: bootstrap 已 await 完成, 直接触发冷启动恢复
+  void getChatStore().restoreFromWarm().catch((e: Error) => {
+    console.warn('[server] ChatStore 冷启动恢复失败:', e.message);
+  });
+  void getConversationStore().restoreFromWarm().catch((e: Error) => {
+    console.warn('[server] ConversationStore 冷启动恢复失败:', e.message);
+  });
 
   // ============================================================
   // Settings API (3000 本地路由, JSON 文件持久化)
