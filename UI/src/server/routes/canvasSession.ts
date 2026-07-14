@@ -161,12 +161,23 @@ export async function handleGetSession(req: Request, res: Response): Promise<Res
  * header X-Requester-Chat-Session-Id: chat-X (必填, 即 owner)
  * body: { description?: string }  (name 由系统分配)
  */
-export function handleCreateCanvas(req: Request, res: Response): Response {
+export async function handleCreateCanvas(req: Request, res: Response): Promise<Response> {
   const requester = getRequesterChatSessionId(req);
   if (!requester) return err(res, 401, 'X-Requester-Chat-Session-Id header required');
+  // ★ FIX 2026-07-14 v4: 拒绝为临时 chat ID 创建画布
+  //   temp-xxx 会被真实 ID 替换, 为 temp ID 创建的画布会成为孤儿数据。
+  if (requester.startsWith('temp-')) {
+    return err(res, 400, 'canvas creation not allowed for temp chat id (wait for real id)');
+  }
   const body = (req.body && typeof req.body === 'object') ? req.body as { description?: unknown } : {};
   const description = typeof body.description === 'string' ? body.description : undefined;
-  const state = getSessionStore().createCanvas();
+  const store = getSessionStore();
+  // ★ FIX 2026-07-14 v4: 创建前先清理孤儿画布 (属于 temp-* ID 的)
+  //   这样即使有遗留的孤儿画布, 也不会占着槽位导致新画布创建失败。
+  await store.cleanupOrphanedCanvases().catch((e: Error) => {
+    console.warn('[canvasSession] cleanupOrphanedCanvases failed:', e.message);
+  });
+  const state = store.createCanvas();
   if (!state) return err(res, 409, 'canvas limit reached (max 10, please delete some before creating)');
   if (description !== undefined) {
     state.description = description;
@@ -175,9 +186,9 @@ export function handleCreateCanvas(req: Request, res: Response): Response {
   // 原逻辑: 只 recordAccess 不 claimCanvas → 画布保持无归属 (isUnowned=true)
   //         → 其他 chat 打开时看到无归属画布就复用 → 数据串台 (画布混用)
   // 修复: 创建即认领, 确保每个 chat 创建的画布立即归属该 chat, 其他 chat 不会复用
-  getSessionStore().claimCanvas(state.sessionId, requester);
+  store.claimCanvas(state.sessionId, requester);
   // 记录访问 (用于 lastAccessedCanvasId 自动切回)
-  getSessionStore().recordAccess(state.sessionId, requester);
+  store.recordAccess(state.sessionId, requester);
   return ok(res, state);
 }
 
@@ -186,7 +197,7 @@ export function handleCreateCanvas(req: Request, res: Response): Response {
  * P0: 资源池端点 — 列出 requester 可访问的所有画布 (按序号升序)
  * 默认 public 全部可见, 附上 owner 信息便于 UI 展示
  */
-export function handleListResources(req: Request, res: Response): Response {
+export async function handleListResources(req: Request, res: Response): Promise<Response> {
   const requester = getRequesterChatSessionId(req) ?? (
     typeof req.query.requesterChatSessionId === 'string'
       ? req.query.requesterChatSessionId
@@ -194,6 +205,13 @@ export function handleListResources(req: Request, res: Response): Response {
   );
   if (!requester) return err(res, 401, 'X-Requester-Chat-Session-Id header (or ?requesterChatSessionId=) required');
   const store = getSessionStore();
+  // ★ FIX 2026-07-14 v4: 列表时异步清理孤儿画布 (不阻塞返回)
+  //   只在非 temp requester 时触发, 避免无意义的清理
+  if (!requester.startsWith('temp-')) {
+    store.cleanupOrphanedCanvases().catch((e: Error) => {
+      console.warn('[canvasSession] cleanupOrphanedCanvases (in list) failed:', e.message);
+    });
+  }
   const all = store.listCanvases();
   const accessible = all
     .filter(c => store.canRead(c, requester))

@@ -35,6 +35,16 @@ import {
   type CanvasListResponse,
 } from '../services/canvas/sessionApi';
 
+/**
+ * ★ FIX 2026-07-14: 判断是否为临时 chat ID
+ * chatsStore.createChat 先用 temp-xxx 作为乐观更新 ID, 后端返回真实 ID 后替换。
+ * 如果在 temp ID 阶段触发画布创建, 画布会被认领给 temp ID,
+ * 等 real ID 到来后找不到属于自己的画布 → 又建一个 → 画布堆积。
+ */
+function isTempChatId(id: string | null | undefined): boolean {
+  return !!id && id.startsWith('temp-');
+}
+
 export interface UseChatClickCanvasBridgeOptions {
   /** 当前选中的 chat session id */
   chatId: string | null | undefined;
@@ -101,6 +111,28 @@ export function useChatClickCanvasBridge(
     if (!id) {
       setCanvasId(null);
       setCanvases([]);
+      setReady(true);
+      return null;
+    }
+    // ★ FIX 2026-07-14 v4: 临时 chat ID 不触发画布创建
+    //   chatsStore.createChat 先用 temp-xxx 乐观更新, 后端返回真实 ID 后替换。
+    //   如果在 temp ID 阶段创建画布, real ID 到来后会再建一个 → 画布堆积。
+    //   策略: temp ID 阶段只拉列表 (UI 能看到画布), 不创建/不切换。
+    if (isTempChatId(id)) {
+      let resp = INFLIGHT.get(id);
+      if (!resp) {
+        resp = listCanvasResources(id);
+        INFLIGHT.set(id, resp);
+        resp.finally(() => INFLIGHT.delete(id));
+      }
+      const list = await resp;
+      if (!aliveRef.current) return null;
+      if (list) {
+        setCanvases(list.canvases || []);
+        setMaxCanvases(list.maxCanvases || 10);
+      }
+      // 不设 canvasId, 不标记 lastResolvedFor — 等 real ID 到来后重新 resolve
+      setCanvasId(null);
       setReady(true);
       return null;
     }
