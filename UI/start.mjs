@@ -5,6 +5,28 @@ import fs from "fs";
 import net from "net";
 import { fileURLToPath } from "url";
 
+// ── 进程树杀死辅助 (Windows) ──────────────────────────────────
+// Windows 上 spawn(..., { shell: true }) 会创建 cmd.exe → npx → node 多层子进程。
+// process.kill() 只杀顶层 cmd.exe, 子进程变成孤儿继续运行 (持有 rocksdb 锁等资源)。
+// 用 taskkill /T /F 杀死整个进程树。
+function killProcessTree(proc, label = "process") {
+  if (!proc || proc.exitCode !== null) return;
+  const pid = proc.pid;
+  try {
+    if (process.platform === "win32") {
+      // /T = 连同子进程一起杀, /F = 强制
+      execSync(`taskkill /PID ${pid} /T /F`, { stdio: "ignore" });
+      console.log(`[start] ${label} 进程树已杀死 (PID ${pid})`);
+    } else {
+      proc.kill("SIGTERM");
+      console.log(`[start] ${label} 已发送 SIGTERM (PID ${pid})`);
+    }
+  } catch {
+    // 进程可能已退出, 忽略错误
+    try { proc.kill(); } catch {}
+  }
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ── 0. 启动 Garnet (6379) — RACER Core 依赖 ────────────────────
@@ -179,14 +201,18 @@ async function startElectron() {
   });
 }
 
-// ── 7. 优雅退出：关闭所有进程 ──────────────────────────────────
+// ── 7. 优雅退出：关闭所有进程 (含子进程树) ───────────────────
+// ★ 2026-07-15: 改用 killProcessTree 替代裸 .kill()。
+//   原因: Windows 上 spawn(shell:true) 的子进程 (npx→tsx→node) 不会被
+//   父进程 .kill() 连带杀死, 变成孤儿继续持有 rocksdb LOCK 文件,
+//   导致下次启动时 SurrealDB 初始化超时 30s 后崩溃。
 function cleanup() {
   console.log("\n[start] 正在关闭所有服务...");
-  try { if (electronProcess) electronProcess.kill(); } catch {}
-  try { if (nodeProcess) nodeProcess.kill(); } catch {}
-  try { if (coreProcess) coreProcess.kill(); } catch {}
-  try { if (garnetProcess) garnetProcess.kill(); } catch {}
-  try { gitService.kill(); } catch {}
+  killProcessTree(electronProcess, "Electron");
+  killProcessTree(nodeProcess, "Node.js dev server");
+  killProcessTree(coreProcess, "RACER Core");
+  killProcessTree(garnetProcess, "Garnet");
+  killProcessTree(gitService, "git-service");
   process.exit(0);
 }
 
