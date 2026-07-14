@@ -1106,7 +1106,7 @@ export default function PreviewPanel({
         )}
 
         {/* CANVAS AREA — 整个剩余空间都是画布区 */}
-        <div ref={canvasAreaRef} className="flex-1 relative overflow-hidden flex items-center justify-center">
+        <div ref={canvasAreaRef} className="flex-1 relative overflow-hidden flex items-center justify-center p-3">
           {noCanvas ? renderStandby() : (
             <div
               ref={deviceFrameRef}
