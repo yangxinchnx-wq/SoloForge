@@ -361,12 +361,21 @@ export default function PreviewPanel({
     }
   }, [effectiveCanvasId, renderMode, setDeviceInStore, handleSelectDevice]);
 
-  // ★ 下拉框/颜色选择器打开时隐藏 Flutter 原生窗口, 避免拦截点击
+  // ★ 下拉框/颜色选择器打开时隐藏 Flutter 原生窗口, 避免拦截点击 + 视觉遮挡
   useEffect(() => {
     if (!isElectron()) return;
     const anyDropdownOpen = showDeviceDropdown || showColorPicker;
     window.soloforge?.canvas.setHostVisible?.(!anyDropdownOpen).catch(() => {});
   }, [showDeviceDropdown, showColorPicker]);
+
+  // ★ 按钮 toggle: 先隐藏 Flutter 窗口再打开下拉框, 避免 fixed panel 被 HWND 盖住
+  const toggleDeviceDropdown = useCallback(() => {
+    if (!showDeviceDropdown && isElectron()) {
+      // 即将打开 → 先隐藏 Flutter 窗口 (异步, 但尽早发出)
+      window.soloforge?.canvas.setHostVisible?.(false).catch(() => {});
+    }
+    setShowDeviceDropdown(s => !s);
+  }, [showDeviceDropdown]);
 
   // ★ 设备下拉框 Esc 关闭 (与协同副模型一致)
   useEffect(() => {
@@ -647,19 +656,46 @@ export default function PreviewPanel({
   // 2026-07-11: IncrementalCanvasPusher 已经在 useChatStore 中直接推画布,
   //   PreviewPanel 不再重复推送 — 避免双推冲突 + WebAstPreview 覆盖 Flutter 画布
 
-  // 计算画布实际宽高（无设备约束时填满 PreviewPanel 宽度）
+  // ★ FIX 2026-07-14: 追踪 canvas 实际区域尺寸 (替代硬编码 640 高度)
+  const [canvasAreaSize, setCanvasAreaSize] = useState<{ w: number; h: number }>({ w: 360, h: 640 });
+  useEffect(() => {
+    const el = canvasAreaRef.current;
+    if (!el) return;
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        setCanvasAreaSize({ w: Math.floor(r.width), h: Math.floor(r.height) });
+      }
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // 计算画布实际宽高（无设备约束时填满 PreviewPanel 宽度 + 实际高度）
   const computeFrame = useCallback((preset: DevicePreset | null) => {
     if (preset && preset.w > 0) return { w: preset.w, h: preset.h };
-    return { w: Math.max(320, Math.floor(width - 32)), h: 640 };
-  }, [width]);
+    return {
+      w: Math.max(320, Math.floor(width - 32)),
+      h: Math.max(400, canvasAreaSize.h - 16),
+    };
+  }, [width, canvasAreaSize]);
 
   // ★ 2026-07-14: 将画布实际帧尺寸写入 store, 供 aiBackend (LLM prompt 注入) + incrementalCanvasPusher (canvas.start 参数) 读取
+  // ★ FIX 2026-07-14: 同时写入 fallback key, 确保时序不一致时 aiBackend 也能找到
   const setFrameSizeInStore = deviceStore.setFrameSize;
   useEffect(() => {
-    if (!effectiveCanvasId) return;
+    if (!effectiveCanvasId || !selectedChatId) return;
     const { w, h } = computeFrame(activePreset);
-    setFrameSizeInStore(effectiveCanvasId, { width: w, height: h });
-  }, [effectiveCanvasId, activePreset, computeFrame, setFrameSizeInStore]);
+    const size = { width: w, height: h };
+    setFrameSizeInStore(effectiveCanvasId, size);
+    // ★ 同时写入 fallback key, 确保即使 bridge 还没更新, aiBackend 也能找到帧尺寸
+    const fallbackKey = `canvas-${selectedChatId}`;
+    if (effectiveCanvasId !== fallbackKey) {
+      setFrameSizeInStore(fallbackKey, size);
+    }
+  }, [effectiveCanvasId, activePreset, computeFrame, setFrameSizeInStore, selectedChatId]);
 
   // 启动画布 — 带 30s 超时保护，防止 IPC 卡死导致 UI 永远停在 "启动中"
   const startCanvas = useCallback(async () => {
@@ -1029,7 +1065,7 @@ export default function PreviewPanel({
               <button
                 onClick={() => {
                   setRenderMode('2D');
-                  setShowDeviceDropdown(s => !s);
+                  toggleDeviceDropdown();
                 }}
                 className={`flex items-center gap-1 px-2 py-1 text-[10px] font-mono font-semibold transition-colors ${
                   renderMode === '2D'
@@ -1044,7 +1080,7 @@ export default function PreviewPanel({
               <button
                 onClick={() => {
                   setRenderMode('3D');
-                  setShowDeviceDropdown(s => !s);
+                  toggleDeviceDropdown();
                 }}
                 className={`flex items-center gap-1 px-2 py-1 text-[10px] font-mono font-semibold transition-colors border-l border-[var(--color-outline)]/30 ${
                   renderMode === '3D'
@@ -1057,7 +1093,7 @@ export default function PreviewPanel({
                 <span>3D</span>
               </button>
               <motion.button
-                onClick={() => setShowDeviceDropdown(s => !s)}
+                onClick={toggleDeviceDropdown}
                 whileTap={{ scale: 0.94 }}
                 transition={{ type: 'spring', stiffness: 600, damping: 28 }}
                 className={`flex items-center px-1.5 py-1 text-[10px] font-mono transition-colors border-l border-[var(--color-outline)]/30 ${
@@ -1083,14 +1119,14 @@ export default function PreviewPanel({
             <AnimatePresence>
               {showDeviceDropdown && (
                 <>
-                  {/* 透明 backdrop 仅用于承载 click-outside + z-index */}
+                  {/* 半透明 backdrop: 承载 click-outside + 遮暗背景让 panel 更突出 */}
                   <motion.div
                     key="device-backdrop"
                     variants={deviceBackdropVariants}
                     initial="hidden"
                     animate="visible"
                     exit="hidden"
-                    className="fixed inset-0 z-40 cursor-default"
+                    className="fixed inset-0 z-40 cursor-default bg-black/20"
                     onClick={() => setShowDeviceDropdown(false)}
                   />
 
@@ -1111,6 +1147,8 @@ export default function PreviewPanel({
                       transform: 'translateZ(0)',
                       backfaceVisibility: 'hidden',
                       WebkitBackfaceVisibility: 'hidden',
+                      // ★ 强制不透明背景, 避免被 Flutter HWND 盖住时透出底层内容
+                      backgroundColor: 'var(--color-surface)',
                     }}
                     className="w-80 bg-[var(--color-surface)] border border-[var(--color-outline)]/45 rounded-2xl shadow-[0_24px_64px_rgba(0,0,0,0.15)] p-4 flex flex-col font-sans z-50 text-left cursor-default max-h-[500px]"
                     role="dialog"

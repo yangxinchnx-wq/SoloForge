@@ -149,10 +149,22 @@ export function getCanvasSize(canvasId?: string): CanvasFrameSize {
     if (device && device.width > 0 && device.height > 0) {
       return { width: device.width, height: device.height };
     }
-    // 2. frameSizes
+    // 2. frameSizes 精确匹配
     const frame = state.getFrameSize(canvasId);
     if (frame && frame.width > 0 && frame.height > 0) {
       return frame;
+    }
+
+    // ★ FIX 2026-07-14: 精确 key 找不到时, 尝试 fallback key
+    //   场景: ensureCanvasForChat 刚把映射从 "canvas-{chatId}" 改成 "canvas_N",
+    //   但 PreviewPanel 的 useEffect 还没来得及更新 frameSizes 下的 key
+    if (canvasId.startsWith('canvas_')) {
+      // 真实 ID (canvas_1) → 尝试所有 fallback key (canvas-{chatId})
+      for (const [key, val] of Object.entries(state.frameSizes)) {
+        if (key.startsWith('canvas-') && val.width > 0 && val.height > 0) {
+          return val;
+        }
+      }
     }
   } else {
     // 无 canvasId: 尝试从 frameSizes 取第一个
@@ -160,6 +172,13 @@ export function getCanvasSize(canvasId?: string): CanvasFrameSize {
     if (frames.length > 0 && frames[0].width > 0) {
       return frames[0];
     }
+  }
+
+  // ★ FIX 2026-07-14: 最后兜底 — 尝试任意已有的帧尺寸
+  //   场景: canvasId 是真实 ID, 但 frameSizes 只有 fallback key 的数据
+  const allFrames = Object.values(state.frameSizes);
+  if (allFrames.length > 0 && allFrames[0].width > 0) {
+    return allFrames[0];
   }
 
   // 3. 默认值
