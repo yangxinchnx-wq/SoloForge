@@ -39,6 +39,7 @@ const BACKEND_URL = process.env.SOLOFORGE_BACKEND_URL || 'http://localhost:3001'
 
 let isDev = false;
 let mainWindow = null;
+let splashWindow = null;
 
   // ── 生产模式服务管理 ──────────────────────────────────────────
   // 打包后 Electron 需要自动拉起所有后端进程
@@ -2139,6 +2140,137 @@ function psSetWindowPos(hwnd, x, y, w, h, flags) {
   return false;
 }
 
+// ── 启动 Splash 窗口（白色背景 + logo 呼吸动画） ──
+function createSplashWindow() {
+  const iconPath = path.join(__dirname, '..', 'build', 'icon', 'icon-666.png');
+  const appIcon = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : null;
+
+  // logo 路径: 优先 4K 版本, 回退旧版
+  const logoPath = (() => {
+    const p4k = path.join(__dirname, '..', 'public', 'lightning_logo_4k.png');
+    if (fs.existsSync(p4k)) return p4k;
+    const p = path.join(__dirname, '..', 'public', 'lightning_logo.png');
+    return fs.existsSync(p) ? p : null;
+  })();
+  const logoDataUrl = logoPath
+    ? `data:image/png;base64,${fs.readFileSync(logoPath).toString('base64')}`
+    : '';
+
+  const splashHtml = `<!DOCTYPE html>
+<html><head><style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden;background:#fff}
+  .scene{position:relative;width:100%;height:100%;display:flex;flex-direction:column;
+         align-items:center;justify-content:center;gap:20px}
+
+  /* ── 旋转光环 ── */
+  .ring{position:absolute;width:240px;height:240px;border-radius:50%;
+        border:2px solid transparent;
+        border-top:2px solid rgba(56,189,248,.6);
+        border-right:2px solid rgba(99,102,241,.4);
+        animation:spin 2s linear infinite;
+        filter:drop-shadow(0 0 8px rgba(56,189,248,.3))}
+  .ring.r2{width:280px;height:280px;
+        border-top:2px solid rgba(99,102,241,.5);
+        border-left:2px solid rgba(168,85,247,.3);
+        animation-duration:3s;animation-direction:reverse}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* ── Logo 容器 ── */
+  .logo-box{position:relative;width:160px;height:160px;
+            animation:entry .8s cubic-bezier(.22,1,.36,1) both}
+  @keyframes entry{
+    0%  {transform:scale(.6) rotate(-8deg);opacity:0;filter:blur(12px)}
+    60% {transform:scale(1.05) rotate(1deg);opacity:1;filter:blur(0)}
+    100%{transform:scale(1) rotate(0);opacity:1;filter:blur(0)}
+  }
+  .logo-box img{width:100%;height:100%;object-fit:contain;
+                filter:drop-shadow(0 0 20px rgba(56,189,248,.25));
+                animation:glow 2.8s ease-in-out infinite}
+  @keyframes glow{
+    0%,100%{filter:drop-shadow(0 0 16px rgba(56,189,248,.2))}
+    50%    {filter:drop-shadow(0 0 32px rgba(99,102,241,.45))}
+  }
+
+  /* ── 闪光 ── */
+  .flash{position:absolute;width:200px;height:200px;border-radius:50%;
+         background:radial-gradient(circle,rgba(56,189,248,.18) 0%,transparent 70%);
+         animation:flash 2.8s ease-in-out infinite}
+  @keyframes flash{
+    0%,100%{transform:scale(.8);opacity:.3}
+    50%    {transform:scale(1.4);opacity:.7}
+  }
+
+  /* ── 电粒子 ── */
+  .sparks{position:absolute;width:300px;height:300px;pointer-events:none}
+  .spark{position:absolute;left:50%;top:50%;width:3px;height:3px;border-radius:50%;
+         background:#38bdf8;box-shadow:0 0 6px #38bdf8;
+         animation:fly 2s ease-out infinite}
+  .spark:nth-child(1){animation-delay:0s;--a:0deg;--d:90px}
+  .spark:nth-child(2){animation-delay:.25s;--a:45deg;--d:80px}
+  .spark:nth-child(3){animation-delay:.5s;--a:90deg;--d:95px}
+  .spark:nth-child(4){animation-delay:.75s;--a:135deg;--d:85px}
+  .spark:nth-child(5){animation-delay:1s;--a:180deg;--d:90px}
+  .spark:nth-child(6){animation-delay:1.25s;--a:225deg;--d:80px}
+  .spark:nth-child(7){animation-delay:1.5s;--a:270deg;--d:95px}
+  .spark:nth-child(8){animation-delay:1.75s;--a:315deg;--d:85px}
+  @keyframes fly{
+    0%  {transform:translate(-50%,-50%) rotate(var(--a)) translateY(0);
+         opacity:1;filter:blur(0)}
+    100%{transform:translate(-50%,-50%) rotate(var(--a)) translateY(calc(-1 * var(--d)));
+         opacity:0;filter:blur(1px)}
+  }
+
+  /* ── 加载条 ── */
+  .loader{width:120px;height:3px;border-radius:2px;background:rgba(0,0,0,.06);
+          overflow:hidden;margin-top:12px}
+  .loader::after{content:'';display:block;width:40%;height:100%;border-radius:2px;
+                 background:linear-gradient(90deg,#38bdf8,#6366f1);
+                 animation:slide 1.4s ease-in-out infinite}
+  @keyframes slide{0%{transform:translateX(-100%)}100%{transform:translateX(350%)}}
+
+  /* ── 文字 ── */
+  .title{font:600 14px/1 system-ui,sans-serif;color:#1e293b;letter-spacing:2px;
+         opacity:0;animation:fadeUp .6s .6s ease-out both}
+  @keyframes fadeUp{0%{transform:translateY(8px);opacity:0}100%{transform:translateY(0);opacity:1}}
+</style></head><body>
+  <div class="scene">
+    <div class="ring"></div>
+    <div class="ring r2"></div>
+    <div class="flash"></div>
+    <div class="sparks">
+      <div class="spark"></div><div class="spark"></div><div class="spark"></div><div class="spark"></div>
+      <div class="spark"></div><div class="spark"></div><div class="spark"></div><div class="spark"></div>
+    </div>
+    <div class="logo-box">
+      ${logoDataUrl ? `<img src="${logoDataUrl}" alt="SoloForge">` : ''}
+    </div>
+    <div class="title">SOLOFORGE</div>
+    <div class="loader"></div>
+  </div>
+</body></html>`;
+
+  splashWindow = new BrowserWindow({
+    width: 520,
+    height: 400,
+    frame: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    backgroundColor: '#ffffff',
+    transparent: false,
+    icon: appIcon || undefined,
+    webPreferences: { sandbox: true },
+  });
+  splashWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(splashHtml)}`);
+  splashWindow.center();
+  splashWindow.on('closed', () => { splashWindow = null; });
+  return splashWindow;
+}
+
 function createWindow() {
   // 应用图标: 使用 build/icon/icon-666.png (256x256 高清版)
   const iconPath = path.join(__dirname, '..', 'build', 'icon', 'icon-666.png');
@@ -2337,25 +2469,19 @@ app.whenReady().then(async () => {
     console.log(`[electron] isDev=${isDev} (defaultApp=${process.defaultApp}, isPackaged=${app.isPackaged})`);
   }
 
-  // ── 生产模式: 自动启动所有后端服务 ──
+  // ── Splash 窗口（白色 + logo 动画）立刻显示 ──
+  createSplashWindow();
+
+  // ── 生产模式: 并行启动后端服务（不阻塞 UI） ──
   if (!isDev) {
-    await startProductionServices();
-    // 等待 UI Server (3000) 就绪, 最多 15s
-    console.log('[electron] 等待 UI Server (3000) 就绪...');
-    const ready = await waitForPort(3000, 15000);
-    if (ready) {
-      console.log('[electron] ✓ UI Server (3000) 就绪');
-    } else {
-      console.error('[electron] ✗ UI Server (3000) 未在 15s 内就绪, 渲染器可能白屏');
-    }
+    // fire-and-forget: 服务在后台并行启动
+    startProductionServices().catch(e => console.error('[services] error:', e?.message));
   }
+
+  // CSP / proxy / 缓存清理 — 可以在 splash 期间并行完成
   applyCsp();
   setupApiProxy();
 
-  // 2026-07-11 修复"e壳子出现旧代码"问题 (方案 D, 根因修复):
-  //   原方案 C 的问题:清缓存是 fire-and-forget(不 await),窗口可能在缓存清完前就
-  //   加载了旧字节码。改为 await 确保全部清完再 createWindow。
-  //   同时注入 onHeadersReceived 强制 no-store,让 Chromium 不写任何磁盘缓存。
   try {
     await Promise.all([
       session.defaultSession.clearCache().catch((e) => console.warn('[electron] clearCache:', e?.message)),
@@ -2363,7 +2489,7 @@ app.whenReady().then(async () => {
         storages: ['shadercache', 'cachestorage', 'serviceworkers'],
       }).catch((e) => console.warn('[electron] clearStorageData:', e?.message)),
     ]);
-    console.log('[electron] ✓ session 缓存已清 (awaited)');
+    console.log('[electron] ✓ session 缓存已清');
   } catch (e) {
     console.warn('[electron] 清 session 缓存失败:', e?.message);
   }
@@ -2416,14 +2542,29 @@ app.whenReady().then(async () => {
   // 2026: 启动持久 PS worker(drag/resize 高频 SetWindowPos 用)
   startPsWorker();
 
-  createWindow();                  // 先创建主窗口
-  createCanvasHostWindow(mainWindow); // 再以主窗口为 parent 创建画布宿主 → OS 自动管 z-order
+  // ── 生产模式: 等待 UI Server 就绪后再创建主窗口 ──
+  if (!isDev) {
+    console.log('[electron] splash 显示中, 等待 UI Server (3000) 就绪...');
+    const ready = await waitForPort(3000, 30000);
+    if (ready) {
+      console.log('[electron] ✓ UI Server (3000) 就绪, 加载主窗口');
+    } else {
+      console.error('[electron] ✗ UI Server (3000) 30s 超时, 强制加载');
+    }
+  }
+
+  createWindow();
+  createCanvasHostWindow(mainWindow);
 
 // frame:false + maximizable:true → maximize() 可用
 // 启动后移除 WS_MAXIMIZEBOX | WS_SYSMENU → 无 snap flyout + 无原生关闭按钮红色 hover
 mainWindow.once('ready-to-show', () => {
+  // 关闭 splash, 显示主窗口
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    splashWindow.close();
+    splashWindow = null;
+  }
   mainWindow.show();
-  // 延迟 300ms 等 HWND 稳定后移除 caption button 样式
   setTimeout(() => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       removeCaptionButtonStyles(mainWindow);

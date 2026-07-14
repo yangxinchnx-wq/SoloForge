@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'ui_parser.dart';
 import 'platform_renderer.dart';
 
@@ -115,6 +116,7 @@ void main(List<String> args) {
 
   int port = 9090;
   int? parentHwnd;
+  String? modelsDir;
 
   for (int i = 0; i < args.length; i++) {
     final a = args[i];
@@ -128,12 +130,17 @@ void main(List<String> args) {
       i++;
     } else if (a.startsWith('--parent-hwnd=')) {
       parentHwnd = int.tryParse(a.substring('--parent-hwnd='.length));
+    } else if (a == '--models-dir' && i + 1 < args.length) {
+      modelsDir = args[i + 1];
+      i++;
+    } else if (a.startsWith('--models-dir=')) {
+      modelsDir = a.substring('--models-dir='.length);
     }
   }
 
-  _writeLog('[main] started port=$port parentHwnd=$parentHwnd args=${args.join(" ")}');
+  _writeLog('[main] started port=$port parentHwnd=$parentHwnd modelsDir=$modelsDir args=${args.join(" ")}');
 
-  runApp(CanvasApp(port: port, parentHwnd: parentHwnd));
+  runApp(CanvasApp(port: port, parentHwnd: parentHwnd, modelsDir: modelsDir));
 }
 
 void _writeLog(String msg) {
@@ -150,8 +157,9 @@ void _writeLog(String msg) {
 class CanvasApp extends StatefulWidget {
   final int port;
   final int? parentHwnd;
+  final String? modelsDir;
 
-  const CanvasApp({super.key, required this.port, this.parentHwnd});
+  const CanvasApp({super.key, required this.port, this.parentHwnd, this.modelsDir});
 
   @override
   State<CanvasApp> createState() => _CanvasAppState();
@@ -165,6 +173,13 @@ class _CanvasAppState extends State<CanvasApp> {
   // ── 3D 设备状态: 当前活跃 session 的设备列表 ──
   final Map<String, DeviceInstance> _devices = {};
   String? _activeSessionId;
+
+  // ── 3D 模型查看器: 当前加载的 GLB 文件路径 (相对 modelsDir) ──
+  String? _currentGlbPath;
+  InAppWebViewController? _webviewController;
+  StreamSubscription<FileSystemEvent>? _modelWatcher;
+  // model-viewer 加载重试计数 (文件刚放入时可能还没写完)
+  int _loadRetry = 0;
 
   // ── 2026-07-08 修复: 防止画布进程崩溃 ──────────────────────────
   //
