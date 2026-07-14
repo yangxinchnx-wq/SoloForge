@@ -16,9 +16,10 @@
  *   - 总结块进入时从下淡入 (stream-summary-enter)
  *   - 消除 2 秒后折叠的视觉跳变感
  */
-import React, { useEffect } from 'react';
-import { Loader2, CheckCircle2, AlertCircle, Clock } from '../utils/icons';
+import React, { useEffect, useMemo } from 'react';
+import { Loader2, CheckCircle2, AlertCircle, Clock, Gauge } from '../utils/icons';
 import type { PermissionMode } from '../types/streaming';
+import type { UIUsagePart } from '../types/messages';
 import { useStreamingStore } from '../state/streamingStore';
 import { promptCardPool } from '../services/promptCardPool';
 import { usePromptCards } from '../hooks/usePromptCards';
@@ -26,6 +27,7 @@ import { PromptCard } from './PromptCard';
 import { useAutoPersist, clearChatAll } from '../services/actorIntegration';
 import { useStreamSummary } from '../services/useStreamSummary';
 import { useRootTaskFromParts } from '../services/usePartsDerived';
+import { useLastAssistantMessage } from '../services/uiMessageStore';
 
 interface StreamPanelProps {
   chatId: string;
@@ -214,11 +216,27 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
     );
   }
 
-  // 完成/错误: 显示总结块
+  // ★ 2026-07-14 v2: 从 parts 提取 usage 数据, 显示在总结下方
+  const lastMsg = useLastAssistantMessage(chatId);
+  const usageParts = useMemo(
+    () => (lastMsg?.parts.filter(p => p.type === 'usage') as UIUsagePart[]) ?? [],
+    [lastMsg],
+  );
+
+  // 完成/错误: 显示总结块 + Token 统计
   if (!isDone && !isError) return null;
+
+  const formatToken = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+  // 聚合多个 usage part (多模型场景各自一个 usage part)
+  const totalPrompt = usageParts.reduce((s, p) => s + p.promptTokens, 0);
+  const totalCompletion = usageParts.reduce((s, p) => s + p.completionTokens, 0);
+  const totalTokens = usageParts.reduce((s, p) => s + p.totalTokens, 0);
+  const totalCached = usageParts.reduce((s, p) => s + (p.cachedTokens ?? 0), 0);
+  const cacheRate = totalPrompt > 0 ? Math.round((totalCached / totalPrompt) * 100) : 0;
 
   return (
     <div className="w-full pl-[58px] pr-3">
+      {/* 总结气泡 */}
       <div className="border border-outline/30 rounded-lg bg-bg/50 p-3 space-y-1">
         <div className="flex items-center gap-1.5 text-on-surface/80 mb-1.5">
           {isError
@@ -251,6 +269,24 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
           </div>
         )}
       </div>
+
+      {/* Token 统计 — 总结气泡下方 */}
+      {usageParts.length > 0 && (
+        <div className="flex items-center gap-2 px-1 py-1 text-[10px] font-mono text-on-surface/40">
+          <Gauge className="w-3 h-3 text-on-surface/40 shrink-0" />
+          <span className="shrink-0">Token</span>
+          <span className="text-on-surface/50">
+            {formatToken(totalPrompt)} + {formatToken(totalCompletion)}
+          </span>
+          <span className="text-on-surface/30">=</span>
+          <span className="text-on-surface/70 font-bold">{formatToken(totalTokens)}</span>
+          {totalCached > 0 && (
+            <span className="text-emerald-400/60">
+              (缓存命中 {formatToken(totalCached)} · {cacheRate}%)
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }

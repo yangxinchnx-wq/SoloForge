@@ -16,11 +16,11 @@
  * 2026-07-10: 视觉打磨 — 交错入场动画、审计折叠、phase 过渡、步骤条动画
  * 2026-07-11: 补充 model-action Part 渲染器 (修复 LLM/Agent 思考过程不显示的 bug)
  *
- * ★ 2026-07-14: 全量显示修复
- *   - 移除 subtask-step / delivery 过滤 (之前被错误隐藏)
- *   - 移除自动折叠 (1.5s 后消失导致用户看不到)
- *   - 新增 usage / task-summary part 渲染器
- *   - 过程块始终保持展开, 用户手动折叠
+ * ★ 2026-07-14 v2: 流程精简 + 总结联动
+ *   - 流程不再是独立气泡 (去掉 border/bg 容器), 改为内联折叠
+ *   - 完成后自动折叠流程 (总结出现时流程收起)
+ *   - usage 移至总结气泡下方显示 (不在流程中显示)
+ *   - subtask-step / delivery 不再过滤
  */
 
 import React, { memo, useDeferredValue, useState, useCallback, useEffect } from 'react';
@@ -95,13 +95,9 @@ export const UIMessagePartsRenderer = memo(function UIMessagePartsRenderer({
   const deferredParts = useDeferredValue(message?.parts ?? EMPTY_PARTS);
   const isStreaming = message?.status === 'streaming';
 
-  // ★ FIX 2026-07-14: 全量显示 — 不再过滤 subtask-step / delivery
-  //   只过滤 text (LLM 文本已在主对话气泡显示, 避免重复)
-  //   subtask-step: 子任务执行步骤 (READ_TASK/EXECUTE 等), 之前被错误隐藏
-  //   delivery: 交付结果, 之前被错误隐藏
-  //   usage: Token 统计, 需要可见
+  // ★ 2026-07-14 v2: 过滤 text (主气泡已显示) + usage (移至总结下方显示)
   const processParts = deferredParts.filter(
-    p => p.type !== 'text'
+    p => p.type !== 'text' && p.type !== 'usage'
   );
 
   if (!message) return null;
@@ -120,11 +116,11 @@ export const UIMessagePartsRenderer = memo(function UIMessagePartsRenderer({
   );
 });
 
-// ==================== CollapsibleProcess — 可折叠过程块 ====================
-// ★ 2026-07-14: 用户要求 — 简化、可折叠、不消失
+// ==================== CollapsibleProcess — 内联可折叠过程 ====================
+// ★ 2026-07-14 v2: 不再是独立气泡 (无 border/bg 容器)
 //   - streaming 时自动展开
-//   - 完成后 1.5s 自动折叠 (但不消失)
-//   - 用户可手动点击展开/折叠
+//   - 完成后自动折叠 (总结出现时流程收起, 用户可手动展开查看)
+//   - 内联样式: 只有一个可点击的折叠头 + 展开内容
 
 interface CollapsibleProcessProps {
   parts: UIPart[];
@@ -136,13 +132,16 @@ const CollapsibleProcess = memo(function CollapsibleProcess({ parts, isStreaming
   const [isOpen, setIsOpen] = useState(true);
   const [userToggled, setUserToggled] = useState(false);
 
-  // ★ FIX 2026-07-14: 移除自动折叠 — 过程块始终保持展开
-  //   原逻辑: streaming 结束后 1.5s 自动折叠, 导致用户来不及看就消失了
-  //   新逻辑: 始终展开, 用户可手动点击折叠
-  //   streaming 时确保展开
+  // ★ 2026-07-14 v2: streaming 时展开; 完成后自动折叠 (用户可手动展开)
   useEffect(() => {
-    if (isStreaming && !isOpen) {
-      setIsOpen(true);
+    if (isStreaming) {
+      if (!isOpen) setIsOpen(true);
+      return;
+    }
+    // streaming 结束后自动折叠 (仅在用户未手动操作过时)
+    if (!userToggled) {
+      const timer = setTimeout(() => setIsOpen(false), 800);
+      return () => clearTimeout(timer);
     }
   }, [isStreaming]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -152,11 +151,11 @@ const CollapsibleProcess = memo(function CollapsibleProcess({ parts, isStreaming
   }, []);
 
   return (
-    <div className="rounded-lg border border-outline/20 bg-bg/30 overflow-hidden">
-      {/* 折叠头 */}
+    <div>
+      {/* 折叠头 — 内联, 无容器样式 */}
       <button
         onClick={handleToggle}
-        className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[11px] text-on-surface/60 hover:bg-surface/40 transition-colors"
+        className="flex items-center gap-1.5 px-1 py-0.5 text-[11px] text-on-surface/50 hover:text-on-surface/80 transition-colors"
       >
         {isStreaming ? (
           <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
@@ -165,11 +164,11 @@ const CollapsibleProcess = memo(function CollapsibleProcess({ parts, isStreaming
         ) : (
           <ChevronRight className="w-3 h-3 shrink-0" />
         )}
-        <span className="font-medium">过程</span>
+        <span className="font-medium">流程</span>
         <span className="text-[10px] text-on-surface/30 font-mono ml-0.5">{parts.length}</span>
       </button>
 
-      {/* 展开内容 */}
+      {/* 展开内容 — 无 border/bg, 直接内联 */}
       <AnimatePresence initial={false}>
         {isOpen && (
           <motion.div
@@ -179,7 +178,7 @@ const CollapsibleProcess = memo(function CollapsibleProcess({ parts, isStreaming
             transition={{ duration: 0.2, ease: EASE }}
             className="overflow-hidden"
           >
-            <div className="flex flex-col gap-1.5 px-3 pb-2.5 pt-0.5">
+            <div className="flex flex-col gap-1.5 pl-1 pb-1 pt-0.5">
               {parts.map((part, index) => {
                 const isLast = index === parts.length - 1;
                 return (
