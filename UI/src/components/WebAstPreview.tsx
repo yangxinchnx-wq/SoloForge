@@ -249,13 +249,10 @@ function renderNode(node: UniversalNode, key: string): React.ReactNode {
       );
 
     case 'image':
+      if (!n.src) return null;
       return (
-        <div key={key} style={{ ...style, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f3f4f6', borderRadius: '8px', minHeight: '60px' }}>
-          {n.src ? (
-            <img src={n.src} alt={n.alt || ''} style={{ maxWidth: '100%', maxHeight: '100%' }} />
-          ) : (
-            <span style={{ color: '#9ca3af', fontSize: '11px' }}>{n.alt || 'image'}</span>
-          )}
+        <div key={key} style={{ ...style, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px' }}>
+          <img src={n.src} alt={n.alt || ''} style={{ maxWidth: '100%', maxHeight: '100%' }} />
         </div>
       );
 
