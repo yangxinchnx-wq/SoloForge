@@ -178,30 +178,42 @@ export default function AgentCustomTab() {
     if (saved.id) { setSelectedId(saved.id); fetchDetail(saved.id); }
   }, [editingAgent, fetchAgents, fetchDetail]);
 
+  const handleSaveSystemPrompt = useCallback(async (agentId: string, systemPrompt: string): Promise<void> => {
+    if (!detail) return;
+    try {
+      const res = await fetch(`/api/java-agent/api/agents/${encodeURIComponent(agentId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...detail, systemPrompt }),
+      });
+      if (res.ok) fetchDetail(agentId);
+    } catch { /* ignore */ }
+  }, [detail, fetchDetail]);
+
   return (
     <div className="space-y-4 animate-fadeIn">
       {/* Header */}
       <div className="border-b border-[var(--color-outline)]/20 pb-3 mb-2">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-base font-bold text-[var(--color-on-surface)]">助理池管理</h3>
+            <h3 className="text-lg font-bold text-[var(--color-on-surface)]">助理池管理</h3>
           </div>
           <div className="flex items-center gap-2">
             <ServiceStatusBadge alive={serviceAlive} loading={loading} />
             <button
               onClick={handleOpenCreate}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-primary/30 bg-primary/10 text-primary text-[10px] font-bold hover:bg-primary/20 transition-colors"
+              className="flex items-center gap-1 px-3 py-2 rounded-lg border border-primary/30 bg-primary/10 text-primary text-[11px] font-bold hover:bg-primary/20 transition-colors active:scale-[0.96]"
               title="新建助理"
             >
-              <Plus className="w-3 h-3" />
+              <Plus className="w-3.5 h-3.5" />
               新建
             </button>
             <button
               onClick={fetchAgents}
-              className="p-1.5 rounded-lg border border-[var(--color-outline)]/30 hover:bg-[var(--color-surface-bright)]/40 text-on-surface/70 hover:text-[var(--color-on-surface)] transition-colors"
+              className="p-2 rounded-lg border border-[var(--color-outline)]/30 hover:bg-[var(--color-surface-bright)]/40 text-on-surface/70 hover:text-[var(--color-on-surface)] transition-colors active:scale-[0.96]"
               title="刷新助理列表"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             </button>
           </div>
         </div>
@@ -220,18 +232,18 @@ export default function AgentCustomTab() {
 
       <div className="grid grid-cols-12 gap-4">
         {/* Left: 助理列表 */}
-        <div className="col-span-5 space-y-2">
-          <div className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono">
+        <div className="col-span-4 space-y-2">
+          <div className="text-[11px] text-on-surface/50 font-bold uppercase tracking-wider font-mono">
             助理列表 ({agents.length})
           </div>
           {loading && agents.length === 0 ? (
             <div className="space-y-2">
               {[1, 2, 3, 4].map(i => (
-                <div key={i} className="h-20 rounded-xl bg-[var(--color-surface-bright)]/30 animate-pulse" />
+                <div key={i} className="h-24 rounded-xl bg-[var(--color-surface-bright)]/30 animate-pulse" />
               ))}
             </div>
           ) : agents.length === 0 ? (
-            <div className="p-6 rounded-xl border border-dashed border-[var(--color-outline)]/30 text-center text-on-surface/40 text-xs">
+            <div className="p-8 rounded-xl border border-dashed border-[var(--color-outline)]/30 text-center text-on-surface/40 text-sm">
               {serviceAlive === false ? '服务未启动' : '暂无助理'}
             </div>
           ) : (
@@ -243,7 +255,7 @@ export default function AgentCustomTab() {
                 return (
                   <div
                     key={agent.id}
-                    className={`flex items-start gap-2.5 p-2.5 rounded-xl border text-left transition-all ${
+                    className={`flex items-start gap-3 p-3.5 rounded-xl border text-left transition-all ${
                       isSelected
                         ? 'border-primary/40 bg-primary/10 shadow-sm'
                         : 'border-outline/25 bg-[var(--color-surface)] hover:bg-[var(--color-surface-bright)]/40'
@@ -251,32 +263,32 @@ export default function AgentCustomTab() {
                   >
                     <button
                       onClick={() => setSelectedId(agent.id)}
-                      className="flex items-start gap-2.5 flex-1 min-w-0 cursor-pointer"
+                      className="flex items-start gap-3 flex-1 min-w-0 cursor-pointer"
                       style={{ background: 'none', border: 'none', padding: 0, textAlign: 'left' }}
                     >
-                      <div className={`p-1.5 rounded-lg border shrink-0 ${meta.color}`}>
+                      <div className={`p-2 rounded-xl border shrink-0 ${meta.color}`}>
                         {agent.avatar ? (
-                          <span className="text-sm">{agent.avatar}</span>
+                          <span className="text-lg">{agent.avatar}</span>
                         ) : (
-                          <RoleIcon className="w-3.5 h-3.5" />
+                          <RoleIcon className="w-5 h-5" />
                         )}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-2">
-                          <span className={`text-xs font-bold truncate ${isSelected ? 'text-primary' : 'text-on-surface'}`}>
+                          <span className={`text-sm font-bold truncate ${isSelected ? 'text-primary' : 'text-on-surface'}`}>
                             {agent.name}
                           </span>
-                          <span className="text-[9px] font-mono opacity-50 shrink-0 uppercase">{agent.level}</span>
+                          <span className="text-[10px] font-mono opacity-50 shrink-0 uppercase">{agent.level}</span>
                         </div>
-                        <div className="flex items-center gap-1.5 mt-0.5">
-                          <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-on-surface/5 text-on-surface/60 shrink-0">
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-on-surface/5 text-on-surface/60 shrink-0">
                             {agent.id}
                           </span>
-                          <span className="text-[9px] opacity-50 truncate">{getStrategyLabel(agent.strategy)}</span>
+                          <span className="text-[10px] opacity-50 truncate">{getStrategyLabel(agent.strategy)}</span>
                         </div>
-                        <div className="flex items-center gap-2 mt-1 text-[9px] opacity-50">
+                        <div className="flex items-center gap-2 mt-1.5 text-[10px] opacity-50">
                           <span className="flex items-center gap-0.5">
-                            <Activity className="w-2.5 h-2.5" />
+                            <Activity className="w-3 h-3" />
                             {agent.taskCount} 任务
                           </span>
                           <span>·</span>
@@ -286,7 +298,7 @@ export default function AgentCustomTab() {
                     </button>
                     <button
                       onClick={(e) => { e.stopPropagation(); handleToggleEnabled(agent.id, agent.enabled === false); }}
-                      className={`p-1 rounded shrink-0 transition-colors cursor-pointer ${
+                      className={`p-1.5 rounded shrink-0 transition-colors cursor-pointer ${
                         agent.enabled === false
                           ? 'text-on-surface/30 hover:text-emerald-400'
                           : 'text-emerald-400 hover:text-on-surface/30'
@@ -294,9 +306,9 @@ export default function AgentCustomTab() {
                       title={agent.enabled === false ? '启用' : '禁用'}
                     >
                       {agent.enabled === false ? (
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg>
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg>
                       ) : (
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                       )}
                     </button>
                   </div>
@@ -307,21 +319,22 @@ export default function AgentCustomTab() {
         </div>
 
         {/* Right: 助理详情 + 反馈训练 */}
-        <div className="col-span-7 space-y-3 overflow-y-auto max-h-[calc(85vh-220px)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <div className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-2">
+        <div className="col-span-8 space-y-3 overflow-y-auto max-h-[calc(85vh-200px)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="text-[11px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-2">
             助理详情
           </div>
           {!selectedId ? (
-            <div className="p-8 rounded-xl border border-dashed border-[var(--color-outline)]/30 text-center text-on-surface/40 text-xs">
+            <div className="p-10 rounded-xl border border-dashed border-[var(--color-outline)]/30 text-center text-on-surface/40 text-sm">
               ← 点击左侧助理查看详情
             </div>
           ) : loadingDetail ? (
-            <div className="h-64 rounded-xl bg-[var(--color-surface-bright)]/30 animate-pulse" />
+            <div className="h-72 rounded-xl bg-[var(--color-surface-bright)]/30 animate-pulse" />
           ) : detail ? (
             <>
               <AgentDetailPanel detail={detail} onClose={() => setSelectedId(null)}
                 onEdit={handleOpenEdit} onDelete={handleDelete} onToggle={handleToggleEnabled}
-                confirmDelete={confirmDelete} onConfirmDelete={setConfirmDelete} />
+                confirmDelete={confirmDelete} onConfirmDelete={setConfirmDelete}
+                onSaveSystemPrompt={handleSaveSystemPrompt} />
               <FeedTrainingPanel agentId={detail.id} agentName={detail.name} />
             </>
           ) : (
@@ -367,25 +380,44 @@ function ServiceStatusBadge({ alive, loading }: { alive: boolean | null; loading
   );
 }
 
-function AgentDetailPanel({ detail, onClose, onEdit, onDelete, onToggle, confirmDelete, onConfirmDelete }: {
+function AgentDetailPanel({ detail, onClose, onEdit, onDelete, onToggle, confirmDelete, onConfirmDelete, onSaveSystemPrompt }: {
   detail: AgentDetail; onClose: () => void; onEdit: () => void; onDelete: (id: string) => void;
   onToggle: (id: string, enabled: boolean) => void; confirmDelete: string | null; onConfirmDelete: (id: string | null) => void;
+  onSaveSystemPrompt: (agentId: string, systemPrompt: string) => Promise<void>;
 }) {
   const meta = getRoleMeta(detail.role);
   const RoleIcon = meta.icon;
-  const promptPreview = (detail.systemPrompt || '').slice(0, 500);
-  const promptTruncated = (detail.systemPrompt || '').length > 500;
+
+  // ── System Prompt 内联编辑状态 ──
+  const [isEditingPrompt, setIsEditingPrompt] = useState(false);
+  const [editedPrompt, setEditedPrompt] = useState(detail.systemPrompt || '');
+  const [savingPrompt, setSavingPrompt] = useState(false);
+
+  useEffect(() => {
+    setIsEditingPrompt(false);
+    setEditedPrompt(detail.systemPrompt || '');
+  }, [detail.id, detail.systemPrompt]);
+
+  const handleSavePrompt = useCallback(async () => {
+    setSavingPrompt(true);
+    try {
+      await onSaveSystemPrompt(detail.id, editedPrompt);
+    } finally {
+      setSavingPrompt(false);
+      setIsEditingPrompt(false);
+    }
+  }, [detail.id, editedPrompt, onSaveSystemPrompt]);
 
   return (
     <div className="rounded-xl border border-[var(--color-outline)]/25 bg-[var(--color-surface)] overflow-hidden">
       {/* Header */}
-      <div className="flex items-center gap-3 p-3 border-b border-[var(--color-outline)]/20 bg-[var(--color-bg)]">
-        <div className={`p-2 rounded-lg border ${meta.color}`}>
-          {detail.avatar ? <span className="text-lg">{detail.avatar}</span> : <RoleIcon className="w-4 h-4" />}
+      <div className="flex items-center gap-3 p-4 border-b border-[var(--color-outline)]/20 bg-[var(--color-bg)]">
+        <div className={`p-2.5 rounded-xl border ${meta.color}`}>
+          {detail.avatar ? <span className="text-2xl">{detail.avatar}</span> : <RoleIcon className="w-6 h-6" />}
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-bold text-[var(--color-on-surface)]">{detail.name}</span>
+            <span className="text-base font-bold text-[var(--color-on-surface)]">{detail.name}</span>
             <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
               {detail.id}
             </span>
@@ -393,64 +425,64 @@ function AgentDetailPanel({ detail, onClose, onEdit, onDelete, onToggle, confirm
               <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20">已禁用</span>
             )}
           </div>
-          <div className="text-[10px] text-on-surface/50 mt-0.5">
+          <div className="text-[11px] text-on-surface/50 mt-1">
             {meta.label} · {getStrategyLabel(detail.strategy)} · <span className="uppercase">{detail.level}</span>
           </div>
         </div>
         <div className="flex items-center gap-1">
           <button
             onClick={onEdit}
-            className="p-1.5 hover:bg-primary/10 rounded text-on-surface/40 hover:text-primary transition-colors cursor-pointer"
+            className="p-2 hover:bg-primary/10 rounded-lg text-on-surface/40 hover:text-primary transition-colors cursor-pointer active:scale-[0.96]"
             title="编辑助理"
           >
-            <Pencil className="w-3.5 h-3.5" />
+            <Pencil className="w-4 h-4" />
           </button>
           <button
             onClick={() => onToggle(detail.id, detail.enabled === false)}
-            className={`p-1.5 rounded transition-colors cursor-pointer ${
+            className={`p-2 rounded-lg transition-colors cursor-pointer active:scale-[0.96] ${
               detail.enabled === false ? 'text-on-surface/30 hover:text-emerald-400' : 'text-emerald-400 hover:text-on-surface/30'
             }`}
             title={detail.enabled === false ? '启用' : '禁用'}
           >
             {detail.enabled === false ? (
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg>
             ) : (
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
             )}
           </button>
           {confirmDelete === detail.id ? (
-            <div className="flex items-center gap-1 ml-1">
+            <div className="flex items-center gap-1.5 ml-1">
               <button onClick={() => onDelete(detail.id)}
-                className="px-2 py-1 rounded text-[9px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:bg-rose-500/30 cursor-pointer">
+                className="px-2.5 py-1 rounded-md text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:bg-rose-500/30 cursor-pointer active:scale-[0.96]">
                 确认删除
               </button>
               <button onClick={() => onConfirmDelete(null)}
-                className="px-2 py-1 rounded text-[9px] font-bold bg-on-surface/5 text-on-surface/50 hover:bg-on-surface/10 cursor-pointer">
+                className="px-2.5 py-1 rounded-md text-[10px] font-bold bg-on-surface/5 text-on-surface/50 hover:bg-on-surface/10 cursor-pointer active:scale-[0.96]">
                 取消
               </button>
             </div>
           ) : (
             <button
               onClick={() => onConfirmDelete(detail.id)}
-              className="p-1.5 hover:bg-rose-500/10 rounded text-on-surface/30 hover:text-rose-400 transition-colors cursor-pointer"
+              className="p-2 hover:bg-rose-500/10 rounded-lg text-on-surface/30 hover:text-rose-400 transition-colors cursor-pointer active:scale-[0.96]"
               title="删除助理"
             >
-              <Trash2 className="w-3.5 h-3.5" />
+              <Trash2 className="w-4 h-4" />
             </button>
           )}
           <button
             onClick={onClose}
-            className="p-1 hover:bg-[var(--color-surface-bright)]/40 rounded text-on-surface/40 hover:text-[var(--color-on-surface)]"
+            className="p-1.5 hover:bg-[var(--color-surface-bright)]/40 rounded-lg text-on-surface/40 hover:text-[var(--color-on-surface)] active:scale-[0.96]"
           >
-            <X className="w-3.5 h-3.5" />
+            <X className="w-4 h-4" />
           </button>
         </div>
       </div>
 
       {/* Body */}
-      <div className="p-3 space-y-3 text-xs">
+      <div className="p-4 space-y-4 text-xs">
         {/* Stats Grid */}
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-4 gap-2.5">
           <StatBox icon={Activity} label="任务数" value={String(detail.taskCount ?? 0)} />
           <StatBox icon={Zap} label="温度" value={detail.temperature != null ? String(detail.temperature) : '—'} />
           <StatBox icon={RefreshCw} label="最大轮次" value={String(detail.maxRounds ?? '—')} />
@@ -465,14 +497,14 @@ function AgentDetailPanel({ detail, onClose, onEdit, onDelete, onToggle, confirm
         {/* Capabilities */}
         {detail.capabilities && detail.capabilities.length > 0 && (
           <div>
-            <div className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1">
+            <div className="text-[11px] text-on-surface/50 font-bold uppercase tracking-wider font-mono mb-1.5">
               能力 ({detail.capabilities.length})
             </div>
-            <div className="flex flex-wrap gap-1">
+            <div className="flex flex-wrap gap-1.5">
               {detail.capabilities.map(cap => (
                 <span
                   key={cap}
-                  className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20"
+                  className="text-[11px] font-mono px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20"
                 >
                   {getCapabilityLabel(cap)}
                 </span>
@@ -481,23 +513,64 @@ function AgentDetailPanel({ detail, onClose, onEdit, onDelete, onToggle, confirm
           </div>
         )}
 
-        {/* System Prompt Preview */}
-        {promptPreview && (
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <div className="text-[10px] text-on-surface/50 font-bold uppercase tracking-wider font-mono">
-                System Prompt 预览
-              </div>
+        {/* System Prompt — 可内联编辑 */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[11px] text-on-surface/50 font-bold uppercase tracking-wider font-mono">
+              System Prompt
+            </div>
+            <div className="flex items-center gap-2">
               {detail.systemPromptVersion && (
-                <span className="text-[9px] font-mono opacity-50">v{detail.systemPromptVersion}</span>
+                <span className="text-[10px] font-mono opacity-50">v{detail.systemPromptVersion}</span>
+              )}
+              {isEditingPrompt ? (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => { setEditedPrompt(detail.systemPrompt || ''); setIsEditingPrompt(false); }}
+                    className="px-2.5 py-1 rounded-md text-[11px] font-bold border border-[var(--color-outline)]/20 text-on-surface/60 hover:bg-[var(--color-surface-bright)]/40 cursor-pointer transition-colors active:scale-[0.96]"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={handleSavePrompt}
+                    disabled={savingPrompt}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold border border-[var(--color-primary)]/30 bg-[var(--color-primary)]/10 text-[var(--color-primary)] hover:bg-[var(--color-primary)]/20 cursor-pointer transition-colors active:scale-[0.96] disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <Save className="w-3 h-3" />
+                    {savingPrompt ? '保存中...' : '保存'}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setIsEditingPrompt(true)}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold border border-[var(--color-outline)]/20 text-on-surface/50 hover:text-[var(--color-primary)] hover:border-[var(--color-primary)]/30 cursor-pointer transition-colors active:scale-[0.96]"
+                >
+                  <Pencil className="w-3 h-3" />
+                  编辑
+                </button>
               )}
             </div>
-            <div className="p-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-outline)]/20 font-mono text-[10px] text-on-surface/70 max-h-48 overflow-y-auto whitespace-pre-wrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              {promptPreview}
-              {promptTruncated && <span className="opacity-50">... ({(detail.systemPrompt || '').length - 500} 字符省略)</span>}
-            </div>
           </div>
-        )}
+          {isEditingPrompt ? (
+            <div>
+              <textarea
+                value={editedPrompt}
+                onChange={(e) => setEditedPrompt(e.target.value)}
+                placeholder="输入 System Prompt..."
+                autoFocus
+                className="w-full h-56 px-3 py-2.5 text-[12px] rounded-lg bg-[var(--color-bg)] border border-[var(--color-outline)]/20 text-[var(--color-on-surface)] placeholder:text-on-surface/25 resize-y focus:outline-none focus:border-[var(--color-primary)]/40 transition-colors font-mono leading-relaxed [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              />
+              <div className="flex items-center justify-between mt-1.5 text-[10px] text-on-surface/30 font-mono">
+                <span>{editedPrompt.length} 字符</span>
+                {editedPrompt.length > 2000 && <span className="text-amber-400/60">建议控制在 2000 字符以内</span>}
+              </div>
+            </div>
+          ) : (
+            <div className="p-3 rounded-lg bg-[var(--color-bg)] border border-[var(--color-outline)]/20 font-mono text-[11px] text-on-surface/70 max-h-40 overflow-y-auto whitespace-pre-wrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden leading-relaxed">
+              {detail.systemPrompt || <span className="opacity-40 italic">暂无 System Prompt，点击「编辑」添加</span>}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -515,12 +588,12 @@ function StatBox({
   highlight?: boolean;
 }) {
   return (
-    <div className="p-2 rounded-lg border border-[var(--color-outline)]/20 bg-[var(--color-bg)]">
-      <div className="flex items-center gap-1 text-[9px] text-on-surface/50 uppercase tracking-wider font-mono mb-0.5">
-        <Icon className="w-2.5 h-2.5" />
+    <div className="p-2.5 rounded-lg border border-[var(--color-outline)]/20 bg-[var(--color-bg)]">
+      <div className="flex items-center gap-1 text-[10px] text-on-surface/50 uppercase tracking-wider font-mono mb-1">
+        <Icon className="w-3 h-3" />
         {label}
       </div>
-      <div className={`text-xs font-bold ${highlight ? 'text-emerald-400' : 'text-on-surface'}`}>{value}</div>
+      <div className={`text-sm font-bold ${highlight ? 'text-emerald-400' : 'text-on-surface'}`}>{value}</div>
     </div>
   );
 }
