@@ -42,11 +42,11 @@ declare global {
 }
 
 // ── 模式选项配置 ──
-const MODE_OPTIONS: { id: ProxyMode; label: string; desc: string; defaultMode?: boolean }[] = [
-  { id: 'system', label: '系统代理', desc: '读取 OS 代理设置，含 WPAD/PAC 自动发现', defaultMode: true },
-  { id: 'direct', label: '直连模式', desc: '不使用代理，所有请求直连' },
-  { id: 'manual', label: '手动代理', desc: '用户手动配置代理服务器地址和端口' },
-  { id: 'pac',    label: 'PAC 自动配置', desc: '通过 PAC URL 自动决定代理路由规则' },
+const MODE_OPTIONS: { id: ProxyMode; label: string; desc: string; defaultMode?: boolean; icon: string }[] = [
+  { id: 'system', label: '系统代理', desc: '读取 OS 代理设置，含 WPAD/PAC 自动发现', defaultMode: true, icon: '🖥️' },
+  { id: 'direct', label: '直连模式', desc: '不使用代理，所有请求直连', icon: '📡' },
+  { id: 'manual', label: '手动代理', desc: '手动配置代理服务器地址和端口', icon: '⚙️' },
+  { id: 'pac',    label: 'PAC 自动配置', desc: '通过 PAC URL 自动决定代理路由规则', icon: '📋' },
 ];
 
 const PROTOCOL_OPTIONS: { id: ProxyProtocol; label: string }[] = [
@@ -147,20 +147,15 @@ export default function ProxyTab() {
     }
   }, []);
 
-  // ── 模式切换按钮样式 ──
-  const modeBtnClass = (m: ProxyMode) =>
-    `p-3 rounded-xl border text-left cursor-pointer transition-all duration-150 ${
-      mode === m
-        ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/8 text-[var(--color-on-surface)] shadow-sm'
-        : 'border-[var(--color-outline)]/15 text-on-surface/60 hover:border-[var(--color-outline)]/30 hover:bg-[var(--color-surface)]'
-    }`;
+  // ── 当前选中模式的序号 ──
+  const activeModeIndex = MODE_OPTIONS.findIndex(o => o.id === mode);
 
   // ── 渲染 ──
   return (
-    <div className="space-y-5 animate-fadeIn">
+    <div className="flex flex-col h-full animate-fadeIn">
       {/* 标题区 */}
-      <div className="border-b border-[var(--color-outline)]/15 pb-3">
-        <h3 className="text-base font-bold text-[var(--color-on-surface)]">网络与代理配置</h3>
+      <div className="border-b border-[var(--color-outline)]/15 pb-3 mb-4 shrink-0">
+        <h3 className="text-base font-bold text-[var(--color-on-surface)]" style={{ textWrap: 'balance' }}>网络与代理配置</h3>
         <p className="text-xs text-on-surface/45 mt-1 leading-relaxed">
           配置应用程序的网络代理设置。修改后需点击「应用配置」生效。
           {mode === 'pac' && (
@@ -169,191 +164,241 @@ export default function ProxyTab() {
         </p>
       </div>
 
-      {/* 四模式选择 */}
-      <div className="grid grid-cols-2 gap-3">
-        {MODE_OPTIONS.map((opt) => (
-          <button key={opt.id} onClick={() => setMode(opt.id)} className={modeBtnClass(opt.id)}>
-            <span className="text-sm font-semibold block">{opt.label}</span>
-            {opt.defaultMode && mode === opt.id && (
-              <span className="text-[10px] mt-0.5 inline-block px-1.5 py-0.5 rounded bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-medium">默认</span>
-            )}
-            <span className="text-[11px] mt-1 block opacity-55">{opt.desc}</span>
-          </button>
-        ))}
-      </div>
+      {/* 左右分栏：左侧模式列表 + 右侧详情 */}
+      <div className="flex-1 flex gap-4 min-h-0">
 
-      {/* ── 模式详情区域（根据选择动态切换） ── */}
+        {/* ── 左侧：四个模式列表 ── */}
+        <div className="w-[200px] shrink-0 flex flex-col gap-2">
+          {MODE_OPTIONS.map((opt, idx) => {
+            const isActive = mode === opt.id;
+            return (
+              <button
+                key={opt.id}
+                onClick={() => setMode(opt.id)}
+                className={`group relative flex items-start gap-2.5 px-3 py-3 rounded-xl border text-left transition-[border-color,background-color] duration-150 cursor-pointer ${
+                  isActive
+                    ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/8 text-[var(--color-on-surface)] shadow-[0_2px_8px_rgba(0,0,0,0.06)]'
+                    : 'border-[var(--color-outline)]/15 text-on-surface/60 hover:border-[var(--color-outline)]/30 hover:bg-[var(--color-surface)]'
+                }`}
+                style={{
+                  animationDelay: `${idx * 60}ms`,
+                }}
+              >
+                {isActive && (
+                  <div className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full bg-[var(--color-primary)]" />
+                )}
+                {/* 图标 */}
+                <span className="text-base leading-none mt-0.5 select-none">{opt.icon}</span>
+                {/* 文本 */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[13px] font-semibold leading-tight">{opt.label}</span>
+                    {opt.defaultMode && (
+                      <span className="text-[9px] px-1 py-px rounded bg-[var(--color-primary)]/12 text-[var(--color-primary)] font-medium leading-none">
+                        默认
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10.5px] mt-1 block opacity-50 leading-snug line-clamp-2">{opt.desc}</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
 
-      {/* 系统代理模式详情 */}
-      {mode === 'system' && (
-        <div className="p-4 bg-[var(--color-surface)] border border-[var(--color-outline)]/12 rounded-xl space-y-2">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-green-500/70 animate-pulse" />
-            <span className="text-sm font-medium text-[var(--color-on-surface)]">系统代理模式</span>
-          </div>
-          {sysInfo ? (
-            sysInfo.enabled ? (
-              <div className="text-xs text-on-surface/60 space-y-1 pl-4">
-                <p>状态：<span className="text-green-600 font-medium">已启用</span></p>
-                {sysInfo.server && <p>地址：<code className="font-mono bg-black/5 px-1.5 py-0.5 rounded">{sysInfo.server}</code></p>}
-                {sysInfo.pacUrl && <p>PAC URL：<code className="font-mono bg-black/5 px-1.5 py-0.5 rounded break-all">{sysInfo.pacUrl}</code></p>}
-                {!sysInfo.server && !sysInfo.pacUrl && <p className="text-amber-600/80">检测到系统代理已启用，但未找到具体地址信息</p>}
-                {sysInfo.platform && sysInfo.platform !== 'win32' && (
-                  <p className="text-amber-600/70 italic">当前平台 ({sysInfo.platform}) 的系统代理检测为实验性支持</p>
+        {/* ── 右侧：模式详情 + 操作栏 ── */}
+        <div className="flex-1 flex flex-col min-w-0 min-h-0">
+
+          {/* 详情内容区（滚动） */}
+          <div className="flex-1 overflow-y-auto pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+
+            {/* 系统代理模式详情 */}
+            {mode === 'system' && (
+              <div
+                key="system"
+                className="p-4 bg-[var(--color-surface)] border border-[var(--color-outline)]/12 rounded-xl space-y-2 animate-fadeIn"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-green-500/70 animate-pulse" />
+                  <span className="text-sm font-medium text-[var(--color-on-surface)]">系统代理模式</span>
+                </div>
+                {sysInfo ? (
+                  sysInfo.enabled ? (
+                    <div className="text-xs text-on-surface/60 space-y-1 pl-4">
+                      <p>状态：<span className="text-green-600 font-medium">已启用</span></p>
+                      {sysInfo.server && <p>地址：<code className="font-mono bg-black/5 px-1.5 py-0.5 rounded">{sysInfo.server}</code></p>}
+                      {sysInfo.pacUrl && <p>PAC URL：<code className="font-mono bg-black/5 px-1.5 py-0.5 rounded break-all">{sysInfo.pacUrl}</code></p>}
+                      {!sysInfo.server && !sysInfo.pacUrl && <p className="text-amber-600/80">检测到系统代理已启用，但未找到具体地址信息</p>}
+                      {sysInfo.platform && sysInfo.platform !== 'win32' && (
+                        <p className="text-amber-600/70 italic">当前平台 ({sysInfo.platform}) 的系统代理检测为实验性支持</p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-on-surface/50 pl-4">系统代理当前未启用（将使用直连）</p>
+                  )
+                ) : (
+                  <p className="text-xs text-on-surface/40 pl-4">正在检测系统代理...</p>
                 )}
               </div>
-            ) : (
-              <p className="text-xs text-on-surface/50 pl-4">系统代理当前未启用（将使用直连）</p>
-            )
-          ) : (
-            <p className="text-xs text-on-surface/40 pl-4">正在检测系统代理...</p>
-          )}
-        </div>
-      )}
+            )}
 
-      {/* 手动代理模式详情 */}
-      {mode === 'manual' && (
-        <div className="p-4 bg-[var(--color-surface)] border border-[var(--color-outline)]/12 rounded-xl space-y-4">
-          {/* 协议选择 */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-[var(--color-primary)]/80 uppercase tracking-wider">协议类型</label>
-            <div className="flex gap-2">
-              {PROTOCOL_OPTIONS.map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => setProtocol(p.id)}
-                  className={`px-3 py-1.5 text-xs rounded-lg border transition-all cursor-pointer ${
-                    protocol === p.id
-                      ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-semibold'
-                      : 'border-[var(--color-outline)]/20 text-on-surface/50 hover:border-[var(--color-outline)]/40'
-                  }`}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* 地址 + 端口 */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-[var(--color-primary)]/80">服务器地址</label>
-              <input
-                type="text"
-                value={server}
-                onChange={(e) => setServer(e.target.value)}
-                placeholder="127.0.0.1"
-                className="w-full text-sm p-2.5 bg-[var(--color-bg)] border border-[var(--color-outline)]/20 rounded-lg text-[var(--color-on-surface)] font-mono focus:border-[var(--color-primary)] outline-none transition-colors"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-[var(--color-primary)]/80">端口</label>
-              <input
-                type="text"
-                value={port}
-                onChange={(e) => setPort(e.target.value)}
-                placeholder="7890"
-                className="w-full text-sm p-2.5 bg-[var(--color-bg)] border border-[var(--color-outline)]/20 rounded-lg text-[var(--color-on-surface)] font-mono focus:border-[var(--color-primary)] outline-none transition-colors"
-              />
-            </div>
-          </div>
-
-          {/* Bypass 绕过列表 */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-medium text-[var(--color-primary)]/80">绕过列表（可选）</label>
-              <button
-                onClick={() => setShowBypassEdit(!showBypassEdit)}
-                className="text-[11px] text-[var(--color-primary)]/70 hover:text-[var(--color-primary)] transition-colors"
+            {/* 直连模式提示 */}
+            {mode === 'direct' && (
+              <div
+                key="direct"
+                className="p-4 bg-[var(--color-surface)] border border-[var(--color-outline)]/12 rounded-xl space-y-2 animate-fadeIn"
               >
-                {showBypassEdit ? '收起' : '编辑'}
-              </button>
-            </div>
-            {showBypassEdit ? (
-              <textarea
-                value={bypassList}
-                onChange={(e) => setBypassList(e.target.value)}
-                placeholder="localhost,127.0.0.1,::1,*.local,&lt;local&gt;"
-                rows={2}
-                className="w-full text-xs p-2.5 bg-[var(--color-bg)] border border-[var(--color-outline)]/20 rounded-lg text-[var(--color-on-surface)] font-mono focus:border-[var(--color-primary)] outline-none resize-y"
-              />
-            ) : (
-              <p className="text-[11px] text-on-surface/40 font-mono truncate">
-                {bypassList || '使用默认绕过列表（localhost / 127.0.0.1 / ::1 / *.local / 内部服务端口）'}
-              </p>
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-blue-500/70" />
+                  <span className="text-sm font-medium text-[var(--color-on-surface)]">直连模式</span>
+                </div>
+                <p className="text-xs text-on-surface/50 pl-4 leading-relaxed">
+                  所有网络请求将直接连接，不经过任何代理服务器。适用于已有全局 VPN 或加速器的场景。
+                </p>
+              </div>
+            )}
+
+            {/* 手动代理模式详情 */}
+            {mode === 'manual' && (
+              <div
+                key="manual"
+                className="p-4 bg-[var(--color-surface)] border border-[var(--color-outline)]/12 rounded-xl space-y-4 animate-fadeIn"
+              >
+                {/* 协议选择 */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-[var(--color-primary)]/80 uppercase tracking-wider">协议类型</label>
+                  <div className="flex gap-2">
+                    {PROTOCOL_OPTIONS.map((p) => (
+                      <button
+                        key={p.id}
+                        onClick={() => setProtocol(p.id)}
+                        className={`px-3 py-1.5 text-xs rounded-lg border transition-[border-color,background-color,color] cursor-pointer ${
+                          protocol === p.id
+                            ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-[var(--color-primary)] font-semibold'
+                            : 'border-[var(--color-outline)]/20 text-on-surface/50 hover:border-[var(--color-outline)]/40'
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 地址 + 端口 */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-[var(--color-primary)]/80">服务器地址</label>
+                    <input
+                      type="text"
+                      value={server}
+                      onChange={(e) => setServer(e.target.value)}
+                      placeholder="127.0.0.1"
+                      className="w-full text-sm p-2.5 bg-[var(--color-bg)] border border-[var(--color-outline)]/20 rounded-lg text-[var(--color-on-surface)] font-mono focus:border-[var(--color-primary)] outline-none transition-colors"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-[var(--color-primary)]/80">端口</label>
+                    <input
+                      type="text"
+                      value={port}
+                      onChange={(e) => setPort(e.target.value)}
+                      placeholder="7890"
+                      className="w-full text-sm p-2.5 bg-[var(--color-bg)] border border-[var(--color-outline)]/20 rounded-lg text-[var(--color-on-surface)] font-mono focus:border-[var(--color-primary)] outline-none transition-colors"
+                    />
+                  </div>
+                </div>
+
+                {/* Bypass 绕过列表 */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-medium text-[var(--color-primary)]/80">绕过列表（可选）</label>
+                    <button
+                      onClick={() => setShowBypassEdit(!showBypassEdit)}
+                      className="text-[11px] text-[var(--color-primary)]/70 hover:text-[var(--color-primary)] transition-colors cursor-pointer"
+                    >
+                      {showBypassEdit ? '收起' : '编辑'}
+                    </button>
+                  </div>
+                  {showBypassEdit ? (
+                    <textarea
+                      value={bypassList}
+                      onChange={(e) => setBypassList(e.target.value)}
+                      placeholder="localhost,127.0.0.1,::1,*.local,&lt;local&gt;"
+                      rows={2}
+                      className="w-full text-xs p-2.5 bg-[var(--color-bg)] border border-[var(--color-outline)]/20 rounded-lg text-[var(--color-on-surface)] font-mono focus:border-[var(--color-primary)] outline-none resize-y"
+                    />
+                  ) : (
+                    <p className="text-[11px] text-on-surface/40 font-mono truncate">
+                      {bypassList || '使用默认绕过列表（localhost / 127.0.0.1 / ::1 / *.local / 内部服务端口）'}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* PAC 模式详情 */}
+            {mode === 'pac' && (
+              <div
+                key="pac"
+                className="p-4 bg-[var(--color-surface)] border border-[var(--color-outline)]/12 rounded-xl space-y-3 animate-fadeIn"
+              >
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-[var(--color-primary)]/80">PAC 脚本 URL</label>
+                  <input
+                    type="text"
+                    value={pacUrl}
+                    onChange={(e) => setPacUrl(e.target.value)}
+                    placeholder="http://proxy.company.com/proxy.pac"
+                    className="w-full text-sm p-2.5 bg-[var(--color-bg)] border border-[var(--color-outline)]/20 rounded-lg text-[var(--color-on-surface)] font-mono focus:border-[var(--color-primary)] outline-none transition-colors"
+                  />
+                </div>
+                <p className="text-[11px] text-amber-600/70 leading-relaxed">
+                  ⚠️ PAC 模式仅对 Chromium 渲染进程生效。Node.js 后端请求（LLM 调度、API 请求等）将直连，
+                  不经过 PAC 路由规则。
+                </p>
+              </div>
+            )}
+
+          </div>
+
+          {/* 操作栏：应用 + 测试（固定在右侧底部） */}
+          <div className="flex items-center gap-3 pt-3 mt-3 border-t border-[var(--color-outline)]/10 shrink-0">
+            <button
+              onClick={handleApply}
+              disabled={saving}
+              className={`px-5 py-2.5 rounded-lg text-sm font-semibold transition-[background-color,opacity] cursor-pointer active:scale-[0.98] ${
+                saving
+                  ? 'bg-gray-300 text-gray-500 cursor-wait'
+                  : saveStatus === 'ok'
+                    ? 'bg-green-500/15 text-green-700 border border-green-500/25'
+                    : saveStatus === 'error'
+                      ? 'bg-red-500/15 text-red-700 border border-red-500/25'
+                      : 'bg-[var(--color-primary)] text-white hover:brightness-110'
+              }`}
+            >
+              {saving ? '保存中...' : saveStatus === 'ok' ? '✓ 已应用' : saveStatus === 'error' ? '✗ 失败' : '应用配置'}
+            </button>
+
+            <button
+              onClick={handleTest}
+              disabled={testing}
+              className="px-4 py-2.5 rounded-lg text-sm font-medium border border-[var(--color-outline)]/20 text-on-surface/70 hover:bg-[var(--color-surface)] transition-[background-color,opacity] cursor-pointer active:scale-[0.98] disabled:opacity-50"
+            >
+              {testing ? '测试中...' : '测试连接'}
+            </button>
+
+            {/* 测试结果展示 */}
+            {testResult && (
+              <span className={`text-xs font-mono tabular-nums ${testResult.ok ? 'text-green-600' : 'text-red-500'}`}>
+                {testResult.ok
+                  ? `出口 IP: ${testResult.ip} · 延迟: ${testResult.latency}ms`
+                  : `失败: ${testResult.error}`
+                }
+              </span>
             )}
           </div>
+
         </div>
-      )}
-
-      {/* PAC 模式详情 */}
-      {mode === 'pac' && (
-        <div className="p-4 bg-[var(--color-surface)] border border-[var(--color-outline)]/12 rounded-xl space-y-3">
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-[var(--color-primary)]/80">PAC 脚本 URL</label>
-            <input
-              type="text"
-              value={pacUrl}
-              onChange={(e) => setPacUrl(e.target.value)}
-              placeholder="http://proxy.company.com/proxy.pac"
-              className="w-full text-sm p-2.5 bg-[var(--color-bg)] border border-[var(--color-outline)]/20 rounded-lg text-[var(--color-on-surface)] font-mono focus:border-[var(--color-primary)] outline-none transition-colors"
-            />
-          </div>
-          <p className="text-[11px] text-amber-600/70 leading-relaxed">
-            ⚠️ PAC 模式仅对 Chromium 渲染进程生效。Node.js 后端请求（LLM 调度、API 请求等）将直连，
-            不经过 PAC 路由规则。
-          </p>
-        </div>
-      )}
-
-      {/* 直连模式提示 */}
-      {mode === 'direct' && (
-        <div className="p-4 bg-[var(--color-surface)] border border-[var(--color-outline)]/12 rounded-xl">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-blue-500/70" />
-            <span className="text-sm font-medium text-[var(--color-on-surface)]">直连模式</span>
-          </div>
-          <p className="text-xs text-on-surface/50 mt-2 pl-4">
-            所有网络请求将直接连接，不经过任何代理服务器。适用于已有全局 VPN 或加速器的场景。
-          </p>
-        </div>
-      )}
-
-      {/* 操作栏：应用 + 测试 */}
-      <div className="flex items-center gap-3 pt-2">
-        <button
-          onClick={handleApply}
-          disabled={saving}
-          className={`px-5 py-2.5 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
-            saving
-              ? 'bg-gray-300 text-gray-500 cursor-wait'
-              : saveStatus === 'ok'
-                ? 'bg-green-500/15 text-green-700 border border-green-500/25'
-                : saveStatus === 'error'
-                  ? 'bg-red-500/15 text-red-700 border border-red-500/25'
-                  : 'bg-[var(--color-primary)] text-white hover:brightness-110 active:scale-[0.98]'
-          }`}
-        >
-          {saving ? '保存中...' : saveStatus === 'ok' ? '✓ 已应用' : saveStatus === 'error' ? '✗ 失败' : '应用配置'}
-        </button>
-
-        <button
-          onClick={handleTest}
-          disabled={testing}
-          className="px-4 py-2.5 rounded-lg text-sm font-medium border border-[var(--color-outline)]/20 text-on-surface/70 hover:bg-[var(--color-surface)] transition-all cursor-pointer disabled:opacity-50"
-        >
-          {testing ? '测试中...' : '测试连接'}
-        </button>
-
-        {/* 测试结果展示 */}
-        {testResult && (
-          <span className={`text-xs font-mono ${testResult.ok ? 'text-green-600' : 'text-red-500'}`}>
-            {testResult.ok
-              ? `出口 IP: ${testResult.ip} · 延迟: ${testResult.latency}ms`
-              : `失败: ${testResult.error}`
-            }
-          </span>
-        )}
       </div>
     </div>
   );
