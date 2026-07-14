@@ -2405,10 +2405,24 @@ app.whenReady().then(async () => {
   createWindow();                  // 先创建主窗口
   createCanvasHostWindow(mainWindow); // 再以主窗口为 parent 创建画布宿主 → OS 自动管 z-order
 
-// frame:false → 完全无非客户区 → 无原生按钮效果, 无 snap flyout
-//   maximizable:false → Chromium 不返回 HTMAXBUTTON
+// frame:false → 完全无非客户区 → 无原生按钮效果
+// 但 Chromium 内部 WM_NCHITTEST 仍返回 HTMAXBUTTON → 触发 Win11 snap layout flyout (尺寸提示器)
+// 解决: 窗口就绪后用 PS Worker SUBCLASS 安装 WindowProc hook, 拦截 WM_NCHITTEST,
+//   将 HTMAXBUTTON(9) 改为 HTCLIENT(1) → 系统不触发 snap flyout
 mainWindow.once('ready-to-show', () => {
   mainWindow.show();
+  // 延迟 500ms 等 PS Worker READY 后安装 SUBCLASS hook
+  setTimeout(async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const hwnd = getHwndStr(mainWindow);
+    if (!hwnd) return;
+    try {
+      const result = await psSend(`SUBCLASS|${hwnd}`, 'subclass-hook');
+      console.log('[subclass] hook installed:', result);
+    } catch (e) {
+      console.warn('[subclass] failed:', e?.message, '— snap flyout 将不会被拦截');
+    }
+  }, 500);
 });
   registerIpc();
 
