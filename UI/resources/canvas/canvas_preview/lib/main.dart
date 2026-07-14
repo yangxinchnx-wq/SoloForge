@@ -181,6 +181,8 @@ class _CanvasAppState extends State<CanvasApp> {
   StreamSubscription<FileSystemEvent>? _modelWatcher;
   // model-viewer 加载重试计数 (文件刚放入时可能还没写完)
   int _loadRetry = 0;
+  // ★ 预加载的 model-viewer.min.js 内容 (内联到 HTML, 避免跨域加载问题)
+  String? _modelViewerJs;
 
   // ── 2026-07-08 修复: 防止画布进程崩溃 ──────────────────────────
   //
@@ -209,6 +211,21 @@ class _CanvasAppState extends State<CanvasApp> {
     super.initState();
     _configureWindow();
     _startServer();
+    _preloadModelViewerJs();
+  }
+
+  /// ★ 预加载 model-viewer.min.js 内容到内存
+  ///   后续 _buildModelViewer 把它内联到 HTML 的 <script> 标签里
+  ///   避免 WebView 跨域加载 module script 的问题
+  Future<void> _preloadModelViewerJs() async {
+    try {
+      final data = await rootBundle.load('assets/model-viewer.min.js');
+      _modelViewerJs = String.fromCharCodes(
+        data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes));
+      _writeLog('[assets] model-viewer.min.js loaded: ${_modelViewerJs!.length} chars');
+    } catch (e) {
+      _writeLog('[assets] failed to load model-viewer.min.js: $e');
+    }
   }
 
   void _configureWindow() {
@@ -735,9 +752,16 @@ class _CanvasAppState extends State<CanvasApp> {
     final port = widget.port;
     final modelUrl = 'http://127.0.0.1:$port/models/3d/$glbPath';
 
+    // ★ model-viewer.min.js 内联到 HTML (避免跨域 module script 加载问题)
+    //   如果预加载失败, 退回 CDN 加载
+    final jsContent = _modelViewerJs ?? '';
+    final scriptTag = jsContent.isNotEmpty
+        ? '<script type="module">$jsContent</script>'
+        : '<script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>';
+
     // 构造 HTML: 引入 model-viewer web component, 加载 GLB
-    // - model-viewer.min.js 从本地 assets 加载 (离线, 不依赖 CDN)
-    // - transparentBackground: true 让 WebView 背景透明, 透出 Flutter 画布背景
+    // - JS 内联: 避免跨域 + 离线可用
+    // - 透明背景: 透出 Flutter 画布背景
     // - auto-rotate: 自动旋转展示
     // - camera-controls: 允许用户拖拽/缩放
     final html = '''<!DOCTYPE html>
@@ -758,10 +782,18 @@ class _CanvasAppState extends State<CanvasApp> {
       background: transparent;
       --poster-color: transparent;
     }
+    #loading {
+      position: fixed; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      color: rgba(255,255,255,0.5);
+      font-family: monospace; font-size: 12px;
+      z-index: 1;
+    }
   </style>
-  <script type="module" src="http://127.0.0.1:$port/assets/model-viewer.min.js"></script>
+  $scriptTag
 </head>
 <body>
+  <div id="loading">Loading 3D model...</div>
   <model-viewer
     src="$modelUrl"
     alt="3D device model"
@@ -774,20 +806,21 @@ class _CanvasAppState extends State<CanvasApp> {
     style="background-color: transparent;">
   </model-viewer>
   <script>
-    // 监听 model-viewer 加载错误 (文件不存在/格式错误)
     const mv = document.querySelector('model-viewer');
+    const loading = document.getElementById('loading');
     if (mv) {
       mv.addEventListener('error', (e) => {
         console.log('[mv-error] ' + (e.detail?.message || 'unknown'));
+        if (loading) loading.textContent = 'Model load failed: ' + (e.detail?.message || 'unknown');
       });
       mv.addEventListener('load', () => {
         console.log('[mv-load] ok src=' + mv.src);
+        if (loading) loading.style.display = 'none';
       });
       mv.addEventListener('preload', () => {
         console.log('[mv-preload] ' + mv.src);
       });
     }
-    // 全局错误捕获
     window.addEventListener('error', (e) => {
       console.log('[window-error] ' + (e.message || ''));
     });
@@ -813,7 +846,7 @@ class _CanvasAppState extends State<CanvasApp> {
       ),
       onWebViewCreated: (controller) {
         _webviewController = controller;
-        _writeLog('[webview] created, modelUrl=$modelUrl');
+        _writeLog('[webview] created, modelUrl=$modelUrl jsInline=${jsContent.isNotEmpty}');
       },
       onLoadStart: (controller, url) {
         _writeLog('[webview] load start: $url');

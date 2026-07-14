@@ -29,7 +29,6 @@
       "dist/**/*",
       "electron/**/*",
       "build/icon/**/*",
-      "public/**/*",
       "package.json"
     ],
     "extraResources": [
@@ -89,7 +88,10 @@
       "shortcutName": "SoloForge",
       "installerIcon": "build/icon/icon.ico",
       "uninstallerIcon": "build/icon/icon.ico",
-      "installerSidebar": null
+      "installerHeader": "build/nsis/header.bmp",
+      "installerSidebar": "build/nsis/sidebar.bmp",
+      "uninstallerSidebar": "build/nsis/uninstall-sidebar.bmp",
+      "include": "build/nsis/customInstaller.nsh"
     }
   },
   "dependencies": {

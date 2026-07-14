@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>抖音 - 记录美好生活</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-font-smoothing: antialiased;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            background-color: #000;
+            color: #fff;
+            width: 100%;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        /* 状态栏 */
+        .status-bar {
+            height: 24px;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 12px;
+            font-size: 12px;
+            z-index: 100;
+        }
+        
+        .status-bar-left {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        .status-bar-right {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .signal-icon {
+            display: flex;
+            gap: 1px;
+        }
+        
+        .signal-bar {
+            width: 3px;
+            background: #fff;
+            border-radius: 1px;
+        }
+        
+        /* 顶部导航 */
+        .top-nav {
+            height: 44px;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 16px;
+            position: relative;
+            z-index: 99;
+        }
+        
+        .nav-left, .nav-right {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        
+        .nav-icon {
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
+        
+        .nav-title {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 16px;
+            font-size: 16px;
+            font-weight: 500;
+        }
+        
+        .nav-title span {
+            opacity: 0.6;
+            cursor: pointer;
+        }
+        
+        .nav-title span.active {
+            opacity: 1;
+            font-weight: 600;
+        }
+        
+        /* 视频流 */
+        .video-feed {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .video-item {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+        }
+        
+        /* 视频内容区域 */
+        .video-content {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 0 16px 120px 16px;
+            background: linear-gradient(transparent, rgba(0,0,0,0.7));
+        }
+        
+        .video-author {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        
+        .video-desc {
+            font-size: 14px;
+            line-height: 1.4;
+            margin-bottom: 12px;
+        }
+        
+        .video-music {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+        }
+        
+        .music-icon {
+            width: 16px;
+            height: 16px;
+        }
+        
+        .music-text {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 200px;
+        }
+        
+        /* 右侧操作栏 */
+        .side-actions {
+            position: absolute;
+            right: 12px;
+            bottom: 140px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+        }
+        
+        .action-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            cursor: pointer;
+        }
+        
+        .action-icon {
+            width: 40px;
+            height: 40px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+        
+        .action-icon.avatar {
+            background: linear-gradient(135deg, #ff6b6b, #ff8e53);
+            border: 2px solid #fff;
+            margin-bottom: 8px;
+        }
+        
+        .action-count {
+            font-size: 12px;
+            color: #fff;
+        }
+        
+        /* 音乐唱片 */
+        .music-disc {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #333, #000);
+            border: 2px solid #333;
+            animation: spin 3s linear infinite;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .music-disc-inner {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #fff;
+        }
+        
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        
+        /* 底部标签栏 */
+        .bottom-tabs {
+            height: 50px;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            z-index: 100;
+        }
+        
+        .tab-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+            cursor: pointer;
+            flex: 1;
+        }
+        
+        .tab-icon {
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+        
+        .tab-label {
+            font-size: 10px;
+        }
+        
+        .tab-item.active .tab-label {
+            color: #fff;
+        }
+        
+        .tab-item:not(.active) .tab-label {
+            color: rgba(255, 255, 255, 0.6);
+        }
+        
+        .create-btn {
+            width: 48px;
+            height: 32px;
+            background: linear-gradient(135deg, #ff6b6b, #ff8e53);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            margin-top: -8px;
+        }
+        
+        /* 搜索框 */
+        .search-bar {
+            position: absolute;
+            top: 68px;
+            left: 16px;
+            right: 16px;
+            height: 36px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 18px;
+            display: flex;
+            align-items: center;
+            padding: 0 12px;
+            gap: 8px;
+            z-index: 50;
+        }
+        
+        .search-icon {
+            font-size: 16px;
+            opacity: 0.6;
+        }
+        
+        .search-text {
+            font-size: 14px;
+            opacity: 0.6;
+        }
+        
+        /* 直播标识 */
+        .live-badge {
+            position: absolute;
+            top: 110px;
+            left: 16px;
+            background: rgba(255, 59, 48, 0.9);
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+            z-index: 50;
+        }
+        
+        /* 分类标签 */
+        .category-tags {
+            position: absolute;
+            top: 110px;
+            left: 16px;
+            display: flex;
+            gap: 12px;
+            z-index: 50;
+        }
+        
+        .category-tag {
+            font-size: 14px;
+            opacity: 0.7;
+            cursor: pointer;
+        }
+        
+        .category-tag.active {
+            opacity: 1;
+            font-weight: 600;
+        }
+        
+        /* 仿真手机框 */
+        .phone-frame {
+            width: 364px;
+            height: 640px;
+            border: 8px solid #333;
+            border-radius: 36px;
+            overflow: hidden;
+            position: relative;
+            box-shadow: 0 0 0 2px #111, 0 20px 60px rgba(0,0,0,0.8);
+        }
+        
+        .phone-notch {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 120px;
+            height: 24px;
+            background: #333;
+            border-radius: 0 0 16px 16px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div class="phone-frame">
+        <div class="phone-notch"></div>
+        
+        <!-- 状态栏 -->
+        <div class="status-bar">
+            <div class="status-bar-left">
+                <span>9:41</span>
+            </div>
+            <div class="status-bar-right">
+                <div class="signal-icon">
+                    <div class="signal-bar" style="height: 6px;"></div>
+                    <div class="signal-bar" style="height: 9px;"></div>
+                    <div class="signal-bar" style="height: 12px;"></div>
+                    <div class="signal-bar" style="height: 15px;"></div>
+                </div>
+                <span>5G</span>
+                <span>📶</span>
+                <span>🔋</span>
+            </div>
+        </div>
+        
+        <!-- 顶部导航 -->
+        <div class="top-nav">
+            <div class="nav-left">
+                <div class="nav-icon">📷</div>
+            </div>
+            <div class="nav-title">
+                <span>关注</span>
+                <span class="active">推荐</span>
+                <span>朋友</span>
+            </div>
+            <div class="nav-right">
+                <div class="nav-icon">🔍</div>
+            </div>
+        </div>
+        
+        <!-- 视频流 -->
+        <div class="video-feed">
+            <!-- 视频项目 -->
+            <div class="video-item">
+                <!-- 搜索栏 -->
+                <div class="search-bar">
+                    <span class="search-icon">🔍</span>
+                    <span class="search-text">搜索你感兴趣的内容</span>
+                </div>
+                
+                <!-- 分类标签 -->
+                <div class="category-tags">
+                    <span class="category-tag active">推荐</span>
+                    <span class="category-tag">直播</span>
+                    <span class="category-tag">热点</span>
+                    <span class="category-tag">游戏</span>
+                    <span class="category-tag">音乐</span>
+                </div>
+                
+                <!-- 视频内容 -->
+                <div class="video-content">
+                    <div class="video-author">@旅行摄影师小明</div>
+                    <div class="video-desc">在大理洱海边看日落，这一刻时间仿佛静止了... #旅行 #大理 #日落 #摄影</div>
+                    <div class="video-music">
+                        <span class="music-icon">🎵</span>
+                        <span class="music-text">落日与晚风 - 纯音乐版</span>
+                    </div>
+                </div>
+                
+                <!-- 右侧操作栏 -->
+                <div class="side-actions">
+                    <div class="action-item">
+                        <div class="action-icon avatar">👤</div>
+                        <div class="action-icon" style="background: linear-gradient(135deg, #ff6b6b, #ff8e53); font-size: 16px;">+</div>
+                    </div>
+                    <div class="action-item">
+                        <div class="action-icon">❤️</div>
+                        <div class="action-count">12.8w</div>
+                    </div>
+                    <div class="action-item">
+                        <div class="action-icon">💬</div>
+                        <div class="action-count">4.2w</div>
+                    </div>
+                    <div class="action-item">
+                        <div class="action-icon">⭐</div>
+                        <div class="action-count">8.6w</div>
+                    </div>
+                    <div class="action-item">
+                        <div class="action-icon">↗️</div>
+                        <div class="action-count">转发</div>
+                    </div>
+                    <div class="music-disc">
+                        <div class="music-disc-inner"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 底部标签栏 -->
+        <div class="bottom-tabs">
+            <div class="tab-item active">
+                <div class="tab-icon">🏠</div>
+                <div class="tab-label">首页</div>
+            </div>
+            <div class="tab-item">
+                <div class="tab-icon">👥</div>
+                <div class="tab-label">朋友</div>
+            </div>
+            <div class="tab-item">
+                <div class="create-btn">+</div>
+            </div>
+            <div class="tab-item">
+                <div class="tab-icon">💬</div>
+                <div class="tab-label">消息</div>
+            </div>
+            <div class="tab-item">
+                <div class="tab-icon">👤</div>
+                <div class="tab-label">我</div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
