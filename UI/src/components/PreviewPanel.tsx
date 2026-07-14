@@ -361,21 +361,10 @@ export default function PreviewPanel({
     }
   }, [effectiveCanvasId, renderMode, setDeviceInStore, handleSelectDevice]);
 
-  // ★ 下拉框/颜色选择器打开时隐藏 Flutter 原生窗口, 避免拦截点击 + 视觉遮挡
-  useEffect(() => {
-    if (!isElectron()) return;
-    const anyDropdownOpen = showDeviceDropdown || showColorPicker;
-    window.soloforge?.canvas.setHostVisible?.(!anyDropdownOpen).catch(() => {});
-  }, [showDeviceDropdown, showColorPicker]);
-
-  // ★ 按钮 toggle: 先隐藏 Flutter 窗口再打开下拉框, 避免 fixed panel 被 HWND 盖住
+  // ★ 下拉框就是简单的浮层, 不隐藏 Flutter 画布, 不影响其他界面元素
   const toggleDeviceDropdown = useCallback(() => {
-    if (!showDeviceDropdown && isElectron()) {
-      // 即将打开 → 先隐藏 Flutter 窗口 (异步, 但尽早发出)
-      window.soloforge?.canvas.setHostVisible?.(false).catch(() => {});
-    }
     setShowDeviceDropdown(s => !s);
-  }, [showDeviceDropdown]);
+  }, []);
 
   // ★ 设备下拉框 Esc 关闭 (与协同副模型一致)
   useEffect(() => {
@@ -1119,14 +1108,14 @@ export default function PreviewPanel({
             <AnimatePresence>
               {showDeviceDropdown && (
                 <>
-                  {/* 半透明 backdrop: 承载 click-outside + 遮暗背景让 panel 更突出 */}
+                  {/* 透明 backdrop: 仅承载 click-outside, 不影响界面 */}
                   <motion.div
                     key="device-backdrop"
                     variants={deviceBackdropVariants}
                     initial="hidden"
                     animate="visible"
                     exit="hidden"
-                    className="fixed inset-0 z-40 cursor-default bg-black/20"
+                    className="fixed inset-0 z-40 cursor-default"
                     onClick={() => setShowDeviceDropdown(false)}
                   />
 

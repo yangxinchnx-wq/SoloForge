@@ -106,21 +106,59 @@ const FORCE_CANVAS_PATTERNS: RegExp[] = [
 const FORCE_CANVAS_INSTRUCTION = `[FORCE_CANVAS] 用户要求在画布上作画/展示。你必须返回可渲染的 UI 内容。
 
 ## 默认策略 — 输出 JSON DSL (零翻译, 最快路径)
-SoloForge 画布的原生渲染格式就是 JSON DSL (UiNode 树)。
-默认情况下, 你直接输出 \`\`\`json 代码块, 前端零翻译直送 Flutter 渲染, 速度最快:
+SoloForge 画布的原生渲染格式是 JSON DSL (UiNode 树)。
+默认情况下, 你直接输出 \`\`\`json 代码块, 前端零翻译直送 Flutter 渲染, 速度最快。
+
+### JSON DSL 格式规范 (严格遵守)
+
+每个节点结构: { "type": "节点类型", "props": { 属性键值对 }, "children": [子节点...] }
+
+**节点类型**:
+- container — 通用容器 (用 props.layout 指定方向: "row" 或 "column", 默认 "column")
+- text — 文本 (props.content = 文本内容)
+- button — 按钮 (props.label = 按钮文字, props.variant = "filled"|"outlined"|"text")
+- input — 输入框 (props.placeholder = 占位文字)
+- image — 图片 (props.url = 图片地址)
+- icon — 图标 (props.icon = 图标名, 如 "star", "home", "search")
+- svg — SVG 矢量图 (props.content = SVG 字符串)
+- chart — 图表 (props.chartType = "bar"|"line"|"pie", props.data = [{label, value, color?}])
+- spacer — 弹性空白 (props.flex = 整数)
+- progress — 进度条 (props.value = 0~1)
+- divider — 分割线
+
+**常用 props 字段**:
+- layout: "row" | "column" (仅 container)
+- content: 文本内容 (text/svg)
+- color: 文字颜色 (text)
+- backgroundColor: 背景颜色 (container)
+- fontSize: 字号 (text, 数字)
+- fontWeight: 字重 (text, 如 "bold", "w400"~"w900")
+- padding: 内边距 (数字或 "上,右,下,左")
+- margin: 外边距
+- borderRadius: 圆角
+- width / height: 尺寸
+- spacing: 子元素间距 (container)
+- mainAxisAlignment: "start"|"center"|"end"|"spaceBetween"|"spaceEvenly"
+- crossAxisAlignment: "start"|"center"|"end"|"stretch"
+- alignment: "center"|"topLeft"|"bottomRight" 等
+
+**颜色格式**: #RRGGBB (如 #2196F3) 或 #AARRGGBB
+
+### 完整示例
 
 \`\`\`json
 {
-  "type": "column",
+  "type": "container",
+  "props": { "layout": "column", "padding": 16, "backgroundColor": "#1a1a2e", "spacing": 12 },
   "children": [
-    { "type": "text", "text": "Hello", "style": { "fontSize": 24 } },
-    { "type": "container", "style": { "color": "#2196F3", "padding": 16 } }
+    { "type": "text", "props": { "content": "Hello World", "fontSize": 24, "fontWeight": "bold", "color": "#ffffff" }, "children": [] },
+    { "type": "container", "props": { "layout": "row", "spacing": 8 }, "children": [
+      { "type": "button", "props": { "label": "OK", "variant": "filled", "color": "#4CAF50" }, "children": [] },
+      { "type": "button", "props": { "label": "Cancel", "variant": "outlined", "color": "#F44336" }, "children": [] }
+    ] }
   ]
 }
 \`\`\`
-
-JSON DSL 节点类型: column, row, container, text, image, button, icon, svg, stack, list, scroll
-样式字段: color, padding, margin, fontSize, fontWeight, alignment, width, height, borderRadius, etc.
 
 ## 语言检测 — 用户明确指定语言时走翻译层
 当用户在请求中明确提到以下关键字时, 输出对应语言的代码块, 前端翻译器会自动转译为画布 AST:
@@ -141,7 +179,9 @@ JSON DSL 节点类型: column, row, container, text, image, button, icon, svg, s
 ## 要求
 1. 不要只回复文字, 必须有代码块
 2. 代码块要完整可渲染 (含布局结构 + 样式)
-3. 末尾不要加 <<<PREVIEW_NEEDED>>> 标记 (前端会自动检测代码块)`;
+3. 每个节点必须有 type 和 props 字段 (不要用 style, 用 props)
+4. 文本内容放在 props.content 里 (不要放在 text 字段)
+5. 末尾不要加 <<<PREVIEW_NEEDED>>> 标记 (前端会自动检测代码块)`;
 
 /** 检测用户输入是否包含强制画布关键词, 若包含则返回注入指令, 否则返回 null */
 export function detectForceCanvas(prompt: string): string | null {

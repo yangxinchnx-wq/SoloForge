@@ -34,7 +34,7 @@ import { usePreviewStreamStore } from './previewStreamStore';
 // P2-7: handleSend 拆分出的纯逻辑 (错误分类 / 越界检测 / 预览触发判定)
 import { classifyStreamError, mentionsOutsideWorkspace, detectPreviewTrigger } from './useChatStore.helpers';
 // 2026-07-11: 实时增量代码翻译 — LLM 每输出一行代码, 立即翻译推送到画布
-import { IncrementalCanvasPusher, getCanvasSessionId, ensureCanvasAndPush, ensureCanvasForChat, universalNodeToFlutterDSL } from '../services/incrementalCanvasPusher';
+import { IncrementalCanvasPusher, getCanvasSessionId, ensureCanvasAndPush, ensureCanvasForChat, universalNodeToFlutterDSL, normalizeDsl } from '../services/incrementalCanvasPusher';
 
 // ════════════════════════════════════════════════════════════
 // [CANVAS PROBE — 临时诊断探针, 验证后删除]
@@ -330,7 +330,9 @@ async function tryLocalTranslateAndPush(text: string, chatSessionId: string): Pr
       // Case 1: 直接 DSL 格式 {type, props, children}
       if (dsl && dsl.type) {
         const canvasSessionId = getCanvasSessionId(chatSessionId);
-        const flutterDsl = { ui: dsl, platform: 'material' };
+        // ★ FIX 2026-07-14: 归一化 LLM JSON DSL → Flutter UiParser 期望格式
+        const normalized = normalizeDsl(dsl);
+        const flutterDsl = { ui: normalized, platform: 'material' };
 
         if (typeof window !== 'undefined' && window.soloforge?.canvas) {
           const result = await ensureCanvasAndPush(canvasSessionId, flutterDsl, chatSessionId);
@@ -343,12 +345,12 @@ async function tryLocalTranslateAndPush(text: string, chatSessionId: string): Pr
         }
         previewStore.updateStream(chatSessionId, {
           raw: code,
-          payload: { language: 'json', framework: 'json', source_code: code, preview: { root: dsl } } as any,
+          payload: { language: 'json', framework: 'json', source_code: code, preview: { root: normalized } } as any,
           errors: [], done: true,
         });
-        const payloadArg = { language: 'json', framework: 'json', source_code: code, preview: { root: dsl } } as any;
+        const payloadArg = { language: 'json', framework: 'json', source_code: code, preview: { root: normalized } } as any;
         previewStore.confirmPayload(chatSessionId, payloadArg);
-        console.log('[tryLocalTranslateAndPush] ✓ JSON DSL (type) 推送成功');
+        console.log('[tryLocalTranslateAndPush] ✓ JSON DSL (type) 推送成功, normalized.type=', normalized.type, 'layout=', normalized.props?.layout);
         return true;
       }
 
@@ -356,6 +358,8 @@ async function tryLocalTranslateAndPush(text: string, chatSessionId: string): Pr
       if (dsl && dsl.ui) {
         const canvasSessionId = getCanvasSessionId(chatSessionId);
         if (!dsl.platform) dsl.platform = 'material';
+        // ★ FIX 2026-07-14: 归一化 ui 子树
+        dsl.ui = normalizeDsl(dsl.ui);
 
         if (typeof window !== 'undefined' && window.soloforge?.canvas) {
           const result = await ensureCanvasAndPush(canvasSessionId, dsl, chatSessionId);
@@ -374,7 +378,7 @@ async function tryLocalTranslateAndPush(text: string, chatSessionId: string): Pr
         });
         const wrappedPayload = { language: 'json', framework: 'json', source_code: code, preview: { root } } as any;
         previewStore.confirmPayload(chatSessionId, wrappedPayload);
-        console.log('[tryLocalTranslateAndPush] ✓ JSON DSL (wrapped ui) 推送成功');
+        console.log('[tryLocalTranslateAndPush] ✓ JSON DSL (wrapped ui) 推送成功, normalized.type=', root?.type);
         return true;
       }
 

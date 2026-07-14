@@ -282,6 +282,77 @@ function styleToProps(style: UniversalStyle | undefined, nodeType: string): Reco
 }
 
 /**
+ * ★ 2026-07-14: 导出 normalizeDsl — 将 LLM 的 JSON DSL 格式归一化为 Flutter UiParser 期望格式
+ *
+ * LLM 被指示输出 (简洁格式):
+ *   { "type": "column", "children": [{ "type": "text", "text": "Hello", "style": { "fontSize": 24 } }] }
+ *
+ * Flutter UiParser.parse 期望 (props 格式):
+ *   { "type": "container", "props": { "layout": "column" }, "children": [{ "type": "text", "props": { "content": "Hello", "fontSize": 24 } }] }
+ *
+ * 归一化规则:
+ *   1. column/row → container + props.layout
+ *   2. style.* → props.* (带字段名映射)
+ *   3. text → props.content
+ *   4. container 的 color → props.backgroundColor
+ *   5. 递归处理 children
+ */
+const STYLE_KEY_MAP: Record<string, string> = {
+  background: 'backgroundColor',
+  bgColor: 'backgroundColor',
+  gap: 'spacing',
+  radius: 'borderRadius',
+  shadow: 'boxShadow',
+};
+
+export function normalizeDsl(node: any): any {
+  if (!node || typeof node !== 'object') return node;
+
+  const rawType = (node.type as string) || 'container';
+  const props: Record<string, any> = { ...(node.props || {}) };
+
+  // 1. column/row → container + layout
+  let normalizedType = rawType;
+  if (rawType === 'column' || rawType === 'row') {
+    normalizedType = 'container';
+    if (!props.layout) props.layout = rawType;
+  }
+
+  // 2. style.* → props.*
+  if (node.style && typeof node.style === 'object') {
+    for (const [key, val] of Object.entries(node.style)) {
+      const propKey = STYLE_KEY_MAP[key] || key;
+      if (props[propKey] === undefined) props[propKey] = val;
+    }
+  }
+
+  // 3. 内容字段 → props
+  if (node.text !== undefined && props.content === undefined) props.content = node.text;
+  if (node.content !== undefined && props.content === undefined) props.content = node.content;
+  if (node.label !== undefined && props.label === undefined) props.label = node.label;
+  if (node.src !== undefined && props.src === undefined) props.src = node.src;
+  if (node.url !== undefined && props.url === undefined) props.url = node.url;
+  if (node.placeholder !== undefined && props.placeholder === undefined) props.placeholder = node.placeholder;
+  if (node.value !== undefined && props.value === undefined) props.value = node.value;
+  if (node.variant !== undefined && props.variant === undefined) props.variant = node.variant;
+  if (node.icon !== undefined && props.icon === undefined) props.icon = node.icon;
+
+  // 4. container 的 color → backgroundColor
+  if (normalizedType === 'container' && props.color && !props.backgroundColor) {
+    props.backgroundColor = props.color;
+    delete props.color;
+  }
+
+  // 5. 递归 children
+  let children = node.children;
+  if (Array.isArray(children)) {
+    children = children.map(normalizeDsl);
+  }
+
+  return { type: normalizedType, props, children: children || [] };
+}
+
+/**
  * ★ 2026-07-14: 导出供 useChatStore.tryLocalTranslateAndPush 使用
  * 将 UniversalNode 转换为 Flutter DSL 格式 {type, props, children}
  */
@@ -561,6 +632,10 @@ class LineTracker {
     const canvasSessionId = getCanvasSessionId(this.chatSessionId);
     // 确保 platform 字段存在
     if (!wrappedDsl.platform) wrappedDsl.platform = 'material';
+    // ★ FIX 2026-07-14: 归一化 ui 子树
+    if (wrappedDsl.ui) {
+      wrappedDsl.ui = normalizeDsl(wrappedDsl.ui);
+    }
     const dsl = wrappedDsl;
 
     if (typeof window !== 'undefined' && window.soloforge?.canvas) {
@@ -602,7 +677,9 @@ class LineTracker {
    */
   private pushRawDsl(dsl: any, code: string, isFinal: boolean): void {
     const canvasSessionId = getCanvasSessionId(this.chatSessionId);
-    const flutterDsl = { ui: dsl, platform: 'material' };
+    // ★ FIX 2026-07-14: 归一化 LLM 的 JSON DSL → Flutter UiParser 期望的 {type, props, children} 格式
+    const normalized = normalizeDsl(dsl);
+    const flutterDsl = { ui: normalized, platform: 'material' };
 
     if (typeof window !== 'undefined' && window.soloforge?.canvas) {
       ensureCanvasAndPush(canvasSessionId, flutterDsl, this.chatSessionId).then((r) => {
@@ -632,7 +709,7 @@ class LineTracker {
         language: 'json',
         framework: 'json',
         source_code: code,
-        preview: { root: dsl },
+        preview: { root: normalized },
       } as any,
       errors: [],
       done: isFinal,
@@ -642,12 +719,14 @@ class LineTracker {
         language: 'json',
         framework: 'json',
         source_code: code,
-        preview: { root: dsl },
+        preview: { root: normalized },
       } as any);
     }
 
     console.log(`[LineTracker] ${isFinal ? '最终' : '增量'}JSON DSL推送`, {
-      type: dsl.type,
+      type: normalized.type,
+      layout: normalized.props?.layout,
+      childCount: normalized.children?.length,
       codeLen: code.length,
       sessionId: canvasSessionId,
     });
