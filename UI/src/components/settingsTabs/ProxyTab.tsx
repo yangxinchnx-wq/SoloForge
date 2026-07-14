@@ -41,12 +41,66 @@ declare global {
   }
 }
 
+// ── 手绘线条图标（stroke 风格，匹配项目图标体系）──────────────
+
+type IconProps = React.SVGProps<SVGSVGElement>;
+
+/** 系统代理：显示器 + 信号波 */
+const SystemProxyIcon = (props: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props}>
+    {/* 显示器外框 */}
+    <rect x="3" y="5" width="18" height="11" rx="1.5" />
+    {/* 底座 */}
+    <path d="M9.5 20h5M12 16v4" />
+    {/* 信号波 */}
+    <path d="M9 9.5a3.5 3.5 0 0 1 6 0M7.5 8a5.5 5.5 0 0 1 9 0" />
+    <circle cx="12" cy="11" r="0.6" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+/** 直连模式：两点直通箭头 */
+const DirectConnIcon = (props: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props}>
+    {/* 左端节点 */}
+    <circle cx="5" cy="12" r="2" />
+    {/* 连接线 */}
+    <path d="M7.2 12h6.6" />
+    {/* 箭头 */}
+    <path d="M11 9.5l3 2.5-3 2.5" />
+    {/* 右端节点 */}
+    <circle cx="19" cy="12" r="2" />
+  </svg>
+);
+
+/** 手动代理：调节滑杆 */
+const ManualProxyIcon = (props: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props}>
+    {/* 三条滑杆 */}
+    <path d="M4 7h16M4 12h16M4 17h16" />
+    {/* 旋钮（填充背景色遮住滑杆） */}
+    <circle cx="9" cy="7" r="2.2" fill="var(--color-surface)" />
+    <circle cx="15" cy="12" r="2.2" fill="var(--color-surface)" />
+    <circle cx="7" cy="17" r="2.2" fill="var(--color-surface)" />
+  </svg>
+);
+
+/** PAC 自动配置：文档 + 代码括号 */
+const PacScriptIcon = (props: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...props}>
+    {/* 文档轮廓 + 折角 */}
+    <path d="M6 3h7l5 5v13H6V3z" />
+    <path d="M13 3v5h5" />
+    {/* 代码括号 < > */}
+    <path d="M10 14.5l-2.2 1.75L10 18M14 14.5l2.2 1.75L14 18" />
+  </svg>
+);
+
 // ── 模式选项配置 ──
-const MODE_OPTIONS: { id: ProxyMode; label: string; desc: string; defaultMode?: boolean; icon: string }[] = [
-  { id: 'system', label: '系统代理', desc: '读取 OS 代理设置，含 WPAD/PAC 自动发现', defaultMode: true, icon: '🖥️' },
-  { id: 'direct', label: '直连模式', desc: '不使用代理，所有请求直连', icon: '📡' },
-  { id: 'manual', label: '手动代理', desc: '手动配置代理服务器地址和端口', icon: '⚙️' },
-  { id: 'pac',    label: 'PAC 自动配置', desc: '通过 PAC URL 自动决定代理路由规则', icon: '📋' },
+const MODE_OPTIONS: { id: ProxyMode; label: string; desc: string; defaultMode?: boolean; icon: React.ComponentType<IconProps> }[] = [
+  { id: 'system', label: '系统代理', desc: '读取 OS 代理设置，含 WPAD/PAC 自动发现', defaultMode: true, icon: SystemProxyIcon },
+  { id: 'direct', label: '直连模式', desc: '不使用代理，所有请求直连', icon: DirectConnIcon },
+  { id: 'manual', label: '手动代理', desc: '手动配置代理服务器地址和端口', icon: ManualProxyIcon },
+  { id: 'pac',    label: 'PAC 自动配置', desc: '通过 PAC URL 自动决定代理路由规则', icon: PacScriptIcon },
 ];
 
 const PROTOCOL_OPTIONS: { id: ProxyProtocol; label: string }[] = [
@@ -188,7 +242,7 @@ export default function ProxyTab() {
                   <div className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r-full bg-[var(--color-primary)]" />
                 )}
                 {/* 图标 */}
-                <span className="text-base leading-none mt-0.5 select-none">{opt.icon}</span>
+                {(() => { const Icon = opt.icon; return <Icon className={`shrink-0 mt-0.5 transition-colors ${isActive ? 'text-[var(--color-primary)]' : 'text-on-surface/40 group-hover:text-on-surface/60'}`} style={{ width: 18, height: 18 }} />; })()}
                 {/* 文本 */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">

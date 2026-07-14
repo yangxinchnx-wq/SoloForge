@@ -52,6 +52,10 @@ export default defineConfig(() => {
         '@dnd-kit/sortable',
         '@dnd-kit/modifiers',
         '@dnd-kit/utilities',
+        // 2026-07-14: recharts 被 StatsModal.tsx 懒加载引用,如果不预打包,
+        //   Vite 按需优化时缓存过期会 504 Outdated Optimize Dep,
+        //   导致动态导入 StatsModal.tsx 也连带失败。
+        'recharts',
       ],
     },
     server: {

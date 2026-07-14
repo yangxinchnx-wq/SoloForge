@@ -1,13 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  X, Globe, PlusCircle, Laptop, Cpu, Code2,
+  X, Globe, PlusCircle, Laptop, Cpu,
   ShieldCheck, Layers, Navigation, Database, Share2, Save, Settings, Bot
 } from '../utils/icons';
 import LanguageTab from './settingsTabs/LanguageTab';
 import ModelAddTab from './settingsTabs/ModelAddTab';
 import LocalModelTab from './settingsTabs/LocalModelTab';
 import McpTab from './settingsTabs/McpTab';
-import EnvironmentTab from './settingsTabs/EnvironmentTab';
 import SkillsRulesTab from './settingsTabs/SkillsRulesTab';
 import ProxyTab from './settingsTabs/ProxyTab';
 import KnowledgeBaseTab from './settingsTabs/KnowledgeBaseTab';
@@ -35,13 +34,12 @@ const TABS: TabItem[] = [
   { id: 'model-add', label: '02. 云端模型', icon: PlusCircle },
   { id: 'local-model', label: '03. 本地模型', icon: Laptop },
   { id: 'mcp', label: '04. MCP 工具', icon: Cpu },
-  { id: 'environment', label: '05. 运行环境', icon: Code2 },
-  { id: 'skills-rules', label: '06. 智能规则', icon: ShieldCheck },
-  { id: 'memory', label: '07. 助理', icon: Bot },
-  { id: 'proxy', label: '08. 网络代理', icon: Navigation },
-  { id: 'knowledge-base', label: '09. 知识库', icon: Database },
-  { id: 'channels', label: '10. 消息连接', icon: Share2 },
-  { id: 'data-management', label: '11. 数据备份', icon: Save }
+  { id: 'skills-rules', label: '05. 智能规则', icon: ShieldCheck },
+  { id: 'memory', label: '06. 助理', icon: Bot },
+  { id: 'proxy', label: '07. 网络代理', icon: Navigation },
+  { id: 'knowledge-base', label: '08. 知识库', icon: Database },
+  { id: 'channels', label: '09. 消息连接', icon: Share2 },
+  { id: 'data-management', label: '10. 数据备份', icon: Save }
 ];
 
 export default function SettingsModal({
@@ -156,7 +154,6 @@ export default function SettingsModal({
               {activeTabId === 'model-add' && <ModelAddTab />}
               {activeTabId === 'local-model' && <LocalModelTab />}
               {activeTabId === 'mcp' && <McpTab />}
-              {activeTabId === 'environment' && <EnvironmentTab />}
               {activeTabId === 'skills-rules' && <SkillsRulesTab onClose={handleClose} permissionMode={permissionMode} />}
               {activeTabId === 'memory' && <AgentCustomTab />}
               {activeTabId === 'proxy' && <ProxyTab />}
