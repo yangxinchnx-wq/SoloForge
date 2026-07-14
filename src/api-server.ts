@@ -475,7 +475,7 @@ export class SoloForgeApiServer {
     if (reqPath === '/api/audit/sinks' && method === 'GET') return handleAuditSinks(vaultDeps);
     if (reqPath === '/api/audit/sinks/config' && method === 'POST') return handleAuditSinksConfig(req.body, vaultDeps);
     if (reqPath === '/api/vault/keys' && method === 'GET') return handleVaultKeysList();
-    const vaultKeyMatch = reqPath.match(/^\/api\/vault\/keys\/([A-Za-z0-9_-]{1,64})(?:\/(verify|reveal))?$/);
+    const vaultKeyMatch = reqPath.match(/^\/api\/vault\/keys\/([A-Za-z0-9_.-]{1,64})(?:\/(verify|reveal))?$/);
     if (vaultKeyMatch) {
       const id = decodeURIComponent(vaultKeyMatch[1]);
       const sub = vaultKeyMatch[2];
