@@ -288,6 +288,8 @@ export default function PreviewPanel({
   const [customColor, setCustomColor] = useState<string>('#FFFFFF');
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showDeviceDropdown, setShowDeviceDropdown] = useState(false);
+  // ★ 下拉框 fixed 定位坐标 (基于按钮 getBoundingClientRect, 避免 overflow-hidden 裁剪)
+  const [devicePanelPos, setDevicePanelPos] = useState<{ top: number; right: number }>({ top: 0, right: 0 });
 
   // ★ 设备下拉框 ref (用于点击外部关闭 + Esc 关闭, 与协同副模型一致)
   const deviceBtnRef = useRef<HTMLDivElement | null>(null);
@@ -390,6 +392,29 @@ export default function PreviewPanel({
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
+  }, [showDeviceDropdown]);
+
+  // ★ 打开下拉框时计算 fixed 定位坐标 (避免被祖先 overflow-hidden 裁剪)
+  useEffect(() => {
+    if (!showDeviceDropdown) return;
+    const updatePos = () => {
+      const btn = deviceBtnRef.current;
+      if (!btn) return;
+      const rect = btn.getBoundingClientRect();
+      // 面板右对齐到按钮右边, 顶部在按钮下方 14px (mt-3.5)
+      setDevicePanelPos({
+        top: rect.bottom + 14,
+        right: window.innerWidth - rect.right,
+      });
+    };
+    updatePos();
+    // 窗口滚动/resize 时重新计算
+    window.addEventListener('resize', updatePos);
+    window.addEventListener('scroll', updatePos, true);
+    return () => {
+      window.removeEventListener('resize', updatePos);
+      window.removeEventListener('scroll', updatePos, true);
+    };
   }, [showDeviceDropdown]);
 
   // ★ 监听 Electron 弹窗的设备选择回调
@@ -1069,7 +1094,7 @@ export default function PreviewPanel({
                     onClick={() => setShowDeviceDropdown(false)}
                   />
 
-                  {/* 椭圆弹出面板 */}
+                  {/* 椭圆弹出面板 — fixed 定位避免被祖先 overflow-hidden 裁剪 */}
                   <motion.div
                     key="device-panel"
                     ref={devicePanelRef}
@@ -1078,13 +1103,16 @@ export default function PreviewPanel({
                     animate="visible"
                     exit="hidden"
                     style={{
+                      position: 'fixed',
+                      top: `${devicePanelPos.top}px`,
+                      right: `${devicePanelPos.right}px`,
                       transformOrigin: '50% 0%',
                       willChange: 'clip-path, transform, opacity',
                       transform: 'translateZ(0)',
                       backfaceVisibility: 'hidden',
                       WebkitBackfaceVisibility: 'hidden',
                     }}
-                    className="absolute right-0 mt-3.5 w-80 bg-[var(--color-surface)] border border-[var(--color-outline)]/45 rounded-2xl shadow-[0_24px_64px_rgba(0,0,0,0.15)] p-4 flex flex-col font-sans z-50 text-left cursor-default max-h-[500px]"
+                    className="w-80 bg-[var(--color-surface)] border border-[var(--color-outline)]/45 rounded-2xl shadow-[0_24px_64px_rgba(0,0,0,0.15)] p-4 flex flex-col font-sans z-50 text-left cursor-default max-h-[500px]"
                     role="dialog"
                     aria-label="设备选择"
                   >
