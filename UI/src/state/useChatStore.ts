@@ -685,6 +685,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     const hasInstruction = !!(additionalInstruction && additionalInstruction.trim());
     set({ isPaused: false, isGenerating: true, activeChatHandle: null, streamState: { ...emptyStreamState } });
 
+    try {
     let continuePrompt: string;
     if (hasInstruction) {
       // 用户追加了新指令: 让 LLM 基于已生成内容 + 新指令综合处理
@@ -730,7 +731,9 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
         case 'usage': { streamBridge.onUsage(evt.usage); break; }
         case 'error': { if (!streamFinalized) { streamFinalized = true; streamBridge.onError(evt.error); } activeStreamContext = null; const fm = classifyStreamError(evt.error || ''); set((s) => { const cl = s.conversations[ctx.activeChatId] || []; if (cl.length === 0) return { isGenerating: false, isPaused: false, activeChatHandle: null, streamState: { ...emptyStreamState } }; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.content = `${lm.content}\n\n\u274C **生成中断**：${fm}`; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [ctx.activeChatId]: nl }, isGenerating: false, isPaused: false, activeChatHandle: null, streamState: { ...emptyStreamState } }; }); break; }
         case 'done': {
-          if (!streamFinalized) { streamFinalized = true; streamBridge.onDone(evt.agentId); } activeStreamContext = null;
+          // ★ FIX: 如果已被 pause/abort 定格, 跳过 done 处理 — 防止清空 activeStreamContext 导致无法恢复
+          if (streamFinalized) break;
+          streamFinalized = true; streamBridge.onDone(evt.agentId); activeStreamContext = null;
           set({ isGenerating: false, isPaused: false, activeChatHandle: null, streamState: { ...emptyStreamState } });
           // ★ FIX: 恢复路径 done 事件补齐与 handleSend 相同的后处理
           const expFp = (evt as any).experienceFingerprint as string | undefined;
@@ -750,7 +753,14 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
         }
       }
     });
-    set({ activeChatHandle: { taskId: chatHandle.taskId, abort: () => { chatHandle.abort(); if (!streamFinalized) { streamFinalized = true; streamBridge.onDone(); } }, pause: () => { chatHandle.abort(); streamBridge.onPause(); } } });
+    set({ activeChatHandle: { taskId: chatHandle.taskId, abort: () => { chatHandle.abort(); if (!streamFinalized) { streamFinalized = true; streamBridge.onDone(); } }, pause: () => { chatHandle.abort(); if (!streamFinalized) { streamFinalized = true; streamBridge.onPause(); } } } });
+    } catch (err: any) {
+      // ★ FIX: resumeChat 无 try/catch 时, ensureCanvasForChat/startChat 抛错会导致状态卡死
+      console.error('[resumeChat] error:', err);
+      activeStreamContext = null;
+      set({ isGenerating: false, isPaused: false, activeChatHandle: null, streamState: { ...emptyStreamState } });
+      set((s) => { const cl = s.conversations[ctx.activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.content = `${lm.content}\n\n\u274C **\u6062\u590d\u5931\u8d25**\uff1a${err?.message || String(err)}`; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [ctx.activeChatId]: nl } }; });
+    }
   },
   // ★ 丢弃暂停的生成: 清除上下文 + 移除残留的部分 assistant 消息, 回到空闲态
   discardPausedGeneration: () => {
@@ -920,7 +930,9 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
         case 'usage': { streamBridge.onUsage(evt.usage); break; }
         case 'error': { if (!streamFinalized) { streamFinalized = true; streamBridge.onError(evt.error); } activeStreamContext = null; const fm = classifyStreamError(evt.error || ''); set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return { isGenerating: false, isPaused: false, activeChatHandle: null, streamState: { ...emptyStreamState } }; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.content = `\u274C **AI 调用失败**：${fm}`; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl }, isGenerating: false, isPaused: false, activeChatHandle: null, streamState: { ...emptyStreamState } }; }); break; }
         case 'done': {
-          if (!streamFinalized) { streamFinalized = true; streamBridge.onDone(evt.agentId); } activeStreamContext = null; set({ isGenerating: false, isPaused: false, activeChatHandle: null, streamState: { ...emptyStreamState } });
+          // ★ FIX: 如果已被 pause/abort 定格, 跳过 done 处理 — 防止清空 activeStreamContext 导致无法恢复
+          if (streamFinalized) break;
+          streamFinalized = true; streamBridge.onDone(evt.agentId); activeStreamContext = null; set({ isGenerating: false, isPaused: false, activeChatHandle: null, streamState: { ...emptyStreamState } });
           const expFp = (evt as any).experienceFingerprint as string | undefined;
           if (expFp) set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.experienceFingerprint = expFp; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl } }; });
 if (canvasPusher) await canvasPusher.flush();
@@ -945,7 +957,7 @@ console.log('[useChatStore] previewStreamStore entry:', _finalEntry ? { hasAst: 
         }
       }
     });
-    set({ activeChatHandle: { taskId: chatHandle.taskId, abort: () => { chatHandle.abort(); if (!streamFinalized) { streamFinalized = true; streamBridge.onDone(); } }, pause: () => { chatHandle.abort(); streamBridge.onPause(); } } });
+    set({ activeChatHandle: { taskId: chatHandle.taskId, abort: () => { chatHandle.abort(); if (!streamFinalized) { streamFinalized = true; streamBridge.onDone(); } }, pause: () => { chatHandle.abort(); if (!streamFinalized) { streamFinalized = true; streamBridge.onPause(); } } } });
   },
 
   handleAcceptEnable: async (candidateName) => {
