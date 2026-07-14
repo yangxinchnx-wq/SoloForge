@@ -665,8 +665,8 @@ export default function PreviewPanel({
     }
   }, [effectiveCanvasId, activePreset, computeFrame, setFrameSizeInStore, selectedChatId]);
 
-  // ★ FIX 2026-07-15: 拖动面板时实时 resize Flutter 窗口, 确保 canvas 跟随自适应
-  //   拖动中即时响应 (无防抖), 停止后也即时生效
+  // ★ FIX 2026-07-15: 拖动面板时实时 resize Flutter 窗口 + 重新推送 DSL, 确保 canvas 内容跟随自适应
+  //   resize 只改窗口大小, 已渲染内容不会自动重排 → 需要把当前 DSL 重新 push 一次
   useEffect(() => {
     if (!isElectron()) return;
     if (canvasState !== 'running') return;
@@ -674,12 +674,22 @@ export default function PreviewPanel({
     if (activePreset && activePreset.w > 0) return; // 有设备时不 resize
     if (canvasAreaSize.w === 0 || canvasAreaSize.h === 0) return; // 尺寸未就绪
     const { w, h } = computeFrame(activePreset);
-    // 拖动中用 requestAnimationFrame 合并, 非拖动时直接执行
     const raf = requestAnimationFrame(() => {
+      // 1. resize Flutter 窗口
       window.soloforge?.canvas.resize(sessionIdRef.current, w, h).catch(() => {});
+      // 2. 重新推送当前 DSL, 让 Flutter 按新尺寸重排内容
+      const entry = usePreviewStreamStore.getState().entries[selectedChatId ?? ''];
+      const payload = entry?.payload;
+      if (payload) {
+        const dsl = (payload as any)?.preview?.root ?? (payload as any)?.dsl ?? null;
+        if (dsl) {
+          const wrapped = { ui: dsl, platform: 'material' };
+          window.soloforge?.canvas.push(sessionIdRef.current, wrapped).catch(() => {});
+        }
+      }
     });
     return () => cancelAnimationFrame(raf);
-  }, [canvasAreaSize, canvasState, activePreset, computeFrame]);
+  }, [canvasAreaSize, canvasState, activePreset, computeFrame, selectedChatId]);
 
   // 启动画布 — 带 30s 超时保护，防止 IPC 卡死导致 UI 永远停在 "启动中"
   const startCanvas = useCallback(async () => {
@@ -1135,7 +1145,7 @@ export default function PreviewPanel({
                   height: `${scaledH}px`,
                   overflow: 'hidden',
                   border: '0.5px solid rgba(0, 0, 0, 0.35)',
-                  boxShadow: '0 0 10px rgba(0, 0, 0, 0.2), 0 1px 4px rgba(0, 0, 0, 0.1)',
+                  boxShadow: '0 0 20px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.15)',
                   borderRadius: '3px',
                   transition: isResizing ? 'none' : 'all 250ms cubic-bezier(0.16, 1, 0.3, 1)',
                 } as React.CSSProperties;
@@ -1147,7 +1157,7 @@ export default function PreviewPanel({
                   margin: `${BLEED / 2}px`,
                   overflow: 'hidden',
                   border: '0.5px solid rgba(0, 0, 0, 0.35)',
-                  boxShadow: '0 0 10px rgba(0, 0, 0, 0.2), 0 1px 4px rgba(0, 0, 0, 0.1)',
+                  boxShadow: '0 0 20px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.15)',
                   borderRadius: '3px',
                   transition: isResizing ? 'none' : 'all 250ms cubic-bezier(0.16, 1, 0.3, 1)',
                 } as React.CSSProperties;
