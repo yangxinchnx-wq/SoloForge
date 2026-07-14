@@ -16,7 +16,7 @@ import { isSessionState, repairSessionState } from '../canvas/validators';
 
 // ★ FIX 2026-07-14: 画布 SurrealDB 改用独立 rocksdb 路径, 避免与 ConversationSurrealStore
 //   的 rocksdb 锁冲突 (两个 Surreal 实例不能同时打开同一个 rocksdb 路径)
-const SURREAL_URL = process.env.SURREAL_URL || 'rocksdb://data/canvas_sessions_db';
+const SURREAL_URL = process.env.SURREAL_URL || 'rocksdb://data/canvas_surreal_db';
 const NAMESPACE = process.env.SURREAL_NAMESPACE || 'soloforge_core';
 const DATABASE = process.env.SURREAL_DATABASE || 'canvas_state';
 
@@ -63,7 +63,7 @@ class SurrealStoreImpl implements ISurrealStore {
     //   绝对路径 `rocksdb://C:/...` 在 Surreal v2 + v3 engine 组合下会 hang
     //   (Surreal 把 `C:` 当成引擎协议名, 等不存在的 C engine, 永远不 resolve)
     //   Root 3001 用相对路径 `data/soloforge_db` 所以工作。
-    const relPath = 'data/canvas_sessions_db';
+    const relPath = 'data/canvas_surreal_db';
     console.log(`[SurrealStore] connecting to rocksdb://${relPath} (cwd=${process.cwd()}) ...`);
     try {
       await this.db.connect(`rocksdb://${relPath}`);
