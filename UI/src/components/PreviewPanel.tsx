@@ -443,6 +443,9 @@ export default function PreviewPanel({
   const containerRef = useRef<HTMLDivElement | null>(null);
   // ★ canvas 区域专用 ref — reportBounds 只上报此区域, 避免Flutter窗口覆盖工具栏
   const canvasAreaRef = useRef<HTMLDivElement | null>(null);
+  // ★ FIX 2026-07-14: 设备框 ref — reportBounds 上报设备框的精确位置, 而非外部全区域
+  //   确保 Flutter HWND 与用户看到的设备框完全对齐
+  const deviceFrameRef = useRef<HTMLDivElement | null>(null);
 
   // 画布跟随应用默认启用 — Electron 环境下自动启动
   // 防重入: autoStartRef 防止同一生命周期内重复触发
@@ -581,14 +584,18 @@ export default function PreviewPanel({
   }, [canvasId, canvasReady, fallbackId, selectedChatId]);
 
   // ─────────────────────────────────────────
-  // ★ 上报 canvas 区域 (不含工具栏) 的位置和尺寸给主进程
-  //   Flutter 原生窗口只覆盖此区域, 不遮挡工具栏按钮
+  // ★ 上报 canvas 设备框 (不含工具栏) 的位置和尺寸给主进程
+  //   Flutter 原生窗口只覆盖设备框区域, 不遮挡工具栏按钮
+  //   ★ FIX 2026-07-14: 优先上报 deviceFrameRef (内部缩放后的设备框),
+  //     而非 canvasAreaRef (外部全区域), 确保 Flutter 窗口与用户看到的设备框对齐
   useEffect(() => {
     if (!isElectron()) return;
     const report = () => {
-      const el = canvasAreaRef.current;
+      // ★ 优先用设备框 ref, 没有则降级到 canvas 区域 ref
+      const el = deviceFrameRef.current || canvasAreaRef.current;
       if (!el) return;
       const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) return;
       window.soloforge!.canvas.reportBounds({
         x: Math.round(r.left), y: Math.round(r.top),
         width: Math.round(r.width), height: Math.round(r.height),
@@ -598,6 +605,7 @@ export default function PreviewPanel({
     const timer = setTimeout(report, 50);
     const ro = new ResizeObserver(report);
     if (canvasAreaRef.current) ro.observe(canvasAreaRef.current);
+    if (deviceFrameRef.current) ro.observe(deviceFrameRef.current);
     window.addEventListener('resize', report);
     window.addEventListener('scroll', report);
     return () => {
@@ -1235,6 +1243,7 @@ export default function PreviewPanel({
         <div ref={canvasAreaRef} className="flex-1 relative overflow-hidden flex items-center justify-center">
           {noCanvas ? renderStandby() : (
             <div
+              ref={deviceFrameRef}
               className="relative flex items-center justify-center"
               style={(() => {
                 // ★ 设备尺寸约束: 选中具体设备时, 画布区域被限制在设备尺寸内

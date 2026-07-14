@@ -1282,14 +1282,22 @@ function registerIpc() {
     return { ok: true, active: !!s, info: s || null };
   });
   // renderer 上报 PreviewPanel 区域的位置/尺寸 → 移动画布宿主窗口到这里
+  // ★ FIX 2026-07-14: reportBounds 只移动宿主窗口位置, 不改变 Flutter 渲染尺寸
+  //   原因: moveWindow 会改变 Flutter 窗口的物理像素尺寸 = 渲染分辨率
+  //   如果用 bounds.width/height (物理区域尺寸) 覆盖了 canvas.start() 时的逻辑尺寸,
+  //   Flutter 会在 325×704 上渲染, 但 LLM 被告知 430×932 → 定位错误!
+  //   修复: moveWindow 使用 session 的逻辑尺寸 (s.width/s.height),
+  //   宿主窗口仍按物理 bounds 定位, Flutter 内容按逻辑尺寸渲染 (超出部分被裁剪)
   ipcMain.handle('canvas:report-bounds', async (_e, bounds) => {
     try {
       if (!bounds) return { ok: false, error: 'bounds missing' };
       positionCanvasHost(bounds);
-      // 如果画布已经在跑，把嵌入的 Flutter 子窗口也同步 resize
+      // Flutter 子窗口保持逻辑尺寸, 不跟随物理区域缩放
       for (const [, s] of canvasSessions) {
         if (s.hwnd && s.process && !s.process.killed) {
-          try { await moveWindow(s.hwnd, 0, 0, bounds.width, bounds.height); } catch {}
+          const fw = s.width || bounds.width;
+          const fh = s.height || bounds.height;
+          try { await moveWindow(s.hwnd, 0, 0, fw, fh); } catch {}
         }
       }
       return { ok: true };

@@ -777,9 +777,13 @@ function createCanvasManager(deps) {
         if (!bounds) return { ok: false, error: 'bounds missing' };
         hostBounds = bounds;
         positionCanvasHost(bounds);
+        // ★ FIX 2026-07-14: Flutter 子窗口保持逻辑尺寸 (s.width/s.height),
+        //   不跟随物理区域缩放, 确保 LLM 告知的尺寸与 Flutter 渲染尺寸一致
         for (const [, s] of canvasSessions) {
           if (s.hwnd && s.process && !s.process.killed) {
-            try { await moveWindow(s.hwnd, 0, 0, bounds.width, bounds.height); } catch {}
+            const fw = s.width || bounds.width;
+            const fh = s.height || bounds.height;
+            try { await moveWindow(s.hwnd, 0, 0, fw, fh); } catch {}
           }
         }
         return { ok: true };
