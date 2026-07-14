@@ -1488,23 +1488,19 @@ ipcMain.handle('window:minimize', () => {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize();
 });
 
-ipcMain.handle('window:toggle-maximize', async () => {
+ipcMain.handle('window:toggle-maximize', () => {
 if (!mainWindow || mainWindow.isDestroyed()) return false;
-// maximizable:false → Electron maximize()/unmaximize() 被拒绝
-//   用 PowerShell ShowWindow 绕过:
-//   SW_MAXIMIZE=3, SW_RESTORE=9
 if (mainWindow.isMaximized()) {
-await psShowWindow(mainWindow, 9); // SW_RESTORE
+mainWindow.unmaximize();
 } else {
-await psShowWindow(mainWindow, 3); // SW_MAXIMIZE
+mainWindow.maximize();
 }
 return mainWindow.isMaximized();
 });
 
-ipcMain.handle('window:restore', async () => {
+ipcMain.handle('window:restore', () => {
 if (mainWindow && !mainWindow.isDestroyed()) {
-// maximizable:false → unmaximize() 被拒绝, 用 PowerShell ShowWindow(SW_RESTORE=9)
-if (mainWindow.isMaximized()) await psShowWindow(mainWindow, 9);
+if (mainWindow.isMaximized()) mainWindow.unmaximize();
 else mainWindow.restore();
 }
 });
@@ -1768,47 +1764,6 @@ function getHwndStr(window) {
     if (buf.length >= 8) return buf.readBigInt64LE(0).toString();
     return buf.readInt32LE(0).toString();
   } catch (e) { return null; }
-}
-
-// ── PowerShell ShowWindow 实现 maximize/restore (绕过 Electron is_maximizable 检查) ──
-// maximizable:false → Electron maximize() 被 is_maximizable() 拒绝
-//   但 ShowWindow(SW_MAXIMIZE=3) / ShowWindow(SW_RESTORE=9) 是 Win32 API, 不检查 maximizable
-//   IsZoomed() 也不检查 → isMaximized() 仍可用
-//   ShowWindow → WM_SIZE(SIZE_MAXIMIZED) → Electron 自动触发 maximize/unmaximize 事件
-async function psShowWindow(window, cmdShow) {
-  if (process.platform !== 'win32') return;
-  const hwnd = getHwndStr(window);
-  if (!hwnd) return;
-  const script = PS_WIN32 + `
-$hwnd = [IntPtr]::new([Int64]${hwnd})
-[W32]::ShowWindow($hwnd, ${cmdShow}) | Out-Null
-`;
-  await execPsSync(script);
-}
-
-// ── 移除 WS_SYSMENU 标志位 ──
-// frame:false + maximizable:false → WS_POPUP 窗口, 无 WS_MAXIMIZEBOX
-//   但 Electron 可能仍设置 WS_SYSMENU → Chromium WM_NCHITTEST 返回 HTCLOSE → 原生关闭按钮红色 hover
-//   移除 WS_SYSMENU → 无原生关闭按钮 hover
-function removeSysMenuStyle(window) {
-  if (process.platform !== 'win32') return;
-  const hwnd = getHwndStr(window);
-  if (!hwnd) return;
-  const script = PS_WIN32 + `
-$hwnd = [IntPtr]::new([Int64]${hwnd})
-$WS_SYSMENU = 0x00080000
-$oldStyle = [W32]::GetWindowLong($hwnd, -16)
-$newStyle = $oldStyle -band (-bnot $WS_SYSMENU)
-[W32]::SetWindowLong($hwnd, -16, $newStyle) | Out-Null
-# SWP_NOMOVE(0x0002) | SWP_NOSIZE(0x0001) | SWP_NOZORDER(0x0004) | SWP_NOACTIVATE(0x0010) | SWP_FRAMECHANGED(0x0020) = 0x0037
-[W32]::SetWindowPos($hwnd, [IntPtr]::Zero, 0, 0, 0, 0, 0x0037) | Out-Null
-$verifyStyle = [W32]::GetWindowLong($hwnd, -16)
-$hasSys = ($verifyStyle -band $WS_SYSMENU) -ne 0
-Write-Output "STYLE old=0x$($oldStyle.ToString('X8')) new=0x$($newStyle.ToString('X8')) SYSMENU_removed=$(-not $hasSys)"
-`;
-  execPsSync(script).then((out) => {
-    if (out) console.log('[remove-sysmenu]', out);
-  });
 }
 
 // ── 2026-07-04 拖动期间禁用标志 ──
@@ -2210,17 +2165,13 @@ function createWindow() {
     width: 1440,
     height: 900,
     show: false,
-    // frame:false → WS_POPUP, 完全无非客户区
-    // maximizable:false → Chromium 内部不创建 maximize button hit-test → 鼠标事件正常传递到 React
-    //   最大化/还原用 PowerShell ShowWindow(SW_MAXIMIZE/SW_RESTORE) 绕过 Electron is_maximizable() 检查
-    //   isMaximized() 仍可用 (底层调 IsZoomed, 不检查 maximizable 属性)
-    //   maximize/unmaximize 事件仍会触发 (ShowWindow → WM_SIZE(SIZE_MAXIMIZED) → Electron 事件)
-    //   启动后移除 WS_SYSMENU → 无原生关闭按钮红色 hover
-    frame: false,
+    // titleBarStyle:'hidden' → 原生 caption buttons (最小化/最大化/关闭), 无标题文字
+    //   自定义 Header 仍在, 右侧留出空间给原生按钮
+    titleBarStyle: 'hidden',
     backgroundColor: '#050505',
     hasShadow: false,
     minimizable: true,
-    maximizable: false,
+    maximizable: true,
     resizable: true,
     fullscreenable: true,
     paintWhenInitiallyHidden: true,
@@ -2489,8 +2440,7 @@ app.whenReady().then(async () => {
   createWindow();
   createCanvasHostWindow(mainWindow);
 
-// frame:false + maximizable:false → Chromium 不创建 maximize hit-test → 鼠标事件正常传递
-// 启动后移除 WS_SYSMENU → 无原生关闭按钮红色 hover
+// titleBarStyle:'hidden' → 原生 caption buttons, 无需任何 PowerShell hack
 mainWindow.once('ready-to-show', () => {
   // 关闭 splash, 显示主窗口
   if (splashWindow && !splashWindow.isDestroyed()) {
@@ -2498,11 +2448,6 @@ mainWindow.once('ready-to-show', () => {
     splashWindow = null;
   }
   mainWindow.show();
-  setTimeout(() => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      removeSysMenuStyle(mainWindow);
-    }
-  }, 300);
 });
 // 原生 maximize/unmaximize 事件 → 通知渲染器更新按钮状态
 mainWindow.on('maximize', () => {

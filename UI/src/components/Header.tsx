@@ -8,7 +8,6 @@ import {
 } from './header-bar';
 import { useThemedSurface } from './header-bar/themeColors';
 import { SecondaryModel } from '../types';
-import { WindowControls } from './WindowControls';
 
 interface HeaderProps {
   mainModel: string;
@@ -394,13 +393,11 @@ draggable
         </div>
       </CentralControlPill>
 
-      {/* ─── 右: 用户 + 窗口控件(主题色对齐) ────────── */}
-      <div className="flex items-center shrink-0" style={{ height: '100%', position: 'relative', zIndex: 40, isolation: 'isolate' }}>
+      {/* ─── 右: 用户胶囊(主题色对齐) ────────── */}
+      {/* titleBarStyle:'hidden' → 原生 caption buttons 在右上角, 右侧 padding 留出空间 */}
+      <div className="flex items-center shrink-0" style={{ height: '100%', position: 'relative', zIndex: 40, isolation: 'isolate', paddingRight: '138px' }}>
         {/* 用户胶囊: 头像下拉 + 名字下拉(主题色轮廓 + 微弱自发光) */}
         <UserBadgeSelector />
-
-        {/* 自定义窗口控件 — 不变, 已经在 Editorial 体系里 */}
-        <WindowControls />
       </div>
     </header>
   );
