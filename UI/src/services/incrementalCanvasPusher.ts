@@ -486,13 +486,23 @@ function buildDisplayText(text: string, blocks: CodeBlockInfo[]): string {
     result += text.slice(lastEnd, block.openFenceStart);
     const langLabel = block.lang || 'code';
     if (block.complete) {
-      if (!renderedLabelShown) {
+      // ★ FIX 2026-07-14: 只对有 translatorLang 的代码块显示「已渲染到画布」
+      //   非 UI 代码块 (如 bash/sql/read_file JSON) 不显示渲染标签
+      if (block.translatorLang && !renderedLabelShown) {
         result += `已渲染到画布 (${langLabel})`;
         renderedLabelShown = true;
+      } else if (!block.translatorLang) {
+        // 非 UI 代码块: 保留原始代码显示
+        result += text.slice(block.openFenceStart, block.closeFenceEnd);
       }
       lastEnd = block.closeFenceEnd;
     } else {
-      result += `正在渲染到画布...`;
+      // 未完成的代码块: 有 translatorLang 才显示「正在渲染」
+      if (block.translatorLang) {
+        result += `正在渲染到画布...`;
+      } else {
+        result += text.slice(block.openFenceStart);
+      }
       lastEnd = text.length;
     }
   }

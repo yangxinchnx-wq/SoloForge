@@ -53,7 +53,16 @@ function normalizeNode(node: any): UniversalNode {
   // Flutter DSL 格式: 把 props 展平到 node 顶层 + style
   const props = node.props || {};
   const style = flutterPropsToStyle(props);
-  const result: any = { type: node.type, style };
+  // ★ FIX 2026-07-14: 根据 props.layout 确定节点类型
+  //   normalizeDsl 把 column/row 转成了 container + props.layout
+  //   WebAstPreview 需要转回来才能正确设置 flex 方向
+  let nodeType = node.type;
+  if (nodeType === 'container' && props.layout === 'row') {
+    nodeType = 'row';
+  } else if (nodeType === 'container' && props.layout === 'column') {
+    nodeType = 'column';
+  }
+  const result: any = { type: nodeType, style };
 
   // 把 props 中的内容字段提到顶层
   if (props.content != null) result.content = props.content;
@@ -64,6 +73,8 @@ function normalizeNode(node: any): UniversalNode {
   if (props.kind != null) result.kind = props.kind;
   if (props.src != null) result.src = props.src;
   if (props.alt != null) result.alt = props.alt;
+  if (props.icon != null) result.icon = props.icon;
+  if (props.url != null) result.src = props.url; // image url → src
 
   // 保留所有 props 作为额外属性 (svg content 等)
   result.props = props;
@@ -217,16 +228,16 @@ function renderNode(node: UniversalNode, key: string): React.ReactNode {
           style={{
             ...style,
             cursor: 'pointer',
-            border: node.variant === 'outlined' ? '1px solid currentColor' : 'none',
-            background: node.variant === 'filled' ? style.background || '#3b82f6' : 'transparent',
-            color: style.color || (node.variant === 'filled' ? '#fff' : '#3b82f6'),
+            border: n.variant === 'outlined' ? '1px solid currentColor' : 'none',
+            background: n.variant === 'filled' ? style.background || '#3b82f6' : 'transparent',
+            color: style.color || (n.variant === 'filled' ? '#fff' : '#3b82f6'),
             padding: '8px 16px',
             borderRadius: '6px',
             fontSize: '13px',
             fontWeight: 500,
           }}
         >
-          {node.label}
+          {n.label}
         </button>
       );
 
@@ -234,9 +245,9 @@ function renderNode(node: UniversalNode, key: string): React.ReactNode {
       return (
         <input
           key={key}
-          placeholder={node.placeholder}
-          defaultValue={node.value}
-          type={node.kind || 'text'}
+          placeholder={n.placeholder}
+          defaultValue={n.value}
+          type={n.kind || 'text'}
           style={{
             ...style,
             padding: '8px 12px',
@@ -298,14 +309,12 @@ export default function WebAstPreview({ root, bgColor = '#ffffff' }: WebAstPrevi
   const normalizedRoot = normalizeNode(root);
   return (
     <div
-      className="absolute inset-0 overflow-auto flex flex-col items-center"
+      className="absolute inset-0 overflow-hidden flex flex-col items-center"
       style={{ background: bgColor }}
     >
       <div style={{
-        padding: '16px',
         width: '100%',
-        maxWidth: '480px',
-        minHeight: '100%',
+        height: '100%',
         margin: '0 auto',
       }}>
         {renderNode(normalizedRoot, 'root')}
