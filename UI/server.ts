@@ -444,7 +444,9 @@ async function startServer() {
   //   - 启动失败/未连接时降级为内存模式 (路由仍可用, 跨重启丢数据)
   //   - 优雅退出时自动 flushAll 到持久层
   // ============================================================
-  bootstrapCanvasSessionLayer(app);
+  // ★ 2026-07-14: bootstrapCanvasSessionLayer 现在会抛错 (不再降级),
+  //   必须用 .then/.catch 处理。成功后才触发 ChatStore/ConvStore 冷启动恢复。
+  const canvasBootstrap = bootstrapCanvasSessionLayer(app);
 
   // ============================================================
   // Chat Session API (3000 本地路由, 三层架构)
@@ -464,9 +466,7 @@ async function startServer() {
   registerChatSessionRoutes(app);
 
   // ★ 三层架构: 冷启动从温存储 (SurrealDB) 恢复对话列表
-  void getChatStore().restoreFromWarm().catch((e: Error) => {
-    console.warn('[server] ChatStore 冷启动恢复失败:', e.message);
-  });
+  //   必须在 canvasBootstrap 完成后调用 (SurrealStore 需先 init)
 
   // ── 临时诊断端点 ──
   app.post('/api/debug-log', (req, res) => {
@@ -492,9 +492,23 @@ async function startServer() {
   registerConversationRoutes(app);
 
   // ★ 三层架构: 冷启动从温存储 (SurrealDB) 恢复对话消息
-  void getConversationStore().restoreFromWarm().catch((e: Error) => {
-    console.warn('[server] ConversationStore 冷启动恢复失败:', e.message);
-  });
+  //   必须在 canvasBootstrap 完成后调用 (SurrealStore 需先 init)
+
+  // ★ 2026-07-14: 等 canvas bootstrap 完成 (SurrealStore init + Garnet ready) 后,
+  //   再触发 ChatStore / ConvStore 冷启动恢复。bootstrap 失败直接退出。
+  canvasBootstrap
+    .then(() => {
+      void getChatStore().restoreFromWarm().catch((e: Error) => {
+        console.warn('[server] ChatStore 冷启动恢复失败:', e.message);
+      });
+      void getConversationStore().restoreFromWarm().catch((e: Error) => {
+        console.warn('[server] ConversationStore 冷启动恢复失败:', e.message);
+      });
+    })
+    .catch((e: Error) => {
+      console.error('[server] Canvas 基础设施初始化失败, 服务器无法启动:', e.message);
+      process.exit(1);
+    });
 
   // ============================================================
   // Settings API (3000 本地路由, JSON 文件持久化)
