@@ -580,7 +580,20 @@ class LineTracker {
       //   1. 直接 DSL: {"type":"svg","props":{...}}
       //   2. 工具调用: {"tool":"canvas_push_ui","args":{"dslJson":"{...}"}}
       if (this.translateLang === '__json_dsl__') {
-        const parsed = JSON.parse(codeToTranslate);
+        // ★ 2026-07-14: JSON DSL 不做增量翻译 — 部分 JSON 永远无法 JSON.parse
+        //   增量阶段 (isFinal=false) 静默跳过, 等 flush() 时 isFinal=true 再解析
+        let parsed: any;
+        try {
+          parsed = JSON.parse(codeToTranslate);
+        } catch (jsonErr) {
+          if (isFinal) {
+            // 最终翻译也失败 — JSON 语法错误, 打印警告
+            console.warn(`[LineTracker] JSON.parse 失败 (final): ${(jsonErr as Error).message}, codeLen=${codeToTranslate.length}`);
+            console.warn(`[LineTracker] code preview: ${codeToTranslate.slice(0, 300)}...`);
+          }
+          // 增量阶段: JSON 不完整是正常的, 静默返回
+          return;
+        }
         // ★ 2026-07-14: 非 canvas_push_ui 的工具调用 (read_file/list_files/write_file 等)
         //   不是 DSL, 静默跳过, 不打警告
         if (parsed && parsed.tool && parsed.tool !== 'canvas_push_ui' && parsed.args) {
