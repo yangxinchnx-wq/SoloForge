@@ -84,53 +84,7 @@ interface PreviewPanelProps {
 
 type CanvasState = 'idle' | 'starting' | 'running' | 'error';
 
-declare global {
-  interface Window {
-    soloforge?: {
-      platform: string;
-      versions: { electron: string; chrome: string; node: string };
-      canvas: {
-        start: (sessionId: string, width: number, height: number) => Promise<{ ok: boolean; error?: string; session?: any; reused?: boolean }>;
-        resize: (sessionId: string, width: number, height: number) => Promise<{ ok: boolean; error?: string }>;
-        stop: (sessionId: string) => Promise<{ ok: boolean; notFound?: boolean }>;
-        push: (sessionId: string, dsl: any) => Promise<{ ok: boolean; status?: number; body?: string; error?: string }>;
-        status: (sessionId: string) => Promise<{ ok: boolean; active: boolean; info?: any }>;
-        reportBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: boolean; error?: string }>;
-        hostInfo: () => Promise<{ ok: boolean; created?: boolean; bounds: { x: number; y: number; width: number; height: number } }>;
-        ensureHost: () => Promise<{ ok: boolean; created?: boolean; hwnd?: number; bounds?: any; error?: string }>;
-        pushUI: (sessionId: string, dsl: any, deviceId?: string | null) => Promise<{ ok: boolean; error?: string }>;
-        selectDevice: (sessionId: string, modelKey: string, file: string, nativeSize: { w: number; h: number }) => Promise<{ ok: boolean; error?: string }>;
-        setHostVisible: (visible: boolean) => Promise<{ ok: boolean; error?: string }>;
-        openDevicePopup: (payload: {
-          x: number; y: number; width: number; height: number;
-          renderMode: string; currentKey: string; currentLabel?: string; deviceCount: number;
-          groups: Array<{ label: string; items: Array<{ key: string; label: string; w: number; h: number; group: string }> }>;
-          theme: { surface: string; surfaceBright: string; primary: string; onSurface: string; outline: string };
-        }) => Promise<{ ok: boolean; error?: string }>;
-        closeDevicePopup: () => Promise<{ ok: boolean }>;
-        onDeviceSelected: (callback: (data: { key: string; glbFile?: string }) => void) => () => void;
-        transformDevice: (sessionId: string, deviceId: string, transform: any) => Promise<{ ok: boolean; error?: string }>;
-        clearDevices: (sessionId: string) => Promise<{ ok: boolean; error?: string }>;
-        setBackground: (sessionId: string, color: string) => Promise<{ ok: boolean; error?: string }>;
-        screenshot: (sessionId: string) => Promise<{ ok: boolean; dataUrl?: string; width?: number; height?: number; error?: string }>;
-        getDeviceConfig: () => Promise<{ ok: boolean; config?: any; modelsDir?: string }>;
-        listModels: () => Promise<{ ok: boolean; models?: any[] }>;
-        embedStatus: (sessionId: string) => Promise<{ ok: boolean; sessionId?: string; embedded?: boolean; hwnd?: number; pid?: number; width?: number; height?: number; error?: string }>;
-        onExited: (callback: (info: CanvasExitedInfo) => void) => () => void;
-      };
-    };
-  }
-}
-
-/** main.cjs child.on('exit') 推送的画布退出信息 */
-interface CanvasExitedInfo {
-  sessionId: string;
-  exitCode: number | null;
-  signal: string | null;
-  isCrash: boolean;
-  stderr: string;
-  message: string;
-}
+// ★ window.soloforge / CanvasApi / CanvasExitedInfo 类型定义已移至 src/global.d.ts (全局, 避免重复声明冲突)
 
 const isElectron = () => typeof window !== 'undefined' && !!window.soloforge;
 
@@ -675,10 +629,10 @@ export default function PreviewPanel({
     return () => ro.disconnect();
   }, []);
 
-  // ★ 无设备时: 填满可用区域, 留 4px 出血线 (每边 2px)
+  // ★ 无设备时: 填满可用区域, 四边各留出血线
   //   有设备时: 使用设备原生尺寸
   //   确保 canvas.start() 使用的尺寸与 LLM 被告知的尺寸完全一致
-  const BLEED = 4; // 出血线 (px)
+  const BLEED = 8; // 出血线总 px (每边 4px)
   const computeFrame = useCallback((preset: DevicePreset | null) => {
     if (preset && preset.w > 0) return { w: preset.w, h: preset.h };
     return {
@@ -701,6 +655,22 @@ export default function PreviewPanel({
       setFrameSizeInStore(fallbackKey, size);
     }
   }, [effectiveCanvasId, activePreset, computeFrame, setFrameSizeInStore, selectedChatId]);
+
+  // ★ FIX 2026-07-15: 拖动面板时实时 resize Flutter 窗口, 确保 canvas 跟随自适应
+  //   canvasAreaSize 变化 → computeFrame 变化 → canvas.resize 更新 Flutter 渲染尺寸
+  //   仅在画布运行中且无设备约束时触发 (有设备时尺寸固定, 不需要 resize)
+  useEffect(() => {
+    if (!isElectron()) return;
+    if (canvasState !== 'running') return;
+    if (!sessionIdRef.current) return;
+    if (activePreset && activePreset.w > 0) return; // 有设备时不 resize
+    const { w, h } = computeFrame(activePreset);
+    // 防抖: 避免拖动过程中频繁 IPC 调用
+    const timer = setTimeout(() => {
+      window.soloforge?.canvas.resize(sessionIdRef.current, w, h).catch(() => {});
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [canvasAreaSize, canvasState, activePreset, computeFrame]);
 
   // 启动画布 — 带 30s 超时保护，防止 IPC 卡死导致 UI 永远停在 "启动中"
   const startCanvas = useCallback(async () => {
@@ -1158,10 +1128,11 @@ export default function PreviewPanel({
                     transition: 'all 250ms cubic-bezier(0.16, 1, 0.3, 1)',
                   } as React.CSSProperties;
                 }
-                // ★ 无设备时填满可用区域 (留出血线)
+                // ★ 无设备时填满可用区域 (四边各留 BLEED/2 出血线)
                 return {
                   width: `calc(100% - ${BLEED}px)`,
                   height: `calc(100% - ${BLEED}px)`,
+                  margin: `${BLEED / 2}px`,
                   overflow: 'hidden',
                   transition: 'all 250ms cubic-bezier(0.16, 1, 0.3, 1)',
                 } as React.CSSProperties;
