@@ -322,6 +322,31 @@ const BLOCK_LANG_TO_TRANSLATOR: Record<string, string> = {
   json: '__json_dsl__',
 };
 
+/**
+ * ★ 2026-07-14: 检查 JSON 字符串是否是画布 DSL (而非工具调用)
+ * 工具调用格式: {"tool":"read_file","args":{...}}
+ * 画布 DSL 格式: {"type":"container",...} 或 {"ui":{...}} 或 {"tool":"canvas_push_ui",...}
+ */
+function isCanvasDslJson(code: string): boolean {
+  try {
+    const parsed = JSON.parse(code);
+    if (!parsed || typeof parsed !== 'object') return false;
+    // 画布 DSL: 有 type 字段
+    if (typeof parsed.type === 'string') return true;
+    // 画布 DSL: 有 ui 字段
+    if (parsed.ui && typeof parsed.ui === 'object') return true;
+    // 画布 DSL: canvas_push_ui 工具调用
+    if (parsed.tool === 'canvas_push_ui') return true;
+    // 非画布: 其他工具调用 (read_file, write_file, etc.)
+    if (typeof parsed.tool === 'string' && parsed.tool !== 'canvas_push_ui') return false;
+    // 有 children 但无 type — 可能是不完整的画布 DSL
+    if (Array.isArray(parsed.children)) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 function extractCodeBlock(text: string): { code: string; lang: string } | null {
   if (!text) return null;
   const fencedRe = /```(\w+)\s*\n([\s\S]*?)```/g;
@@ -331,8 +356,14 @@ function extractCodeBlock(text: string): { code: string; lang: string } | null {
     const code = match[2].trim();
     if (!code) continue;
     const translatorLang = BLOCK_LANG_TO_TRANSLATOR[blockLang];
-    // ★ 2026-07-14: __json_dsl__ 不在 translatorRegistry 中, 需要特殊处理
-    if (translatorLang === '__json_dsl__') return { code, lang: '__json_dsl__' };
+    // ★ 2026-07-14: __json_dsl__ 需要过滤非画布工具调用 JSON (如 read_file)
+    if (translatorLang === '__json_dsl__') {
+      if (!isCanvasDslJson(code)) {
+        console.log('[extractCodeBlock] 跳过非画布 JSON 代码块, 前50字:', code.slice(0, 50));
+        continue;
+      }
+      return { code, lang: '__json_dsl__' };
+    }
     if (translatorLang && isLanguageSupported(translatorLang)) return { code, lang: translatorLang };
     const detected = detectLanguage(code);
     if (detected) return { code, lang: detected.language };
@@ -353,6 +384,11 @@ async function tryLocalTranslateAndPush(text: string, chatSessionId: string): Pr
   if (lang === '__json_dsl__') {
     try {
       const dsl = JSON.parse(code);
+      // ★ 2026-07-14: 安全检查 — 非 canvas_push_ui 的工具调用不是 DSL, 跳过
+      if (dsl && dsl.tool && dsl.tool !== 'canvas_push_ui' && dsl.args) {
+        console.log('[tryLocalTranslateAndPush] 跳过非画布工具调用:', dsl.tool);
+        return false;
+      }
       console.log('[tryLocalTranslateAndPush] JSON parsed, keys=', Object.keys(dsl || {}));
 
       // Case 1: 直接 DSL 格式 {type, props, children}
@@ -822,6 +858,10 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     let accumulatedText = '';
     let canvasPusher: IncrementalCanvasPusher | null = null;
 
+    // ★ FIX 2026-07-14: 发新消息时清理旧的 previewStreamStore entry
+    //   避免上一轮的残留数据导致 usePreviewBridge 跳过新推送
+    usePreviewStreamStore.getState().clearEntry(activeChatId);
+
     // ★ 2026-07-14: 懒创建画布 — 发消息时才创建, 不再注册 fallback ID
     //   ensureCanvasForChat 会调用 POST /api/canvas/sessions 创建真实画布
     //   并派发 'soloforge-canvas-created' 事件让 bridge 刷新
@@ -860,6 +900,11 @@ if (canvasPusher) await canvasPusher.flush();
 const pusherHandled = canvasPusher?.wasHandled() ?? false;
 let localPushed = pusherHandled;
 if (!pusherHandled) localPushed = await tryLocalTranslateAndPush(accumulatedText, activeChatId);
+// ★ FIX 2026-07-14: 如果推送和本地翻译都没成功, 清理残留 entry
+//   避免旧数据导致 usePreviewBridge 跳过预览触发
+if (!pusherHandled && !localPushed) {
+  usePreviewStreamStore.getState().clearEntry(activeChatId);
+}
 // ★ 2026-07-14: 诊断日志 — 跟踪画布推送结果
 console.log('[useChatStore] done event: pusherHandled=', pusherHandled, 'localPushed=', localPushed, 'accumulatedText.length=', accumulatedText.length);
 const _finalEntry = usePreviewStreamStore.getState().getEntry(activeChatId);

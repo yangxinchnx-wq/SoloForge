@@ -581,6 +581,13 @@ class LineTracker {
       //   2. 工具调用: {"tool":"canvas_push_ui","args":{"dslJson":"{...}"}}
       if (this.translateLang === '__json_dsl__') {
         const parsed = JSON.parse(codeToTranslate);
+        // ★ 2026-07-14: 非 canvas_push_ui 的工具调用 (read_file/list_files/write_file 等)
+        //   不是 DSL, 静默跳过, 不打警告
+        if (parsed && parsed.tool && parsed.tool !== 'canvas_push_ui' && parsed.args) {
+          console.log(`[LineTracker] 跳过非画布工具调用: tool=${parsed.tool}`);
+          return;
+        }
+
         console.log('[LineTracker] __json_dsl__ parsed, keys=', Object.keys(parsed || {}), 'isFinal=', isFinal);
 
         // Case 1: 直接 DSL (有 type 字段)
@@ -921,7 +928,11 @@ export class IncrementalCanvasPusher {
       for (const { block } of finalTasks) {
         this.pushedBlockStarts.add(block.openFenceStart);
       }
-      this._handled = finalTasks.some(t => t.tracker.pushed);
+      // ★ 2026-07-14: 不要覆盖已成功的 _handled — 增量阶段可能已成功推送
+      //   flush 遇到非 DSL 工具调用 (read_file 等) 时 pushed=false,
+      //   但不应丢失增量阶段已推送的状态
+      const anyPushed = finalTasks.some(t => t.tracker.pushed);
+      this._handled = this._handled || anyPushed;
       console.log(`[IncrementalCanvasPusher] flush 完成: _handled=${this._handled}`);
     } else {
       console.log(`[IncrementalCanvasPusher] flush: 无可翻译的代码块`);
