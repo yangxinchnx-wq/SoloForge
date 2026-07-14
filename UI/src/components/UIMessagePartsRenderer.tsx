@@ -140,7 +140,7 @@ const CollapsibleProcess = memo(function CollapsibleProcess({ parts, isStreaming
     }
     // streaming 结束后自动折叠 (仅在用户未手动操作过时)
     if (!userToggled) {
-      const timer = setTimeout(() => setIsOpen(false), 800);
+      const timer = setTimeout(() => setIsOpen(false), 2000);
       return () => clearTimeout(timer);
     }
   }, [isStreaming]); // eslint-disable-line react-hooks/exhaustive-deps
