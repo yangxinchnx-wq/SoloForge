@@ -1765,6 +1765,35 @@ function getHwndStr(window) {
   } catch (e) { return null; }
 }
 
+// ── 移除 WS_MAXIMIZEBOX 标志位 ──
+// frame:false + maximizable:true → Electron 创建窗口时设置了 WS_MAXIMIZEBOX
+// → Chromium WM_NCHITTEST 返回 HTMAXBUTTON → 触发 Win11 snap layout flyout (浅白色尺寸提示器)
+// 解决: 用 PowerShell SetWindowLong(GWL_STYLE) 移除 WS_MAXIMIZEBOX 标志位
+//   - GWL_STYLE 可以跨进程修改 (不像 GWL_WNDPROC 必须同进程)
+//   - 移除后 Chromium 不返回 HTMAXBUTTON → 无 snap flyout
+//   - ShowWindow(SW_MAXIMIZE) 不检查 WS_MAXIMIZEBOX → maximize() 仍可工作
+//   - 最大化用原生 maximize()/unmaximize() → 无 DWM resize tooltip
+function removeMaximizeBoxStyle(window) {
+  if (process.platform !== 'win32') return;
+  const hwnd = getHwndStr(window);
+  if (!hwnd) return;
+  const script = PS_WIN32 + `
+$hwnd = [IntPtr]::new([Int64]${hwnd})
+$WS_MAXIMIZEBOX = 0x00010000
+$oldStyle = [W32]::GetWindowLong($hwnd, -16)
+$newStyle = $oldStyle -band (-bnot $WS_MAXIMIZEBOX)
+[W32]::SetWindowLong($hwnd, -16, $newStyle) | Out-Null
+# SWP_NOMOVE(0x0002) | SWP_NOSIZE(0x0001) | SWP_NOZORDER(0x0004) | SWP_NOACTIVATE(0x0010) | SWP_FRAMECHANGED(0x0020) = 0x0037
+[W32]::SetWindowPos($hwnd, [IntPtr]::Zero, 0, 0, 0, 0, 0x0037) | Out-Null
+$verifyStyle = [W32]::GetWindowLong($hwnd, -16)
+$hasMax = ($verifyStyle -band $WS_MAXIMIZEBOX) -ne 0
+Write-Output "STYLE old=0x$($oldStyle.ToString('X8')) new=0x$($newStyle.ToString('X8')) WS_MAXIMIZEBOX_removed=$(-not $hasMax)"
+`;
+  execPsSync(script).then((out) => {
+    if (out) console.log('[remove-maxbox]', out);
+  });
+}
+
 // ── 2026-07-04 拖动期间禁用标志 ──
 let dragActive = false;
 
@@ -2386,11 +2415,16 @@ app.whenReady().then(async () => {
   createWindow();                  // 先创建主窗口
   createCanvasHostWindow(mainWindow); // 再以主窗口为 parent 创建画布宿主 → OS 自动管 z-order
 
-// frame:false → WS_POPUP 窗口, 无非客户区 → 无 snap flyout
-// maximize()/unmaximize() → 原生 ShowWindow(SW_MAXIMIZE), 不触发 DWM resize tooltip
-//   (setBounds → SetWindowPos → 会触发 DWM resize tooltip = 浅白色尺寸提示器)
+// frame:false → 无系统标题栏; maximizable:true → maximize() 可用
+// 启动后移除 WS_MAXIMIZEBOX → 无 snap flyout; maximize() → 无 DWM resize tooltip
 mainWindow.once('ready-to-show', () => {
   mainWindow.show();
+  // 延迟 300ms 等 HWND 稳定后移除 WS_MAXIMIZEBOX
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      removeMaximizeBoxStyle(mainWindow);
+    }
+  }, 300);
 });
 // 原生 maximize/unmaximize 事件 → 通知渲染器更新按钮状态
 mainWindow.on('maximize', () => {
