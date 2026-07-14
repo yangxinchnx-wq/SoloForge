@@ -3,7 +3,8 @@
 // 入口：package.json "main" 指向本文件
 //
 // dev 模式: 开发者手动启动 `npm run dev` (Vite + Node.js 3000)
-//           Electron 从 http://localhost:3000 加载前端, 有 HMR 热更新
+//           Electron 从 http://localhost:3000 加载前端, HMR 已禁用 (DISABLE_HMR=true)
+//           用户通过 Ctrl+R / F5 / UI 按钮手动重载
 //
 // prod 模式: Electron 自动拉起所有后端服务 (UI Server 3000 + RACER 3001
 //            + Garnet 6379 + git-service 3002), 从 dist/index.html 加载
@@ -1720,6 +1721,18 @@ ipcMain.handle('window:maximize-state', (event) => {
       return null;
     }
   });
+
+  // ── 2026-07-14: 手动重载 IPC (HMR 已禁用, 用户通过 UI 按钮 / F5 / Ctrl+R 手动重载) ──
+  ipcMain.handle('app:reload', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      console.log('[electron] 手动重载渲染进程 (app:reload IPC)');
+      // 清缓存防止 Chromium 复用旧字节码
+      try { mainWindow.webContents.session.clearCache(); } catch {}
+      mainWindow.webContents.reload();
+      return { ok: true };
+    }
+    return { ok: false, error: 'mainWindow not available' };
+  });
 }
 
 // ────────────────────────────────────────────
@@ -2198,9 +2211,9 @@ function createWindow() {
   }
 
   // 2026-07-02 修复"强制刷新看到几个版本前的代码"问题:
-  //   dev 模式: 从 Vite dev server (3000) 加载, 有 HMR
+  //   dev 模式: 从 Vite dev server (3000) 加载, HMR 已禁用 (手动重载)
   //   prod 模式: 从已启动的 UI Server (3000) 加载 (HTTP 协议, 无 file:// 缓存问题)
-  //   两者都走 http://localhost:3000, 区别在于 dev 有 DevTools + HMR
+  //   两者都走 http://localhost:3000, 区别在于 dev 有 DevTools
   if (isDev) {
     mainWindow.loadURL(DEV_URL);
     mainWindow.webContents.openDevTools({ mode: 'detach' });
@@ -2275,7 +2288,27 @@ function buildMenu() {
     ...(isMac ? [{ role: 'appMenu' }] : []),
     { label: 'File', submenu: [isMac ? { role: 'close' } : { role: 'quit' }] },
     { role: 'editMenu' },
-    { role: 'viewMenu' },
+    // 2026-07-14: HMR 已禁用, View 菜单显式提供 Reload 入口 (Ctrl+R + F5)
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload', accelerator: 'CmdOrCtrl+R' },
+        { label: 'Reload (F5)', accelerator: 'F5', click: () => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            try { mainWindow.webContents.session.clearCache(); } catch {}
+            mainWindow.webContents.reload();
+          }
+        }},
+        { type: 'separator' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+      ],
+    },
     { role: 'windowMenu' },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));

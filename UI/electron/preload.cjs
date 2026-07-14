@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('soloforge', {
     chrome: process.versions.chrome,
     node: process.versions.node,
   },
+  // ── 2026-07-14: 手动重载 (HMR 已禁用, 渲染层可调用此方法触发完整页面重载) ──
+  reload: () => ipcRenderer.invoke('app:reload'),
   // 画布相关 IPC（受 contextBridge 沙箱约束，只暴露 invoke 包装）
   canvas: {
     start: (sessionId, width, height) =>

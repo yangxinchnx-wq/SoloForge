@@ -59,12 +59,12 @@ export default defineConfig(() => {
       ],
     },
     server: {
-      // 2026-07-14 修复 "@vitejs/plugin-react can't detect preamble" 错误:
-      //   当 hmr: false 时,plugin-react 的 skipFastRefresh=true → 不注入 preamble,
-      //   但 OXC 转换器仍可能在组件中注入 Refresh 注册代码 → 运行时检测不到 preamble 报错。
-      //   修复: hmr 默认 true,仅当 DISABLE_HMR=true 时关闭(与 watch 逻辑一致)。
+      // 2026-07-14: HMR 已永久禁用 (start.mjs 传 DISABLE_HMR=true)。
+      //   原因: Vite HMR 在 agent 编辑文件时频繁触发页面重载, 干扰开发。
+      //   改为手动重载: Ctrl+R / F5 / window.soloforge.reload() IPC。
+      //   保留 env 开关仅为向后兼容: 未设 DISABLE_HMR 时 hmr 仍为 true。
       hmr: process.env.DISABLE_HMR !== 'true',
-      // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
+      // HMR 禁用时同时关闭文件监听, 节省 CPU (agent 编辑不触发 Vite watch)
       watch: process.env.DISABLE_HMR === 'true' ? null : {
         // [2026-06-28 关键修复] .soloforge/ 在项目根目录, 不在 UI/ 下; 必须用绝对路径
         //   才能让 Vite 跳过监听。**/.soloforge/** 只能匹配 UI/.soloforge, 漏掉了

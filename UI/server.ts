@@ -2412,8 +2412,9 @@ async function startServer() {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        // hmr 必须放在 server 内层 (Vite Config 的 hmr 是 server.hmr, 不是顶层属性)。
-        // vite.config.ts 中也有相同的 server.hmr 配置, 这里显式传入确保 middleware 模式下也生效。
+        // 2026-07-14: HMR 已永久禁用 (start.mjs 传 DISABLE_HMR=true)。
+        //   用户通过 Ctrl+R / F5 / window.soloforge.reload() 手动重载。
+        //   vite.config.ts 中也有相同的 server.hmr 配置。
         hmr: process.env.DISABLE_HMR !== 'true',
       },
       appType: "spa",
