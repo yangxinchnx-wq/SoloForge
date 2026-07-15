@@ -98,12 +98,18 @@ public class SpringAiAgentExecutor {
         ctx.put("provider_model", provider.getModel());
         String pKey = LlmCommandCenter.providerKey(provider.getBaseUrl(), provider.getModel());
         String response = null;
+        java.util.List<String> errorLog = new java.util.ArrayList<>();
         for (int attempt = 0; attempt <= 3; attempt++) {
             LlmCommandCenter.LlmDecision d = commandCenter.evaluate(provider.getBaseUrl(), provider.getModel(), provider.getRateLimitProfile());
-            if (d.action == LlmCommandCenter.LlmDecision.Action.REJECT)
-                throw new RuntimeException("CommandCenter rejected: " + d.reason);
-            if (d.action == LlmCommandCenter.LlmDecision.Action.WAIT)
+            if (d.action == LlmCommandCenter.LlmDecision.Action.REJECT) {
+                errorLog.add("[App] " + d.reason);
+                if (attempt < 3) { log.warn("[SpringAiExec] attempt #{} rejected: {}", attempt+1, d.reason); continue; }
+                throw new RuntimeException(buildErrorReport(provider, errorLog, 3));
+            }
+            if (d.action == LlmCommandCenter.LlmDecision.Action.WAIT) {
+                log.info("[SpringAiExec] attempt #{} waiting {}ms (RPM)", attempt+1, d.waitMs);
                 try { Thread.sleep(d.waitMs); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            }
             try {
                 long t0 = System.currentTimeMillis();
                 response = chatClient.prompt().system(systemPrompt).user(userMessage).toolContext(ctx)
@@ -111,20 +117,26 @@ public class SpringAiAgentExecutor {
                                 .temperature(settings.getTemperature() != null ? settings.getTemperature() : 0.3).build())
                         .call().content();
                 commandCenter.recordSuccess(pKey, System.currentTimeMillis() - t0);
+                commandCenter.completeRequest(systemPrompt, userMessage, provider.getModel(), temp, response, System.currentTimeMillis() - t0);
                 break;
             } catch (Exception e) {
                 int sc = LlmCommandCenter.extractStatusCode(e);
                 commandCenter.recordFailure(pKey, sc);
+                String errType = sc == 429 ? "[Server 429]" : sc == 503 ? "[Server 503]" : sc >= 500 ? "[Server " + sc + "]" : sc > 0 ? "[Server " + sc + "]" : "[App/Network]";
+                String errMsg = e.getMessage() != null ? e.getMessage().substring(0, Math.min(e.getMessage().length(), 200)) : "unknown";
+                errorLog.add(errType + " " + errMsg);
+                log.warn("[SpringAiExec] attempt #{}/3 failed: {} {}", attempt+1, errType, errMsg);
                 if (commandCenter.shouldRetry(e, attempt) && attempt < 3) {
                     commandCenter.waitBeforeRetry(e, attempt);
                     continue;
                 }
-                throw e;
+                commandCenter.failRequest(systemPrompt, userMessage, provider.getModel(), temp, e);
+                throw new RuntimeException(buildErrorReport(provider, errorLog, attempt+1), e);
             } finally {
                 commandCenter.release(pKey);
             }
         }
-        if (response == null) throw new RuntimeException("LLM call exhausted");
+        if (response == null) throw new RuntimeException(buildErrorReport(provider, errorLog, 3));
         log.info("[SpringAiExec] response_len={}", response.length());
         postExecuteSideEffects(agent, response, settings);
         DelegationTools.clearContext();
@@ -229,6 +241,24 @@ public class SpringAiAgentExecutor {
     }
 
     /** Parse agent.capabilities JSON string to List<String> */
+    private String buildErrorReport(ChatRequest.LlmProvider provider, java.util.List<String> errorLog, int attempts) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("LLM 调用失败 (连续 ").append(attempts).append(" 次)\n");
+        sb.append("模型: ").append(provider.getModel()).append("\n");
+        sb.append("接口: ").append(provider.getBaseUrl()).append("\n");
+        sb.append("错误详情:\n");
+        for (int i = 0; i < errorLog.size(); i++) {
+            sb.append("  第").append(i + 1).append("次: ").append(errorLog.get(i)).append("\n");
+        }
+        if (errorLog.stream().anyMatch(e -> e.contains("429"))) {
+            sb.append("建议: 该模型请求频率超限, 请稍后重试或在设置中降低副模型并发数。\n");
+        }
+        if (errorLog.stream().anyMatch(e -> e.contains("[App]") && e.contains("circuit"))) {
+            sb.append("建议: 模型已触发熔断保护, 请等待 30 秒后重试。\n");
+        }
+        return sb.toString().trim();
+    }
+
     @SuppressWarnings("unchecked")
     private java.util.List<String> parseCapabilities(String json) {
         if (json == null || json.isBlank()) return null;
