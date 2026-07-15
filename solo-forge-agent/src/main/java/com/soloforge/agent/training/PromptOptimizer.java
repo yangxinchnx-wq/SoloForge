@@ -1,6 +1,5 @@
 package com.soloforge.agent.training;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.soloforge.agent.dto.ChatRequest;
 import com.soloforge.agent.config.DynamicChatModelResolver;
 import com.soloforge.agent.persistence.AgentIdentityEntity;
@@ -47,18 +46,18 @@ public class PromptOptimizer {
     private final AgentTrainingHistoryRepository historyRepo;
     private final TrainingTaskLoader taskLoader;
     private final DynamicChatModelResolver modelResolver;
-    private final ObjectMapper objectMapper;
 
     /** 优化阈值: new reward 必须超过 baseline 的 (1 + IMPROVEMENT_THRESHOLD) 倍才采纳 */
     @Value("${soloforge.training.improvement-threshold:0.05}")
     private double improvementThreshold;
 
-    /** 训练用 LLM provider (从系统属性读取, 与运行时 provider 分离) */
-    @Value("${soloforge.training.llm.base-url:https://api.openai.com}")
+    /** 训练用 LLM provider (从配置读取, 与运行时 provider 分离)
+     *  默认使用本地小模型 (Python MARL 服务 8767 端口, llama-cpp-python + GGUF) */
+    @Value("${soloforge.training.llm.base-url:http://127.0.0.1:8767}")
     private String trainingLlmBaseUrl;
-    @Value("${soloforge.training.llm.api-key:placeholder}")
+    @Value("${soloforge.training.llm.api-key:local}")
     private String trainingLlmApiKey;
-    @Value("${soloforge.training.llm.model:gpt-4o-mini}")
+    @Value("${soloforge.training.llm.model:qwen2.5-0.5b-instruct}")
     private String trainingLlmModel;
 
     /** 正在训练中的 Agent 防重入 */
@@ -115,7 +114,21 @@ public class PromptOptimizer {
         return results;
     }
 
-    @SuppressWarnings("unchecked")
+    /**
+     * 构建训练用 LlmProvider: 优先用 overrideProvider, 否则用配置的训练专用 LLM
+     */
+    private ChatRequest.LlmProvider resolveTrainingProvider(ChatRequest.LlmProvider overrideProvider) {
+        if (overrideProvider != null) {
+            return overrideProvider;
+        }
+        return ChatRequest.LlmProvider.builder()
+                .name("OPENAI") // OpenAI-compatible protocol
+                .baseUrl(trainingLlmBaseUrl)
+                .apiKey(trainingLlmApiKey)
+                .model(trainingLlmModel)
+                .build();
+    }
+
     private OptimizeResult doOptimize(String agentId, ChatRequest.LlmProvider overrideProvider) {
         Optional<AgentIdentityEntity> opt = agentRepo.findById(agentId);
         if (opt.isEmpty()) {
@@ -134,12 +147,15 @@ public class PromptOptimizer {
         log.info("=== PromptOptimizer: 助理 {} (v{}, domain={}, {} tasks) ===",
                 agentId, currentVersion, agent.getDomain(), tasks.size());
 
+        // 解析训练用 LLM provider
+        ChatRequest.LlmProvider trainingProvider = resolveTrainingProvider(overrideProvider);
+
         // Step 1: 用当前 prompt 跑 baseline
-        double rewardBefore = evaluatePrompt(currentPrompt, tasks, agent);
+        double rewardBefore = evaluatePrompt(currentPrompt, tasks, trainingProvider);
         log.info("助理 {} baseline reward = {:.4}", agentId, rewardBefore);
 
         // Step 2: 用 LLM 分析弱点 + 生成改进版 prompt
-        String improvedPrompt = generateImprovedPrompt(agent, currentPrompt, tasks, rewardBefore, overrideProvider);
+        String improvedPrompt = generateImprovedPrompt(agent, currentPrompt, tasks, rewardBefore, trainingProvider);
         if (improvedPrompt == null || improvedPrompt.isBlank()) {
             recordHistory(agentId, currentVersion, currentVersion, rewardBefore, 0.0,
                     tasks.size(), "LLM 生成改进 prompt 失败", false);
@@ -147,7 +163,7 @@ public class PromptOptimizer {
         }
 
         // Step 3: 用新 prompt 跑评估
-        double rewardAfter = evaluatePrompt(improvedPrompt, tasks, agent);
+        double rewardAfter = evaluatePrompt(improvedPrompt, tasks, trainingProvider);
         log.info("助理 {} improved reward = {:.4} (baseline={:.4})", agentId, rewardAfter, rewardBefore);
 
         boolean adopted = rewardAfter > rewardBefore * (1.0 + improvementThreshold);
@@ -184,14 +200,14 @@ public class PromptOptimizer {
     /**
      * 评估单个 prompt 在任务集上的 reward
      */
-    double evaluatePrompt(String prompt, List<TrainingTask> tasks, AgentIdentityEntity agent) {
+    double evaluatePrompt(String prompt, List<TrainingTask> tasks, ChatRequest.LlmProvider provider) {
         if (tasks.isEmpty()) return 0.0;
 
         double totalReward = 0.0;
         int weightSum = 0;
 
         for (TrainingTask task : tasks) {
-            double r = evaluateSingleTask(prompt, task, agent);
+            double r = evaluateSingleTask(prompt, task, provider);
             totalReward += r * task.getWeight();
             weightSum += task.getWeight();
         }
@@ -202,19 +218,11 @@ public class PromptOptimizer {
     /**
      * 单任务评估: 发送 prompt + task 输入给 LLM, 按 keyword/quality/length 打分
      */
-    @SuppressWarnings("unchecked")
-    double evaluateSingleTask(String prompt, TrainingTask task, AgentIdentityEntity agent) {
+    double evaluateSingleTask(String prompt, TrainingTask task, ChatRequest.LlmProvider provider) {
         try {
-            StringBuilder fullPrompt = new StringBuilder();
-            fullPrompt.append("[System Prompt]\n").append(prompt).append("\n\n");
-            fullPrompt.append("[Task]\n").append(task.getInput()).append("\n\n");
-            fullPrompt.append("[Expected Keywords]").append(String.join(", ", java.util.Arrays.asList(task.getExpectedKeywords()))).append("\n");
-            fullPrompt.append("请根据以上 system prompt 完成任务。");
-
-            // ★ Path C: 使用 DynamicChatModelResolver + ChatClient
+            // 使用 DynamicChatModelResolver + ChatClient (Spring AI 2.0.0 GA)
             try {
-                ChatClient chatClient = ChatClient.create(modelResolver.resolve(
-                        ChatRequest.LlmProvider.builder().name("OPENAI").build())); // 训练模块固定用 OpenAI
+                ChatClient chatClient = ChatClient.create(modelResolver.resolve(provider));
                 String response = chatClient.prompt()
                         .system(prompt)
                         .user(task.getInput())
@@ -252,10 +260,9 @@ public class PromptOptimizer {
     /**
      * 用 LLM 分析当前 prompt 弱点并生成改进版
      */
-    @SuppressWarnings("unchecked")
     String generateImprovedPrompt(AgentIdentityEntity agent, String currentPrompt,
                                   List<TrainingTask> tasks, double baselineReward,
-                                  ChatRequest.LlmProvider overrideProvider) {
+                                  ChatRequest.LlmProvider provider) {
         try {
             StringBuilder analysisPrompt = new StringBuilder();
             analysisPrompt.append("你是一个 Prompt Engineering 专家。以下是一个 AI 助理的当前 system prompt 和它在标准任务集上的表现。\n\n");
@@ -269,9 +276,8 @@ public class PromptOptimizer {
             }
             analysisPrompt.append("\n请分析当前 prompt 的弱点，然后输出一个改进版的完整 system prompt。只输出改进后的 prompt 内容，不要解释。");
 
-            // ★ Path C: 使用 DynamicChatModelResolver
-            ChatClient chatClient = ChatClient.create(modelResolver.resolve(
-                    overrideProvider != null ? overrideProvider : ChatRequest.LlmProvider.builder().name("OPENAI").build()));
+            // 使用 DynamicChatModelResolver (Spring AI 2.0.0 GA)
+            ChatClient chatClient = ChatClient.create(modelResolver.resolve(provider));
             String improved = chatClient.prompt()
                     .user(analysisPrompt.toString())
                     .call()
@@ -313,4 +319,3 @@ public class PromptOptimizer {
 
     // ========== DTOs ==========
 }
-

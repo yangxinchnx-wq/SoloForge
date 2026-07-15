@@ -38,19 +38,6 @@ spring:
   ai:
     chatbot:
 
-  # Garnet (Redis 协议) - ChatMemory 持久化
-  # [已替代] Node.js RACER 使用 SurrealDB 持久化，Redis 仅 Java Agent fallback 时使用
-  data:
-    redis:
-      host: 127.0.0.1
-      port: 6379
-      timeout: 2000ms
-      lettuce:
-        pool:
-          max-active: 16
-          max-idle: 8
-          min-idle: 2
-
   # SQLite (AI Society 共享数据库) - AgentConfig + 业务表
   # 路径解析优先级:
   #   1. 环境变量 SOLOFORGE_SQLITE_URL (如 jdbc:sqlite:/path/to/ai_society.db)

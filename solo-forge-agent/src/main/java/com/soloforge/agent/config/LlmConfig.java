@@ -5,7 +5,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.anthropic.AnthropicChatModel;
 import org.springframework.ai.anthropic.AnthropicChatOptions;
 import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.beans.factory.annotation.Value;
@@ -99,12 +98,4 @@ public class LlmConfig {
         return new DynamicChatModelResolver(ctx);
     }
 
-    // ──────────────────────────────────────────────
-    // 5. Tool Calling Manager (Spring AI 2.0.0 GA 内置)
-    // ──────────────────────────────────────────────
-
-    @Bean
-    public ToolCallingManager toolCallingManager() {
-        return ToolCallingManager.builder().build();
-    }
 }
