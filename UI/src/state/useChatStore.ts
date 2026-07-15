@@ -465,7 +465,7 @@ export interface ChatRuntimeOptions {
   permissionMode?: 'normal' | 'performance' | 'ultimate' | 'expert';
   selectedChatId?: string; mainModel?: string; secModels?: any[];
   selectedFile?: string; editorContent?: string;
-  modelProviderMap?: Record<string, { baseUrl: string; apiKey: string; model: string; providerName: string; enabledInSettings: boolean; rateLimitProfile?: { maxConcurrent?: number; maxRpm?: number; maxTpm?: number } | null }>;
+  modelProviderMap?: Record<string, { baseUrl: string; apiKey: string; model: string; providerName: string; enabledInSettings: boolean; rateLimitProfile?: { maxConcurrent?: number; maxRpm?: number; maxTpm?: number; contextWindow?: number; maxOutputTokens?: number } | null }>;
 }
 
 interface ChatStoreState {

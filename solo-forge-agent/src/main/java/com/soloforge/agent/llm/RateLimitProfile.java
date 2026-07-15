@@ -1,4 +1,4 @@
-﻿package com.soloforge.agent.llm;
+package com.soloforge.agent.llm;
 
 import java.util.Map;
 
@@ -26,16 +26,22 @@ public class RateLimitProfile {
     private int maxTpm = 0;
     private int retryAfterSec = 0;
     private String source = "default";
+    private int contextWindow = 0;
+    private int maxOutputTokens = 0;
     public int getMaxConcurrent() { return maxConcurrent; }
     public int getMaxRpm() { return maxRpm; }
     public int getMaxTpm() { return maxTpm; }
     public int getRetryAfterSec() { return retryAfterSec; }
     public String getSource() { return source; }
+    public int getContextWindow() { return contextWindow; }
+    public int getMaxOutputTokens() { return maxOutputTokens; }
     public void setMaxConcurrent(int v) { this.maxConcurrent = v; }
     public void setMaxRpm(int v) { this.maxRpm = v; }
     public void setMaxTpm(int v) { this.maxTpm = v; }
     public void setRetryAfterSec(int v) { this.retryAfterSec = v; }
     public void setSource(String v) { this.source = v; }
+    public void setContextWindow(int v) { this.contextWindow = v; }
+    public void setMaxOutputTokens(int v) { this.maxOutputTokens = v; }
     public RateLimitProfile copy() {
         RateLimitProfile c = new RateLimitProfile();
         c.maxConcurrent = maxConcurrent;
@@ -43,6 +49,8 @@ public class RateLimitProfile {
         c.maxTpm = maxTpm;
         c.retryAfterSec = retryAfterSec;
         c.source = source;
+        c.contextWindow = contextWindow;
+        c.maxOutputTokens = maxOutputTokens;
         return c;
     }
     public static RateLimitProfile defaults() { return new RateLimitProfile(); }

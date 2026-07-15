@@ -8,6 +8,7 @@ import com.soloforge.agent.dto.ChatSettings;
 import com.soloforge.agent.llm.LlmCommandCenter;
 import com.soloforge.agent.persistence.AgentIdentityEntity;
 import com.soloforge.agent.persistence.AgentIdentityRepository;
+import com.soloforge.agent.advisor.SoloForgeAdvisors;
 import com.soloforge.agent.tools.SoloForgeTools;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,6 +36,9 @@ public class SpringAiAgentExecutor {
     private final CaseRetriever caseRetriever;
     private final LlmCommandCenter commandCenter;
     private final SoloForgeTools soloForgeTools;
+    private final SoloForgeAdvisors.LegalCheckAdvisor legalCheckAdvisor;
+    private final SoloForgeAdvisors.CreditCheckAdvisor creditCheckAdvisor;
+    private final SoloForgeAdvisors.PostToolCallAdvisor postToolCallAdvisor;
 
     public SpringAiAgentExecutor(
             DynamicChatModelResolver modelResolver,
@@ -45,7 +49,10 @@ public class SpringAiAgentExecutor {
             MemoryClient memoryClient, CultureClient cultureClient,
             CoalitionClient coalitionClient, InstitutionClient institutionClient,
             CaseRetriever caseRetriever, LlmCommandCenter commandCenter,
-            SoloForgeTools soloForgeTools) {
+            SoloForgeTools soloForgeTools,
+            SoloForgeAdvisors.LegalCheckAdvisor legalCheckAdvisor,
+            SoloForgeAdvisors.CreditCheckAdvisor creditCheckAdvisor,
+            SoloForgeAdvisors.PostToolCallAdvisor postToolCallAdvisor) {
         this.modelResolver = modelResolver;
         this.promptBuilder = promptBuilder;
         this.agentRepo = agentRepo;
@@ -60,7 +67,11 @@ public class SpringAiAgentExecutor {
         this.caseRetriever = caseRetriever;
         this.commandCenter = commandCenter;
         this.soloForgeTools = soloForgeTools;
+        this.legalCheckAdvisor = legalCheckAdvisor;
+        this.creditCheckAdvisor = creditCheckAdvisor;
+        this.postToolCallAdvisor = postToolCallAdvisor;
     }
+
 
     public String execute(String userMessage, ChatRequest request) {
         String agentId = request.getSettings().getAgentId();
@@ -72,41 +83,50 @@ public class SpringAiAgentExecutor {
         if (!lawClient.checkLegal(agentId, settings)) return "Blocked: legal";
         if (!economyClient.checkCreditScore(agentId, settings)) return "Blocked: credit";
         String systemPrompt = promptBuilder.build(agent, settings, null);
+        double temp = settings.getTemperature() != null ? settings.getTemperature() : 0.3;
+        // ══ 容量校验 ══
+        String capErr = commandCenter.checkCapacity(systemPrompt, userMessage, provider.getRateLimitProfile());
+        if (capErr != null) return "Capacity error: " + capErr;
+        // ══ 请求去重: 缓存命中? ══
+        LlmCommandCenter.CacheEntry cached = commandCenter.checkDuplicate(systemPrompt, userMessage, provider.getModel(), temp);
+        if (cached != null) {
+            log.info("[SpringAiExec] CACHE HIT");
+            return cached.response;
+        }
+        // ══ 请求去重: 相同请求正在飞行? 等它 ══
+        var existing = commandCenter.getInFlight(systemPrompt, userMessage, provider.getModel(), temp);
+        if (existing != null) {
+            log.info("[SpringAiExec] COALESCE");
+            try { return existing.get().response; } catch (Exception e) { log.warn("coalesce failed"); }
+        }
+        commandCenter.registerInFlight(systemPrompt, userMessage, provider.getModel(), temp);
         ChatModel chatModel = modelResolver.resolve(provider);
         ChatClient chatClient = ChatClient.builder(chatModel).defaultTools(soloForgeTools).build();
         java.util.Map<String, Object> ctx = new java.util.HashMap<>();
         ctx.put("agent_id", agentId);
-        ctx.put("provider_base_url", provider.getBaseUrl());
-        ctx.put("provider_model", provider.getModel());
         String pKey = LlmCommandCenter.providerKey(provider.getBaseUrl(), provider.getModel());
         String response = null;
         for (int attempt = 0; attempt <= 3; attempt++) {
             LlmCommandCenter.LlmDecision d = commandCenter.evaluate(provider.getBaseUrl(), provider.getModel(), provider.getRateLimitProfile());
-            if (d.action == LlmCommandCenter.LlmDecision.Action.REJECT)
-                throw new RuntimeException("CommandCenter rejected: " + d.reason);
-            if (d.action == LlmCommandCenter.LlmDecision.Action.WAIT)
-                try { Thread.sleep(d.waitMs); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            if (d.action == LlmCommandCenter.LlmDecision.Action.REJECT) throw new RuntimeException(d.reason);
+            if (d.action == LlmCommandCenter.LlmDecision.Action.WAIT) try { Thread.sleep(d.waitMs); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
             try {
                 long t0 = System.currentTimeMillis();
                 response = chatClient.prompt().system(systemPrompt).user(userMessage).toolContext(ctx)
-                        .options(org.springframework.ai.chat.prompt.ChatOptions.builder()
-                                .temperature(settings.getTemperature() != null ? settings.getTemperature() : 0.3).build())
+                        .options(org.springframework.ai.chat.prompt.ChatOptions.builder().temperature(temp).build())
                         .call().content();
-                commandCenter.recordSuccess(pKey, System.currentTimeMillis() - t0);
+                long latency = System.currentTimeMillis() - t0;
+                commandCenter.recordSuccess(pKey, latency);
+                commandCenter.completeRequest(systemPrompt, userMessage, provider.getModel(), temp, response, latency);
                 break;
             } catch (Exception e) {
-                int sc = LlmCommandCenter.extractStatusCode(e);
-                commandCenter.recordFailure(pKey, sc);
-                if (commandCenter.shouldRetry(e, attempt) && attempt < 3) {
-                    commandCenter.waitBeforeRetry(e, attempt);
-                    continue;
-                }
+                commandCenter.recordFailure(pKey, LlmCommandCenter.extractStatusCode(e));
+                if (commandCenter.shouldRetry(e, attempt) && attempt < 3) { commandCenter.waitBeforeRetry(e, attempt); continue; }
+                commandCenter.failRequest(systemPrompt, userMessage, provider.getModel(), temp, e);
                 throw e;
-            } finally {
-                commandCenter.release(pKey);
-            }
+            } finally { commandCenter.release(pKey); }
         }
-        if (response == null) throw new RuntimeException("LLM call exhausted");
+        if (response == null) throw new RuntimeException("LLM exhausted");
         log.info("[SpringAiExec] response_len={}", response.length());
         postExecuteSideEffects(agent, response, settings);
         return response;
@@ -124,30 +144,22 @@ public class SpringAiAgentExecutor {
         if (!economyClient.checkCreditScore(agentId, settings))
             return reactor.core.publisher.Flux.just("Blocked: credit");
         String systemPrompt = promptBuilder.build(agent, settings, null);
+        double temp = settings.getTemperature() != null ? settings.getTemperature() : 0.3;
+        String pKey = LlmCommandCenter.providerKey(provider.getBaseUrl(), provider.getModel());
+        LlmCommandCenter.LlmDecision d = commandCenter.evaluate(provider.getBaseUrl(), provider.getModel(), provider.getRateLimitProfile());
+        if (d.action == LlmCommandCenter.LlmDecision.Action.REJECT) return reactor.core.publisher.Flux.just("Blocked: " + d.reason);
+        if (d.action == LlmCommandCenter.LlmDecision.Action.WAIT) try { Thread.sleep(d.waitMs); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         ChatModel chatModel = modelResolver.resolve(provider);
         ChatClient chatClient = ChatClient.builder(chatModel).defaultTools(soloForgeTools).build();
         java.util.Map<String, Object> ctx = new java.util.HashMap<>();
         ctx.put("agent_id", agentId);
-        ctx.put("provider_base_url", provider.getBaseUrl());
-        ctx.put("provider_model", provider.getModel());
-        String pKey = LlmCommandCenter.providerKey(provider.getBaseUrl(), provider.getModel());
-        LlmCommandCenter.LlmDecision d = commandCenter.evaluate(provider.getBaseUrl(), provider.getModel(), provider.getRateLimitProfile());
-        if (d.action == LlmCommandCenter.LlmDecision.Action.REJECT)
-            return reactor.core.publisher.Flux.just("Blocked: " + d.reason);
-        if (d.action == LlmCommandCenter.LlmDecision.Action.WAIT)
-            try { Thread.sleep(d.waitMs); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         reactor.core.publisher.Flux<ChatResponse> responseFlux = chatClient.prompt()
                 .system(systemPrompt).user(userMessage).toolContext(ctx)
-                .options(org.springframework.ai.chat.prompt.ChatOptions.builder()
-                        .temperature(settings.getTemperature() != null ? settings.getTemperature() : 0.3).build())
+                .options(org.springframework.ai.chat.prompt.ChatOptions.builder().temperature(temp).build())
                 .stream().chatResponse()
                 .doOnTerminate(() -> commandCenter.release(pKey))
                 .doOnCancel(() -> commandCenter.release(pKey))
-                .doOnError(e -> {
-                    commandCenter.release(pKey);
-                    int sc = LlmCommandCenter.extractStatusCode(e);
-                    commandCenter.recordFailure(pKey, sc);
-                })
+                .doOnError(e -> { commandCenter.release(pKey); commandCenter.recordFailure(pKey, LlmCommandCenter.extractStatusCode(e)); })
                 .doOnComplete(() -> commandCenter.recordSuccess(pKey, 0));
         return new StreamingResponseAdapter().adapt(responseFlux);
     }
@@ -160,15 +172,11 @@ public class SpringAiAgentExecutor {
             cultureClient.evaluateCulturalImpact(agent.getId(), response);
             coalitionClient.recordCoalitionAction(agent.getId(), extractAction(response));
             institutionClient.recordInstitutionalInteraction(agent.getId(), response);
-            log.info("[SpringAiExec] side effects done for agent={}", agent.getId());
-        } catch (Exception e) {
-            log.error("[SpringAiExec] side effects failed: {}", e.getMessage(), e);
-        }
+        } catch (Exception e) { log.error("[SpringAiExec] side effects: {}", e.getMessage(), e); }
     }
 
     private String buildObservation(AgentIdentityEntity agent, String response) {
-        return String.format("{\"agentId\":\"%s\",\"agentName\":\"%s\",\"responseLength\":%d}",
-                agent.getId(), agent.getName(), response.length());
+        return String.format("{\"agentId\":\"%s\",\"agentName\":\"%s\",\"responseLength\":%d}", agent.getId(), agent.getName(), response.length());
     }
 
     private String extractAction(String response) {
