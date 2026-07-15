@@ -1,4 +1,4 @@
-﻿package com.soloforge.agent.dto;
+package com.soloforge.agent.dto;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;

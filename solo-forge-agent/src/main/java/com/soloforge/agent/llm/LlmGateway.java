@@ -1,13 +1,11 @@
-﻿package com.soloforge.agent.llm;
+package com.soloforge.agent.llm;
 
 /**
  * @deprecated Use {@link com.soloforge.agent.config.DynamicChatModelResolver} and
  *             {@link org.springframework.ai.chat.model.ChatModel} instead.
- *             Replaced by Spring AI 2.0 ChatClient in Path C migration (2026-07-15).
+ *             Replaced by Spring AI 1.0.0 GA ChatClient in Path C migration (2026-07-15).
  *             This class will be removed in a future release. Retained for fallback reference.
  */
-@Deprecated
-
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.soloforge.agent.dto.ChatRequest;
 import lombok.extern.slf4j.Slf4j;
@@ -31,12 +29,12 @@ import java.util.function.Consumer;
 /**
  * LLM Gateway
  *
- * 鍔ㄦ€佸 provider 鏀寔: 姣忔璇锋眰浠?ChatRequest.provider 娉ㄥ叆 baseUrl/apiKey/model,
- * 涓嶄緷璧?application.yml 鐨勯潤鎬侀厤缃€?
+ * 閸斻劍鈧礁顦?provider 閺€顖涘瘮: 濮ｅ繑顐肩拠閿嬬湴娴?ChatRequest.provider 濞夈劌鍙?baseUrl/apiKey/model,
+ * 娑撳秳绶风挧?application.yml 閻ㄥ嫰娼ら幀渚€鍘ょ純顔衡偓?
  *
- * 鏀寔 OpenAI 鍏煎鍗忚 (OpenAI / Claude / DeepSeek / GLM / 閫氫箟鍗冮棶绛?
+ * 閺€顖涘瘮 OpenAI 閸忕厧顔愰崡蹇氼唴 (OpenAI / Claude / DeepSeek / GLM / 闁矮绠熼崡鍐６缁?
  *
- * 2026-07-08: 鏂板 chatCompletionStream() 鐪熷疄娴佸紡璋冪敤, 杩斿洖 Flux<String> 澧為噺鏂囨湰
+ * 2026-07-08: 閺傛澘顤?chatCompletionStream() 閻喎鐤勫ù浣哥础鐠嬪啰鏁? 鏉╂柨娲?Flux<String> 婢х偤鍣洪弬鍥ㄦ拱
  */
 @Slf4j
 @Component
@@ -49,8 +47,8 @@ public class LlmGateway {
     private LlmRateLimiter rateLimiter;
 
     /**
-     * 鍚屾璋冪敤 LLM (闈炴祦寮?
-     * 濡傛灉甯?tools 璋冪敤杩斿洖绌哄唴瀹? 鑷姩鍘绘帀 tools 閲嶈瘯涓€娆?
+     * 閸氬本顒炵拫鍐暏 LLM (闂堢偞绁﹀?
+     * 婵″倹鐏夌敮?tools 鐠嬪啰鏁ゆ潻鏂挎礀缁屽搫鍞寸€? 閼奉亜濮╅崢缁樺竴 tools 闁插秷鐦稉鈧▎?
      */
     public String chatCompletion(String systemPrompt,
                                   String userMessage,
@@ -61,8 +59,8 @@ public class LlmGateway {
     }
 
     /**
-     * 鍚屾璋冪敤 LLM (闈炴祦寮? 鎸囧畾 temperature)
-     * temperature 鐢?agent 閰嶇疆鍐冲畾, 榛樿 0.3
+     * 閸氬本顒炵拫鍐暏 LLM (闂堢偞绁﹀? 閹稿洤鐣?temperature)
+     * temperature 閻?agent 闁板秶鐤嗛崘鍐茬暰, 姒涙顓?0.3
      */
     public String chatCompletion(String systemPrompt,
                                   String userMessage,
@@ -109,7 +107,7 @@ public class LlmGateway {
 
             String content = extractContent(response);
             
-            // 濡傛灉甯?tools 璋冪敤杩斿洖绌哄唴瀹? 鍘绘帀 tools 閲嶈瘯
+            // 婵″倹鐏夌敮?tools 鐠嬪啰鏁ゆ潻鏂挎礀缁屽搫鍞寸€? 閸樼粯甯€ tools 闁插秷鐦?
             if ((content == null || content.isBlank()) && tools != null && !tools.isEmpty()) {
                 log.warn("LLM returned empty content with tools, retrying without tools...");
                 Map<String, Object> bodyNoTools = buildRequestBody(systemPrompt, userMessage, history, resolved, null, false, temperature);
@@ -126,7 +124,7 @@ public class LlmGateway {
             return content;
         } catch (Exception e) {
             log.error("LLM call failed: {}", e.getMessage());
-            // 闄嶇骇鍒?fallback 妯″瀷
+            // 闂勫秶楠囬崚?fallback 濡€崇€?
             if (resolved.getFallbackModels() != null && resolved.getFallbackModels().length > 0) {
                 log.info("Falling back to: {}", resolved.getFallbackModels()[0]);
                 ChatRequest.LlmProvider fallback = ChatRequest.LlmProvider.builder()
@@ -136,15 +134,15 @@ public class LlmGateway {
                     .build();
                 return chatCompletion(systemPrompt, userMessage, history, fallback, tools, temperature);
             }
-            throw new RuntimeException("LLM 璋冪敤澶辫触: " + formatLlmError(e, resolved), e);
+            throw new RuntimeException("LLM 鐠嬪啰鏁ゆ径杈Е: " + formatLlmError(e, resolved), e);
         }
     }
 
     /**
-     * 娴佸紡璋冪敤 LLM 鈥?杩斿洖澧為噺鏂囨湰 Flux
+     * 濞翠礁绱＄拫鍐暏 LLM 閳?鏉╂柨娲栨晶鐐哄櫤閺傚洦婀?Flux
      *
-     * 姣忎釜 onNext 鏄竴涓?delta content 鐗囨 (闈炲畬鏁村搷搴?
-     * Flux complete 琛ㄧず娴佺粨鏉?
+     * 濮ｅ繋閲?onNext 閺勵垯绔存稉?delta content 閻楀洦顔?(闂堢偛鐣弫鏉戞惙鎼?
+     * Flux complete 鐞涖劎銇氬ù浣虹波閺?
      */
     public Flux<String> chatCompletionStream(String systemPrompt,
                                               String userMessage,
@@ -155,10 +153,10 @@ public class LlmGateway {
     }
 
     /**
-     * 鈽?娴佸紡璋冪敤 LLM (甯?usage 鍥炶皟)
+     * 閳?濞翠礁绱＄拫鍐暏 LLM (鐢?usage 閸ョ偠鐨?
      *
-     * usageConsumer 鍦ㄦ祦寮忕粨鏉熸椂琚皟鐢ㄤ竴娆? 鎼哄甫鏈疆 LLM 璋冪敤鐨?token 缁熻
-     * (闇€瑕?provider 鏀寔 stream_options.include_usage, OpenAI 鍏煎鍗忚鍧囨敮鎸?
+     * usageConsumer 閸︺劍绁﹀蹇曠波閺夌喐妞傜悮顐ョ殶閻劋绔村▎? 閹煎搫鐢張顒冪枂 LLM 鐠嬪啰鏁ら惃?token 缂佺喕顓?
+     * (闂団偓鐟?provider 閺€顖涘瘮 stream_options.include_usage, OpenAI 閸忕厧顔愰崡蹇氼唴閸у洦鏁幐?
      */
     public Flux<String> chatCompletionStream(String systemPrompt,
                                               String userMessage,
@@ -170,8 +168,8 @@ public class LlmGateway {
     }
 
     /**
-     * 鈽?娴佸紡璋冪敤 LLM (甯?usage 鍥炶皟 + 鎸囧畾 temperature)
-     * temperature 鐢?agent 閰嶇疆鍐冲畾, 榛樿 0.3
+     * 閳?濞翠礁绱＄拫鍐暏 LLM (鐢?usage 閸ョ偠鐨?+ 閹稿洤鐣?temperature)
+     * temperature 閻?agent 闁板秶鐤嗛崘鍐茬暰, 姒涙顓?0.3
      */
     public Flux<String> chatCompletionStream(String systemPrompt,
                                               String userMessage,
@@ -186,7 +184,7 @@ public class LlmGateway {
         WebClient client = buildClient(resolved);
         Map<String, Object> body = buildRequestBody(systemPrompt, userMessage, history, resolved, tools, true, temperature);
 
-        // 绱Н鍘熺敓 tool_calls 鍒嗙墖 (娴佸紡 mode 涓?arguments 鍒嗙墖鍒拌揪)
+        // 缁鳖垳袧閸樼喓鏁?tool_calls 閸掑棛澧?(濞翠礁绱?mode 娑?arguments 閸掑棛澧栭崚鎷屾彧)
         StringBuilder toolCallName = new StringBuilder();
         StringBuilder toolCallArgs = new StringBuilder();
         boolean[] hasToolCall = {false};
@@ -199,14 +197,14 @@ public class LlmGateway {
             .map(ServerSentEvent::data)
             .filter(data -> data != null && !"[DONE]".equals(data))
             .mapNotNull(sseData -> {
-                // 1. 鍏堟鏌?delta.tool_calls (鍘熺敓 function calling)
+                // 1. 閸忓牊顥呴弻?delta.tool_calls (閸樼喓鏁?function calling)
                 try {
                     Map<String, Object> chunk = objectMapper.readValue(sseData, Map.class);
-                    // 鈽?妫€鏌?usage (娴佸紡鏈€鍚庝竴甯ф惡甯? 闇€ stream_options.include_usage=true)
+                    // 閳?濡偓閺?usage (濞翠礁绱￠張鈧崥搴濈鐢勬儭鐢? 闂団偓 stream_options.include_usage=true)
                     if (usageConsumer != null && chunk.get("usage") != null) {
                         try {
                             Map<String, Object> u = (Map<String, Object>) chunk.get("usage");
-                            // 鈽?鍏煎 3 绉?provider 鐨勭紦瀛樺懡涓瓧娈?
+                            // 閳?閸忕厧顔?3 缁?provider 閻ㄥ嫮绱︾€涙ê鎳℃稉顓炵摟濞?
                             //   OpenAI:    usage.prompt_tokens_details.cached_tokens
                             //   DeepSeek:  usage.prompt_cache_hit_tokens
                             //   Anthropic: usage.cache_read_input_tokens
@@ -248,7 +246,7 @@ public class LlmGateway {
                                         }
                                     }
                                 }
-                                // 鏈?tool_calls 鏃? delta.content 閫氬父涓?null, 杩斿洖绌哄崰浣?
+                                // 閺?tool_calls 閺? delta.content 闁艾鐖舵稉?null, 鏉╂柨娲栫粚鍝勫窗娴?
                                 return null;
                             }
                         }
@@ -256,7 +254,7 @@ public class LlmGateway {
                 } catch (Exception e) {
                     log.debug("Failed to parse SSE chunk for tool_calls: {}", e.getMessage());
                 }
-                // 2. 姝ｅ父鎻愬彇 delta content
+                // 2. 濮濓絽鐖堕幓鎰絿 delta content
                 return extractDeltaContent(sseData);
             })
             .doOnComplete(() -> {
@@ -266,7 +264,7 @@ public class LlmGateway {
                 }
             })
             .concatWith(Flux.defer(() -> {
-                // 娴佺粨鏉熷悗: 濡傛灉绱Н浜嗗師鐢?tool_calls, 娉ㄥ叆 ```json 鍧楄 tryParseToolCall 璇嗗埆
+                // 濞翠胶绮ㄩ弶鐔锋倵: 婵″倹鐏夌槐顖溞濇禍鍡楀斧閻?tool_calls, 濞夈劌鍙?```json 閸ф顔€ tryParseToolCall 鐠囧棗鍩?
                 if (hasToolCall[0] && toolCallName.length() > 0) {
                     String argsStr = toolCallArgs.toString();
                     try {
@@ -287,7 +285,7 @@ public class LlmGateway {
             .timeout(TIMEOUT);
     }
 
-    /** 鈽?Token 浣跨敤缁熻 (cachedTokens: 缂撳瓨鍛戒腑鐨?prompt token 鏁? */
+    /** 閳?Token 娴ｈ法鏁ょ紒鐔活吀 (cachedTokens: 缂傛挸鐡ㄩ崨鎴掕厬閻?prompt token 閺? */
     public record Usage(int promptTokens, int completionTokens, int totalTokens, int cachedTokens) {}
 
     private static int toInt(Object v) {
@@ -297,11 +295,11 @@ public class LlmGateway {
     }
 
     /**
-     * 浠?SSE data 瀛楁涓彁鍙?delta content
+     * 娴?SSE data 鐎涙顔屾稉顓熷絹閸?delta content
      *
-     * 鈽?FIX 2026-07-12: reasoning_content 鐢?\u0001 鍓嶇紑鏍囪, ChatController 鎹鍙戦€?'reasoning' 浜嬩欢銆?
-     * 鍓嶇鏀跺埌 reasoning 浜嬩欢鍚庡彧鍦ㄦ祦閫佸尯鏄剧ず, 涓嶅杺缁?IncrementalCanvasPusher,
-     * 閬垮厤鎬濊€冭繃绋嬩腑鐨?``` 瀛楃骞叉壈浠ｇ爜鍧楁娴嬨€?
+     * 閳?FIX 2026-07-12: reasoning_content 閻?\u0001 閸撳秶绱戦弽鍥唶, ChatController 閹诡喗顒濋崣鎴︹偓?'reasoning' 娴滃娆㈤妴?
+     * 閸撳秶顏弨璺哄煂 reasoning 娴滃娆㈤崥搴″涧閸︺劍绁﹂柅浣稿隘閺勫墽銇? 娑撳秴鏉虹紒?IncrementalCanvasPusher,
+     * 闁灝鍘ら幀婵娾偓鍐箖缁嬪鑵戦惃?``` 鐎涙顑侀獮鍙夊娴狅絿鐖滈崸妤侇梾濞村鈧?
      */
     @SuppressWarnings("unchecked")
     private String extractDeltaContent(String sseData) {
@@ -313,7 +311,7 @@ public class LlmGateway {
             if (delta == null) return null;
             Object content = delta.get("content");
             if (content != null) return content.toString();
-            // reasoning model: 鐢?\u0001 鍓嶇紑鏍囪 reasoning_content
+            // reasoning model: 閻?\u0001 閸撳秶绱戦弽鍥唶 reasoning_content
             Object reasoning = delta.get("reasoning_content");
             if (reasoning != null) return "\u0001" + reasoning.toString();
             return null;
@@ -359,7 +357,7 @@ public class LlmGateway {
         body.put("stream", stream);
         body.put("temperature", temperature);
 
-        // 鈽?娴佸紡鏃惰姹?usage 缁熻 (OpenAI 鍏煎鍗忚: stream_options.include_usage)
+        // 閳?濞翠礁绱￠弮鎯邦嚞濮?usage 缂佺喕顓?(OpenAI 閸忕厧顔愰崡蹇氼唴: stream_options.include_usage)
         if (stream) {
             body.put("stream_options", Map.of("include_usage", true));
         }
@@ -374,16 +372,16 @@ public class LlmGateway {
 
     @SuppressWarnings("unchecked")
     private String extractContent(Map<String, Object> response) {
-        if (response == null) return "(绌哄搷搴?";
+        if (response == null) return "(缁屽搫鎼锋惔?";
         List<Map<String, Object>> choices = (List<Map<String, Object>>) response.get("choices");
         if (choices == null || choices.isEmpty()) {
             log.warn("LLM response has no choices: {}", response.keySet());
-            return "(鏃?choices)";
+            return "(閺?choices)";
         }
         Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
-        if (message == null) return "(鏃?message)";
+        if (message == null) return "(閺?message)";
         
-        // 妫€鏌ュ師鐢?tool_calls (OpenAI Function Calling 鏍煎紡)
+        // 濡偓閺屻儱甯悽?tool_calls (OpenAI Function Calling 閺嶇厧绱?
         Object toolCallsObj = message.get("tool_calls");
         if (toolCallsObj != null) {
             try {
@@ -396,13 +394,13 @@ public class LlmGateway {
                         String argsStr = (String) function.get("arguments");
                         log.info("LLM native tool_call: {} args={}", toolName, argsStr);
                         
-                        // 杞崲涓?tryParseToolCall 鑳借瘑鍒殑 ```json 鏍煎紡
+                        // 鏉烆剚宕叉稉?tryParseToolCall 閼冲€熺槕閸掝偆娈?```json 閺嶇厧绱?
                         try {
                             Map<String, Object> args = objectMapper.readValue(argsStr, Map.class);
                             String toolJson = objectMapper.writeValueAsString(Map.of("tool", toolName, "args", args));
                             return "```json\n" + toolJson + "\n```";
                         } catch (Exception e) {
-                            // arguments 涓嶆槸鍚堟硶 JSON, 鐩存帴鍖呰９
+                            // arguments 娑撳秵妲搁崥鍫熺《 JSON, 閻╁瓨甯撮崠鍛帮紮
                             return "```json\n{\"tool\":\"" + toolName + "\",\"args\":" + argsStr + "}\n```";
                         }
                     }
@@ -414,10 +412,10 @@ public class LlmGateway {
         
         Object content = message.get("content");
         if (content == null) {
-            // 鍙兘鏄?reasoning model, 妫€鏌?reasoning_content 瀛楁
+            // 閸欘垵鍏橀弰?reasoning model, 濡偓閺?reasoning_content 鐎涙顔?
             Object reasoning = message.get("reasoning_content");
             if (reasoning != null) return reasoning.toString();
-            return "(鏃?content)";
+            return "(閺?content)";
         }
         String result = content.toString();
         if (result.isBlank()) {
@@ -427,28 +425,28 @@ public class LlmGateway {
     }
 
     /**
-     * 瑙ｆ瀽 provider: 濡傛灉璇锋眰鏈彁渚? 杩斿洖閿欒鑰屼笉鏄粯璁よ繛 OpenAI
-     * (OpenAI 鍦ㄩ儴鍒嗙綉缁滅幆澧冧笉鍙揪, 浼氬鑷?90s 瓒呮椂)
+     * Resolve provider: if request does not provide one, throw error instead of defaulting to OpenAI
+     * (OpenAI is unreachable in some network environments, would cause 90s timeout)
      */
     private ChatRequest.LlmProvider resolveProvider(ChatRequest.LlmProvider provider) {
         if (provider == null || provider.getBaseUrl() == null || provider.getBaseUrl().isBlank()) {
-            throw new RuntimeException("鏈厤缃?LLM Provider: 璇峰湪鍓嶇銆岃缃?鈫?妯″瀷銆嶄腑閰嶇疆 baseUrl/apiKey/model 鍚庨噸璇?);
+            throw new RuntimeException("LLM Provider not configured: please set baseUrl/apiKey/model in frontend Settings, then retry.");
         }
         if (provider.getApiKey() == null || provider.getApiKey().isBlank()) {
-            throw new RuntimeException("LLM Provider apiKey 涓虹┖: 璇峰湪鍓嶇銆岃缃?鈫?妯″瀷銆嶄腑閰嶇疆 API 瀵嗛挜");
+            throw new RuntimeException("LLM Provider apiKey is empty: please set API key in frontend Settings.");
         }
         if (provider.getModel() == null || provider.getModel().isBlank()) {
-            throw new RuntimeException("LLM Provider model 涓虹┖: 璇峰湪鍓嶇銆岃缃?鈫?妯″瀷銆嶄腑閰嶇疆妯″瀷鍚嶇О");
+            throw new RuntimeException("LLM Provider model is empty: please set model name in frontend Settings.");
         }
         return provider;
     }
 
     /**
-     * 鏍煎紡鍖?LLM 閿欒: 灏?Spring WebClient 寮傚父杞负鍖呭惈 "HTTP {status}" 鍓嶇紑鐨勬爣鍑嗘牸寮?
-     * 杩欐牱鍓嶇 classifyStreamError 鍙互姝ｇ‘鍖归厤閿欒绫诲瀷
+     * Format LLM error: use Spring WebClient response info to build "HTTP {status}" style error.
+     * Compatible with classifyStreamError for error classification.
      *
-     * 杈撳嚭鏍煎紡: "HTTP {status} {statusText} 鈥?{bodyPreview} (baseUrl={baseUrl} model={model})"
-     * 绀轰緥: "HTTP 404 Not Found 鈥?{\"error\":{\"message\":\"Model not found\"}} (baseUrl=https://api.openai.com/v1 model=gpt-4o)"
+     * Format: "HTTP {status} {statusText}: {bodyPreview} (baseUrl={baseUrl} model={model})"
+     * Example: "HTTP 404 Not Found: {"error":{"message":"Model not found"}} (baseUrl=https://api.openai.com/v1 model=gpt-4o)"
      */
     private String formatLlmError(Throwable e, ChatRequest.LlmProvider provider) {
         String baseUrl = provider.getBaseUrl();
@@ -462,11 +460,11 @@ public class LlmGateway {
                 String body = new String(wcre.getResponseBodyAsByteArray());
                 bodyPreview = body.length() > 200 ? body.substring(0, 200) : body;
             } catch (Exception ignored) {}
-            return String.format("HTTP %d %s 鈥?%s (baseUrl=%s model=%s)",
+            return String.format("HTTP %d %s 閳?%s (baseUrl=%s model=%s)",
                 status, statusText, bodyPreview, baseUrl, model);
         }
 
-        // 闈?HTTP 閿欒 (瓒呮椂銆佽繛鎺ユ嫆缁濈瓑)
+        // 闂?HTTP 闁挎瑨顕?(鐡掑懏妞傞妴浣界箾閹恒儲瀚嗙紒婵堢搼)
         return String.format("HTTP 500 %s (baseUrl=%s model=%s)", e.getMessage(), baseUrl, model);
     }
 }

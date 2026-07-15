@@ -54,4 +54,9 @@ public class InstitutionClient {
         }
         return List.of();
     }
+
+    /** Record an institutional interaction (stub for compatibility) */
+    public void recordInstitutionalInteraction(String agentId, String response) {
+        log.debug("recordInstitutionalInteraction: agent={} response_len={}", agentId, response != null ? response.length() : 0);
+    }
 }

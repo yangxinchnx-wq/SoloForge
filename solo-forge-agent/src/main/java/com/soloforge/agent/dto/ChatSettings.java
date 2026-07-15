@@ -76,4 +76,7 @@ public class ChatSettings {
 
     /** 额外上下文 (画布节点信息等) */
     private Map<String, Object> extraContext;
+
+    @Builder.Default
+    private Double temperature = 0.3;
 }

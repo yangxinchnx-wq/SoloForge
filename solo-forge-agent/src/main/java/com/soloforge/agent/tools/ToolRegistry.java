@@ -5,8 +5,6 @@ package com.soloforge.agent.tools;
  *             Replaced by Spring AI 2.0 auto Schema generation in Path C migration (2026-07-15).
  *             This class will be removed in a future release. Retained for fallback reference.
  */
-@Deprecated
-
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -36,6 +34,7 @@ import java.util.Set;
  *   - 扩展工具调用通过 HTTP 转发到 Node.js 后端 (POST /api/tools/invoke)
  *   - Node.js 不可用时降级为仅核心工具, 不阻塞 Agent
  */
+@Deprecated
 @Slf4j
 @Component
 @RequiredArgsConstructor

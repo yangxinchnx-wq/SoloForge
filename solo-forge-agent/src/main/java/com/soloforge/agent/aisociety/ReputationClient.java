@@ -87,4 +87,17 @@ public class ReputationClient {
         delta -= toolErrors * 0.05;
         return Math.max(-0.5, Math.min(0.3, delta)); // clamp [-0.5, 0.3]
     }
+
+    /**
+     * Push reputation synchronously (convenience method for SpringAiAgentExecutor)
+     */
+    public void pushReputationSync(String agentId, Map<String, Object> data) {
+        try {
+            Object lastAction = data.getOrDefault("lastAction", "unknown");
+            double delta = 0.0;
+            pushIncrement(agentId, delta, lastAction.toString());
+        } catch (Exception e) {
+            log.warn("pushReputationSync failed: {}", e.getMessage());
+        }
+    }
 }

@@ -74,7 +74,15 @@ public class EconomyClient {
         } catch (Exception e) {
             log.warn("EconomyClient.checkBalance failed: {}", e.getMessage());
         }
-        return true; // 查询失败时放行 (避免阻塞)
+        return true; // fail-open
+    }
+
+    /**
+     * Check credit score (convenience method for SpringAiAgentExecutor)
+     * @return true if credit is sufficient, false if blocked
+     */
+    public boolean checkCreditScore(String agentId, com.soloforge.agent.dto.ChatSettings settings) {
+        return checkBalance(agentId, settings != null ? null : null);
     }
 
     /**

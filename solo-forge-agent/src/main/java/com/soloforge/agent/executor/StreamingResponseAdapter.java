@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
  * <p><strong>关键兼容性</strong>: SoloForge 前端依赖 {@code \u0001} 前缀来区分"推理过程"和"最终答案"，
  * 并通过 SSE 分别发送 {@code reasoning} 和 {@code text} 事件。
  *
- * <p>Spring AI 2.0 的 {@link ChatResponse} 如果包含 reasoning content（如 DeepSeek-R1 / Claude extended thinking），
+ * <p>Spring AI 1.0.0 GA 的 {@link ChatResponse} 如果包含 reasoning content（如 DeepSeek-R1 / Claude extended thinking），
  * 此 Adapter 将其转换为带 {@code \u0001} 前缀的字符串流，使下游 ChatController 无需修改 SSE 发送逻辑。
  */
 @Component
@@ -24,7 +24,7 @@ public class StreamingResponseAdapter {
     public static final String REASONING_PREFIX = "\u0001";
 
     /**
-     * 将 Spring AI 2.0 的 Flux&lt;ChatResponse&gt; 适配为 SoloForge 协议的 Flux&lt;String&gt;
+     * 将 Spring AI 1.0.0 GA 的 Flux&lt;ChatResponse&gt; 适配为 SoloForge 协议的 Flux&lt;String&gt;
      *
      * <p>转换规则：
      * <ul>

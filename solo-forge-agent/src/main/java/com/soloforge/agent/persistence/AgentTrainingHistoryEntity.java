@@ -5,9 +5,9 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * Agent 训练历史实体 (对应 AI Society agent_training_history 表)
+ * Agent training history entity (AI Society agent_training_history table)
  *
- * 记录每次 PromptOptimizer / MAPPO 训练的 before/after 状态。
+ * Records before/after status for each PromptOptimizer / MAPPO training run.
  */
 @Data
 public class AgentTrainingHistoryEntity {
@@ -18,7 +18,7 @@ public class AgentTrainingHistoryEntity {
 
     private LocalDateTime trainedAt;
 
-    /** 触发原因: prompt_optimization / mappo_training / manual */
+    /** Trigger reason: prompt_optimization / mappo_training / manual */
     private String triggerReason;
 
     private Integer sampleCount;
@@ -28,6 +28,13 @@ public class AgentTrainingHistoryEntity {
 
     private Integer promptVersionBefore;
     private Integer promptVersionAfter;
+
+    /** Alias fields for PromptOptimizer compatibility */
+    private Integer fromVersion;
+    private Integer toVersion;
+    private Integer taskCount;
+    private String comment;
+    private Boolean adopted;
 
     private String checkpointPath;
     private String notes;

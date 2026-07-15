@@ -1,8 +1,6 @@
 package com.soloforge.agent.tools;
 
 /** @deprecated Use {@link SoloForgeTools#canvasPushUi(String, String)} with {@code @Tool} annotation instead. */
-@Deprecated
-
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
@@ -28,6 +26,7 @@ import java.util.Map;
  * 之前的设计是"工具只 log, 靠前端 PREVIEW_NEEDED 标记重调 LLM 生成 preview",
  * 导致 LLM 被调用两次, 额度浪费。现在改为直接 HTTP 推送, 一次完成。
  */
+@Deprecated
 @Slf4j
 @Component
 public class CanvasPushUiTool {

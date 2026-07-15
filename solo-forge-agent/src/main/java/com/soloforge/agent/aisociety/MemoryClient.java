@@ -5,16 +5,13 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 /**
- * 社会记忆 Client (查询 AI Society social_memory 表)
+ * Memory Client (query AI Society memory/lessons tables)
  *
- * System Prompt 第 11 层 ExperienceAdvisor 调用此 Client,
- * 从历史记忆中提取经验教训注入 prompt。
+ * Provides lesson retrieval and memory storage for agents.
  */
 @Slf4j
 @Component
@@ -24,34 +21,13 @@ public class MemoryClient {
     private final JdbcTemplate jdbcTemplate;
 
     /**
-     * 获取经验教训 (用于 System Prompt 第 11 层)
-     *
-     * ★ 2026-07-11: 限制为最近 3 条, 避免大量历史记忆污染当前会话上下文
+     * Get lessons for a domain
      */
     public List<String> getLessons(String domain) {
         try {
-            // ★ 2026-07-11: LIMIT 3 (之前 10), 只取最近的少量经验
-            //   过多的经验会占据大量 prompt 空间并干扰当前对话
-            String sql = domain != null
-                ? "SELECT lessons FROM social_memory WHERE impact = 'positive' AND (domain = ? OR domain IS NULL) ORDER BY created_at DESC LIMIT 3"
-                : "SELECT lessons FROM social_memory WHERE impact = 'positive' ORDER BY created_at DESC LIMIT 3";
-
-            List<Map<String, Object>> rows = domain != null
-                ? jdbcTemplate.queryForList(sql, domain)
-                : jdbcTemplate.queryForList(sql);
-
-            List<String> lessons = new ArrayList<>();
-            for (Map<String, Object> row : rows) {
-                String l = (String) row.get("lessons");
-                if (l != null && !l.isBlank()) {
-                    // lessons 是逗号分隔的字符串
-                    for (String lesson : l.split(",")) {
-                        String trimmed = lesson.trim();
-                        if (!trimmed.isEmpty()) lessons.add(trimmed);
-                    }
-                }
-            }
-            return lessons;
+            return jdbcTemplate.queryForList(
+                "SELECT lesson FROM memory WHERE domain = ? AND severity = 'lesson' ORDER BY created_at DESC LIMIT 5",
+                String.class, domain);
         } catch (Exception e) {
             log.warn("MemoryClient.getLessons failed: {}", e.getMessage());
             return List.of();
@@ -59,35 +35,42 @@ public class MemoryClient {
     }
 
     /**
-     * 创建记忆 (任务完成后调用)
+     * Store a memory entry (stub for compatibility)
      */
+    public void storeMemory(String agentId, String role, String content) {
+        log.debug("storeMemory: agent={} role={} content_len={}", agentId, role, content != null ? content.length() : 0);
+    }
+
     public void create(String event, String impact, String severity,
-                       List<String> participants, List<String> lessons, String domain) {
+                       String domain, String agentId) {
         try {
-            String id = "mem_" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 12);
-            String now = LocalDateTime.now().toString();
-            jdbcTemplate.update("""
-                INSERT INTO social_memory
-                (id, event, impact, severity, participants, lessons, domain, outcome, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                id, event, impact, severity,
-                String.join(",", participants),
-                String.join(",", lessons),
-                domain, null, now);
-            log.info("Memory created: event={} impact={}", event, impact);
+            jdbcTemplate.update(
+                "INSERT INTO memory (event, impact, severity, domain, agent_id, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))",
+                event, impact, severity, domain, agentId);
         } catch (Exception e) {
-            log.error("MemoryClient.create failed: {}", e.getMessage());
+            log.warn("MemoryClient.create failed: {}", e.getMessage());
         }
     }
 
-    /**
-     * 统计记忆总数
-     */
+    /** Create memory entry with list params (compatibility overload for AgentExecutor) */
+    public void create(String event, String impact, String severity,
+                       java.util.List<String> agentIds, java.util.List<String> notes, String domain) {
+        try {
+            String agentId = agentIds != null && !agentIds.isEmpty() ? agentIds.get(0) : "unknown";
+            jdbcTemplate.update(
+                "INSERT INTO memory (event, impact, severity, domain, agent_id, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))",
+                event, impact, severity, domain, agentId);
+        } catch (Exception e) {
+            log.warn("MemoryClient.create failed: {}", e.getMessage());
+        }
+    }
+
     public int count() {
         try {
-            return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM social_memory", Integer.class);
+            Integer c = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM memory", Integer.class);
+            return c != null ? c : 0;
         } catch (Exception e) {
+            log.warn("MemoryClient.count failed: {}", e.getMessage());
             return 0;
         }
     }

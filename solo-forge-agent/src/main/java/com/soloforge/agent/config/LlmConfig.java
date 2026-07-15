@@ -6,16 +6,15 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.anthropic.AnthropicChatModel;
 import org.springframework.ai.anthropic.api.AnthropicApi;
 import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.model.function.ToolCallingManager;
+import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Primary;
 
-import java.util.List;
+
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -52,7 +51,7 @@ public class LlmConfig {
                         .build())
                 .defaultOptions(org.springframework.ai.openai.OpenAiChatOptions.builder()
                         .model(model)
-                        .temperature(0.3f)
+                        .temperature(0.3)
                         .build())
                 .build();
     }
@@ -73,7 +72,7 @@ public class LlmConfig {
                         .build())
                 .defaultOptions(org.springframework.ai.openai.OpenAiChatOptions.builder()
                         .model(model)
-                        .temperature(0.3f)
+                        .temperature(0.3)
                         .build())
                 .build();
     }
@@ -92,7 +91,7 @@ public class LlmConfig {
                         .build())
                 .defaultOptions(org.springframework.ai.anthropic.AnthropicChatOptions.builder()
                         .model(model)
-                        .temperature(0.3f)
+                        .temperature(0.3)
                         .build())
                 .build();
     }
@@ -121,73 +120,6 @@ public class LlmConfig {
 
     @Bean
     public ToolCallingManager toolCallingManager() {
-        return new ToolCallingManager();
-    }
-}
-
-/**
- * 动态 ChatModel 路由器
- *
- * <p>解决 Spring AI ChatModel 单例模式与 SoloForge 请求级动态 Provider 注入的冲突。
- * 原有 LlmGateway 每次请求都从 ChatRequest.LlmProvider 动态注入 baseUrl/apiKey/model，
- * 此组件保持相同能力的同时利用 Spring AI 标准化 API。
- */
-class DynamicChatModelResolver {
-
-    private final ApplicationContext applicationContext;
-    private final Map<String, ChatModel> dynamicCache = new ConcurrentHashMap<>();
-
-    private static final Logger log = LoggerFactory.getLogger(DynamicChatModelResolver.class);
-
-    // 预定义的 Bean 名称 → provider 类型映射
-    private static final Map<String, String> BEAN_NAME_MAP = Map.of(
-            "openAiChatModel", "OPENAI",
-            "deepseekChatModel", "DEEPSEEK",
-            "anthropicChatModel", "CLAUDE"
-    );
-
-    DynamicChatModelResolver(ApplicationContext applicationContext) {
-        this.applicationContext = applicationContext;
-    }
-
-    /**
-     * 根据 ChatRequest.LlmProvider 解析对应的 ChatModel。
-     *
-     * @param provider 从请求体注入的 provider 信息（含 baseUrl/apiKey/model/fallbackModels）
-     * @return 可用的 ChatModel 实例
-     */
-    public ChatModel resolve(ChatRequest.LlmProvider provider) {
-        // 1) 先尝试从预注册 Bean 匹配
-        for (Map.Entry<String, String> entry : BEAN_NAME_MAP.entrySet()) {
-            if (entry.getValue().equalsIgnoreCase(provider.name())) {
-                try {
-                    return applicationContext.getBean(entry.getKey(), ChatModel.class);
-                } catch (Exception e) {
-                    log.debug("Bean {} not found, falling back to dynamic", entry.getKey());
-                }
-            }
-        }
-
-        // 2) 按 baseUrl+model 缓存键查找或动态创建
-        String cacheKey = provider.getBaseUrl() + "|" + provider.getModel();
-        return dynamicCache.computeIfAbsent(cacheKey, k -> {
-            log.info("Creating dynamic ChatModel for: baseUrl={} model={}",
-                    provider.getBaseUrl(), provider.getModel());
-            return createDynamicModel(provider);
-        });
-    }
-
-    private ChatModel createDynamicModel(ChatRequest.LlmProvider provider) {
-        // 默认走 OpenAI 兼容协议（覆盖 DeepSeek/GLM/通义千问等）
-        return OpenAiChatModel.builder()
-                .openAiApi(OpenAiApi.builder()
-                        .apiKey(provider.getApiKey())
-                        .baseUrl(provider.getBaseUrl())
-                        .build())
-                .defaultOptions(org.springframework.ai.openai.OpenAiChatOptions.builder()
-                        .model(provider.getModel())
-                        .temperature(0.3f)
-                        .build())
-                .build();
+        return ToolCallingManager.builder().build();
     }
 }

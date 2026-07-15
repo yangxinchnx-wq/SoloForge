@@ -48,4 +48,9 @@ public class CultureClient {
             .filter(p -> p != null && !p.isBlank())
             .toList();
     }
+
+    /** Evaluate cultural impact of an agent response (stub for compatibility) */
+    public void evaluateCulturalImpact(String agentId, String response) {
+        log.debug("evaluateCulturalImpact: agent={} response_len={}", agentId, response != null ? response.length() : 0);
+    }
 }

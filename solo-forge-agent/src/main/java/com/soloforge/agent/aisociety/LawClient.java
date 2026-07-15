@@ -48,6 +48,20 @@ public class LawClient {
      * @param context 包含 task/tools/budget 等上下文
      * @return 违规列表 (空表示无违规)
      */
+
+    /**
+     * Check if agent action is legal (convenience method for SpringAiAgentExecutor)
+     * @return true if legal (no violations), false if blocked
+     */
+    public boolean checkLegal(String agentId, com.soloforge.agent.dto.ChatSettings settings) {
+        try {
+            return checkViolation(agentId, java.util.Map.of()).isEmpty();
+        } catch (Exception e) {
+            log.warn("checkLegal failed: {}", e.getMessage());
+            return true; // fail-open
+        }
+    }
+
     public List<Map<String, Object>> checkViolation(String agentId, Map<String, Object> context) {
         List<Map<String, Object>> violations = new ArrayList<>();
         try {

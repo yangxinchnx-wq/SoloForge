@@ -18,6 +18,10 @@ import java.nio.file.Paths;
 @Component
 public class WriteFileTool {
 
+    public String getDescription() {
+        return "Write content to a file";
+    }
+
     public String execute(String filePath, String content) {
         try {
             Path target = Paths.get(filePath);

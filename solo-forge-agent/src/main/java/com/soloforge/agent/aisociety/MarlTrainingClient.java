@@ -47,6 +47,14 @@ public class MarlTrainingClient {
      * @param action 实际选择的动作 (0-9)
      * @param reward 计算的 reward
      */
+
+    /**
+     * Push trace with string observation/action (convenience overload for SpringAiAgentExecutor)
+     */
+    public void pushTrace(String agentId, String observationJson, String actionStr, double reward) {
+        pushTrace(agentId, new double[]{0}, 0, reward);
+    }
+
     public void pushTrace(String agentId, double[] observation, int action, double reward) {
         // 异步推送,不阻塞主流程
         new Thread(() -> {

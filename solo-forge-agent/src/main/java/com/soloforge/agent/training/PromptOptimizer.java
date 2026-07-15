@@ -1,4 +1,4 @@
-﻿package com.soloforge.agent.training;
+package com.soloforge.agent.training;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.soloforge.agent.dto.ChatRequest;
@@ -15,6 +15,7 @@ import org.springframework.stereotype.Component;
 
 import org.springframework.ai.chat.client.ChatClient; // ★ Path C: Spring AI ChatClient
 
+import com.soloforge.agent.training.TrainingTask;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -172,9 +173,14 @@ public class PromptOptimizer {
                     agentId, currentVersion, rewardBefore, rewardAfter, improvementThreshold * 100);
         }
 
-        return new OptimizeResult(agentId, adopted, rewardBefore, rewardAfter,
-                currentPrompt.length(), improvedPrompt.length(),
-                adopted ? currentVersion + 1 : currentVersion);
+        return OptimizeResult.builder()
+                .agentId(agentId).adopted(adopted)
+                .rewardBefore(rewardBefore).rewardAfter(rewardAfter)
+                .versionBefore(currentVersion).versionAfter(adopted ? currentVersion + 1 : currentVersion)
+                .sampleCount(tasks.size())
+                .status(adopted ? "success" : "failed")
+                .notes(adopted ? "Adopted" : "Not improved")
+                .build();
     }
 
     /**
@@ -204,13 +210,13 @@ public class PromptOptimizer {
             StringBuilder fullPrompt = new StringBuilder();
             fullPrompt.append("[System Prompt]\n").append(prompt).append("\n\n");
             fullPrompt.append("[Task]\n").append(task.getInput()).append("\n\n");
-            fullPrompt.append("[Expected Keywords]").append(task.getKeywords()).append("\n");
+            fullPrompt.append("[Expected Keywords]").append(String.join(", ", java.util.Arrays.asList(task.getExpectedKeywords()))).append("\n");
             fullPrompt.append("请根据以上 system prompt 完成任务。");
 
             // ★ Path C: 使用 DynamicChatModelResolver + ChatClient
             try {
                 ChatClient chatClient = ChatClient.create(modelResolver.resolve(
-                        ChatRequest.LlmProvider.OPENAI)); // 训练模块固定用 OpenAI
+                        ChatRequest.LlmProvider.builder().name("OPENAI").build())); // 训练模块固定用 OpenAI
                 String response = chatClient.prompt()
                         .system(prompt)
                         .user(task.getInput())
@@ -219,8 +225,8 @@ public class PromptOptimizer {
 
                 // 打分逻辑
                 double keywordHit = 0.0;
-                if (task.getKeywords() != null && !task.getKeywords().isBlank()) {
-                    String[] kwList = task.getKeywords().split(",");
+                if (task.getExpectedKeywords() != null && task.getExpectedKeywords().length > 0) {
+                    String[] kwList = task.getExpectedKeywords();
                     int hit = 0;
                     for (String kw : kwList) {
                         if (response.toLowerCase().contains(kw.toLowerCase().trim())) hit++;
@@ -235,27 +241,8 @@ public class PromptOptimizer {
                 return (keywordHit * 0.5 + qualityScore * 0.3 + lengthScore * 0.2);
 
             } catch (Exception e) {
-                // fallback 到旧 llmGateway
-                log.debug("PromptOptimizer: ChatClient 评估失败, fallback 到 LlmGateway: {}", e.getMessage());
-                Map<String, Object> result = llmGateway.chatCompletion(
-                        trainingLlmBaseUrl, trainingLlmApiKey, trainingLlmModel,
-                        fullPrompt.toString(), 0.7, 1024);
-                String content = (String) result.getOrDefault("content", "");
-
-                double keywordHit = 0.0;
-                if (task.getKeywords() != null && !task.getKeywords().isBlank()) {
-                    String[] kwList = task.getKeywords().split(",");
-                    int hit = 0;
-                    for (String kw : kwList) {
-                        if (content.toLowerCase().contains(kw.toLowerCase().trim())) hit++;
-                    }
-                    keywordHit = (double) hit / kwList.length;
-                }
-                double qualityScore = Math.min(1.0, content.length() / 200.0);
-                double lengthScore = content.length() >= 20 && content.length() <= 2000 ? 1.0 :
-                        (content.length() < 20 ? content.length() / 20.0 : 2000.0 / content.length());
-
-                return (keywordHit * 0.5 + qualityScore * 0.3 + lengthScore * 0.2);
+                log.debug("PromptOptimizer: ChatClient evaluation failed: {}", e.getMessage());
+                return 0.0;
             }
 
         } catch (Exception e) {
@@ -280,13 +267,13 @@ public class PromptOptimizer {
             int count = 0;
             for (TrainingTask t : tasks) {
                 if (count++ >= 3) { analysisPrompt.append("... 共 ").append(tasks.size()).append(" 个任务\n"); break; }
-                analysisPrompt.append("- ").append(t.getInput()).append(" (keywords: ").append(t.getKeywords()).append(")\n");
+                analysisPrompt.append("- ").append(t.getInput()).append(" (keywords: ").append(String.join(", ", java.util.Arrays.asList(t.getExpectedKeywords()))).append(")\n");
             }
             analysisPrompt.append("\n请分析当前 prompt 的弱点，然后输出一个改进版的完整 system prompt。只输出改进后的 prompt 内容，不要解释。");
 
             // ★ Path C: 使用 DynamicChatModelResolver
             ChatClient chatClient = ChatClient.create(modelResolver.resolve(
-                    overrideProvider != null ? overrideProvider : ChatRequest.LlmProvider.OPENAI));
+                    overrideProvider != null ? overrideProvider : ChatRequest.LlmProvider.builder().name("OPENAI").build()));
             String improved = chatClient.prompt()
                     .user(analysisPrompt.toString())
                     .call()
@@ -301,12 +288,8 @@ public class PromptOptimizer {
             return improved;
 
         } catch (Exception e) {
-            // fallback 到旧 llmGateway
-            log.warn("PromptOptimizer: ChatClient 生成改进失败, fallback: {}", e.getMessage());
-            Map<String, Object> result = llmGateway.chatCompletion(
-                    trainingLlmBaseUrl, trainingLlmApiKey, trainingLlmModel,
-                    analysisPrompt.toString(), 0.8, 2048);
-            return (String) result.getOrDefault("content", "");
+            log.warn("PromptOptimizer: ChatClient generation failed: {}", e.getMessage());
+            return null;
         }
     }
 
@@ -331,74 +314,5 @@ public class PromptOptimizer {
     }
 
     // ========== DTOs ==========
-
-    public static class OptimizeResult {
-        public final String agentId;
-        public final boolean adopted;
-        public final double rewardBefore;
-        public final double rewardAfter;
-        public final int beforeLength;
-        public final int afterLength;
-        public final int newVersion;
-        public final String message;
-        public final LocalDateTime timestamp;
-
-        private OptimizeResult(String agentId, boolean adopted, double rewardBefore, double rewardAfter,
-                               int beforeLength, int afterLength, int newVersion, String message) {
-            this.agentId = agentId;
-            this.adopted = adopted;
-            this.rewardBefore = rewardBefore;
-            this.rewardAfter = rewardAfter;
-            this.beforeLength = beforeLength;
-            this.afterLength = afterLength;
-            this.newVersion = newVersion;
-            this.message = message;
-            this.timestamp = LocalDateTime.now();
-        }
-
-        public static OptimizeResult adopted(String agentId, double before, double after,
-                                             int bLen, int aLen, int version) {
-            return new OptimizeResult(agentId, true, before, after, bLen, aLen, version, "已采纳");
-        }
-
-        public static OptimizeResult failed(String agentId, String reason) {
-            return new OptimizeResult(agentId, false, 0, 0, 0, 0, 0, "FAILED: " + reason);
-        }
-
-        public static OptimizeResult skipped(String agentId, String reason) {
-            return new OptimizeResult(agentId, false, 0, 0, 0, 0, 0, "SKIPPED: " + reason);
-        }
-
-        public boolean isAdopted() { return adopted; }
-
-        @Override
-        public String toString() {
-            return String.format("OptimizeResult{agent=%s, adopted=%s, %.3f→%.3f, v%d, msg=%s}",
-                    agentId, adopted, rewardBefore, rewardAfter, newVersion, message);
-        }
-    }
-
-    public static class TrainingTask {
-        private String id;
-        private String domain;
-        private String input;
-        private String expectedOutput;
-        private String keywords;
-        private int weight = 1;
-
-        // getters & setters
-        public String getId() { return id; }
-        public void setId(String id) { this.id = id; }
-        public String getDomain() { return domain; }
-        public void setDomain(String domain) { this.domain = domain; }
-        public String getInput() { return input; }
-        public void setInput(String input) { this.input = input; }
-        public String getExpectedOutput() { return expectedOutput; }
-        public void setExpectedOutput(String expectedOutput) { this.expectedOutput = expectedOutput; }
-        public String getKeywords() { return keywords; }
-        public void setKeywords(String keywords) { this.keywords = keywords; }
-        public int getWeight() { return weight; }
-        public void setWeight(int weight) { this.weight = weight; }
-    }
 }
 

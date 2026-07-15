@@ -6,13 +6,16 @@ import com.soloforge.agent.aisociety.MarlTrainingClient;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.chat.client.ChatClientRequest;`nimport org.springframework.ai.chat.client.ChatClientResponse;`nimport org.springframework.ai.chat.client.advisor.api.CallAdvisor;`nimport org.springframework.ai.chat.client.advisor.api.CallAdvisorChain;
+import org.springframework.ai.chat.client.ChatClientRequest;
+import org.springframework.ai.chat.client.ChatClientResponse;
+import org.springframework.ai.chat.client.advisor.api.CallAdvisor;
+import org.springframework.ai.chat.client.advisor.api.CallAdvisorChain;
 
 import org.springframework.stereotype.Component;
 
 
 /**
- * SoloForge custom Advisors for Spring AI 1.0.0 GA Advisor chain.
+ * SoloForge custom Advisors for Spring AI 2.0 Advisor chain.
  *
  * <p>Extracts pre/post logic from AgentExecutor into declarative Advisor chain.
  *
@@ -23,7 +26,6 @@ import org.springframework.stereotype.Component;
  *   <li>PostToolCallAdvisor - MARL training trace push (after tool calls)</li>
  * </ol>
  */
-@Component
 public class SoloForgeAdvisors {
 
     private SoloForgeAdvisors() {}

@@ -48,4 +48,9 @@ public class CoalitionClient {
             return List.of();
         }
     }
+
+    /** Record a coalition action (stub for compatibility) */
+    public void recordCoalitionAction(String agentId, String action) {
+        log.debug("recordCoalitionAction: agent={} action={}", agentId, action);
+    }
 }
