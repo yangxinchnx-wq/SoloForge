@@ -35,7 +35,12 @@ public class DelegationTools {
     private final SpringAiAgentExecutor executor;
     private final LlmCommandCenter commandCenter;
 
-    /** ThreadLocal 存储当前请求的上下文 (由 SpringAiAgentExecutor.execute() 设置) */
+    /**
+     * ThreadLocal 存储当前请求的上下文 (ChatSettings + subProviders)
+     * — 由 SpringAiAgentExecutor.execute() 在 LLM 调用前设置, 调用后清除
+     * — DelegationTools 是 @Service 单例, 无法通过构造函数传请求级数据
+     * — 用 ThreadLocal 让 @Tool 方法在函数调用时能拿到当前请求的副模型列表和设置
+     */
     private static final ThreadLocal<DelegationContext> ctxHolder = new ThreadLocal<>();
 
     public DelegationTools(SpringAiAgentExecutor executor, LlmCommandCenter commandCenter) {

@@ -21,12 +21,19 @@ import java.util.Map;
  * </ul>
  */
 public class RateLimitProfile {
+    /** 最大并发请求数 (指挥中心据此创建 Semaphore) */
     private int maxConcurrent = 3;
+    /** 每分钟最大请求数 (指挥中心 RPM 滑动窗口) */
     private int maxRpm = 50;
+    /** 每分钟最大 token 数 (0=不限) */
     private int maxTpm = 0;
+    /** Retry-After 头的值 (秒, 0=无) */
     private int retryAfterSec = 0;
+    /** 数据来源: "default" / "headers" / "frontend" */
     private String source = "default";
+    /** 模型上下文窗口大小 (tokens, 0=未知) — 指挥中心据此做容量校验 */
     private int contextWindow = 0;
+    /** 模型最大输出 tokens (0=未知) */
     private int maxOutputTokens = 0;
     public int getMaxConcurrent() { return maxConcurrent; }
     public int getMaxRpm() { return maxRpm; }
@@ -42,6 +49,7 @@ public class RateLimitProfile {
     public void setSource(String v) { this.source = v; }
     public void setContextWindow(int v) { this.contextWindow = v; }
     public void setMaxOutputTokens(int v) { this.maxOutputTokens = v; }
+    /** 深拷贝 */
     public RateLimitProfile copy() {
         RateLimitProfile c = new RateLimitProfile();
         c.maxConcurrent = maxConcurrent;
@@ -53,7 +61,13 @@ public class RateLimitProfile {
         c.maxOutputTokens = maxOutputTokens;
         return c;
     }
+    /** 返回保守默认值 (并发 3, RPM 50, 无容量限制) */
     public static RateLimitProfile defaults() { return new RateLimitProfile(); }
+    /**
+     * 从 HTTP 响应头动态解析限流配置
+     * 兼容 OpenAI / Anthropic / DeepSeek / 通用 X-RateLimit-* 格式
+     * 解析出 RPM 后自动推导并发数 (RPM/10)
+     */
     public static RateLimitProfile fromHeaders(Map<String, String> headers) {
         if (headers == null || headers.isEmpty()) return defaults();
         RateLimitProfile p = new RateLimitProfile();

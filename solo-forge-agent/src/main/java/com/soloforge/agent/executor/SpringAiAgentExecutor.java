@@ -19,7 +19,39 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.stereotype.Component;
 import java.util.Map;
 
-/** Spring AI Agent executor - powered by LlmCommandCenter */
+/**
+ * Spring AI Agent 执行器 — LLM 请求的完整生命周期管理
+ *
+ * <p>核心职责:
+ * <ol>
+ *   <li>构建 12 层 System Prompt (身份/性格/能力/技能/经验/案例/文化/行为规则)</li>
+ *   <li>接入 {@link LlmCommandCenter} 指挥中心 — 容量校验/请求去重/熔断/限流</li>
+ *   <li>429/503 自动重试 (3 次), 失败后返回详细报错让用户自行决定</li>
+ *   <li>注册 {@code DelegationTools} — 主模型可通过函数调用委托副模型</li>
+ *   <li>后置副作用 — MARL 训练轨迹/声望/记忆/文化/联盟/制度推送</li>
+ * </ol>
+ *
+ * <p>数据流 (execute 方法):
+ * <pre>
+ * 1. 法律/信用检查
+ * 2. buildFullPrompt() — 收集 capabilities/skills/experiences/cases/culture
+ * 3. commandCenter.checkCapacity() — contextWindow 容量校验
+ * 4. commandCenter.checkDuplicate() — 缓存命中直接返回
+ * 5. commandCenter.getInFlight() — 相同请求合并
+ * 6. commandCenter.evaluate() — 熔断+RPM+并发
+ * 7. chatClient.call() — 实际 LLM 调用 (含 @Tool 函数调用)
+ * 8. commandCenter.recordSuccess/recordFailure — 结果记录
+ * 9. postExecuteSideEffects — 后置副作用
+ * </pre>
+ *
+ * <p>相关文件:
+ * <ul>
+ *   <li>{@link LlmCommandCenter} — 指挥中心 (llm 包)</li>
+ *   <li>{@link com.soloforge.agent.llm.RateLimitProfile} — 动态限流配置 (llm 包)</li>
+ *   <li>{@link com.soloforge.agent.tools.DelegationTools} — 副模型委托工具 (tools 包)</li>
+ *   <li>{@link com.soloforge.agent.advisor.SystemPromptBuilder} — 12 层 Prompt 构建 (advisor 包)</li>
+ * </ul>
+ */
 @Component
 public class SpringAiAgentExecutor {
     private static final Logger log = LoggerFactory.getLogger(SpringAiAgentExecutor.class);
