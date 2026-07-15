@@ -124,7 +124,7 @@ public class SpringAiAgentExecutor {
                 int sc = LlmCommandCenter.extractStatusCode(e);
                 commandCenter.recordFailure(pKey, sc);
                 String errType = sc == 429 ? "[Server 429]" : sc == 503 ? "[Server 503]" : sc >= 500 ? "[Server " + sc + "]" : sc > 0 ? "[Server " + sc + "]" : "[App/Network]";
-                String errMsg = e.getMessage() != null ? e.getMessage().substring(0, Math.min(e.getMessage().length(), 200)) : "unknown";
+                String errMsg = extractDetailedError(e);
                 errorLog.add(errType + " " + errMsg);
                 log.warn("[SpringAiExec] attempt #{}/3 failed: {} {}", attempt+1, errType, errMsg);
                 if (commandCenter.shouldRetry(e, attempt) && attempt < 3) {
@@ -242,6 +242,49 @@ public class SpringAiAgentExecutor {
     }
 
     /** Parse agent.capabilities JSON string to List<String> */
+    /**
+     * 从异常中提取尽可能详细的错误信息:
+     * - 异常类名 (帮助诊断是 WebClient/RestClient/还是应用层错误)
+     * - 异常顶层消息
+     * - cause chain 消息 (找到根因)
+     * - 如果是 HTTP 异常, 尝试提取 response body
+     */
+    private String extractDetailedError(Throwable e) {
+        if (e == null) return "unknown";
+        StringBuilder sb = new StringBuilder();
+        // 1. 异常类名
+        sb.append("(").append(e.getClass().getSimpleName()).append(") ");
+        // 2. 顶层消息
+        if (e.getMessage() != null) {
+            String msg = e.getMessage();
+            if (msg.length() > 300) msg = msg.substring(0, 300) + "...";
+            sb.append(msg);
+        }
+        // 3. 尝试提取 response body (Spring AI 用 WebClient, 异常可能是 WebClientResponseException)
+        try {
+            // 反射获取 getResponseBodyAsString() 方法 (WebClientResponseException 有此方法)
+            java.lang.reflect.Method m = e.getClass().getMethod("getResponseBodyAsString");
+            if (m != null) {
+                String body = (String) m.invoke(e);
+                if (body != null && !body.isBlank()) {
+                    String trimmed = body.length() > 300 ? body.substring(0, 300) + "..." : body;
+                    sb.append(" | body: ").append(trimmed);
+                }
+            }
+        } catch (Exception ignored) {}
+        // 4. cause chain — 找到根因
+        Throwable cause = e.getCause();
+        if (cause != null && cause != e && cause.getMessage() != null) {
+            String causeMsg = cause.getMessage();
+            if (causeMsg.length() > 200) causeMsg = causeMsg.substring(0, 200) + "...";
+            if (!sb.toString().contains(causeMsg)) {
+                sb.append(" | cause: ").append(cause.getClass().getSimpleName()).append(": ").append(causeMsg);
+            }
+        }
+        String result = sb.toString();
+        return result.length() > 500 ? result.substring(0, 500) + "..." : result;
+    }
+
     private String buildErrorReport(ChatRequest.LlmProvider provider, java.util.List<String> errorLog, int attempts) {
         StringBuilder sb = new StringBuilder();
         sb.append("LLM 调用失败 (连续 ").append(attempts).append(" 次)\n");
