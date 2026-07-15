@@ -64,6 +64,8 @@ public class ChatController {
         health.put("status", "UP");
         health.put("service", "solo-forge-agent");
         health.put("version", "1.0.0");
+        health.put("springAiVersion", "2.0.0");
+        health.put("springBootVersion", "4.0.0");
         health.put("port", 8770);
         health.put("role", "training-only");
         return ResponseEntity.ok(health);

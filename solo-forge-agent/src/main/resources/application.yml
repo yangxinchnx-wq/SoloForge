@@ -15,7 +15,7 @@
 #   llm/LlmGateway/LlmRateLimiter/LlmCommandCenter/RateLimitProfile → src/llm/ (llmProxyHandler + circuit-breaker)
 #
 # 保留的模块 (Java 独占，RACER 无对等实现):
-#   config/LlmConfig                 → Spring AI 1.0.0 GA ChatModel Bean (训练用)
+  #   config/LlmConfig                 → Spring AI 2.0.0 GA ChatModel Bean (训练用)
 #   config/DynamicChatModelResolver  → 运行时 provider 路由 (训练用)
 #   config/SqliteConfig              → SQLite 连接配置
 #   controller/ChatController        → Agent 管理 CRUD + 健康检查 (无聊天端点)
@@ -32,7 +32,7 @@ spring:
   application:
     name: solo-forge-agent
 
-  # Spring AI 1.0.0 GA 配置 — 动态多 Provider 由 LlmConfig.java 管理
+  # Spring AI 2.0.0 GA 配置 — 动态多 Provider 由 LlmConfig.java 管理
   # 不再使用静态 spring.ai.* 配置，改为请求级动态注入
   # ChatModel Bean 在 LlmConfig 中按 provider 名称注册，运行时按需路由
   ai:

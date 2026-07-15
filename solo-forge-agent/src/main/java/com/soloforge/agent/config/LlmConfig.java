@@ -1,14 +1,13 @@
 package com.soloforge.agent.config;
 
-import com.soloforge.agent.dto.ChatRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.anthropic.AnthropicChatModel;
-import org.springframework.ai.anthropic.api.AnthropicApi;
+import org.springframework.ai.anthropic.AnthropicChatOptions;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.openai.OpenAiChatModel;
-import org.springframework.ai.openai.api.OpenAiApi;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
@@ -16,15 +15,19 @@ import org.springframework.context.annotation.Configuration;
 
 
 /**
- * Spring AI 1.0.0 GA 多 Provider 配置
- *
- * <p>替换原 LlmGateway (WebClient 手搓 /chat/completions)。
+ * Spring AI 2.0.0 GA 多 Provider 配置
  *
  * <p>核心设计：
  * <ul>
  *   <li>每个常用 provider 预创建一个 {@link ChatModel} Bean</li>
  *   <li>{@link DynamicChatModelResolver} 在运行时按 provider 名称路由</li>
  *   <li>支持请求级动态 baseUrl/apiKey/model 注入（兼容原有 ChatRequest.LlmProvider）</li>
+ * </ul>
+ *
+ * <p>Spring AI 2.0.0 API 变更 (vs 1.0.0):
+ * <ul>
+ *   <li>移除 OpenAiApi / AnthropicApi — baseUrl 和 apiKey 直接放入 ChatOptions</li>
+ *   <li>builder 使用 .options() 替代 .openAiApi() + .defaultOptions()</li>
  * </ul>
  */
 @Configuration
@@ -42,11 +45,9 @@ public class LlmConfig {
             @Value("${soloforge.llm.openai.base-url:https://api.openai.com}") String baseUrl,
             @Value("${soloforge.llm.openai.model:gpt-4o}") String model) {
         return OpenAiChatModel.builder()
-                .openAiApi(OpenAiApi.builder()
+                .options(OpenAiChatOptions.builder()
                         .apiKey(apiKey)
                         .baseUrl(baseUrl)
-                        .build())
-                .defaultOptions(org.springframework.ai.openai.OpenAiChatOptions.builder()
                         .model(model)
                         .temperature(0.3)
                         .build())
@@ -63,11 +64,9 @@ public class LlmConfig {
             @Value("${soloforge.llm.deepseek.base-url:https://api.deepseek.com}") String baseUrl,
             @Value("${soloforge.llm.deepseek.model:deepseek-chat}") String model) {
         return OpenAiChatModel.builder()
-                .openAiApi(OpenAiApi.builder()
+                .options(OpenAiChatOptions.builder()
                         .apiKey(apiKey)
                         .baseUrl(baseUrl)
-                        .build())
-                .defaultOptions(org.springframework.ai.openai.OpenAiChatOptions.builder()
                         .model(model)
                         .temperature(0.3)
                         .build())
@@ -83,10 +82,8 @@ public class LlmConfig {
             @Value("${soloforge.llm.anthropic.api-key:placeholder}") String apiKey,
             @Value("${soloforge.llm.anthropic.model:claude-sonnet-4-20250514}") String model) {
         return AnthropicChatModel.builder()
-                .anthropicApi(AnthropicApi.builder()
+                .options(AnthropicChatOptions.builder()
                         .apiKey(apiKey)
-                        .build())
-                .defaultOptions(org.springframework.ai.anthropic.AnthropicChatOptions.builder()
                         .model(model)
                         .temperature(0.3)
                         .build())
@@ -94,25 +91,16 @@ public class LlmConfig {
     }
 
     // ──────────────────────────────────────────────
-    // 4. 动态路由器 — 替代 LlmGateway.resolveProvider()
+    // 4. 动态路由器
     // ──────────────────────────────────────────────
 
-    /**
-     * 运行时动态解析 ChatModel。
-     *
-     * <p>优先级：
-     * <ol>
-     *   <li>从已注册的 Bean 按名称查找（预配置的 provider）</li>
-     *   <li>若未找到且请求携带了自定义 baseUrl/apiKey，则动态创建并缓存</li>
-     * </ol>
-     */
     @Bean
     public DynamicChatModelResolver dynamicChatModelResolver(ApplicationContext ctx) {
         return new DynamicChatModelResolver(ctx);
     }
 
     // ──────────────────────────────────────────────
-    // 5. Tool Calling Manager (Spring AI 1.0.0 GA 内置)
+    // 5. Tool Calling Manager (Spring AI 2.0.0 GA 内置)
     // ──────────────────────────────────────────────
 
     @Bean

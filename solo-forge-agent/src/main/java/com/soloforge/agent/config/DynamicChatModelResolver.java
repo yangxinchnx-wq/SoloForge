@@ -5,7 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatModel;
-import org.springframework.ai.openai.api.OpenAiApi;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.context.ApplicationContext;
 
 import java.util.Map;
@@ -16,6 +16,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * Resolves Spring AI ChatModel instances at runtime based on ChatRequest.LlmProvider.
  * Maintains a cache of dynamically created models keyed by baseUrl+model.
+ *
+ * Spring AI 2.0.0: OpenAiApi removed, baseUrl/apiKey go directly into OpenAiChatOptions.
  */
 public class DynamicChatModelResolver {
 
@@ -60,11 +62,9 @@ public class DynamicChatModelResolver {
 
     private ChatModel createDynamicModel(ChatRequest.LlmProvider provider) {
         return OpenAiChatModel.builder()
-                .openAiApi(OpenAiApi.builder()
+                .options(OpenAiChatOptions.builder()
                         .apiKey(provider.getApiKey())
                         .baseUrl(provider.getBaseUrl())
-                        .build())
-                .defaultOptions(org.springframework.ai.openai.OpenAiChatOptions.builder()
                         .model(provider.getModel())
                         .temperature(0.3)
                         .build())
