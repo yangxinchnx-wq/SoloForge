@@ -28,9 +28,9 @@ public class LlmCommandCenter {
     private final Map<String, ProviderState> registry = new ConcurrentHashMap<>();
 
     // ── 决策入口 ──
-    public LlmDecision evaluate(String baseUrl, String model) {
+    public LlmDecision evaluate(String baseUrl, String model, RateLimitProfile profile) {
         String key = providerKey(baseUrl, model);
-        ProviderState st = getOrCreate(key);
+        ProviderState st = getOrCreate(key, profile);
         // 1. 熔断器
         if (st.circuit == CircuitState.OPEN) {
             if (System.currentTimeMillis() - st.circuitOpenedAt > CIRCUIT_RESET_MS) {
@@ -60,7 +60,7 @@ public class LlmCommandCenter {
 
     // ── 结果记录 ──
     public void recordSuccess(String key, long latencyMs) {
-        ProviderState st = getOrCreate(key);
+        ProviderState st = getOrCreate(key, profile);
         st.consecutive429s.set(0);
         st.failCount.set(0);
         st.recordLatency(latencyMs);
@@ -70,7 +70,7 @@ public class LlmCommandCenter {
         }
     }
     public void recordFailure(String key, int statusCode) {
-        ProviderState st = getOrCreate(key);
+        ProviderState st = getOrCreate(key, profile);
         st.totalRequests.incrementAndGet();
         if (statusCode == 429 || statusCode == 503) {
             int c = st.consecutive429s.incrementAndGet();
@@ -126,8 +126,8 @@ public class LlmCommandCenter {
         if (m.find()) try { return Long.parseLong(m.group(1)); } catch (Exception ignored) {}
         return null;
     }
-    private ProviderState getOrCreate(String key) {
-        return registry.computeIfAbsent(key, k -> new ProviderState());
+    private ProviderState getOrCreate(String key, RateLimitProfile profile) {
+        return registry.computeIfAbsent(key, k -> new ProviderState(profile != null ? profile : RateLimitProfile.defaults()));
     }
     public int getAvailablePermits(String key) {
         ProviderState st = registry.get(key);
@@ -168,7 +168,7 @@ public class LlmCommandCenter {
             long start = now - 60_000L;
             while (!rpmWindow.isEmpty() && rpmWindow.peekFirst() != null && rpmWindow.peekFirst() < start)
                 rpmWindow.pollFirst();
-            if (rpmWindow.size() >= DEFAULT_MAX_RPM) return false;
+            if (rpmWindow.size() >= maxRpm) return false;
             rpmWindow.addLast(now);
             return true;
         }

@@ -81,7 +81,7 @@ public class SpringAiAgentExecutor {
         String pKey = LlmCommandCenter.providerKey(provider.getBaseUrl(), provider.getModel());
         String response = null;
         for (int attempt = 0; attempt <= 3; attempt++) {
-            LlmCommandCenter.LlmDecision d = commandCenter.evaluate(provider.getBaseUrl(), provider.getModel());
+            LlmCommandCenter.LlmDecision d = commandCenter.evaluate(provider.getBaseUrl(), provider.getModel(), provider.getRateLimitProfile());
             if (d.action == LlmCommandCenter.LlmDecision.Action.REJECT)
                 throw new RuntimeException("CommandCenter rejected: " + d.reason);
             if (d.action == LlmCommandCenter.LlmDecision.Action.WAIT)
@@ -131,7 +131,7 @@ public class SpringAiAgentExecutor {
         ctx.put("provider_base_url", provider.getBaseUrl());
         ctx.put("provider_model", provider.getModel());
         String pKey = LlmCommandCenter.providerKey(provider.getBaseUrl(), provider.getModel());
-        LlmCommandCenter.LlmDecision d = commandCenter.evaluate(provider.getBaseUrl(), provider.getModel());
+        LlmCommandCenter.LlmDecision d = commandCenter.evaluate(provider.getBaseUrl(), provider.getModel(), provider.getRateLimitProfile());
         if (d.action == LlmCommandCenter.LlmDecision.Action.REJECT)
             return reactor.core.publisher.Flux.just("Blocked: " + d.reason);
         if (d.action == LlmCommandCenter.LlmDecision.Action.WAIT)

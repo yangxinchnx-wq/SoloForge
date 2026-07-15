@@ -1,4 +1,4 @@
-/**
+﻿/**
  * aiBackend — 统一 AI 流式后端接口
  *   dev (浏览器 / Vite dev server) → /api/java-agent/api/chat/stream (Java SSE)
  *                                  → Node.js(3000) 直连透传到 Java Spring AI Agent(8770)
@@ -48,7 +48,7 @@ export interface ChatRequest {
    *     1. 前端只传 provider ID，后端从安全配置服务获取密钥
    *     2. 或使用短期 session token 替代持久 apiKey
    */
-  mainProvider?: { baseUrl: string; apiKey: string; model: string };
+  mainProvider?: { baseUrl: string; apiKey: string; model: string; rateLimitProfile?: { maxConcurrent?: number; maxRpm?: number; maxTpm?: number } | null };
   /** 工作区文件夹路径 (用于 AI 作用域限制) */
   workspaceFolder?: string;
   /** 前端资源管理器选中的工具 ID 列表 (如 browser_devtools, bu_run_task, win_powershell) */
@@ -282,6 +282,7 @@ function buildJavaRequestBody(req: ChatRequest): any {
           baseUrl: req.mainProvider.baseUrl,
           apiKey: req.mainProvider.apiKey,
           model: req.mainProvider.model,
+          rateLimitProfile: req.mainProvider.rateLimitProfile || null,
         }
       : null,
     // 副模型列表: Java agent 事件带回前端流送区显示 (主模型 → agent (副模型))
@@ -289,6 +290,7 @@ function buildJavaRequestBody(req: ChatRequest): any {
       baseUrl: sp.baseUrl,
       apiKey: sp.apiKey,
       model: sp.model,
+      rateLimitProfile: sp.rateLimitProfile || null,
     })),
     history: req.history || [],
     fileContext: req.fileContext || undefined,

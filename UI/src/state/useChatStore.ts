@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ChatPanel 核心 store
  *
  * 2026-07-03 阶段3.1.E 从 ChatPanel.tsx 抽出。
@@ -465,7 +465,7 @@ export interface ChatRuntimeOptions {
   permissionMode?: 'normal' | 'performance' | 'ultimate' | 'expert';
   selectedChatId?: string; mainModel?: string; secModels?: any[];
   selectedFile?: string; editorContent?: string;
-  modelProviderMap?: Record<string, { baseUrl: string; apiKey: string; model: string; providerName: string; enabledInSettings: boolean }>;
+  modelProviderMap?: Record<string, { baseUrl: string; apiKey: string; model: string; providerName: string; enabledInSettings: boolean; rateLimitProfile?: { maxConcurrent?: number; maxRpm?: number; maxTpm?: number } | null }>;
 }
 
 interface ChatStoreState {
@@ -577,7 +577,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     // ★ 2026-07-14: 懒创建画布 — 恢复时也确保画布存在
     await ensureCanvasForChat(ctx.activeChatId);
 
-    const chatHandle = await startChat({ chatId: ctx.activeChatId, prompt: continuePrompt, mode: ctx.permissionMode, history: resumeHistory.map(m => ({ sender: m.sender, content: m.rawContent || m.content })), fileContext: ctx.selectedFile ? { name: ctx.selectedFile, content: ctx.editorContent } : undefined, mainProvider: { baseUrl: ctx.mainEntry.baseUrl, apiKey: ctx.mainEntry.apiKey, model: ctx.mainEntry.model }, subProviders: ctx.reqBody.subProviders, candidateProviders: ctx.reqBody.candidateProviders, ...(ctx.hashlineAgentEnabled ? { toolCallMode: 'hashline' } : {}), workspaceFolder: useChatsStore.getState().getChat(ctx.activeChatId)?.workspaceFolder, activeTools: ctx.activeTools, activeSkills: ctx.activeSkills, activeKnowledge: ctx.activeKnowledge, activeSettings: ctx.activeSettings, canvasId: getCanvasSessionId(ctx.activeChatId) } as any, async (evt: ChatStreamEvent) => {
+    const chatHandle = await startChat({ chatId: ctx.activeChatId, prompt: continuePrompt, mode: ctx.permissionMode, history: resumeHistory.map(m => ({ sender: m.sender, content: m.rawContent || m.content })), fileContext: ctx.selectedFile ? { name: ctx.selectedFile, content: ctx.editorContent } : undefined, mainProvider: { baseUrl: ctx.mainEntry.baseUrl, apiKey: ctx.mainEntry.apiKey, model: ctx.mainEntry.model, rateLimitProfile: (ctx.mainEntry as any).rateLimitProfile || null }, subProviders: ctx.reqBody.subProviders, candidateProviders: ctx.reqBody.candidateProviders, ...(ctx.hashlineAgentEnabled ? { toolCallMode: 'hashline' } : {}), workspaceFolder: useChatsStore.getState().getChat(ctx.activeChatId)?.workspaceFolder, activeTools: ctx.activeTools, activeSkills: ctx.activeSkills, activeKnowledge: ctx.activeKnowledge, activeSettings: ctx.activeSettings, canvasId: getCanvasSessionId(ctx.activeChatId) } as any, async (evt: ChatStreamEvent) => {
       switch (evt.kind) {
         case 'text': {
           resumeAccumulated += evt.text;
@@ -748,7 +748,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     const rmState = useResourceManagerStore.getState();
     const activeTools = Array.from(rmState.activeTools); const activeSkills = Array.from(rmState.activeSkills); const activeKnowledge = Array.from(rmState.activeKnowledge);
 
-    const reqBody = { mode: permissionMode, query: finalContent, history: activeMessages.map(m => ({ sender: m.sender, content: m.rawContent || m.content })), fileContext: selectedFile ? { name: selectedFile, content: editorContent } : undefined, toolCallMode: hashlineAgentEnabled ? 'hashline' : undefined, mainProvider: { baseUrl: mainEntry.baseUrl, apiKey: mainEntry.apiKey, model: mainEntry.model }, subProviders: subEntries.map(e => ({ baseUrl: e.baseUrl, apiKey: e.apiKey, model: e.model })), candidateProviders: candidateEntries.map((e: any) => ({ displayName: e.model, providerName: e.providerName, modelName: e.model, baseUrl: e.baseUrl })), activeTools: activeTools.length > 0 ? activeTools : undefined, activeSkills: activeSkills.length > 0 ? activeSkills : undefined, activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined };
+    const reqBody = { mode: permissionMode, query: finalContent, history: activeMessages.map(m => ({ sender: m.sender, content: m.rawContent || m.content })), fileContext: selectedFile ? { name: selectedFile, content: editorContent } : undefined, toolCallMode: hashlineAgentEnabled ? 'hashline' : undefined, mainProvider: { baseUrl: mainEntry.baseUrl, apiKey: mainEntry.apiKey, model: mainEntry.model, rateLimitProfile: (mainEntry as any).rateLimitProfile || null }, subProviders: subEntries.map(e => ({ baseUrl: e.baseUrl, apiKey: e.apiKey, model: e.model, rateLimitProfile: (e as any).rateLimitProfile || null })), candidateProviders: candidateEntries.map((e: any) => ({ displayName: e.model, providerName: e.providerName, modelName: e.model, baseUrl: e.baseUrl })), activeTools: activeTools.length > 0 ? activeTools : undefined, activeSkills: activeSkills.length > 0 ? activeSkills : undefined, activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined };
     set({ lastReqBody: reqBody });
 
     const assistantMsg: ChatMessage = { sender: 'assistant', content: '', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), avatar: '' };
@@ -772,7 +772,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     // ★ 保存流式上下文, 供 pauseChat/resumeChat 使用
     activeStreamContext = { activeChatId, accumulatedText: '', mainEntry, mainModel, finalContent, permissionMode, currentChatMsgs, reqBody, hashlineAgentEnabled, selectedFile, editorContent, activeTools: activeTools.length > 0 ? activeTools : undefined, activeSkills: activeSkills.length > 0 ? activeSkills : undefined, activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined, activeSettings: configs[activeChatId] || fallbackActiveSettings };
 
-    const chatHandle = await startChat({ chatId: activeChatId, prompt: finalContent, mode: permissionMode, history: activeMessages.map(m => ({ sender: m.sender, content: m.rawContent || m.content })), fileContext: selectedFile ? { name: selectedFile, content: editorContent } : undefined, mainProvider: { baseUrl: mainEntry.baseUrl, apiKey: mainEntry.apiKey, model: mainEntry.model }, subProviders: subEntries.map(e => ({ baseUrl: e.baseUrl, apiKey: e.apiKey, model: e.model })), candidateProviders: candidateEntries.map((e: any) => ({ displayName: e.model, providerName: e.providerName, modelName: e.model, baseUrl: e.baseUrl })), ...(hashlineAgentEnabled ? { toolCallMode: 'hashline' } : {}), workspaceFolder: useChatsStore.getState().getChat(activeChatId)?.workspaceFolder, activeTools: activeTools.length > 0 ? activeTools : undefined, activeSkills: activeSkills.length > 0 ? activeSkills : undefined, activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined, activeSettings: configs[activeChatId] || fallbackActiveSettings, canvasId: getCanvasSessionId(activeChatId) } as any, async (evt: ChatStreamEvent) => {
+    const chatHandle = await startChat({ chatId: activeChatId, prompt: finalContent, mode: permissionMode, history: activeMessages.map(m => ({ sender: m.sender, content: m.rawContent || m.content })), fileContext: selectedFile ? { name: selectedFile, content: editorContent } : undefined, mainProvider: { baseUrl: mainEntry.baseUrl, apiKey: mainEntry.apiKey, model: mainEntry.model, rateLimitProfile: (mainEntry as any).rateLimitProfile || null }, subProviders: subEntries.map(e => ({ baseUrl: e.baseUrl, apiKey: e.apiKey, model: e.model, rateLimitProfile: (e as any).rateLimitProfile || null })), candidateProviders: candidateEntries.map((e: any) => ({ displayName: e.model, providerName: e.providerName, modelName: e.model, baseUrl: e.baseUrl })), ...(hashlineAgentEnabled ? { toolCallMode: 'hashline' } : {}), workspaceFolder: useChatsStore.getState().getChat(activeChatId)?.workspaceFolder, activeTools: activeTools.length > 0 ? activeTools : undefined, activeSkills: activeSkills.length > 0 ? activeSkills : undefined, activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined, activeSettings: configs[activeChatId] || fallbackActiveSettings, canvasId: getCanvasSessionId(activeChatId) } as any, async (evt: ChatStreamEvent) => {
       switch (evt.kind) {
         case 'text': {
           accumulatedText += evt.text;
