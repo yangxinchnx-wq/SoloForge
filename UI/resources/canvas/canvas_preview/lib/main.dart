@@ -782,11 +782,11 @@ class _CanvasAppState extends State<CanvasApp> {
   /// 比例值 (0~1), 相对于 WebView 尺寸
   /// x,y = 屏幕左上角位置; w,h = 屏幕宽高; radius = 屏幕圆角(px)
   static const Map<String, Map<String, double>> _screenRegions = {
-    'm-iphone14pro':    {x: 0.30, y: 0.10, w: 0.40, h: 0.78, r: 18},
-    'm-iphone15promax': {x: 0.30, y: 0.10, w: 0.40, h: 0.78, r: 18},
-    'm-iphone11promax': {x: 0.30, y: 0.10, w: 0.40, h: 0.78, r: 18},
+    'm-iphone14pro':    {'x': 0.30, 'y': 0.10, 'w': 0.40, 'h': 0.78, 'r': 18},
+    'm-iphone15promax': {'x': 0.30, 'y': 0.10, 'w': 0.40, 'h': 0.78, 'r': 18},
+    'm-iphone11promax': {'x': 0.30, 'y': 0.10, 'w': 0.40, 'h': 0.78, 'r': 18},
   };
-  static const Map<String, double> _defaultScreenRegion = {x: 0.30, y: 0.10, w: 0.40, h: 0.78, r: 18};
+  static const Map<String, double> _defaultScreenRegion = {'x': 0.30, 'y': 0.10, 'w': 0.40, 'h': 0.78, 'r': 18};
 
   /// 用 InAppWebView 加载包含 model-viewer 的 HTML 页面 + 叠加 2D UI
   Widget _buildModelViewer(String glbPath) {

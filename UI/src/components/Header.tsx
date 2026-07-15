@@ -257,7 +257,6 @@ export default function Header({
                 WebkitMaskSize: 'contain',
                 WebkitMaskPosition: 'center',
                 WebkitMaskRepeat: 'no-repeat',
-                filter: `drop-shadow(0 0 8px ${rgba('--color-primary-rgb', 0.55)})`,
               }}
             />
           </div>

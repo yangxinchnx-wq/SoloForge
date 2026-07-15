@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SoloForge</title>
     <!--
-      内联 boot 样式: 硬编码浅色背景,不依赖 CSS 变量。
+      内联 boot 样式: 硬编码浅色背景 + lightning logo,不依赖 CSS 变量。
       在 Vite/Tailwind CSS bundle 下载前就生效,防止强制刷新闪白。
       一旦 index.css 加载,html/body 的背景色会被
       正确的主题色覆盖。
@@ -30,16 +30,11 @@
         background-color: #fafafa;
         z-index: 2147483647;
       }
-      #sf-boot-spinner {
-        width: 32px;
-        height: 32px;
-        border-radius: 50%;
-        border: 2.5px solid rgba(99, 102, 241, 0.15);
-        border-top-color: #6366f1;
-        animation: sf-boot-spin 0.7s linear infinite;
-      }
-      @keyframes sf-boot-spin {
-        to { transform: rotate(360deg); }
+      #sf-boot-logo {
+        width: 200px;
+        height: 200px;
+        object-fit: contain;
+        filter: drop-shadow(0 2px 12px rgba(0,0,0,.1));
       }
     </style>
     <script type="module" src="/src/main.tsx"></script>
@@ -47,7 +42,7 @@
   <body>
     <div id="root">
       <div id="sf-boot-loader">
-        <div id="sf-boot-spinner"></div>
+        <img id="sf-boot-logo" src="/lightning_logo.png" alt="SoloForge">
       </div>
     </div>
 

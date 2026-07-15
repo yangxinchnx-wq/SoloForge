@@ -197,6 +197,15 @@ async function startElectron() {
 
   electronProcess.on("exit", (code) => {
     console.log(`[start] Electron 已退出 (code ${code})`);
+    // ★ 热重启支持: 设置 SOLOFORGE_RELAUNCH=1 时, Electron 退出后自动重启,
+    //   不触发 cleanup (保留所有后端服务: Garnet/git-service/RACER Core/Vite)
+    if (process.env.SOLOFORGE_RELAUNCH === '1') {
+      console.log("[start] 检测到热重启标志, 1s 后重新启动 Electron...");
+      setTimeout(() => {
+        startElectron();
+      }, 1000);
+      return;
+    }
     cleanup();
   });
 }

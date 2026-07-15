@@ -11,7 +11,7 @@ html, body {
   overflow: hidden;
 }
 
-/* 但默认主题是 light, 所以需要浅色背景。
+/* 启动阶段先以浅色背景填充，避免黑屏。
    React mount 后 ThemeContext 的 data-theme 会覆盖为正确颜色 */
 
 @source not "./components/SettingsModal.tsx";

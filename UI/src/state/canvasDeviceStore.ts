@@ -192,6 +192,6 @@ export function getCanvasSize(canvasId?: string): CanvasFrameSize {
     return allFrames[0];
   }
 
-  // 3. 默认值 — 与 PreviewPanel DEFAULT_CANVAS_PRESET 一致 (430×932)
+  // 3. 默认值 (iPhone 15 Pro Max: 430×932)
   return { width: 430, height: 932 };
 }
