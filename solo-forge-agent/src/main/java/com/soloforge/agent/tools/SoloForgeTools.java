@@ -17,11 +17,9 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * SoloForge 核心工具集 — Spring AI 2.0 @Tool 注解驱动
+ * SoloForge 核心工具集 — Spring AI 1.0.0 GA @Tool 注解驱动
  *
  * <p>替换原 ToolRegistry (361 行手写 JSON Schema + switch 路由)。
- *
- * <p>迁移对照表：
  * <pre>
  * 原类                          → 本方法
  * ReadFileTool                  → readFile()
@@ -32,7 +30,7 @@ import java.util.stream.Stream;
  * CanvasPushUiTool              → canvasPushUi()
  * </pre>
  *
- * <p>Spring AI 2.0 自动从方法签名生成 JSON Schema 并注册到 ChatClient，
+ * <p>Spring AI 1.0.0 GA 自动从方法签名生成 JSON Schema 并注册到 ChatClient，
  * 无需手动维护 ToolRegistry.getToolSchemas() 或 switch 路由逻辑。
  */
 @Service

@@ -21,6 +21,8 @@ import type { ToolSchema, ToolCallRequest, ToolCallResult } from './tool-definit
 import { executeToolCall } from './tool-definitions';
 // P2: 跨 Dispatch 工具结果缓存
 import { sessionToolCache, isCacheableToolResult } from './session-tool-cache';
+// Circuit Breaker: 移植自 Java LlmCommandCenter, 防止 provider 连续失败时级联崩溃
+import { llmCircuitBreaker, circuitProviderKey } from '../../../llm/circuit-breaker';
 
 // ─── 类型定义 ───────────────────────────────────────────────────────
 
@@ -464,6 +466,17 @@ interface CallOnceOptions {
 }
 
 async function callLLMOnce(opts: CallOnceOptions): Promise<LLMMessage> {
+  // ── Circuit Breaker: 调用前检查 ──────────────────────────────────
+  const cbKey = circuitProviderKey(opts.baseUrl, opts.model);
+  const cbDecision = llmCircuitBreaker.evaluate(cbKey);
+  if (cbDecision.action === 'reject') {
+    throw new Error(`LLM circuit breaker OPEN: ${opts.baseUrl} model=${opts.model} — ${cbDecision.reason}`);
+  }
+  if (cbDecision.action === 'wait' && cbDecision.waitMs) {
+    await new Promise(r => setTimeout(r, cbDecision.waitMs!));
+  }
+
+  const t0 = Date.now();
   const url = `${opts.baseUrl}/chat/completions`;
 
   // 检测 Anthropic provider (baseUrl 含 anthropic 或 claude)
@@ -660,6 +673,9 @@ async function callLLMOnce(opts: CallOnceOptions): Promise<LLMMessage> {
           continue;
         }
 
+        // ── Circuit Breaker: 记录失败 ──────────────────────────────
+        llmCircuitBreaker.recordFailure(cbKey, status);
+
         // 重试耗尽,抛出
         throw new Error(`LLM HTTP ${status}: ${errText.slice(0, 300)}`);
       }
@@ -667,6 +683,9 @@ async function callLLMOnce(opts: CallOnceOptions): Promise<LLMMessage> {
       const json = await response.json() as any;
       const choice = json?.choices?.[0];
       if (!choice) throw new Error('LLM returned empty choices');
+
+      // ── Circuit Breaker: 记录成功 ──────────────────────────────────
+      llmCircuitBreaker.recordSuccess(cbKey, Date.now() - t0);
 
       const msg = choice.message;
       const assistantMsg: LLMMessage = {
@@ -702,6 +721,8 @@ async function callLLMOnce(opts: CallOnceOptions): Promise<LLMMessage> {
         throw err;
       }
       // 网络错误 (ECONNRESET / fetch failed 等): 可重试
+      // ── Circuit Breaker: 记录网络错误 ────────────────────────────
+      llmCircuitBreaker.recordFailure(cbKey, 0);
       if (attempt < MAX_RETRIES) {
         const jitter = Math.random() * 100;
         const waitMs = Math.min(BASE_BACKOFF_MS * Math.pow(2, attempt) + jitter, MAX_BACKOFF_MS);

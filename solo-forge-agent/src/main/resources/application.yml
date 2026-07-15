@@ -1,32 +1,34 @@
 # SoloForge Agent Service 配置
 #
-# *** FALLBACK STATUS (2026-07-09) ***
-# 本 Java Agent 已降级为 fallback 路径。以下模块已被 Node.js RACER 系统替代：
+# *** FALLBACK STATUS (2026-07-15) ***
+# 本 Java Agent 已降级为 fallback 路径，主路径为 Node.js RACER 系统。
+# 以下旧模块已删除，功能由 RACER 完全替代：
 #
-#   [已替代] controller/ChatController      → src/server/routes-agent.ts (POST /api/agents/dispatch)
-#   [已替代] orchestrator/AgentOrchestrator   → src/core/agent/agent-decision-orchestrator.ts (RACER routing)
-#   [已替代] orchestrator/MultiAgentCoordinator → RACER court + coalition 系统
-#   [已替代] orchestrator/TaskComplexityEvaluator → RACER complexity scoring
-#   [已替代] executor/AgentExecutor           → RACER agent-loop + MCP tools
-#   [已替代] llm/LlmGateway                  → src/llm/llmProxy.ts (多 provider 动态路由)
-#   [已替代] tools/* (6个工具)                → MCP tools 系统
-#   [已替代] advisor/SystemPromptBuilder      → agent-registry.ts prompt 构建
-#   [已替代] aisociety/ReputationClient       → src/server/routes-agent.ts reputation bridge
-#   [已替代] aisociety/EconomyClient          → src/core/agent/ credit 系统
-#   [已替代] aisociety/GovernanceClient       → src/core/agent/ court 系统
-#   [已替代] aisociety/CoalitionClient        → RACER coalition 系统
-#   [已替代] aisociety/LawClient              → RACER 规则引擎
-#   [已替代] aisociety/CultureClient          → RACER 文化约束
-#   [已替代] aisociety/MemoryClient           → SurrealDB 持久化
-#   [已替代] aisociety/InstitutionClient      → RACER 制度系统
-#   [已替代] aisociety/MarlTrainingClient     → MAPPO IPC (src/kernel/)
-#   [已替代] aisociety/CaseRetriever          → RACER 经验检索
+#   [已删除→RACER] controller/ChatController      → src/server/routes-agent.ts
+#   [已删除→RACER] executor/AgentExecutor          → src/core/agent/tools/function-calling-client.ts
+#   [已删除→RACER] llm/LlmGateway                  → src/llm/llmProxyHandler.ts
+#   [已删除→RACER] llm/LlmRateLimiter              → src/llm/circuit-breaker.ts (熔断器)
+#   [已删除→RACER] tools/ToolRegistry              → src/core/agent/tools/tool-definitions.ts (@Tool 注解)
+#   [已删除→RACER] tools/ReadFileTool 等 6 个       → src/core/agent/tools/ (MCP tools)
+#   [已删除→RACER] advisor/RateLimitAdvisor         → circuit-breaker.ts (集成到 function-calling-client)
 #
-#   [保留]   training/* (7个文件)             → 离线训练/Prompt优化 (Node.js 无对等实现)
-#   [保留]   persistence/AgentTrainingHistory → 训练历史记录
-#   [保留]   config/SqliteConfig              → SQLite 连接配置
+# 以下模块仍保留在 Java Agent 中 (RACER 有对等实现, Java 作为 fallback):
+#   config/LlmConfig                 → Spring AI 1.0.0 GA ChatModel Bean 配置
+#   config/DynamicChatModelResolver  → 运行时 provider 路由
+#   executor/SpringAiAgentExecutor   → Spring AI ChatClient 执行器 (fallback)
+#   executor/StreamingResponseAdapter → 流式响应适配
+#   advisor/SoloForgeAdvisors        → Spring AI Advisor 链 (Legal/Credit/PostToolCall)
+#   orchestrator/*                   → 多 Agent 编排 (fallback)
+#   aisociety/*                      → AI 社会子系统客户端 (fallback, RACER 有对等实现)
+#   advisor/SystemPromptBuilder      → 系统提示构建 (fallback)
 #
-# 保留本服务的场景：Node.js RACER 不可用时的 fallback 路径
+# 以下模块仅保留在 Java Agent 中 (Node.js 无对等实现):
+#   [Java独占] training/* (离线训练/Prompt优化)
+#   [Java独占] persistence/AgentTrainingHistory (训练历史)
+#   [Java独占] config/SqliteConfig (SQLite 连接)
+#
+# RACER 主路径已补充 Circuit Breaker (src/llm/circuit-breaker.ts),
+# 移植自 Java LlmCommandCenter 熔断器逻辑。
 # ****************************************************
 server:
   port: 8770   # 注意：Node.js RACER 使用 src/api-server.ts 监听端口，本端口仅 fallback 时使用
@@ -37,8 +39,8 @@ spring:
   application:
     name: solo-forge-agent
 
-  # Spring AI 2.0 配置 — 动态多 Provider 由 LlmConfig.java 管理
-  # [Path C] 不再使用静态 spring.ai.* 配置，改为请求级动态注入
+  # Spring AI 1.0.0 GA 配置 — 动态多 Provider 由 LlmConfig.java 管理
+  # 不再使用静态 spring.ai.* 配置，改为请求级动态注入
   # ChatModel Bean 在 LlmConfig 中按 provider 名称注册，运行时按需路由
   ai:
     chatbot:
