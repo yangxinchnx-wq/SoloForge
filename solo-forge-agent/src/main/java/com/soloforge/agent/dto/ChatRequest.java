@@ -57,7 +57,5 @@ public class ChatRequest {
         private String model;
         /** 备用模型列表 (主模型失败时降级) */
         private String[] fallbackModels;
-        /** 动态限流配置 (前端探测/扫描后传入, 指挥中心据此调整并发和速率) */
-        private com.soloforge.agent.llm.RateLimitProfile rateLimitProfile;
     }
 }

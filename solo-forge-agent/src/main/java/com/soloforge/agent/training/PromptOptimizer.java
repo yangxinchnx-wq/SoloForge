@@ -2,8 +2,7 @@ package com.soloforge.agent.training;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.soloforge.agent.dto.ChatRequest;
-import com.soloforge.agent.config.DynamicChatModelResolver; // ★ Path C: 替代 LlmGateway
-import com.soloforge.agent.llm.LlmGateway; // @Deprecated — 保留 fallback 引用
+import com.soloforge.agent.config.DynamicChatModelResolver;
 import com.soloforge.agent.persistence.AgentIdentityEntity;
 import com.soloforge.agent.persistence.AgentIdentityRepository;
 import com.soloforge.agent.persistence.AgentTrainingHistoryEntity;
@@ -13,7 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import org.springframework.ai.chat.client.ChatClient; // ★ Path C: Spring AI ChatClient
+import org.springframework.ai.chat.client.ChatClient; // Spring AI 1.0.0 GA ChatClient
 
 import com.soloforge.agent.training.TrainingTask;
 import java.time.LocalDateTime;
@@ -47,8 +46,7 @@ public class PromptOptimizer {
     private final AgentIdentityRepository agentRepo;
     private final AgentTrainingHistoryRepository historyRepo;
     private final TrainingTaskLoader taskLoader;
-    private final LlmGateway llmGateway; // @Deprecated — 保留 fallback
-    private final DynamicChatModelResolver modelResolver; // ★ Path C: 新执行器
+    private final DynamicChatModelResolver modelResolver;
     private final ObjectMapper objectMapper;
 
     /** 优化阈值: new reward 必须超过 baseline 的 (1 + IMPROVEMENT_THRESHOLD) 倍才采纳 */

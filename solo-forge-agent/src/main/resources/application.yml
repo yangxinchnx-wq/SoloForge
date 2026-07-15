@@ -1,37 +1,30 @@
 # SoloForge Agent Service 配置
 #
-# *** FALLBACK STATUS (2026-07-15) ***
-# 本 Java Agent 已降级为 fallback 路径，主路径为 Node.js RACER 系统。
-# 以下旧模块已删除，功能由 RACER 完全替代：
+# *** TRAINING-ONLY STATUS (2026-07-15) ***
+# 本 Java Agent 仅保留离线训练功能。
+# 所有聊天/执行/fallback 路径已删除，RACER (Node.js) 是唯一执行路径。
+# RACER 不可用时直接报错，不降级到 Java Agent。
 #
-#   [已删除→RACER] controller/ChatController      → src/server/routes-agent.ts
-#   [已删除→RACER] executor/AgentExecutor          → src/core/agent/tools/function-calling-client.ts
-#   [已删除→RACER] llm/LlmGateway                  → src/llm/llmProxyHandler.ts
-#   [已删除→RACER] llm/LlmRateLimiter              → src/llm/circuit-breaker.ts (熔断器)
-#   [已删除→RACER] tools/ToolRegistry              → src/core/agent/tools/tool-definitions.ts (@Tool 注解)
-#   [已删除→RACER] tools/ReadFileTool 等 6 个       → src/core/agent/tools/ (MCP tools)
-#   [已删除→RACER] advisor/RateLimitAdvisor         → circuit-breaker.ts (集成到 function-calling-client)
+# 已删除的模块 (功能由 RACER 完全替代，无 fallback):
+#   controller/ChatController (chat/stream 端点)  → src/server/routes-agent.ts
+#   executor/* (SpringAiAgentExecutor 等)          → src/core/agent/tools/function-calling-client.ts
+#   advisor/* (SoloForgeAdvisors/SystemPromptBuilder) → RACER advisor 链
+#   orchestrator/* (5个文件)                       → src/core/agent/agent-decision-orchestrator.ts
+#   aisociety/* (10个文件)                         → RACER 社会子系统
+#   tools/* (SoloForgeTools/DelegationTools)       → src/core/agent/tools/ (MCP tools)
+#   llm/LlmGateway/LlmRateLimiter/LlmCommandCenter/RateLimitProfile → src/llm/ (llmProxyHandler + circuit-breaker)
 #
-# 以下模块仍保留在 Java Agent 中 (RACER 有对等实现, Java 作为 fallback):
-#   config/LlmConfig                 → Spring AI 1.0.0 GA ChatModel Bean 配置
-#   config/DynamicChatModelResolver  → 运行时 provider 路由
-#   executor/SpringAiAgentExecutor   → Spring AI ChatClient 执行器 (fallback)
-#   executor/StreamingResponseAdapter → 流式响应适配
-#   advisor/SoloForgeAdvisors        → Spring AI Advisor 链 (Legal/Credit/PostToolCall)
-#   orchestrator/*                   → 多 Agent 编排 (fallback)
-#   aisociety/*                      → AI 社会子系统客户端 (fallback, RACER 有对等实现)
-#   advisor/SystemPromptBuilder      → 系统提示构建 (fallback)
-#
-# 以下模块仅保留在 Java Agent 中 (Node.js 无对等实现):
-#   [Java独占] training/* (离线训练/Prompt优化)
-#   [Java独占] persistence/AgentTrainingHistory (训练历史)
-#   [Java独占] config/SqliteConfig (SQLite 连接)
-#
-# RACER 主路径已补充 Circuit Breaker (src/llm/circuit-breaker.ts),
-# 移植自 Java LlmCommandCenter 熔断器逻辑。
+# 保留的模块 (Java 独占，RACER 无对等实现):
+#   config/LlmConfig                 → Spring AI 1.0.0 GA ChatModel Bean (训练用)
+#   config/DynamicChatModelResolver  → 运行时 provider 路由 (训练用)
+#   config/SqliteConfig              → SQLite 连接配置
+#   controller/ChatController        → Agent 管理 CRUD + 健康检查 (无聊天端点)
+#   training/* (7个文件)             → 离线 Prompt 优化 + 反馈案例库
+#   persistence/* (6个文件)          → Agent 身份/训练历史/经验案例 持久化
+#   dto/* (2个文件)                  → ChatRequest/ChatSettings (训练用)
 # ****************************************************
 server:
-  port: 8770   # 注意：Node.js RACER 使用 src/api-server.ts 监听端口，本端口仅 fallback 时使用
+  port: 8770   # Java Agent 端口，仅训练和管理 API 使用。聊天由 RACER (Node.js) 处理。
   servlet:
     context-path: /
 

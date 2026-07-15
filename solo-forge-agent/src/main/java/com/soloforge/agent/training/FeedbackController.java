@@ -1,6 +1,5 @@
 package com.soloforge.agent.training;
 
-import com.soloforge.agent.aisociety.EconomyClient;
 import com.soloforge.agent.persistence.AgentIdentityRepository;
 import com.soloforge.agent.persistence.ExperienceCaseEntity;
 import com.soloforge.agent.persistence.ExperienceCaseRepository;
@@ -23,6 +22,8 @@ import java.util.*;
  *       新方案把"有用/没用"的判定权交给用户 (可在案例库 UI 增删)。
  *
  * 数据存储: experience_case 表 (与 social_memory 隔离, 语义清晰)
+ *
+ * 2026-07-15: 移除 EconomyClient 依赖 (信用系统由 RACER 管理, 不降级)
  */
 @Slf4j
 @RestController
@@ -32,11 +33,6 @@ public class FeedbackController {
 
     private final ExperienceCaseRepository caseRepo;
     private final AgentIdentityRepository agentRepo;
-    private final EconomyClient economyClient;
-
-    // 反馈经济参数: 👍 奖励 / 👎 惩罚 (信用分)
-    private static final double REWARD_AMOUNT = 200.0;
-    private static final double PENALTY_AMOUNT = 100.0;
 
     /**
      * 提交反馈 — 写入经验案例
@@ -70,34 +66,15 @@ public class FeedbackController {
 
         ExperienceCaseEntity saved = caseRepo.save(entity);
 
-        // ── 经济系统联动: 👍 加钱 / 👎 扣钱 ──────────────────────────
-        // 做得好 → 信用分增加, 做得差 → 信用分扣减
-        // 这样 Agent 做得越好钱越多, 做得差则可能因余额不足被拦截
-        String agentId = request.getAgentId();
-        double creditsBefore = economyClient.getCredits(agentId);
-        if (request.isPositive()) {
-            economyClient.reward(agentId, REWARD_AMOUNT, "feedback_positive");
-            log.info("Feedback 👍 reward: agent={} +{} credits ({} → {})",
-                    agentId, REWARD_AMOUNT, creditsBefore, creditsBefore + REWARD_AMOUNT);
-        } else {
-            economyClient.penalty(agentId, PENALTY_AMOUNT, "feedback_negative");
-            log.info("Feedback 👎 penalty: agent={} -{} credits ({} → {})",
-                    agentId, PENALTY_AMOUNT, creditsBefore, creditsBefore - PENALTY_AMOUNT);
-        }
-        double creditsAfter = economyClient.getCredits(agentId);
-
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("acknowledged", true);
         result.put("caseId", saved.getId());
         result.put("agentId", request.getAgentId());
         result.put("positive", request.isPositive());
         result.put("trainingTriggered", false); // 兼容前端字段, 新方案不再自动训练
-        result.put("creditsBefore", creditsBefore);
-        result.put("creditsAfter", creditsAfter);
-        result.put("rewardAmount", request.isPositive() ? REWARD_AMOUNT : -PENALTY_AMOUNT);
         result.put("message", request.isPositive()
-                ? String.format("正向反馈! 信用分 +%.0f (当前: %.0f)", REWARD_AMOUNT, creditsAfter)
-                : String.format("负向反馈, 信用分 -%.0f (当前: %.0f)", PENALTY_AMOUNT, creditsAfter));
+                ? "正向反馈已记录"
+                : "负向反馈已记录");
 
         return ResponseEntity.ok(result);
     }

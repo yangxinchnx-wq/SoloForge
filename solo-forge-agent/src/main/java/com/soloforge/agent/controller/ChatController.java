@@ -1,17 +1,12 @@
 package com.soloforge.agent.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.soloforge.agent.dto.ChatRequest;
-import com.soloforge.agent.orchestrator.AgentOrchestrator;
 import com.soloforge.agent.persistence.AgentIdentityEntity;
 import com.soloforge.agent.persistence.AgentIdentityRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-import reactor.core.publisher.Flux;
 
 import java.util.HashMap;
 import java.util.List;
@@ -19,13 +14,21 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * Chat Controller - 统一入口
+ * Chat Controller — Agent 管理 + 健康检查
  *
- * POST /api/chat/send   — 非流式聊天 (向后兼容)
- * POST /api/chat/stream — SSE 流式聊天 (2026-07-08 新增, 真实流式)
- * GET  /api/agents      — 列出所有 Agent
- * GET  /api/agents/{id} — 获取 Agent 详情
- * GET  /health          — 健康检查
+ * 聊天/流式端点已移除 (原 /api/chat/send, /api/chat/stream)。
+ * 聊天路径由 RACER (Node.js) 独占处理，不再有 Java fallback。
+ * RACER 不可用时直接报错，不降级。
+ *
+ * 保留的端点:
+ *   GET    /api/agents          — 列出所有 Agent
+ *   GET    /api/agents/{id}     — 获取 Agent 详情
+ *   POST   /api/agents          — 新建 Agent
+ *   PUT    /api/agents/{id}     — 更新 Agent 配置
+ *   PATCH  /api/agents/{id}/status — 启用/禁用 Agent
+ *   DELETE /api/agents/{id}     — 删除 Agent
+ *   PUT    /api/agents/{id}/profile — 更新 Agent 名称/头像
+ *   GET    /health              — 健康检查
  */
 @Slf4j
 @RestController
@@ -33,143 +36,8 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ChatController {
 
-    private final AgentOrchestrator agentOrchestrator;
     private final AgentIdentityRepository agentRepo;
     private final ObjectMapper objectMapper;
-
-    /**
-     * 非流式聊天 (向后兼容)
-     */
-    @PostMapping("/api/chat/send")
-    public ResponseEntity<Map<String, Object>> sendMessage(@RequestBody ChatRequest request) {
-        log.info("POST /api/chat/send sessionId={} agentId={}",
-            request.getSessionId(),
-            request.getSettings() != null ? request.getSettings().getAgentId() : "default");
-
-        try {
-            if (request.getMessage() == null || request.getMessage().isBlank()) {
-                return badRequest("消息内容不能为空");
-            }
-            if (request.getSettings() == null) {
-                request.setSettings(new com.soloforge.agent.dto.ChatSettings());
-            }
-
-            String result = agentOrchestrator.orchestrate(
-                request.getMessage(),
-                request.getSettings(),
-                request.getProvider(),
-                request.getSubProviders(),
-                request.getHistory(),
-                request.getFileContext());
-
-            Map<String, Object> response = new HashMap<>();
-            response.put("success", true);
-            response.put("content", result);
-            response.put("sessionId", request.getSessionId());
-            response.put("agentId", request.getSettings().getAgentId());
-
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            log.error("Chat send failed: {}", e.getMessage(), e);
-            Map<String, Object> error = new HashMap<>();
-            error.put("success", false);
-            error.put("error", e.getMessage());
-            return ResponseEntity.internalServerError().body(error);
-        }
-    }
-
-    /**
-     * SSE 流式聊天 — 真实流式输出 LLM 增量文本
-     *
-     * SSE 事件格式:
-     *   event: text\ndata: {"content":"增量文本片段"}\n\n
-     *   event: done\ndata: {}\n\n
-     *   event: error\ndata: {"error":"错误信息"}\n\n
-     */
-    @PostMapping(value = "/api/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter sendMessageStream(@RequestBody ChatRequest request) {
-        // 120s 超时, LLM 流式调用可能需要较长时间
-        SseEmitter emitter = new SseEmitter(120_000L);
-
-        log.info("POST /api/chat/stream sessionId={} agentId={}",
-            request.getSessionId(),
-            request.getSettings() != null ? request.getSettings().getAgentId() : "default");
-
-        try {
-            if (request.getMessage() == null || request.getMessage().isBlank()) {
-                sendSseEvent(emitter, "error", Map.of("error", "消息内容不能为空"));
-                emitter.complete();
-                return emitter;
-            }
-            if (request.getSettings() == null) {
-                request.setSettings(new com.soloforge.agent.dto.ChatSettings());
-            }
-
-            // agent 事件改由 SubModelWorker 在执行时发送 (携带 subModel 字段)
-            // 这样前端流送区能准确显示 "副模型 → agent → 任务"
-
-            Flux<String> textFlux = agentOrchestrator.orchestrateStream(
-                request.getMessage(),
-                request.getSettings(),
-                request.getProvider(),
-                request.getSubProviders(),
-                request.getHistory(),
-                request.getFileContext(),
-                emitter);
-
-            textFlux.subscribe(
-                chunk -> {
-                    try {
-                        // ★ FIX 2026-07-12: reasoning_content 用 \u0001 前缀标记
-                        //   发送 'reasoning' 事件, 前端不喂给 IncrementalCanvasPusher
-                        if (chunk.startsWith("\u0001")) {
-                            sendSseEvent(emitter, "reasoning", Map.of("content", chunk.substring(1)));
-                        } else {
-                            sendSseEvent(emitter, "text", Map.of("content", chunk));
-                        }
-                    } catch (Exception e) {
-                        log.warn("SSE send chunk failed: {}", e.getMessage());
-                    }
-                },
-                error -> {
-                    log.error("Stream error: {}", error.getMessage());
-                    try {
-                        sendSseEvent(emitter, "error", Map.of("error", error.getMessage()));
-                    } catch (Exception ignored) {}
-                    emitter.complete();
-                },
-                () -> {
-                    try {
-                        sendSseEvent(emitter, "done", Map.of(
-                            "sessionId", request.getSessionId() != null ? request.getSessionId() : "",
-                            "agentId", request.getSettings().getAgentId()
-                        ));
-                    } catch (Exception ignored) {}
-                    emitter.complete();
-                }
-            );
-
-        } catch (Exception e) {
-            log.error("Stream setup failed: {}", e.getMessage(), e);
-            try {
-                sendSseEvent(emitter, "error", Map.of("error", e.getMessage()));
-            } catch (Exception ignored) {}
-            emitter.complete();
-        }
-
-        return emitter;
-    }
-
-    /**
-     * 发送 SSE 事件 (JSON 序列化)
-     */
-    private void sendSseEvent(SseEmitter emitter, String eventName, Map<String, Object> data) throws Exception {
-        String json = objectMapper.writeValueAsString(data);
-        emitter.send(SseEmitter.event()
-            .name(eventName)
-            .data(json)
-            .build());
-    }
 
     /**
      * 列出所有启用的 Agent
@@ -197,6 +65,7 @@ public class ChatController {
         health.put("service", "solo-forge-agent");
         health.put("version", "1.0.0");
         health.put("port", 8770);
+        health.put("role", "training-only");
         return ResponseEntity.ok(health);
     }
 

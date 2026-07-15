@@ -16,7 +16,7 @@ import org.springframework.context.annotation.Configuration;
 
 
 /**
- * Spring AI 2.0 多 Provider 配置
+ * Spring AI 1.0.0 GA 多 Provider 配置
  *
  * <p>替换原 LlmGateway (WebClient 手搓 /chat/completions)。
  *
@@ -112,7 +112,7 @@ public class LlmConfig {
     }
 
     // ──────────────────────────────────────────────
-    // 5. Tool Calling Manager (Spring AI 2.0 内置)
+    // 5. Tool Calling Manager (Spring AI 1.0.0 GA 内置)
     // ──────────────────────────────────────────────
 
     @Bean
