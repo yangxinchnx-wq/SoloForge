@@ -97,6 +97,7 @@ public class SpringAiAgentExecutor {
         ctx.put("provider_base_url", provider.getBaseUrl());
         ctx.put("provider_model", provider.getModel());
         String pKey = LlmCommandCenter.providerKey(provider.getBaseUrl(), provider.getModel());
+        double temp = settings.getTemperature() != null ? settings.getTemperature() : 0.3;
         String response = null;
         java.util.List<String> errorLog = new java.util.ArrayList<>();
         for (int attempt = 0; attempt <= 3; attempt++) {
@@ -104,7 +105,7 @@ public class SpringAiAgentExecutor {
             if (d.action == LlmCommandCenter.LlmDecision.Action.REJECT) {
                 errorLog.add("[App] " + d.reason);
                 if (attempt < 3) { log.warn("[SpringAiExec] attempt #{} rejected: {}", attempt+1, d.reason); continue; }
-                throw new RuntimeException(buildErrorReport(provider, errorLog, 3));
+                return buildErrorReport(provider, errorLog, 3);
             }
             if (d.action == LlmCommandCenter.LlmDecision.Action.WAIT) {
                 log.info("[SpringAiExec] attempt #{} waiting {}ms (RPM)", attempt+1, d.waitMs);
@@ -114,7 +115,7 @@ public class SpringAiAgentExecutor {
                 long t0 = System.currentTimeMillis();
                 response = chatClient.prompt().system(systemPrompt).user(userMessage).toolContext(ctx)
                         .options(org.springframework.ai.chat.prompt.ChatOptions.builder()
-                                .temperature(settings.getTemperature() != null ? settings.getTemperature() : 0.3).build())
+                                .temperature(temp).build())
                         .call().content();
                 commandCenter.recordSuccess(pKey, System.currentTimeMillis() - t0);
                 commandCenter.completeRequest(systemPrompt, userMessage, provider.getModel(), temp, response, System.currentTimeMillis() - t0);
@@ -131,12 +132,12 @@ public class SpringAiAgentExecutor {
                     continue;
                 }
                 commandCenter.failRequest(systemPrompt, userMessage, provider.getModel(), temp, e);
-                throw new RuntimeException(buildErrorReport(provider, errorLog, attempt+1), e);
+                return buildErrorReport(provider, errorLog, attempt+1);
             } finally {
                 commandCenter.release(pKey);
             }
         }
-        if (response == null) throw new RuntimeException(buildErrorReport(provider, errorLog, 3));
+        if (response == null) return buildErrorReport(provider, errorLog, 3);
         log.info("[SpringAiExec] response_len={}", response.length());
         postExecuteSideEffects(agent, response, settings);
         DelegationTools.clearContext();
