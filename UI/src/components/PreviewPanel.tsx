@@ -342,6 +342,12 @@ export default function PreviewPanel({
     if (!effectiveCanvasId) return;
     if (key === 'none') {
       setDeviceInStore(effectiveCanvasId, null);
+      // ★ FIX: 清除设备时通知 Flutter 切回 2D 模式 (清除 3D 模型)
+      if (isElectron() && canvasStateRef.current === 'running' && sessionIdRef.current) {
+        window.soloforge!.canvas.selectDevice(
+          sessionIdRef.current, 'none', '', { w: 0, h: 0 }
+        ).catch(() => {});
+      }
       return;
     }
     const preset = findDevicePreset(key);
@@ -356,9 +362,16 @@ export default function PreviewPanel({
       glbFile: preset.glbFile,
     };
     setDeviceInStore(effectiveCanvasId, deviceInfo);
-    // 3D 模式下选中设备 → 加载 GLB 模型到当前画布
     if (renderMode === '3D' && preset.glbFile) {
+      // 3D 模式下选中设备 → 加载 GLB 模型到当前画布
       void handleSelectDevice(preset);
+    } else if (renderMode === '2D' && isElectron() &&
+               canvasStateRef.current === 'running' && sessionIdRef.current) {
+      // ★ FIX: 2D 模式下选中设备 → 通知 Flutter 切回 2D 模式 (清除 3D 模型)
+      //   Flutter _handleDeviceAction 收到 'fill' key 会 _renderMode='material' + 清 3D 状态
+      window.soloforge!.canvas.selectDevice(
+        sessionIdRef.current, 'fill', '', { w: 0, h: 0 }
+      ).catch(() => {});
     }
   }, [effectiveCanvasId, renderMode, setDeviceInStore, handleSelectDevice]);
 

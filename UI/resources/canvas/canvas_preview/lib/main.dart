@@ -183,6 +183,8 @@ class _CanvasAppState extends State<CanvasApp> {
   int _loadRetry = 0;
   // ★ 预加载的 model-viewer.min.js 内容 (内联到 HTML, 避免跨域加载问题)
   String? _modelViewerJs;
+  // ★ 查看模式: false=设计模式(固定正面, 显示2D UI), true=查看模式(可旋转, 隐藏2D UI)
+  bool _viewMode = false;
 
   // ── 2026-07-08 修复: 防止画布进程崩溃 ──────────────────────────
   //
@@ -308,6 +310,19 @@ class _CanvasAppState extends State<CanvasApp> {
     try {
       // /assets/model-viewer.min.js → assets/model-viewer.min.js
       final assetKey = path.substring(1); // 去掉前导 /
+
+      // ★ 优先用预加载的 _modelViewerJs (内存), 避免 rootBundle 异步延迟
+      final cached = _modelViewerJs;
+      if (assetKey == 'assets/model-viewer.min.js' && cached != null && cached.isNotEmpty) {
+        request.response.headers.contentType =
+          ContentType.parse('application/javascript');
+        request.response.headers.add('Access-Control-Allow-Origin', '*');
+        request.response.add(utf8.encode(cached));
+        await request.response.close();
+        return;
+      }
+
+      // 兜底: 从 asset bundle 读取
       final byteData = await rootBundle.load(assetKey);
       final bytes = byteData.buffer.asUint8List(
         byteData.offsetInBytes, byteData.lengthInBytes);
@@ -504,9 +519,13 @@ class _CanvasAppState extends State<CanvasApp> {
           setState(() {
             _renderMode = 'material';
             _devices.clear();
+            _nativeSizes.clear();
             _currentGlbPath = null;
+            _viewMode = false; // ★ 切回 2D 时重置查看模式
           });
           _stopModelWatcher();
+          // ★ FIX: 置空 _webviewController, 避免悬空引用 (WebView 已被 Flutter dispose)
+          _webviewController = null;
           _writeLog('[device] switch to 2D fill mode');
           break;
         }
@@ -528,7 +547,7 @@ class _CanvasAppState extends State<CanvasApp> {
             isSelected: true,
           );
           _nativeSizes[deviceId] = (nw, nh);
-          _uiNode = null;
+          // ★ 不清除 _uiNode — 保留 2D UI 内容, 在 3D 模型屏幕区域内显示
           // ★ 设置当前 GLB 路径, _buildDevice3DScene 据此加载 model-viewer
           _currentGlbPath = glbFile;
           _loadRetry = 0;
@@ -547,11 +566,17 @@ class _CanvasAppState extends State<CanvasApp> {
         break;
 
       case 'clearDevices':
+        // ★ FIX: 补齐资源清理 (与 selectDevice fill/none 分支对齐)
+        //   避免 _modelWatcher 泄漏 + _webviewController 悬空引用
         setState(() {
           _renderMode = 'material';
           _devices.clear();
           _nativeSizes.clear();
+          _currentGlbPath = null;
+          _viewMode = false;
         });
+        _stopModelWatcher();
+        _webviewController = null;
         _writeLog('[device] cleared all');
         break;
     }
@@ -648,12 +673,15 @@ class _CanvasAppState extends State<CanvasApp> {
     if (ctrl == null || glbPath == null) return;
     final url = 'http://127.0.0.1:${widget.port}/models/3d/$glbPath';
     // 通过 JS 更新 model-viewer 的 src 属性触发重新加载
+    // ★ FIX: 加 catchError, 避免对已 dispose 的 WebView 调用时抛未捕获异常
     ctrl.evaluateJavascript(source: '''
       const mv = document.querySelector('model-viewer');
       if (mv) {
         mv.src = "$url?t=${DateTime.now().millisecondsSinceEpoch}";
       }
-    ''');
+    ''').catchError((e) {
+      _writeLog('[reload] evaluateJavascript error (webview disposed?): $e');
+    });
     _writeLog('[reload] model-viewer src updated: $url');
   }
 
@@ -750,23 +778,31 @@ class _CanvasAppState extends State<CanvasApp> {
     return _buildPlaceholderScene();
   }
 
-  /// 用 InAppWebView 加载包含 model-viewer 的 HTML 页面
+  /// 设备屏幕区域配置: modelKey -> {x, y, w, h, radius}
+  /// 比例值 (0~1), 相对于 WebView 尺寸
+  /// x,y = 屏幕左上角位置; w,h = 屏幕宽高; radius = 屏幕圆角(px)
+  static const Map<String, Map<String, double>> _screenRegions = {
+    'm-iphone14pro':    {x: 0.30, y: 0.10, w: 0.40, h: 0.78, r: 18},
+    'm-iphone15promax': {x: 0.30, y: 0.10, w: 0.40, h: 0.78, r: 18},
+    'm-iphone11promax': {x: 0.30, y: 0.10, w: 0.40, h: 0.78, r: 18},
+  };
+  static const Map<String, double> _defaultScreenRegion = {x: 0.30, y: 0.10, w: 0.40, h: 0.78, r: 18};
+
+  /// 用 InAppWebView 加载包含 model-viewer 的 HTML 页面 + 叠加 2D UI
   Widget _buildModelViewer(String glbPath) {
     final port = widget.port;
     final modelUrl = 'http://127.0.0.1:$port/models/3d/$glbPath';
 
-    // ★ model-viewer.min.js 内联到 HTML (避免跨域 module script 加载问题)
-    //   如果预加载失败, 退回 CDN 加载
-    final jsContent = _modelViewerJs ?? '';
-    final scriptTag = jsContent.isNotEmpty
-        ? '<script type="module">$jsContent</script>'
-        : '<script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>';
+    // ★ model-viewer.min.js 通过同源 HTTP 加载 (避免 data URL 下的 module CORS 问题)
+    final scriptTag = '<script type="module" src="/assets/model-viewer.min.js"></script>';
 
     // 构造 HTML: 引入 model-viewer web component, 加载 GLB
-    // - JS 内联: 避免跨域 + 离线可用
-    // - 灰色背景: 避免纯白误报 (用户看不到模型时分不清是没加载还是白模型)
-    // - auto-rotate: 自动旋转展示
-    // - camera-controls: 允许用户拖拽/缩放
+    // - 关掉 auto-rotate: 固定正面视角, 保证屏幕区域位置稳定
+    // - 固定 camera-orbit: 正面视角 (0deg azimuth, 90deg elevation)
+    // - 灰色背景: 避免纯白误报
+    // - 默认材质灰色: 模型加载后 JS 把所有材质设为灰色 (#888)
+    // - 暴露 setModelColor 函数: Flutter 右键菜单调用
+    // - camera-controls 动态控制: 设计模式禁用, 查看模式启用
     final html = '''<!DOCTYPE html>
 <html>
 <head>
@@ -792,6 +828,24 @@ class _CanvasAppState extends State<CanvasApp> {
       font-family: monospace; font-size: 12px;
       z-index: 1;
     }
+    /* ★ 右键菜单样式 */
+    #ctx-menu {
+      position: fixed; display: none;
+      background: #2A2A2C; border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+      padding: 4px 0; min-width: 160px;
+      z-index: 100; font-family: -apple-system, sans-serif;
+    }
+    #ctx-menu.show { display: block; }
+    #ctx-menu .item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 14px; cursor: pointer;
+      color: rgba(255,255,255,0.7); font-size: 12px;
+      transition: background 0.1s;
+    }
+    #ctx-menu .item:hover { background: rgba(255,255,255,0.08); color: #fff; }
+    #ctx-menu .sep { height: 1px; background: rgba(255,255,255,0.1); margin: 4px 0; }
+    #ctx-menu .swatch { width: 14px; height: 14px; border-radius: 3px; border: 1px solid rgba(255,255,255,0.2); }
   </style>
   $scriptTag
 </head>
@@ -800,17 +854,83 @@ class _CanvasAppState extends State<CanvasApp> {
   <model-viewer
     src="$modelUrl"
     alt="3D device model"
-    auto-rotate
-    rotation-per-second="30deg"
-    camera-controls
+    camera-orbit="0deg 90deg 100%"
     shadow-intensity="1"
     environment-image="neutral"
     exposure="1"
     style="background-color: #3a3a3c;">
   </model-viewer>
+
+  <!-- ★ 右键菜单 DOM -->
+  <div id="ctx-menu">
+    <div class="item" data-action="mode">📡 <span id="mode-label">切换到查看模式</span></div>
+    <div class="sep"></div>
+    <div class="item" data-color="#888888"><span class="swatch" style="background:#888888"></span>默认灰</div>
+    <div class="item" data-color="#FFFFFF"><span class="swatch" style="background:#FFFFFF"></span>白色</div>
+    <div class="item" data-color="#222222"><span class="swatch" style="background:#222222"></span>黑色</div>
+    <div class="item" data-color="#C0C0C0"><span class="swatch" style="background:#C0C0C0"></span>银色</div>
+    <div class="item" data-color="#4A4A4A"><span class="swatch" style="background:#4A4A4A"></span>深空灰</div>
+    <div class="item" data-color="#D4AF37"><span class="swatch" style="background:#D4AF37"></span>金色</div>
+    <div class="item" data-color="#E8B4B8"><span class="swatch" style="background:#E8B4B8"></span>玫瑰金</div>
+    <div class="item" data-color="#1A2B4A"><span class="swatch" style="background:#1A2B4A"></span>深蓝色</div>
+    <div class="item" data-color="#2D5F3F"><span class="swatch" style="background:#2D5F3F"></span>绿色</div>
+    <div class="item" data-color="#8B2D2D"><span class="swatch" style="background:#8B2D2D"></span>红色</div>
+  </div>
   <script>
     const mv = document.querySelector('model-viewer');
     const loading = document.getElementById('loading');
+
+    // ★ 默认材质颜色: 灰色 (#888888)
+    //   model-viewer 加载完 GLB 后, 遍历所有 material 把 baseColorFactor 设为灰色
+    //   暴露 window.setModelColor(hex) 供 Flutter 调用
+    function applyColorToMaterials(r, g, b) {
+      if (!mv || !mv.model) return false;
+      try {
+        const materials = mv.model.materials;
+        for (const mat of materials) {
+          if (mat.pbrMetallicRoughness) {
+            mat.pbrMetallicRoughness.setBaseColorFactor([r, g, b, 1.0]);
+          }
+        }
+        return true;
+      } catch (e) {
+        console.log('[color-error] ' + e.message);
+        return false;
+      }
+    }
+
+    function hexToRgb(hex) {
+      const h = hex.replace('#', '');
+      return [
+        parseInt(h.substring(0,2), 16) / 255,
+        parseInt(h.substring(2,4), 16) / 255,
+        parseInt(h.substring(4,6), 16) / 255
+      ];
+    }
+
+    // Flutter 调用: window.soloforgeAPI.setModelColor('#FF0000')
+    window.soloforgeAPI = {
+      setModelColor: function(hex) {
+        const rgb = hexToRgb(hex);
+        return applyColorToMaterials(rgb[0], rgb[1], rgb[2]);
+      },
+      setCameraControls: function(enabled) {
+        if (mv) {
+          if (enabled) {
+            mv.setAttribute('camera-controls', '');
+          } else {
+            mv.removeAttribute('camera-controls');
+          }
+        }
+      },
+      resetCamera: function() {
+        if (mv) {
+          mv.cameraOrbit = '0deg 90deg 100%';
+        }
+      }
+    };
+
+    // 模型加载后默认设为灰色
     if (mv) {
       mv.addEventListener('error', (e) => {
         console.log('[mv-error] ' + (e.detail?.message || 'unknown'));
@@ -819,6 +939,11 @@ class _CanvasAppState extends State<CanvasApp> {
       mv.addEventListener('load', () => {
         console.log('[mv-load] ok src=' + mv.src);
         if (loading) loading.style.display = 'none';
+        // ★ 默认灰色材质
+        setTimeout(() => {
+          const ok = applyColorToMaterials(0.533, 0.533, 0.533); // #888888
+          console.log('[mv-color] default gray applied: ' + ok);
+        }, 200);
       });
       mv.addEventListener('preload', () => {
         console.log('[mv-preload] ' + mv.src);
@@ -827,43 +952,165 @@ class _CanvasAppState extends State<CanvasApp> {
     window.addEventListener('error', (e) => {
       console.log('[window-error] ' + (e.message || ''));
     });
+
+    // ★ 右键菜单: WebView 内部处理, 通过 console.log 传回 Flutter
+    //   避免 Flutter GestureDetector 被 InAppWebView 拦截的问题
+    const ctxMenu = document.getElementById('ctx-menu');
+    const modeLabel = document.getElementById('mode-label');
+
+    document.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      ctxMenu.style.left = e.clientX + 'px';
+      ctxMenu.style.top = e.clientY + 'px';
+      ctxMenu.classList.add('show');
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!ctxMenu.contains(e.target)) {
+        ctxMenu.classList.remove('show');
+        return;
+      }
+      const item = e.target.closest('.item');
+      if (!item) return;
+
+      const action = item.dataset.action;
+      const color = item.dataset.color;
+
+      if (action === 'mode') {
+        // 通过 console.log 通知 Flutter 切换模式
+        console.log('[ctx-action] mode_toggle');
+      } else if (color) {
+        // 直接在 JS 层改颜色
+        const ok = window.soloforgeAPI.setModelColor(color);
+        console.log('[ctx-action] color ' + color + ' ok=' + ok);
+      }
+      ctxMenu.classList.remove('show');
+    });
+
+    // ★ 模式切换时更新菜单文字 (由 Flutter 调用)
+    window.soloforgeAPI.updateModeLabel = function(isViewMode) {
+      if (modeLabel) modeLabel.textContent = isViewMode ? '切换到设计模式' : '切换到查看模式';
+    };
   </script>
 </body>
 </html>''';
 
-    return InAppWebView(
-      initialData: InAppWebViewInitialData(
-        data: html,
-        mimeType: 'text/html',
-        encoding: 'utf-8',
-        baseUrl: WebUri('http://127.0.0.1:$port/'),
-      ),
-      initialSettings: InAppWebViewSettings(
-        transparentBackground: true,
-        allowsInlineMediaPlayback: true,
-        mediaPlaybackRequiresUserGesture: false,
-        allowFileAccessFromFileURLs: true,
-        allowUniversalAccessFromFileURLs: true,
-        javaScriptEnabled: true,
-        domStorageEnabled: true,
-      ),
-      onWebViewCreated: (controller) {
-        _webviewController = controller;
-        _writeLog('[webview] created, modelUrl=$modelUrl jsInline=${jsContent.isNotEmpty}');
-      },
-      onLoadStart: (controller, url) {
-        _writeLog('[webview] load start: $url');
-      },
-      onLoadStop: (controller, url) {
-        _writeLog('[webview] load stop: $url');
-      },
-      onLoadError: (controller, url, code, message) {
-        _writeLog('[webview] load error: code=$code msg=$message url=$url');
-      },
-      onConsoleMessage: (controller, consoleMessage) {
-        _writeLog('[webview-console] ${consoleMessage.message}');
+    // ★ 获取当前设备的屏幕区域配置
+    final dev = _devices.values.isNotEmpty ? _devices.values.first : null;
+    final region = _screenRegions[dev?.modelKey] ?? _defaultScreenRegion;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final w = constraints.maxWidth;
+        final h = constraints.maxHeight;
+
+        return Stack(
+          children: [
+            // 底层: 3D 模型 (InAppWebView) — 填满整个 Stack
+            Positioned.fill(
+              child: InAppWebView(
+                initialData: InAppWebViewInitialData(
+                  data: html,
+                  mimeType: 'text/html',
+                  encoding: 'utf-8',
+                  baseUrl: WebUri('http://127.0.0.1:$port/'),
+                ),
+                initialSettings: InAppWebViewSettings(
+                  transparentBackground: false,
+                  allowsInlineMediaPlayback: true,
+                  mediaPlaybackRequiresUserGesture: false,
+                  allowFileAccessFromFileURLs: true,
+                  allowUniversalAccessFromFileURLs: true,
+                  javaScriptEnabled: true,
+                  domStorageEnabled: true,
+                ),
+                onWebViewCreated: (controller) {
+                  _webviewController = controller;
+                  _writeLog('[webview] created, modelUrl=$modelUrl jsCached=${_modelViewerJs?.isNotEmpty ?? false}');
+                },
+                onLoadStart: (controller, url) {
+                  _writeLog('[webview] load start: $url');
+                },
+                onLoadStop: (controller, url) {
+                  _writeLog('[webview] load stop: $url');
+                  // ★ 页面加载完, 根据当前模式设置 camera-controls
+                  _applyViewMode();
+                },
+                onLoadError: (controller, url, code, message) {
+                  _writeLog('[webview] load error: code=$code msg=$message url=$url');
+                },
+                onConsoleMessage: (controller, consoleMessage) {
+                  final msg = consoleMessage.message;
+                  _writeLog('[webview-console] $msg');
+                  // ★ FIX: 精确匹配, 避免外部 UI 数据含子串误触发模式切换
+                  if (msg.trim() == '[ctx-action] mode_toggle') {
+                    _toggleViewMode();
+                  }
+                },
+              ),
+            ),
+
+            // ★ 上层: 2D UI 内容叠加在 3D 模型屏幕区域
+            //   仅在设计模式 (_viewMode=false) 显示; 查看模式隐藏让用户自由旋转
+            //   Positioned 定位到屏幕区域, ClipRRect 裁剪圆角,
+            //   FittedBox 自适应缩放 2D UI 到屏幕区域
+            //   ★ 不加 GestureDetector: 右键菜单改由 WebView 内部 JS 实现,
+            //     避免 Flutter 层拦截事件导致 2D UI 按钮无法点击
+            if (_uiNode != null && !_viewMode)
+              Positioned(
+                left: w * (region['x'] ?? 0.30),
+                top: h * (region['y'] ?? 0.10),
+                width: w * (region['w'] ?? 0.40),
+                height: h * (region['h'] ?? 0.78),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(region['r'] ?? 18),
+                  child: Container(
+                    color: Colors.white,
+                    child: FittedBox(
+                      fit: BoxFit.contain,
+                      alignment: Alignment.topCenter,
+                      child: SizedBox(
+                        width: (dev != null && _nativeSizes[dev.id] != null)
+                            ? _nativeSizes[dev.id]!.$1
+                            : 393.0,
+                        height: (dev != null && _nativeSizes[dev.id] != null)
+                            ? _nativeSizes[dev.id]!.$2
+                            : 852.0,
+                        child: PlatformRenderer('material').build(_uiNode!, context),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
       },
     );
+  }
+
+  /// ★ 切换查看/设计模式 (由右键菜单 console.log 触发)
+  void _toggleViewMode() {
+    setState(() {
+      _viewMode = !_viewMode;
+    });
+    _applyViewMode();
+    _writeLog('[view-mode] toggled: ${_viewMode ? "查看" : "设计"}');
+  }
+
+  /// 应用当前模式到 WebView (camera-controls 开关 + 菜单文字更新)
+  void _applyViewMode() {
+    final ctrl = _webviewController;
+    if (ctrl == null) return;
+    // 查看模式: 启用 camera-controls 允许旋转; 设计模式: 禁用固定正面
+    ctrl.evaluateJavascript(source: 'window.soloforgeAPI && window.soloforgeAPI.setCameraControls(${_viewMode ? 'true' : 'false'});').catchError((e) {
+      _writeLog('[view-mode] apply error: $e');
+    });
+    // 切回设计模式时重置相机到正面
+    if (!_viewMode) {
+      ctrl.evaluateJavascript(source: 'window.soloforgeAPI && window.soloforgeAPI.resetCamera();').catchError(() {});
+    }
+    // 更新右键菜单文字
+    ctrl.evaluateJavascript(source: 'window.soloforgeAPI && window.soloforgeAPI.updateModeLabel(${_viewMode ? 'true' : 'false'});').catchError(() {});
   }
 
   /// 兜底 2D 占位卡片场景 (无 GLB 文件时)
