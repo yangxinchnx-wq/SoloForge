@@ -8,7 +8,6 @@ import org.springframework.stereotype.Repository;
 
 import jakarta.annotation.PostConstruct;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -30,9 +29,6 @@ public class ExperienceCaseRepository {
 
     /** 案例库容量上限 (超过自动淘汰最老的, 防止无限膨胀) */
     private static final int MAX_CASES = 2000;
-    /** 检索时间窗口 (天), 只检索近 N 天的案例, 老案例不参与检索 */
-    private static final int RETENTION_DAYS = 90;
-
     private static final RowMapper<ExperienceCaseEntity> ROW_MAPPER = (rs, rowNum) -> {
         ExperienceCaseEntity e = new ExperienceCaseEntity();
         e.setId(rs.getString("id"));
@@ -82,37 +78,10 @@ public class ExperienceCaseRepository {
             jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_exp_included ON experience_case(included)");
             jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_exp_created ON experience_case(created_at)");
 
-            // FTS5 全文索引虚拟表 (检索 user_message + assistant_response)
-            // 替代 LIKE 全表扫, 检索性能从 O(n) 降到 O(log n)
-            jdbcTemplate.execute("""
-                CREATE VIRTUAL TABLE IF NOT EXISTS experience_case_fts
-                USING fts5(
-                    user_message,
-                    assistant_response,
-                    content='experience_case',
-                    content_rowid='rowid'
-                )
-                """);
-
-            // 触发器: INSERT 时同步写入 FTS
-            jdbcTemplate.execute("""
-                CREATE TRIGGER IF NOT EXISTS exp_case_ai AFTER INSERT ON experience_case BEGIN
-                    INSERT INTO experience_case_fts(rowid, user_message, assistant_response)
-                    VALUES (new.rowid, new.user_message, new.assistant_response);
-                END
-                """);
-            // 触发器: DELETE 时同步删除 FTS
-            jdbcTemplate.execute("""
-                CREATE TRIGGER IF NOT EXISTS exp_case_ad AFTER DELETE ON experience_case BEGIN
-                    INSERT INTO experience_case_fts(experience_case_fts, rowid, user_message, assistant_response)
-                    VALUES ('delete', old.rowid, old.user_message, old.assistant_response);
-                END
-                """);
-
             // 启动时清理超容量的旧案例
             evictExcess();
 
-            log.info("experience_case table ready (FTS5 enabled, max={} retention={}d)", MAX_CASES, RETENTION_DAYS);
+            log.info("experience_case table ready (max={})", MAX_CASES);
         } catch (Exception e) {
             log.error("Failed to init experience_case table: {}", e.getMessage());
         }
@@ -235,82 +204,4 @@ public class ExperienceCaseRepository {
             included, LocalDateTime.now().toString(), id);
     }
 
-    // ── RAG 检索 (供 CaseRetriever 使用) ──────────────────────────
-
-    /**
-     * FTS5 全文检索: 在 user_message + assistant_response 上 MATCH, 按 domain + 时间窗口过滤
-     *
-     * 性能: O(log n) (FTS5 倒排索引), 远优于 LIKE 的 O(n) 全表扫
-     * 时间窗口: 只检索近 RETENTION_DAYS 天的案例, 老案例不参与
-     *
-     * @param query  当前用户消息 (检索 query, 会被转义为 FTS5 安全的 OR 查询)
-     * @param domain Agent 领域 (可为 null, 不过滤)
-     * @param limit  返回条数
-     * @return 匹配的案例列表 (按 created_at 倒序)
-     */
-    public List<ExperienceCaseEntity> searchByKeyword(String query, String domain, int limit) {
-        if (query == null || query.isBlank()) {
-            return List.of();
-        }
-        String ftsQuery = toFtsQuery(query);
-        if (ftsQuery == null) return List.of();
-
-        String cutoff = LocalDateTime.now().minusDays(RETENTION_DAYS).toString();
-
-        if (domain != null && !domain.isBlank()) {
-            return jdbcTemplate.query("""
-                SELECT e.* FROM experience_case e
-                JOIN experience_case_fts f ON e.rowid = f.rowid
-                WHERE e.included = 1
-                  AND e.domain = ?
-                  AND e.created_at >= ?
-                  AND experience_case_fts MATCH ?
-                ORDER BY e.created_at DESC LIMIT ?
-                """,
-                ROW_MAPPER, domain, cutoff, ftsQuery, limit);
-        }
-        return jdbcTemplate.query("""
-            SELECT e.* FROM experience_case e
-            JOIN experience_case_fts f ON e.rowid = f.rowid
-            WHERE e.included = 1
-              AND e.created_at >= ?
-              AND experience_case_fts MATCH ?
-            ORDER BY e.created_at DESC LIMIT ?
-            """,
-            ROW_MAPPER, cutoff, ftsQuery, limit);
-    }
-
-    /**
-     * 把自然语言 query 转成 FTS5 安全的查询表达式
-     *
-     * FTS5 语法: 词1 OR 词2 OR 词3
-     * 过滤掉特殊字符, 避免 FTS5 语法错误
-     */
-    private String toFtsQuery(String query) {
-        // 按非字母数字汉字分割, 取前 5 个词, 用 OR 连接
-        String[] words = query.split("[^\\p{L}\\p{N}]+");
-        List<String> valid = new ArrayList<>();
-        for (String w : words) {
-            if (w.length() >= 2 && valid.size() < 5) {  // 过滤单字符, 最多 5 个词
-                // 转义 FTS5 特殊字符 (用双引号包裹整个词)
-                valid.add("\"" + w.replace("\"", "") + "\"");
-            }
-        }
-        return valid.isEmpty() ? null : String.join(" OR ", valid);
-    }
-
-    /**
-     * 取最近 N 条案例 (无关键词匹配时的 fallback) — 同样受时间窗口限制
-     */
-    public List<ExperienceCaseEntity> findRecent(String domain, int limit) {
-        String cutoff = LocalDateTime.now().minusDays(RETENTION_DAYS).toString();
-        if (domain != null && !domain.isBlank()) {
-            return jdbcTemplate.query(
-                "SELECT * FROM experience_case WHERE included = 1 AND domain = ? AND created_at >= ? ORDER BY created_at DESC LIMIT ?",
-                ROW_MAPPER, domain, cutoff, limit);
-        }
-        return jdbcTemplate.query(
-            "SELECT * FROM experience_case WHERE included = 1 AND created_at >= ? ORDER BY created_at DESC LIMIT ?",
-            ROW_MAPPER, cutoff, limit);
-    }
 }

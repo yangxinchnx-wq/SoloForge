@@ -7,13 +7,11 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 /**
  * SoloForge Agent Service 启动入口
  *
- * 职责：
- *   - 接管 RACER 的 Agent 编排职能（运行时执行层）
- *   - 通过 Spring AI ChatClient + Advisor 链构建 12 层 System Prompt
- *   - 多 Agent 协作编排（并行投票 / 角色分工 / 对话辩论）
- *   - 接入 AI Society 的 law/governance/reputation 约束
- *   - 推送训练轨迹到 MARL 8765 + reputation 到 8766
- *   - Phase 5: 离线 Prompt 优化 (PromptOptimizer + 定时调度)
+ * 职责（训练专用，运行时聊天由 RACER Node.js 独占）：
+ *   - Agent 身份管理 CRUD (ChatController)
+ *   - 离线 Prompt 优化 (PromptOptimizer + 定时调度)
+ *   - 经验案例库 RAG (FeedbackController + ExperienceCaseRepository)
+ *   - Spring AI 2.0.0 GA ChatModel 多 Provider 配置 (LlmConfig)
  *
  * 端口：8770
  */

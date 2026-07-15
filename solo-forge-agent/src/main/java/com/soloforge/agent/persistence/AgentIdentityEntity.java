@@ -8,7 +8,7 @@ import java.time.LocalDateTime;
  * Agent 身份实体 (对应 AI Society agent_identity 表)
  *
  * 这是 Agent 的权威配置源，存储在 ai_society.db SQLite 数据库中。
- * Java 端读取此表获取 Agent 配置，Python 端的 PromptOptimizer 可写入此表优化 system_prompt。
+ * Java 端读取此表获取 Agent 配置，PromptOptimizer 可写入此表优化 system_prompt。
  */
 @Data
 public class AgentIdentityEntity {

@@ -9,9 +9,10 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 聊天设置 (前端 ChatSettings 透传)
+ * 聊天设置 DTO (训练模块使用)
  *
- * 这些字段在原 Node.js 架构中被丢弃，Java 重构后全部接入 System Prompt 拼装。
+ * 注: 原 SystemPromptBuilder 已删除，人格/语气等设置由 RACER (Node.js) 处理。
+ * 本 DTO 保留字段供训练模块兼容性使用。
  */
 @Data
 @Builder
@@ -26,7 +27,7 @@ public class ChatSettings {
     /**
      * 自定义人格描述 (前端 localStorage 透传)
      * <p>当 personality 不在内置 4 个之中时 (如 custom_xxx), 使用此描述注入 System Prompt。
-     * 内置人格时此字段可为 null, 由 SystemPromptBuilder 走内置映射表。
+     * 内置人格时此字段可为 null。人格拼装由 RACER (Node.js) 处理。
      */
     private String personalityDesc;
 

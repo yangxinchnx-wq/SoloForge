@@ -9,7 +9,10 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 聊天请求 (前端 POST /api/chat/send 的请求体)
+ * 聊天请求 DTO (训练模块使用: PromptOptimizer + DynamicChatModelResolver)
+ *
+ * 注: 原聊天端点 /api/chat/send 已移除，聊天路径由 RACER (Node.js) 独占。
+ * 本 DTO 仅保留 LlmProvider 内部类供训练模块动态指定 LLM Provider。
  */
 @Data
 @Builder

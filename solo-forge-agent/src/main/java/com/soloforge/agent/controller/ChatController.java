@@ -187,7 +187,7 @@ public class ChatController {
                 if (body.containsKey("systemPrompt")) existing.setSystemPrompt((String) body.get("systemPrompt"));
                 if (body.containsKey("capabilities")) {
                     Object caps = body.get("capabilities");
-                    existing.setCapabilities(caps instanceof List ? new ObjectMapper().writeValueAsString(caps) : (String) caps);
+                    existing.setCapabilities(caps instanceof List ? objectMapper.writeValueAsString(caps) : (String) caps);
                 }
                 if (body.containsKey("strategy")) existing.setStrategy((String) body.get("strategy"));
                 if (body.containsKey("level")) existing.setLevel((String) body.get("level"));
