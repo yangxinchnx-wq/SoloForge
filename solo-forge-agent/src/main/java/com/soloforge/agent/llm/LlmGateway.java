@@ -1,4 +1,4 @@
-package com.soloforge.agent.llm;
+﻿package com.soloforge.agent.llm;
 
 /**
  * @deprecated Use {@link com.soloforge.agent.config.DynamicChatModelResolver} and
@@ -15,6 +15,7 @@ import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
@@ -30,12 +31,12 @@ import java.util.function.Consumer;
 /**
  * LLM Gateway
  *
- * 动态多 provider 支持: 每次请求从 ChatRequest.provider 注入 baseUrl/apiKey/model,
- * 不依赖 application.yml 的静态配置。
+ * 鍔ㄦ€佸 provider 鏀寔: 姣忔璇锋眰浠?ChatRequest.provider 娉ㄥ叆 baseUrl/apiKey/model,
+ * 涓嶄緷璧?application.yml 鐨勯潤鎬侀厤缃€?
  *
- * 支持 OpenAI 兼容协议 (OpenAI / Claude / DeepSeek / GLM / 通义千问等)
+ * 鏀寔 OpenAI 鍏煎鍗忚 (OpenAI / Claude / DeepSeek / GLM / 閫氫箟鍗冮棶绛?
  *
- * 2026-07-08: 新增 chatCompletionStream() 真实流式调用, 返回 Flux<String> 增量文本
+ * 2026-07-08: 鏂板 chatCompletionStream() 鐪熷疄娴佸紡璋冪敤, 杩斿洖 Flux<String> 澧為噺鏂囨湰
  */
 @Slf4j
 @Component
@@ -44,9 +45,12 @@ public class LlmGateway {
     private static final Duration TIMEOUT = Duration.ofSeconds(90);
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    @Autowired
+    private LlmRateLimiter rateLimiter;
+
     /**
-     * 同步调用 LLM (非流式)
-     * 如果带 tools 调用返回空内容, 自动去掉 tools 重试一次
+     * 鍚屾璋冪敤 LLM (闈炴祦寮?
+     * 濡傛灉甯?tools 璋冪敤杩斿洖绌哄唴瀹? 鑷姩鍘绘帀 tools 閲嶈瘯涓€娆?
      */
     public String chatCompletion(String systemPrompt,
                                   String userMessage,
@@ -57,8 +61,8 @@ public class LlmGateway {
     }
 
     /**
-     * 同步调用 LLM (非流式, 指定 temperature)
-     * temperature 由 agent 配置决定, 默认 0.3
+     * 鍚屾璋冪敤 LLM (闈炴祦寮? 鎸囧畾 temperature)
+     * temperature 鐢?agent 閰嶇疆鍐冲畾, 榛樿 0.3
      */
     public String chatCompletion(String systemPrompt,
                                   String userMessage,
@@ -69,21 +73,43 @@ public class LlmGateway {
         ChatRequest.LlmProvider resolved = resolveProvider(provider);
         log.info("LLM call: baseUrl={} model={} temperature={}", resolved.getBaseUrl(), resolved.getModel(), temperature);
 
+        String pKey = LlmRateLimiter.providerKey(resolved.getBaseUrl(), resolved.getModel());
         try {
             WebClient client = buildClient(resolved);
             Map<String, Object> body = buildRequestBody(systemPrompt, userMessage, history, resolved, tools, false, temperature);
 
-            Map<String, Object> response = client.post()
-                .uri("/chat/completions")
-                .bodyValue(body)
-                .retrieve()
-                .bodyToMono(Map.class)
-                .timeout(TIMEOUT)
-                .block();
+            Map<String, Object> response = null;
+            for (int attempt = 0; attempt <= 3; attempt++) {
+                rateLimiter.waitForRpmSlot(pKey);
+                rateLimiter.acquire(pKey);
+                try {
+                    response = client.post()
+                        .uri("/chat/completions")
+                        .bodyValue(body)
+                        .retrieve()
+                        .bodyToMono(Map.class)
+                        .timeout(TIMEOUT)
+                        .block();
+                    rateLimiter.recordSuccess(pKey);
+                    break;
+                } catch (Exception inner) {
+                    int sc = LlmRateLimiter.extractStatusCode(inner);
+                    if (rateLimiter.shouldRetry(sc, attempt)) {
+                        Long ra = LlmRateLimiter.extractRetryAfter(inner);
+                        log.warn("LLM call failed (HTTP {}), retrying #{}/3", sc, attempt + 1);
+                        rateLimiter.record429(pKey);
+                        rateLimiter.waitBeforeRetry(ra, attempt);
+                        continue;
+                    }
+                    throw inner;
+                } finally {
+                    rateLimiter.release(pKey);
+                }
+            }
 
             String content = extractContent(response);
             
-            // 如果带 tools 调用返回空内容, 去掉 tools 重试
+            // 濡傛灉甯?tools 璋冪敤杩斿洖绌哄唴瀹? 鍘绘帀 tools 閲嶈瘯
             if ((content == null || content.isBlank()) && tools != null && !tools.isEmpty()) {
                 log.warn("LLM returned empty content with tools, retrying without tools...");
                 Map<String, Object> bodyNoTools = buildRequestBody(systemPrompt, userMessage, history, resolved, null, false, temperature);
@@ -100,7 +126,7 @@ public class LlmGateway {
             return content;
         } catch (Exception e) {
             log.error("LLM call failed: {}", e.getMessage());
-            // 降级到 fallback 模型
+            // 闄嶇骇鍒?fallback 妯″瀷
             if (resolved.getFallbackModels() != null && resolved.getFallbackModels().length > 0) {
                 log.info("Falling back to: {}", resolved.getFallbackModels()[0]);
                 ChatRequest.LlmProvider fallback = ChatRequest.LlmProvider.builder()
@@ -110,15 +136,15 @@ public class LlmGateway {
                     .build();
                 return chatCompletion(systemPrompt, userMessage, history, fallback, tools, temperature);
             }
-            throw new RuntimeException("LLM 调用失败: " + formatLlmError(e, resolved), e);
+            throw new RuntimeException("LLM 璋冪敤澶辫触: " + formatLlmError(e, resolved), e);
         }
     }
 
     /**
-     * 流式调用 LLM — 返回增量文本 Flux
+     * 娴佸紡璋冪敤 LLM 鈥?杩斿洖澧為噺鏂囨湰 Flux
      *
-     * 每个 onNext 是一个 delta content 片段 (非完整响应)
-     * Flux complete 表示流结束
+     * 姣忎釜 onNext 鏄竴涓?delta content 鐗囨 (闈炲畬鏁村搷搴?
+     * Flux complete 琛ㄧず娴佺粨鏉?
      */
     public Flux<String> chatCompletionStream(String systemPrompt,
                                               String userMessage,
@@ -129,10 +155,10 @@ public class LlmGateway {
     }
 
     /**
-     * ★ 流式调用 LLM (带 usage 回调)
+     * 鈽?娴佸紡璋冪敤 LLM (甯?usage 鍥炶皟)
      *
-     * usageConsumer 在流式结束时被调用一次, 携带本轮 LLM 调用的 token 统计
-     * (需要 provider 支持 stream_options.include_usage, OpenAI 兼容协议均支持)
+     * usageConsumer 鍦ㄦ祦寮忕粨鏉熸椂琚皟鐢ㄤ竴娆? 鎼哄甫鏈疆 LLM 璋冪敤鐨?token 缁熻
+     * (闇€瑕?provider 鏀寔 stream_options.include_usage, OpenAI 鍏煎鍗忚鍧囨敮鎸?
      */
     public Flux<String> chatCompletionStream(String systemPrompt,
                                               String userMessage,
@@ -144,8 +170,8 @@ public class LlmGateway {
     }
 
     /**
-     * ★ 流式调用 LLM (带 usage 回调 + 指定 temperature)
-     * temperature 由 agent 配置决定, 默认 0.3
+     * 鈽?娴佸紡璋冪敤 LLM (甯?usage 鍥炶皟 + 鎸囧畾 temperature)
+     * temperature 鐢?agent 閰嶇疆鍐冲畾, 榛樿 0.3
      */
     public Flux<String> chatCompletionStream(String systemPrompt,
                                               String userMessage,
@@ -160,7 +186,7 @@ public class LlmGateway {
         WebClient client = buildClient(resolved);
         Map<String, Object> body = buildRequestBody(systemPrompt, userMessage, history, resolved, tools, true, temperature);
 
-        // 累积原生 tool_calls 分片 (流式 mode 下 arguments 分片到达)
+        // 绱Н鍘熺敓 tool_calls 鍒嗙墖 (娴佸紡 mode 涓?arguments 鍒嗙墖鍒拌揪)
         StringBuilder toolCallName = new StringBuilder();
         StringBuilder toolCallArgs = new StringBuilder();
         boolean[] hasToolCall = {false};
@@ -173,14 +199,14 @@ public class LlmGateway {
             .map(ServerSentEvent::data)
             .filter(data -> data != null && !"[DONE]".equals(data))
             .mapNotNull(sseData -> {
-                // 1. 先检查 delta.tool_calls (原生 function calling)
+                // 1. 鍏堟鏌?delta.tool_calls (鍘熺敓 function calling)
                 try {
                     Map<String, Object> chunk = objectMapper.readValue(sseData, Map.class);
-                    // ★ 检查 usage (流式最后一帧携带, 需 stream_options.include_usage=true)
+                    // 鈽?妫€鏌?usage (娴佸紡鏈€鍚庝竴甯ф惡甯? 闇€ stream_options.include_usage=true)
                     if (usageConsumer != null && chunk.get("usage") != null) {
                         try {
                             Map<String, Object> u = (Map<String, Object>) chunk.get("usage");
-                            // ★ 兼容 3 种 provider 的缓存命中字段:
+                            // 鈽?鍏煎 3 绉?provider 鐨勭紦瀛樺懡涓瓧娈?
                             //   OpenAI:    usage.prompt_tokens_details.cached_tokens
                             //   DeepSeek:  usage.prompt_cache_hit_tokens
                             //   Anthropic: usage.cache_read_input_tokens
@@ -222,7 +248,7 @@ public class LlmGateway {
                                         }
                                     }
                                 }
-                                // 有 tool_calls 时, delta.content 通常为 null, 返回空占位
+                                // 鏈?tool_calls 鏃? delta.content 閫氬父涓?null, 杩斿洖绌哄崰浣?
                                 return null;
                             }
                         }
@@ -230,7 +256,7 @@ public class LlmGateway {
                 } catch (Exception e) {
                     log.debug("Failed to parse SSE chunk for tool_calls: {}", e.getMessage());
                 }
-                // 2. 正常提取 delta content
+                // 2. 姝ｅ父鎻愬彇 delta content
                 return extractDeltaContent(sseData);
             })
             .doOnComplete(() -> {
@@ -240,7 +266,7 @@ public class LlmGateway {
                 }
             })
             .concatWith(Flux.defer(() -> {
-                // 流结束后: 如果累积了原生 tool_calls, 注入 ```json 块让 tryParseToolCall 识别
+                // 娴佺粨鏉熷悗: 濡傛灉绱Н浜嗗師鐢?tool_calls, 娉ㄥ叆 ```json 鍧楄 tryParseToolCall 璇嗗埆
                 if (hasToolCall[0] && toolCallName.length() > 0) {
                     String argsStr = toolCallArgs.toString();
                     try {
@@ -261,7 +287,7 @@ public class LlmGateway {
             .timeout(TIMEOUT);
     }
 
-    /** ★ Token 使用统计 (cachedTokens: 缓存命中的 prompt token 数) */
+    /** 鈽?Token 浣跨敤缁熻 (cachedTokens: 缂撳瓨鍛戒腑鐨?prompt token 鏁? */
     public record Usage(int promptTokens, int completionTokens, int totalTokens, int cachedTokens) {}
 
     private static int toInt(Object v) {
@@ -271,11 +297,11 @@ public class LlmGateway {
     }
 
     /**
-     * 从 SSE data 字段中提取 delta content
+     * 浠?SSE data 瀛楁涓彁鍙?delta content
      *
-     * ★ FIX 2026-07-12: reasoning_content 用 \u0001 前缀标记, ChatController 据此发送 'reasoning' 事件。
-     * 前端收到 reasoning 事件后只在流送区显示, 不喂给 IncrementalCanvasPusher,
-     * 避免思考过程中的 ``` 字符干扰代码块检测。
+     * 鈽?FIX 2026-07-12: reasoning_content 鐢?\u0001 鍓嶇紑鏍囪, ChatController 鎹鍙戦€?'reasoning' 浜嬩欢銆?
+     * 鍓嶇鏀跺埌 reasoning 浜嬩欢鍚庡彧鍦ㄦ祦閫佸尯鏄剧ず, 涓嶅杺缁?IncrementalCanvasPusher,
+     * 閬垮厤鎬濊€冭繃绋嬩腑鐨?``` 瀛楃骞叉壈浠ｇ爜鍧楁娴嬨€?
      */
     @SuppressWarnings("unchecked")
     private String extractDeltaContent(String sseData) {
@@ -287,7 +313,7 @@ public class LlmGateway {
             if (delta == null) return null;
             Object content = delta.get("content");
             if (content != null) return content.toString();
-            // reasoning model: 用 \u0001 前缀标记 reasoning_content
+            // reasoning model: 鐢?\u0001 鍓嶇紑鏍囪 reasoning_content
             Object reasoning = delta.get("reasoning_content");
             if (reasoning != null) return "\u0001" + reasoning.toString();
             return null;
@@ -333,7 +359,7 @@ public class LlmGateway {
         body.put("stream", stream);
         body.put("temperature", temperature);
 
-        // ★ 流式时请求 usage 统计 (OpenAI 兼容协议: stream_options.include_usage)
+        // 鈽?娴佸紡鏃惰姹?usage 缁熻 (OpenAI 鍏煎鍗忚: stream_options.include_usage)
         if (stream) {
             body.put("stream_options", Map.of("include_usage", true));
         }
@@ -348,16 +374,16 @@ public class LlmGateway {
 
     @SuppressWarnings("unchecked")
     private String extractContent(Map<String, Object> response) {
-        if (response == null) return "(空响应)";
+        if (response == null) return "(绌哄搷搴?";
         List<Map<String, Object>> choices = (List<Map<String, Object>>) response.get("choices");
         if (choices == null || choices.isEmpty()) {
             log.warn("LLM response has no choices: {}", response.keySet());
-            return "(无 choices)";
+            return "(鏃?choices)";
         }
         Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
-        if (message == null) return "(无 message)";
+        if (message == null) return "(鏃?message)";
         
-        // 检查原生 tool_calls (OpenAI Function Calling 格式)
+        // 妫€鏌ュ師鐢?tool_calls (OpenAI Function Calling 鏍煎紡)
         Object toolCallsObj = message.get("tool_calls");
         if (toolCallsObj != null) {
             try {
@@ -370,13 +396,13 @@ public class LlmGateway {
                         String argsStr = (String) function.get("arguments");
                         log.info("LLM native tool_call: {} args={}", toolName, argsStr);
                         
-                        // 转换为 tryParseToolCall 能识别的 ```json 格式
+                        // 杞崲涓?tryParseToolCall 鑳借瘑鍒殑 ```json 鏍煎紡
                         try {
                             Map<String, Object> args = objectMapper.readValue(argsStr, Map.class);
                             String toolJson = objectMapper.writeValueAsString(Map.of("tool", toolName, "args", args));
                             return "```json\n" + toolJson + "\n```";
                         } catch (Exception e) {
-                            // arguments 不是合法 JSON, 直接包裹
+                            // arguments 涓嶆槸鍚堟硶 JSON, 鐩存帴鍖呰９
                             return "```json\n{\"tool\":\"" + toolName + "\",\"args\":" + argsStr + "}\n```";
                         }
                     }
@@ -388,10 +414,10 @@ public class LlmGateway {
         
         Object content = message.get("content");
         if (content == null) {
-            // 可能是 reasoning model, 检查 reasoning_content 字段
+            // 鍙兘鏄?reasoning model, 妫€鏌?reasoning_content 瀛楁
             Object reasoning = message.get("reasoning_content");
             if (reasoning != null) return reasoning.toString();
-            return "(无 content)";
+            return "(鏃?content)";
         }
         String result = content.toString();
         if (result.isBlank()) {
@@ -401,28 +427,28 @@ public class LlmGateway {
     }
 
     /**
-     * 解析 provider: 如果请求未提供, 返回错误而不是默认连 OpenAI
-     * (OpenAI 在部分网络环境不可达, 会导致 90s 超时)
+     * 瑙ｆ瀽 provider: 濡傛灉璇锋眰鏈彁渚? 杩斿洖閿欒鑰屼笉鏄粯璁よ繛 OpenAI
+     * (OpenAI 鍦ㄩ儴鍒嗙綉缁滅幆澧冧笉鍙揪, 浼氬鑷?90s 瓒呮椂)
      */
     private ChatRequest.LlmProvider resolveProvider(ChatRequest.LlmProvider provider) {
         if (provider == null || provider.getBaseUrl() == null || provider.getBaseUrl().isBlank()) {
-            throw new RuntimeException("未配置 LLM Provider: 请在前端「设置 → 模型」中配置 baseUrl/apiKey/model 后重试");
+            throw new RuntimeException("鏈厤缃?LLM Provider: 璇峰湪鍓嶇銆岃缃?鈫?妯″瀷銆嶄腑閰嶇疆 baseUrl/apiKey/model 鍚庨噸璇?);
         }
         if (provider.getApiKey() == null || provider.getApiKey().isBlank()) {
-            throw new RuntimeException("LLM Provider apiKey 为空: 请在前端「设置 → 模型」中配置 API 密钥");
+            throw new RuntimeException("LLM Provider apiKey 涓虹┖: 璇峰湪鍓嶇銆岃缃?鈫?妯″瀷銆嶄腑閰嶇疆 API 瀵嗛挜");
         }
         if (provider.getModel() == null || provider.getModel().isBlank()) {
-            throw new RuntimeException("LLM Provider model 为空: 请在前端「设置 → 模型」中配置模型名称");
+            throw new RuntimeException("LLM Provider model 涓虹┖: 璇峰湪鍓嶇銆岃缃?鈫?妯″瀷銆嶄腑閰嶇疆妯″瀷鍚嶇О");
         }
         return provider;
     }
 
     /**
-     * 格式化 LLM 错误: 将 Spring WebClient 异常转为包含 "HTTP {status}" 前缀的标准格式
-     * 这样前端 classifyStreamError 可以正确匹配错误类型
+     * 鏍煎紡鍖?LLM 閿欒: 灏?Spring WebClient 寮傚父杞负鍖呭惈 "HTTP {status}" 鍓嶇紑鐨勬爣鍑嗘牸寮?
+     * 杩欐牱鍓嶇 classifyStreamError 鍙互姝ｇ‘鍖归厤閿欒绫诲瀷
      *
-     * 输出格式: "HTTP {status} {statusText} — {bodyPreview} (baseUrl={baseUrl} model={model})"
-     * 示例: "HTTP 404 Not Found — {\"error\":{\"message\":\"Model not found\"}} (baseUrl=https://api.openai.com/v1 model=gpt-4o)"
+     * 杈撳嚭鏍煎紡: "HTTP {status} {statusText} 鈥?{bodyPreview} (baseUrl={baseUrl} model={model})"
+     * 绀轰緥: "HTTP 404 Not Found 鈥?{\"error\":{\"message\":\"Model not found\"}} (baseUrl=https://api.openai.com/v1 model=gpt-4o)"
      */
     private String formatLlmError(Throwable e, ChatRequest.LlmProvider provider) {
         String baseUrl = provider.getBaseUrl();
@@ -436,11 +462,11 @@ public class LlmGateway {
                 String body = new String(wcre.getResponseBodyAsByteArray());
                 bodyPreview = body.length() > 200 ? body.substring(0, 200) : body;
             } catch (Exception ignored) {}
-            return String.format("HTTP %d %s — %s (baseUrl=%s model=%s)",
+            return String.format("HTTP %d %s 鈥?%s (baseUrl=%s model=%s)",
                 status, statusText, bodyPreview, baseUrl, model);
         }
 
-        // 非 HTTP 错误 (超时、连接拒绝等)
+        // 闈?HTTP 閿欒 (瓒呮椂銆佽繛鎺ユ嫆缁濈瓑)
         return String.format("HTTP 500 %s (baseUrl=%s model=%s)", e.getMessage(), baseUrl, model);
     }
 }

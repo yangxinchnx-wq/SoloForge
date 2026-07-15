@@ -1,26 +1,22 @@
-package com.soloforge.agent.advisor;
+﻿package com.soloforge.agent.advisor;
 
 import com.soloforge.agent.aisociety.LawClient;
 import com.soloforge.agent.aisociety.EconomyClient;
 import com.soloforge.agent.aisociety.MarlTrainingClient;
-import com.soloforge.agent.dto.ChatSettings;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.chat.client.AdvisedRequest;
-import org.springframework.ai.chat.client.AdvisedResponse;
-import org.springframework.ai.chat.client.CallAroundAdvisor;
-import org.springframework.ai.chat.client.CallAroundAdvisorChain;
-import org.springframework.core.Ordered;
+import org.springframework.ai.chat.client.ChatClientRequest;`nimport org.springframework.ai.chat.client.ChatClientResponse;`nimport org.springframework.ai.chat.client.advisor.api.CallAdvisor;`nimport org.springframework.ai.chat.client.advisor.api.CallAdvisorChain;
+
 import org.springframework.stereotype.Component;
 
-import java.util.Map;
 
 /**
- * SoloForge custom Advisors for Spring AI 2.0 Advisor chain.
+ * SoloForge custom Advisors for Spring AI 1.0.0 GA Advisor chain.
  *
  * <p>Extracts pre/post logic from AgentExecutor into declarative Advisor chain.
  *
- * <p>Execution order (via Ordered interface):
+ * <p>Execution order (via getOrder() from Ordered):
  * <ol>
  *   <li>LegalCheckAdvisor - legal compliance (highest priority)</li>
  *   <li>CreditCheckAdvisor - credit score check</li>
@@ -37,7 +33,7 @@ public class SoloForgeAdvisors {
      * Corresponds to AgentExecutor L86-95.
      */
     @Component
-    public static class LegalCheckAdvisor implements CallAroundAdvisor, Ordered {
+    public static class LegalCheckAdvisor implements CallAdvisor {
         private static final Logger log = LoggerFactory.getLogger(LegalCheckAdvisor.class);
         private final LawClient lawClient;
 
@@ -47,12 +43,12 @@ public class SoloForgeAdvisors {
         @Override public String getName() { return "LegalCheckAdvisor"; }
 
         @Override
-        public AdvisedRequest aroundCall(AdvisedRequest request, CallAroundAdvisorChain chain) {
+        public ChatClientResponse adviseCall(ChatClientRequest request, CallAdvisorChain chain) {
             String agentId = extractAgentId(request);
             if (agentId != null && !lawClient.checkLegal(agentId, null)) {
                 log.warn("LegalCheck BLOCKED: agent={}", agentId);
             }
-            return chain.nextAroundCall(request);
+            return chain.nextCall(request);
         }
     }
 
@@ -61,7 +57,7 @@ public class SoloForgeAdvisors {
      * Corresponds to AgentExecutor L97-102.
      */
     @Component
-    public static class CreditCheckAdvisor implements CallAroundAdvisor, Ordered {
+    public static class CreditCheckAdvisor implements CallAdvisor {
         private static final Logger log = LoggerFactory.getLogger(CreditCheckAdvisor.class);
         private final EconomyClient economyClient;
 
@@ -71,12 +67,12 @@ public class SoloForgeAdvisors {
         @Override public String getName() { return "CreditCheckAdvisor"; }
 
         @Override
-        public AdvisedRequest aroundCall(AdvisedRequest request, CallAroundAdvisorChain chain) {
+        public ChatClientResponse adviseCall(ChatClientRequest request, CallAdvisorChain chain) {
             String agentId = extractAgentId(request);
             if (agentId != null && !economyClient.checkCreditScore(agentId, null)) {
                 log.warn("CreditCheck BLOCKED: agent={}", agentId);
             }
-            return chain.nextAroundCall(request);
+            return chain.nextCall(request);
         }
     }
 
@@ -85,7 +81,7 @@ public class SoloForgeAdvisors {
      * Pushes training data after ToolCallingAdvisor completes tool calls.
      */
     @Component
-    public static class PostToolCallAdvisor implements CallAroundAdvisor, Ordered {
+    public static class PostToolCallAdvisor implements CallAdvisor {
         private static final Logger log = LoggerFactory.getLogger(PostToolCallAdvisor.class);
         private final MarlTrainingClient marlTrainingClient;
 
@@ -97,11 +93,11 @@ public class SoloForgeAdvisors {
         @Override public String getName() { return "PostToolCallAdvisor"; }
 
         @Override
-        public AdvisedResponse aroundCall(AdvisedRequest request, CallAroundAdvisorChain chain) {
-            AdvisedResponse response = chain.nextAroundCall(request);
-            if (response != null && response.responseContents() != null) {
+        public ChatClientResponse adviseCall(ChatClientRequest request, CallAdvisorChain chain) {
+            ChatClientResponse response = chain.nextCall(request);
+            if (response != null && response.chatResponse() != null) {
                 try {
-                    boolean hasToolCalls = response.responseContents().hasToolCalls();
+                    boolean hasToolCalls = response.chatResponse() != null;
                     if (hasToolCalls) {
                         String agentId = extractAgentId(request);
                         if (agentId != null) {
@@ -121,9 +117,10 @@ public class SoloForgeAdvisors {
 
     // ── Internal helpers ──
 
-    static String extractAgentId(AdvisedRequest request) {
-        if (request == null || request.chatOptions() == null) return null;
-        Object id = request.chatOptions().get("agent_id");
+    static String extractAgentId(ChatClientRequest request) {
+        if (request == null || request.context() == null) return null;
+        Object id = request.context().get("agent_id");
         return id != null ? id.toString() : null;
     }
 }
+

@@ -1,18 +1,18 @@
-/**
- * OpenAICompatibleProvider.ts — OpenAI Chat Completions 兼容客户端
+﻿/**
+ * OpenAICompatibleProvider.ts 鈥?OpenAI Chat Completions 鍏煎瀹㈡埛绔?
  *
- * 适用：OpenAI / Anthropic（带 proxy） / OpenRouter / DeepSeek / Moonshot / 任何 OpenAI 兼容服务
+ * 閫傜敤锛歄penAI / Anthropic锛堝甫 proxy锛?/ OpenRouter / DeepSeek / Moonshot / 浠讳綍 OpenAI 鍏煎鏈嶅姟
  *
- * SSE 格式：
+ * SSE 鏍煎紡锛?
  *   data: {"choices":[{"delta":{"content":"hello"}}]}
  *   data: {"choices":[{"delta":{"content":" world"}}]}
  *   data: [DONE]
  *
- * 实现要点：
- *   - 使用浏览器原生 fetch + ReadableStream（零依赖）
- *   - R2.3 fix: SSE 解析改用 utils/sseStream.parseSseFromStream (与主对话流统一)
- *   - 支持 AbortController 取消
- *   - 自动重试 1 次（仅对网络错误）
+ * 瀹炵幇瑕佺偣锛?
+ *   - 浣跨敤娴忚鍣ㄥ師鐢?fetch + ReadableStream锛堥浂渚濊禆锛?
+ *   - R2.3 fix: SSE 瑙ｆ瀽鏀圭敤 utils/sseStream.parseSseFromStream (涓庝富瀵硅瘽娴佺粺涓€)
+ *   - 鏀寔 AbortController 鍙栨秷
+ *   - 鑷姩閲嶈瘯 1 娆★紙浠呭缃戠粶閿欒锛?
  */
 
 import type {
@@ -24,7 +24,24 @@ import type {
 import { parseSseFromStream } from '../../utils/sseStream';
 
 const DEFAULT_TIMEOUT_MS = 60_000;
-const MAX_RETRIES = 1;
+const MAX_RETRIES = 3;
+const BASE_BACKOFF_MS = 1_000;
+const MAX_BACKOFF_MS = 60_000;
+
+function shouldRetryStatus(status: number): boolean {
+  return status === 429 || status === 503 || (status >= 500 && status < 600);
+}
+
+function calculateBackoff(attempt: number, retryAfterSeconds?: number): number {
+  if (retryAfterSeconds && retryAfterSeconds > 0) {
+    const ms = retryAfterSeconds * 1000;
+    return Math.min(ms + ms * 0.1 * Math.random(), MAX_BACKOFF_MS);
+  }
+  const exp = BASE_BACKOFF_MS * Math.pow(2, attempt);
+  const capped = Math.min(exp, MAX_BACKOFF_MS);
+  const jitter = capped * 0.2 * (Math.random() * 2 - 1);
+  return Math.max(100, Math.round(capped + jitter));
+}
 
 interface OpenAIChunk {
   choices?: Array<{ delta?: { content?: string } }>;
@@ -66,7 +83,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
 
     const timeoutId = setTimeout(() => controller.abort('timeout'), this.config.timeoutMs);
 
-    // push queue 桥接 parseSseFromStream (callback) 到 generator (pull)
+    // push queue 妗ユ帴 parseSseFromStream (callback) 鍒?generator (pull)
     const queue: string[] = [];
     let error: Error | null = null;
     let streamClosed = false;
@@ -104,7 +121,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
             throw new Error(`${this.name}: empty response body`);
           }
 
-          // R2.3: 用统一 parseSseFromStream 解析
+          // R2.3: 鐢ㄧ粺涓€ parseSseFromStream 瑙ｆ瀽
           await parseSseFromStream(response.body, (raw) => {
             if (cancelled) return;
             const json = raw as OpenAIChunk;
@@ -116,7 +133,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
           });
           streamClosed = true;
           notify();
-          return; // 成功完成
+          return; // 鎴愬姛瀹屾垚
         } catch (err) {
           attempt++;
           if (cancelled) return;
@@ -126,11 +143,23 @@ export class OpenAICompatibleProvider implements LLMProvider {
             notify();
             return;
           }
-          // 退避 200ms
-          await new Promise((r) => setTimeout(r, 200 * attempt));
+          // exponential backoff + 429 retry + Retry-After header parsing
+          const errMsg = err instanceof Error ? err.message : String(err);
+          const statusMatch = errMsg.match(/HTTP\s+(\d+)/);
+          const statusCode = statusMatch ? parseInt(statusMatch[1]) : 0;
+          if (!shouldRetryStatus(statusCode) && statusCode !== 0) {
+            error = err instanceof Error ? err : new Error(String(err));
+            streamClosed = true;
+            notify();
+            return;
+          }
+          const retryAfterMatch = errMsg.match(/retry-after\s*[:=]\s*(\d+)/i);
+          const retryAfter = retryAfterMatch ? parseInt(retryAfterMatch[1]) : undefined;
+          const delay = calculateBackoff(attempt - 1, retryAfter);
+          await new Promise((r) => setTimeout(r, delay));
         }
       }
-      // 重试耗尽但未成功 → 关闭流
+      // 閲嶈瘯鑰楀敖浣嗘湭鎴愬姛 鈫?鍏抽棴娴?
       if (!streamClosed) {
         error = new Error('OpenAI compatible: retries exhausted');
         streamClosed = true;
@@ -164,7 +193,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       rejectDone = reject;
     });
 
-    // 监听 streamPromise 完成
+    // 鐩戝惉 streamPromise 瀹屾垚
     streamPromise
       .then(() => resolveDone())
       .catch((err) => rejectDone(err instanceof Error ? err : new Error(String(err))));
@@ -173,7 +202,7 @@ export class OpenAICompatibleProvider implements LLMProvider {
       cancel() {
         if (cancelled) return;
         cancelled = true;
-        // R2.3 fix: 必须先唤醒 pendingResolve, 否则 iterator 卡在 await 上不会退出
+        // R2.3 fix: 蹇呴』鍏堝敜閱?pendingResolve, 鍚﹀垯 iterator 鍗″湪 await 涓婁笉浼氶€€鍑?
         notify();
         controller.abort('cancelled');
       },

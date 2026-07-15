@@ -1,4 +1,4 @@
-package com.soloforge.agent.training;
+﻿package com.soloforge.agent.training;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.soloforge.agent.dto.ChatRequest;
@@ -13,7 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import ai.chat.client.ChatClient; // ★ Path C: Spring AI ChatClient
+import org.springframework.ai.chat.client.ChatClient; // ★ Path C: Spring AI ChatClient
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -280,7 +280,7 @@ public class PromptOptimizer {
             int count = 0;
             for (TrainingTask t : tasks) {
                 if (count++ >= 3) { analysisPrompt.append("... 共 ").append(tasks.size()).append(" 个任务\n"); break; }
-                analysisInput("- ").append(t.getInput()).append(" (keywords: ").append(t.getKeywords()).append(")\n");
+                analysisPrompt.append("- ").append(t.getInput()).append(" (keywords: ").append(t.getKeywords()).append(")\n");
             }
             analysisPrompt.append("\n请分析当前 prompt 的弱点，然后输出一个改进版的完整 system prompt。只输出改进后的 prompt 内容，不要解释。");
 
@@ -401,3 +401,4 @@ public class PromptOptimizer {
         public void setWeight(int weight) { this.weight = weight; }
     }
 }
+

@@ -124,6 +124,7 @@
     "ioredis": "^5.11.1",
     "keytar": "^7.9.0",
     "node-llama-cpp": "^3.19.0",
+    "png-to-ico": "^3.0.2",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "recharts": "^3.8.1",

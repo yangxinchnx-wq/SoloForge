@@ -1,9 +1,9 @@
-package com.soloforge.agent.orchestrator;
+﻿package com.soloforge.agent.orchestrator;
 
 import com.soloforge.agent.dto.ChatRequest;
 import com.soloforge.agent.dto.ChatSettings;
-import com.soloforge.agent.executor.AgentExecutor; // @Deprecated — 保留 fallback
-import com.soloforge.agent.executor.SpringAiAgentExecutor; // ★ Path C: 新执行器
+import com.soloforge.agent.executor.AgentExecutor; // @Deprecated 鈥?淇濈暀 fallback
+import com.soloforge.agent.executor.SpringAiAgentExecutor; // 鈽?Path C: 鏂版墽琛屽櫒
 import com.soloforge.agent.persistence.AgentIdentityEntity;
 import com.soloforge.agent.persistence.AgentIdentityRepository;
 import lombok.RequiredArgsConstructor;
@@ -17,35 +17,34 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * 多 Agent 协作编排器 (3 种形态)
+ * 澶?Agent 鍗忎綔缂栨帓鍣?(3 绉嶅舰鎬?
  *
- * A. ParallelVoter  — 并行投票 (多 Agent 独立求解, 选最佳)
- * B. RoleDispatcher — 角色分工 (Planner→Executor→Reviewer)
- * C. DebateLoop     — 对话辩论 (多轮辩论后达成共识)
+ * A. ParallelVoter  鈥?骞惰鎶曠エ (澶?Agent 鐙珛姹傝В, 閫夋渶浣?
+ * B. RoleDispatcher 鈥?瑙掕壊鍒嗗伐 (Planner鈫扙xecutor鈫扲eviewer)
+ * C. DebateLoop     鈥?瀵硅瘽杈╄ (澶氳疆杈╄鍚庤揪鎴愬叡璇?
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class MultiAgentCoordinator {
 
-    private final AgentExecutor agentExecutor; // @Deprecated — 保留用于 fallback
-    private final SpringAiAgentExecutor springAiAgentExecutor; // ★ Path C: 新执行器
+    private final AgentExecutor agentExecutor; // @Deprecated 鈥?淇濈暀鐢ㄤ簬 fallback
+    private final SpringAiAgentExecutor springAiAgentExecutor; // 鈽?Path C: 鏂版墽琛屽櫒
     private final AgentIdentityRepository agentRepo;
 
-    private final ExecutorService parallelExecutor = Executors.newFixedThreadPool(4);
+    private final ExecutorService parallelExecutor = Executors.newFixedThreadPool(2);
 
     /**
-     * A. 并行投票
+     * A. 骞惰鎶曠エ
      *
-     * 多个 Agent 独立处理同一任务,选最优结果。
-     * 适用于: 代码生成、方案设计等"多解"问题
+     * 澶氫釜 Agent 鐙珛澶勭悊鍚屼竴浠诲姟,閫夋渶浼樼粨鏋溿€?     * 閫傜敤浜? 浠ｇ爜鐢熸垚銆佹柟妗堣璁＄瓑"澶氳В"闂
      */
     public String parallelVote(String task, List<String> agentIds,
                                ChatSettings settings, ChatRequest.LlmProvider provider) {
         log.info("ParallelVoter: agents={} task='{}'", agentIds,
             task.length() > 60 ? task.substring(0, 60) + "..." : task);
 
-        // 并行执行
+        // 骞惰鎵ц
         List<CompletableFuture<String>> futures = agentIds.stream()
             .map(agentId -> CompletableFuture.supplyAsync(() -> {
                 ChatSettings agentSettings = copySettings(settings, agentId);
@@ -54,12 +53,12 @@ public class MultiAgentCoordinator {
             }, parallelExecutor))
             .toList();
 
-        // 收集结果
+        // 鏀堕泦缁撴灉
         List<String> results = futures.stream()
             .map(CompletableFuture::join)
             .toList();
 
-        // 选最优 (简化版: 选最长的,实际应让 LLM 评判)
+        // 閫夋渶浼?(绠€鍖栫増: 閫夋渶闀跨殑,瀹為檯搴旇 LLM 璇勫垽)
         String best = selectBestResult(results);
         log.info("ParallelVoter completed: {} agents, best result {} chars",
             results.size(), best.length());
@@ -67,53 +66,52 @@ public class MultiAgentCoordinator {
     }
 
     /**
-     * B. 角色分工
+     * B. 瑙掕壊鍒嗗伐
      *
-     * Planner 拆解 → Executor 执行 → Reviewer 审查
-     * 适用于: 复杂任务、需要质量保证的场景
+     * Planner 鎷嗚В 鈫?Executor 鎵ц 鈫?Reviewer 瀹℃煡
+     * 閫傜敤浜? 澶嶆潅浠诲姟銆侀渶瑕佽川閲忎繚璇佺殑鍦烘櫙
      */
     public String roleDispatch(String task, ChatSettings settings, ChatRequest.LlmProvider provider) {
         log.info("RoleDispatcher: task='{}'",
             task.length() > 60 ? task.substring(0, 60) + "..." : task);
 
-        // 1. Planner 拆解
+        // 1. Planner 鎷嗚В
         ChatSettings plannerSettings = copySettings(settings, "plan_agent");
         String plan = springAiAgentExecutor.execute(
-            "请拆解以下任务,给出明确的步骤:\n" + task,
+            "璇锋媶瑙ｄ互涓嬩换鍔?缁欏嚭鏄庣‘鐨勬楠?\n" + task,
             ChatRequest.builder().settings(plannerSettings).provider(provider).build());
         log.info("Planner output: {} chars", plan.length());
 
-        // 2. Executor 执行
+        // 2. Executor 鎵ц
         ChatSettings executorSettings = copySettings(settings, "code_agent");
         String execution = springAiAgentExecutor.execute(
-            "按照以下计划执行任务:\n" + plan + "\n\n原始任务: " + task,
+            "鎸夌収浠ヤ笅璁″垝鎵ц浠诲姟:\n" + plan + "\n\n鍘熷浠诲姟: " + task,
             ChatRequest.builder().settings(executorSettings).provider(provider).build());
         log.info("Executor output: {} chars", execution.length());
 
-        // 3. Reviewer 审查
+        // 3. Reviewer 瀹℃煡
         ChatSettings reviewerSettings = copySettings(settings, "debug_agent");
         String review = springAiAgentExecutor.execute(
-            "审查以下执行结果,指出问题:\n\n计划:\n" + plan + "\n\n执行结果:\n" + execution,
+            "瀹℃煡浠ヤ笅鎵ц缁撴灉,鎸囧嚭闂:\n\n璁″垝:\n" + plan + "\n\n鎵ц缁撴灉:\n" + execution,
             ChatRequest.builder().settings(reviewerSettings).provider(provider).build());
         log.info("Reviewer output: {} chars", review.length());
 
-        // 4. 如果审查发现问题,重新执行 (简化版: 直接返回综合结果)
-        if (review.contains("问题") || review.contains("错误")) {
+        // 4. 濡傛灉瀹℃煡鍙戠幇闂,閲嶆柊鎵ц (绠€鍖栫増: 鐩存帴杩斿洖缁煎悎缁撴灉)
+        if (review.contains("闂") || review.contains("閿欒")) {
             ChatSettings reexecSettings = copySettings(settings, "code_agent");
             String reexec = springAiAgentExecutor.execute(
-                "根据审查意见修复:\n\n执行结果:\n" + execution + "\n\n审查意见:\n" + review,
+                "鏍规嵁瀹℃煡鎰忚淇:\n\n鎵ц缁撴灉:\n" + execution + "\n\n瀹℃煡鎰忚:\n" + review,
                 ChatRequest.builder().settings(reexecSettings).provider(provider).build());
-            return "## 计划\n" + plan + "\n\n## 执行(修复后)\n" + reexec + "\n\n## 审查\n" + review;
+            return "## 璁″垝\n" + plan + "\n\n## 鎵ц(淇鍚?\n" + reexec + "\n\n## 瀹℃煡\n" + review;
         }
 
-        return "## 计划\n" + plan + "\n\n## 执行\n" + execution + "\n\n## 审查\n" + review;
+        return "## 璁″垝\n" + plan + "\n\n## 鎵ц\n" + execution + "\n\n## 瀹℃煡\n" + review;
     }
 
     /**
-     * C. 对话辩论
+     * C. 瀵硅瘽杈╄
      *
-     * 多个 Agent 多轮辩论,最终达成共识。
-     * 适用于: 技术选型、方案评审等"多观点"问题
+     * 澶氫釜 Agent 澶氳疆杈╄,鏈€缁堣揪鎴愬叡璇嗐€?     * 閫傜敤浜? 鎶€鏈€夊瀷銆佹柟妗堣瘎瀹＄瓑"澶氳鐐?闂
      */
     public String debate(String task, List<String> agentIds, int maxRounds,
                          ChatSettings settings, ChatRequest.LlmProvider provider) {
@@ -128,40 +126,40 @@ public class MultiAgentCoordinator {
                 ChatSettings agentSettings = copySettings(settings, agentId);
                 String prompt = round == 0
                     ? task
-                    : "任务: " + task + "\n\n其他 Agent 的观点:\n" + String.join("\n---\n", positions)
-                        + "\n\n请给出你的观点,可以赞同或反驳其他 Agent。";
+                    : "浠诲姟: " + task + "\n\n鍏朵粬 Agent 鐨勮鐐?\n" + String.join("\n---\n", positions)
+                        + "\n\n璇风粰鍑轰綘鐨勮鐐?鍙互璧炲悓鎴栧弽椹冲叾浠?Agent銆?;
                 String position = springAiAgentExecutor.execute(prompt,
                         ChatRequest.builder().settings(agentSettings).provider(provider).build());
                 positions.add("[" + agentId + "] " + position);
             }
 
-            // 检查共识 (简化版: 第 2 轮后如果观点趋同则结束)
+            // 妫€鏌ュ叡璇?(绠€鍖栫増: 绗?2 杞悗濡傛灉瑙傜偣瓒嬪悓鍒欑粨鏉?
             if (round >= 1 && checkConsensus(positions)) {
                 log.info("Consensus reached at round {}", round + 1);
                 break;
             }
         }
 
-        // 仲裁 (选最后一个观点作为最终答案)
+        // 浠茶 (閫夋渶鍚庝竴涓鐐逛綔涓烘渶缁堢瓟妗?
         String verdict = positions.get(positions.size() - 1);
         log.info("Debate completed: {} positions, verdict {} chars", positions.size(), verdict.length());
-        return "## 辩论过程\n" + String.join("\n\n", positions) + "\n\n## 最终结论\n" + verdict;
+        return "## 杈╄杩囩▼\n" + String.join("\n\n", positions) + "\n\n## 鏈€缁堢粨璁篭n" + verdict;
     }
 
     private boolean checkConsensus(List<String> positions) {
-        // 简化版: 如果最近 2 个观点都包含"同意"或"赞同",认为达成共识
+        // 绠€鍖栫増: 濡傛灉鏈€杩?2 涓鐐归兘鍖呭惈"鍚屾剰"鎴?璧炲悓",璁や负杈炬垚鍏辫瘑
         if (positions.size() < 2) return false;
         String last = positions.get(positions.size() - 1).toLowerCase();
         String prev = positions.get(positions.size() - 2).toLowerCase();
-        return (last.contains("同意") || last.contains("赞同"))
-            && (prev.contains("同意") || prev.contains("赞同"));
+        return (last.contains("鍚屾剰") || last.contains("璧炲悓"))
+            && (prev.contains("鍚屾剰") || prev.contains("璧炲悓"));
     }
 
     private String selectBestResult(List<String> results) {
-        // 简化版: 选最长的 (实际应让 LLM 评判)
+        // 绠€鍖栫増: 閫夋渶闀跨殑 (瀹為檯搴旇 LLM 璇勫垽)
         return results.stream()
             .max((a, b) -> Integer.compare(a.length(), b.length()))
-            .orElse("(无结果)");
+            .orElse("(鏃犵粨鏋?");
     }
 
     private ChatSettings copySettings(ChatSettings original, String agentId) {
