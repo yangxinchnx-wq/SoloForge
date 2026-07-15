@@ -40,7 +40,6 @@ const BACKEND_URL = process.env.SOLOFORGE_BACKEND_URL || 'http://localhost:3001'
 
 let isDev = false;
 let mainWindow = null;
-let splashWindow = null;
 
   // ── 生产模式服务管理 ──────────────────────────────────────────
   // 打包后 Electron 需要自动拉起所有后端进程
@@ -715,6 +714,7 @@ function killProcessTree(child) {
 // 启动画布
 // ────────────────────────────────────────────
 async function startCanvas(sessionId, width, height) {
+  console.log(`[startCanvas] called: sessionId=${sessionId} width=${width} height=${height}`);
   if (canvasSessions.has(sessionId)) {
     const existing = canvasSessions.get(sessionId);
     if (existing.process && !existing.process.killed) {
@@ -733,6 +733,7 @@ async function startCanvas(sessionId, width, height) {
   }
 
   const exe = resolveCanvasExePath();
+  console.log(`[startCanvas] exe path: ${exe} exists: ${fs.existsSync(exe)}`);
   if (!fs.existsSync(exe)) {
     return { ok: false, error: `canvas_preview.exe not found at ${exe}` };
   }
@@ -1094,8 +1095,26 @@ async function clearCanvasDevices(sessionId) {
 }
 
 async function selectDeviceToCanvas(sessionId, modelKey, file, nativeSize) {
+  console.log('[selectDevice] sessionId=%s modelKey=%s file=%s nativeSize=%j', sessionId, modelKey, file, nativeSize);
+  // ★ 文件日志: 确认 IPC 链路 (console.log 在终端关闭后不可见)
+  try {
+    fs.appendFileSync(path.join(process.env.TEMP || '/tmp', 'soloforge_select_device.log'),
+      `${new Date().toISOString()} [selectDevice] sessionId=${sessionId} modelKey=${modelKey} file=${file} nativeSize=${JSON.stringify(nativeSize)}\n`);
+  } catch {}
   const s = canvasSessions.get(sessionId);
-  if (!s) return { ok: false, error: 'session not found' };
+  if (!s) {
+    console.log('[selectDevice] ✗ session not found. sessions=%j', Array.from(canvasSessions.keys()));
+    try {
+      fs.appendFileSync(path.join(process.env.TEMP || '/tmp', 'soloforge_select_device.log'),
+        `${new Date().toISOString()} [selectDevice] ✗ session not found. sessions=${JSON.stringify(Array.from(canvasSessions.keys()))}\n`);
+    } catch {}
+    return { ok: false, error: 'session not found' };
+  }
+  console.log('[selectDevice] → session port=%s hwnd=%s', s.port, s.hwnd);
+  try {
+    fs.appendFileSync(path.join(process.env.TEMP || '/tmp', 'soloforge_select_device.log'),
+      `${new Date().toISOString()} [selectDevice] → port=${s.port} hwnd=${s.hwnd}\n`);
+    } catch {}
   const payload = JSON.stringify({
     action: 'selectDevice',
     modelKey,
@@ -1103,6 +1122,10 @@ async function selectDeviceToCanvas(sessionId, modelKey, file, nativeSize) {
     nativeSize,
   });
   const r = await sendToCanvasRaw(s.port, '/render', payload, 5000);
+  try {
+    fs.appendFileSync(path.join(process.env.TEMP || '/tmp', 'soloforge_select_device.log'),
+      `${new Date().toISOString()} [selectDevice] HTTP status=${r.status} body=${(r.body || '').slice(0, 200)}\n`);
+  } catch {}
   if (r.status === 200) {
     try { return { ok: true, ...JSON.parse(r.body) }; }
     catch { return { ok: true }; }
@@ -1167,6 +1190,9 @@ async function screenshotCanvas(sessionId) {
 // IPC handlers
 // ────────────────────────────────────────────
 function registerIpc() {
+  // ★ 2026-07-16: 画布 IPC 全部注释掉 — 画布重构中
+  //   恢复方法: 删除本行下方的 /* 和对应的 */ 注释
+  /* CANVAS IPC DISABLED — see git history to restore
   ipcMain.handle('canvas:start', async (_e, { sessionId, width, height }) => {
     return startCanvas(sessionId, width || 800, height || 600);
   });
@@ -1265,27 +1291,79 @@ function buildDeviceDropdownShell() {
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  html, body { width:100%; height:100%; background:var(--surface); overflow:hidden; font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; }
-  :root { --surface:#fff; --surface-bright:#f4f4f5; --primary:#3b82f6; --on-surface:#18181b; --outline:#d4d4d8; }
-  .panel { width:100%; height:100%; background:var(--surface); border-radius:16px; padding:12px; display:flex; flex-direction:column; color:var(--on-surface); overflow:hidden; }
-  .header { display:flex; align-items:center; justify-content:space-between; gap:8px; border-bottom:1px solid color-mix(in srgb, var(--outline) 20%, transparent); padding-bottom:8px; margin-bottom:8px; }
-  .badge { font-size:10px; font-family:ui-monospace,monospace; font-weight:700; background:color-mix(in srgb, var(--primary) 10%, transparent); border:1px solid color-mix(in srgb, var(--primary) 25%, transparent); color:var(--primary); padding:2px 10px; border-radius:9999px; line-height:1.2; }
-  .current { font-size:10px; color:color-mix(in srgb, var(--on-surface) 50%, transparent); font-family:ui-monospace,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .none-btn { display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border-radius:10px; font-size:10px; font-family:ui-monospace,monospace; font-weight:600; border:1px solid transparent; background:transparent; color:color-mix(in srgb, var(--on-surface) 70%, transparent); cursor:pointer; transition:background .15s; margin-bottom:6px; }
-  .none-btn:hover { background:color-mix(in srgb, var(--surface-bright) 60%, transparent); }
-  .none-btn.active { background:color-mix(in srgb, var(--primary) 15%, transparent); color:var(--primary); border-color:color-mix(in srgb, var(--primary) 40%, transparent); }
-  .list { display:flex; flex-direction:column; gap:6px; overflow-y:auto; flex:1; padding-right:4px; }
-  .group { display:flex; flex-direction:column; gap:3px; }
-  .group-label { font-size:9px; font-family:ui-monospace,monospace; font-weight:700; text-transform:uppercase; letter-spacing:.1em; color:color-mix(in srgb, var(--on-surface) 40%, transparent); padding:0 4px; line-height:1; }
-  .item { display:flex; align-items:center; gap:8px; width:100%; padding:5px 10px; border-radius:10px; font-size:10px; font-family:ui-monospace,monospace; font-weight:600; border:1px solid transparent; background:transparent; color:color-mix(in srgb, var(--on-surface) 80%, transparent); cursor:pointer; transition:background .15s; }
-  .item:hover { background:color-mix(in srgb, var(--surface-bright) 60%, transparent); color:var(--primary); }
-  .item.active { background:color-mix(in srgb, var(--primary) 15%, transparent); color:var(--primary); border-color:color-mix(in srgb, var(--primary) 40%, transparent); }
+  html, body {
+    width:100%; height:100%; background:transparent; overflow:hidden;
+    font-family: "Inter", "Segoe UI", "SF Pro Text", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+  }
+  :root {
+    --surface:#ffffff; --surface-bright:#f4f4f5;
+    --primary:#6366f1; --primary-rgb:99,102,241;
+    --on-surface:#18181b; --on-surface-rgb:24,24,27;
+    --outline:#e4e4e7;
+  }
+  /* ★ 复用 MainModelSelector 风格 */
+  .panel {
+    width:100%; height:100%;
+    background:var(--surface);
+    border:1px solid rgba(var(--primary-rgb), 0.18);
+    border-radius:14px;
+    padding:6px;
+    display:flex; flex-direction:column;
+    color:var(--on-surface);
+    overflow:hidden;
+    box-shadow: 0 10px 32px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.55);
+    animation: panelIn 0.19s cubic-bezier(0.16,1,0.3,1);
+    transform-origin: 50% 0%;
+  }
+  @keyframes panelIn {
+    from { opacity:0; transform:scale(0.94) translateY(8px); }
+    to   { opacity:1; transform:scale(1) translateY(0); }
+  }
+  .header {
+    font-size:9px; font-weight:600; color:rgba(var(--primary-rgb),0.7);
+    padding:5px 8px 4px; letter-spacing:0.08em; text-transform:uppercase;
+    border-bottom:1px solid var(--outline);
+    margin-bottom:3px;
+  }
+  .item {
+    display:flex; align-items:center; gap:8px; width:100%;
+    padding:7px 10px; border-radius:8px;
+    font-size:11.5px; font-weight:500;
+    border:none; background:transparent;
+    color:rgba(var(--on-surface-rgb), 0.8);
+    cursor:pointer;
+    transition: background 0.12s ease, color 0.12s ease, transform 0.12s ease;
+  }
+  .item:hover {
+    background:rgba(var(--primary-rgb), 0.08);
+    color:var(--primary);
+    transform: translateX(2px);
+  }
+  .item.active {
+    color:var(--primary);
+    font-weight:700;
+  }
   .item .label { flex:1; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .item .dim { color:color-mix(in srgb, var(--on-surface) 40%, transparent); font-size:9px; }
-  .item .check { color:var(--primary); font-size:10px; }
-  .empty { text-align:center; padding:20px; font-size:11px; color:color-mix(in srgb, var(--on-surface) 40%, transparent); }
-  .list::-webkit-scrollbar { width:4px; }
-  .list::-webkit-scrollbar-thumb { background:color-mix(in srgb, var(--outline) 30%, transparent); border-radius:2px; }
+  .item .dim {
+    color:rgba(var(--on-surface-rgb), 0.38);
+    font-size:9.5px; font-family:"JetBrains Mono", ui-monospace, monospace;
+  }
+  .item .dot {
+    width:5px; height:5px; border-radius:50%;
+    background:var(--primary);
+    flex-shrink:0;
+  }
+  .group { display:flex; flex-direction:column; gap:1px; }
+  .group-label {
+    font-size:9px; font-weight:600;
+    color:rgba(var(--on-surface-rgb), 0.38);
+    padding:6px 10px 2px;
+    letter-spacing:0.04em;
+  }
+  .list { display:flex; flex-direction:column; gap:4px; overflow-y:auto; flex:1; }
+  .list::-webkit-scrollbar { width:0; display:none; }
+  .empty { text-align:center; padding:24px 12px; font-size:11px; color:rgba(var(--on-surface-rgb), 0.38); }
 </style></head>
 <body><div class="panel" id="app"></div>
 <script>
@@ -1307,25 +1385,27 @@ function buildDeviceDropdownContent(payload) {
     const itemsHtml = items.map(it => {
       const active = it.key === currentKey;
       return `<button class="item${active ? ' active' : ''}" data-key="${escapeHtml(it.key)}">
-        ${deviceIconSvg(it.group)}
         <span class="label">${escapeHtml(it.label)}</span>
         <span class="dim">${it.w}×${it.h}</span>
-        ${active ? '<span class="check">✓</span>' : ''}
+        ${active ? '<span class="dot"></span>' : ''}
       </button>`;
     }).join('');
     return `<div class="group"><div class="group-label">${escapeHtml(g.label)}</div>${itemsHtml}</div>`;
   }).join('');
 
-  const cssVars = `:root{--surface:${t.surface||'#fff'};--surface-bright:${t.surfaceBright||'#f4f4f5'};--primary:${t.primary||'#3b82f6'};--on-surface:${t.onSurface||'#18181b'};--outline:${t.outline||'#d4d4d8'};}`;
-  const appHtml = `<div class="header">
-    <div class="badge">${escapeHtml(payload.renderMode || '')} · ${payload.deviceCount || 0} 款设备</div>
-    ${payload.currentLabel ? `<div class="current">当前: ${escapeHtml(payload.currentLabel)}</div>` : ''}
-  </div>
-  <button class="none-btn${noneActive ? ' active' : ''}" data-key="none">
-    <span>▢</span><span style="flex:1;text-align:left">默认尺寸 (430×932)</span>
-    ${noneActive ? '<span>✓</span>' : ''}
-  </button>
-  <div class="list">${groupsHtml || '<div class="empty">暂无设备</div>'}</div>`;
+  // ★ cssText 格式: "prop:val;prop:val;" (不能带 :root{} 包裹, 否则无效)
+  const cssVars = `--surface:${t.surface||'#ffffff'};--surface-bright:${t.surfaceBright||'#f4f4f5'};--primary:${t.primary||'#6366f1'};--primary-rgb:${t.primaryRgb||'99,102,241'};--on-surface:${t.onSurface||'#18181b'};--on-surface-rgb:${t.onSurfaceRgb||'24,24,27'};--outline:${t.outline||'#e4e4e7'};`;
+  const appHtml = `<div class="header">${escapeHtml(payload.renderMode || '')} 设备</div>
+  <div class="list">
+    <div class="group">
+      <button class="item${noneActive ? ' active' : ''}" data-key="none">
+        <span class="label">默认尺寸</span>
+        <span class="dim">430×932</span>
+        ${noneActive ? '<span class="dot"></span>' : ''}
+      </button>
+    </div>
+    ${groupsHtml || '<div class="empty">暂无设备</div>'}
+  </div>`;
 
   // 返回要在 BrowserWindow 里执行的 JS 代码
   return `(function(){
@@ -1342,6 +1422,7 @@ function buildDeviceDropdownContent(payload) {
 
 function openDeviceDropdownWindow(payload) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
+  console.log('[device-dropdown] payload.theme:', JSON.stringify(payload.theme));
   const bounds = { x: (payload.x|0), y: (payload.y|0), width: (payload.width||320), height: (payload.height||460) };
   // 窗口已存在 → 只 setBounds + 更新内容 + show (不重新 loadURL, 不弹 DevTools)
   if (deviceDropdownWindow && !deviceDropdownWindow.isDestroyed()) {
@@ -1379,7 +1460,22 @@ function openDeviceDropdownWindow(payload) {
   deviceDropdownWindow.webContents.on('did-finish-load', () => {
     deviceDropdownReady = true;
     const pending = deviceDropdownWindow._pendingPayload || payload;
-    deviceDropdownWindow.webContents.executeJavaScript(buildDeviceDropdownContent(pending)).catch(() => {});
+    deviceDropdownWindow.webContents.executeJavaScript(buildDeviceDropdownContent(pending)).then(() => {
+      // ★ 调试: 打印实际解析的 CSS 值
+      deviceDropdownWindow.webContents.executeJavaScript(`(function(){
+        var cs = getComputedStyle(document.documentElement);
+        return JSON.stringify({
+          primary: cs.getPropertyValue('--primary'),
+          primaryRgb: cs.getPropertyValue('--primary-rgb'),
+          surface: cs.getPropertyValue('--surface'),
+          onSurface: cs.getPropertyValue('--on-surface'),
+          onSurfaceRgb: cs.getPropertyValue('--on-surface-rgb'),
+          outline: cs.getPropertyValue('--outline'),
+          itemColor: getComputedStyle(document.querySelector('.item')).color,
+          panelBg: getComputedStyle(document.querySelector('.panel')).backgroundColor
+        });
+      })()`).then(r => console.log('[device-dropdown] actual CSS:', r)).catch(e => console.log('[device-dropdown] inspect failed:', e?.message));
+    }).catch(() => {});
     deviceDropdownWindow._pendingPayload = null;
   });
   deviceDropdownWindow.on('blur', () => {
@@ -1475,6 +1571,7 @@ ipcMain.on('canvas:device-popup-close', () => {
       height: s.height,
     };
   });
+  */ // CANVAS IPC DISABLED END
 
 // ── 自定义窗口控制按钮 ──
 // 由 UI/src/components/WindowControls.tsx 调用
@@ -2205,54 +2302,6 @@ function psSetWindowPos(hwnd, x, y, w, h, flags) {
   return false;
 }
 
-// ── 启动 Splash 窗口（白色背景 + logo 呼吸动画） ──
-function createSplashWindow() {
-  const iconPath = path.join(__dirname, '..', 'build', 'icon', 'icon-666.png');
-  const appIcon = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : null;
-
-  // logo 路径: 优先 4K 版本, 回退旧版
-  const logoPath = (() => {
-    const p4k = path.join(__dirname, '..', 'public', 'lightning_logo_4k.png');
-    if (fs.existsSync(p4k)) return p4k;
-    const p = path.join(__dirname, '..', 'public', 'lightning_logo.png');
-    return fs.existsSync(p) ? p : null;
-  })();
-  const logoDataUrl = logoPath
-    ? `data:image/png;base64,${fs.readFileSync(logoPath).toString('base64')}`
-    : '';
-
-  const splashHtml = `<!DOCTYPE html>
-<html><head><style>
-  *{margin:0;padding:0;box-sizing:border-box}
-  html,body{width:100%;height:100%;overflow:hidden;background:#fff;
-            display:flex;align-items:center;justify-content:center}
-  img{width:200px;height:200px;object-fit:contain;
-      filter:drop-shadow(0 2px 12px rgba(0,0,0,.1))}
-</style></head><body>
-  ${logoDataUrl ? `<img src="${logoDataUrl}" alt="SoloForge">` : ''}
-</body></html>`;
-
-  splashWindow = new BrowserWindow({
-    width: 520,
-    height: 400,
-    frame: false,
-    resizable: false,
-    movable: false,
-    minimizable: false,
-    maximizable: false,
-    skipTaskbar: true,
-    alwaysOnTop: true,
-    backgroundColor: '#ffffff',
-    transparent: false,
-    icon: appIcon || undefined,
-    webPreferences: { sandbox: true },
-  });
-  splashWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(splashHtml)}`);
-  splashWindow.center();
-  splashWindow.on('closed', () => { splashWindow = null; });
-  return splashWindow;
-}
-
 function createWindow() {
   // 应用图标: 使用 build/icon/icon-666.png (256x256 高清版)
   const iconPath = path.join(__dirname, '..', 'build', 'icon', 'icon-666.png');
@@ -2323,6 +2372,20 @@ function createWindow() {
   // 2026-07-02 调试日志:确认 renderer 真正加载的 URL(诊断"看到的还是旧 UI")
   mainWindow.webContents.on('did-finish-load', () => {
     console.log(`[electron] ★ renderer 真正加载的 URL: ${mainWindow.webContents.getURL()}`);
+    // ★ 画布默认启动: renderer 加载完成后, 延迟 3s 触发画布自动启动
+    //   延迟是为了让渲染进程的 React 组件完成挂载和布局计算
+    if (!canvasSessions.has('canvas-default')) {
+      setTimeout(() => {
+        if (!canvasSessions.has('canvas-default')) {
+          console.log('[auto-start] triggering canvas startup from main process...');
+          startCanvas('canvas-default', 430, 932).then((res) => {
+            console.log('[auto-start] result:', res);
+          }).catch((e) => {
+            console.error('[auto-start] failed:', e);
+          });
+        }
+      }, 3000);
+    }
   });
   mainWindow.webContents.on('did-fail-load', (_, code, desc, url) => {
     console.error(`[electron] ✗ renderer 加载失败: ${url} (${code} ${desc})`);
@@ -2478,9 +2541,6 @@ app.whenReady().then(async () => {
     console.log(`[electron] isDev=${isDev} (defaultApp=${process.defaultApp}, isPackaged=${app.isPackaged})`);
   }
 
-  // ── Splash 窗口（白色 + logo 动画）立刻显示 ──
-  createSplashWindow();
-
   // ── 生产模式: 并行启动后端服务（不阻塞 UI） ──
   if (!isDev) {
     // fire-and-forget: 服务在后台并行启动
@@ -2565,11 +2625,6 @@ app.whenReady().then(async () => {
 
 // titleBarStyle:'hidden' → 原生 caption buttons, 无需任何 PowerShell hack
 mainWindow.once('ready-to-show', () => {
-  // 关闭 splash, 显示主窗口
-  if (splashWindow && !splashWindow.isDestroyed()) {
-    splashWindow.close();
-    splashWindow = null;
-  }
   mainWindow.show();
 });
 // 原生 maximize/unmaximize 事件 → 通知渲染器更新按钮状态
@@ -2581,7 +2636,7 @@ mainWindow.on('unmaximize', () => {
 });
   registerIpc();
   // ★ 清理 hot reload 残留的下拉框窗口 (防双窗口)
-  cleanupStaleDropdownWindows();
+  try { cleanupStaleDropdownWindows(); } catch (e) { console.warn('[electron] cleanupStaleDropdownWindows:', e?.message); }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

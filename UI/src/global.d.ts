@@ -14,46 +14,42 @@ interface WindowControlsApi {
   onMaximizeChanged: (cb: (isMax: boolean) => void) => () => void;
 }
 
-interface CanvasApi {
-  start: (sessionId: string, width: number, height: number) => Promise<{ ok: boolean; error?: string; session?: any; reused?: boolean }>;
-  resize: (sessionId: string, width: number, height: number) => Promise<{ ok: boolean; error?: string }>;
-  stop: (sessionId: string) => Promise<{ ok: boolean; notFound?: boolean }>;
-  push: (sessionId: string, dsl: any) => Promise<{ ok: boolean; status?: number; body?: string; error?: string }>;
-  status: (sessionId: string) => Promise<{ ok: boolean; active: boolean; info?: any }>;
-  reportBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: boolean; error?: string }>;
-  hostInfo: () => Promise<{ ok: boolean; created?: boolean; bounds: { x: number; y: number; width: number; height: number } }>;
-  ensureHost: () => Promise<{ ok: boolean; created?: boolean; hwnd?: number; bounds?: any; error?: string }>;
-  pushUI: (sessionId: string, dsl: any, deviceId?: string | null) => Promise<{ ok: boolean; error?: string }>;
-  selectDevice: (sessionId: string, modelKey: string, file: string, nativeSize: { w: number; h: number }) => Promise<{ ok: boolean; error?: string }>;
-  openDevicePopup: (payload: {
-    x: number; y: number; width: number; height: number;
-    renderMode: string; currentKey: string; currentLabel?: string; deviceCount: number;
-    groups: Array<{ label: string; items: Array<{ key: string; label: string; w: number; h: number; group: string }> }>;
-    theme: { surface: string; surfaceBright: string; primary: string; onSurface: string; outline: string };
-  }) => Promise<{ ok: boolean; error?: string }>;
-  closeDevicePopup: () => Promise<{ ok: boolean }>;
-  devicePopupSelect: (key: string) => void;
-  devicePopupClose: () => void;
-  onDeviceSelected: (callback: (data: { key: string; glbFile?: string }) => void) => () => void;
-  transformDevice: (sessionId: string, deviceId: string, transform: any) => Promise<{ ok: boolean; error?: string }>;
-  clearDevices: (sessionId: string) => Promise<{ ok: boolean; error?: string }>;
-  setBackground: (sessionId: string, color: string) => Promise<{ ok: boolean; error?: string }>;
-  screenshot: (sessionId: string) => Promise<{ ok: boolean; dataUrl?: string; width?: number; height?: number; error?: string }>;
-  getDeviceConfig: () => Promise<{ ok: boolean; config?: any; modelsDir?: string }>;
-  listModels: () => Promise<{ ok: boolean; models?: any[] }>;
-  embedStatus: (sessionId: string) => Promise<{ ok: boolean; sessionId?: string; embedded?: boolean; hwnd?: number; pid?: number; width?: number; height?: number; error?: string }>;
-  onExited: (callback: (info: CanvasExitedInfo) => void) => () => void;
-}
-
-/** main.cjs child.on('exit') 推送的画布退出信息 */
-interface CanvasExitedInfo {
-  sessionId: string;
-  exitCode: number | null;
-  signal: string | null;
-  isCrash: boolean;
-  stderr: string;
-  message: string;
-}
+// ★ 2026-07-16: CanvasApi / CanvasExitedInfo 注释掉 — 画布重构中
+//   恢复方法: 取消下面注释
+// interface CanvasApi {
+//   start: (sessionId: string, width: number, height: number) => Promise<{ ok: boolean; error?: string; session?: any; reused?: boolean }>;
+//   resize: (sessionId: string, width: number, height: number) => Promise<{ ok: boolean; error?: string }>;
+//   stop: (sessionId: string) => Promise<{ ok: boolean; notFound?: boolean }>;
+//   push: (sessionId: string, dsl: any) => Promise<{ ok: boolean; status?: number; body?: string; error?: string }>;
+//   status: (sessionId: string) => Promise<{ ok: boolean; active: boolean; info?: any }>;
+//   reportBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ ok: boolean; error?: string }>;
+//   hostInfo: () => Promise<{ ok: boolean; created?: boolean; bounds: { x: number; y: number; width: number; height: number } }>;
+//   ensureHost: () => Promise<{ ok: boolean; created?: boolean; hwnd?: number; bounds?: any; error?: string }>;
+//   pushUI: (sessionId: string, dsl: any, deviceId?: string | null) => Promise<{ ok: boolean; error?: string }>;
+//   selectDevice: (sessionId: string, modelKey: string, file: string, nativeSize: { w: number; h: number }) => Promise<{ ok: boolean; error?: string }>;
+//   openDevicePopup: (payload: any) => Promise<{ ok: boolean; error?: string }>;
+//   closeDevicePopup: () => Promise<{ ok: boolean }>;
+//   devicePopupSelect: (key: string) => void;
+//   devicePopupClose: () => void;
+//   onDeviceSelected: (callback: (data: { key: string; glbFile?: string }) => void) => () => void;
+//   transformDevice: (sessionId: string, deviceId: string, transform: any) => Promise<{ ok: boolean; error?: string }>;
+//   clearDevices: (sessionId: string) => Promise<{ ok: boolean; error?: string }>;
+//   setBackground: (sessionId: string, color: string) => Promise<{ ok: boolean; error?: string }>;
+//   screenshot: (sessionId: string) => Promise<{ ok: boolean; dataUrl?: string; width?: number; height?: number; error?: string }>;
+//   getDeviceConfig: () => Promise<{ ok: boolean; config?: any; modelsDir?: string }>;
+//   listModels: () => Promise<{ ok: boolean; models?: any[] }>;
+//   embedStatus: (sessionId: string) => Promise<{ ok: boolean; sessionId?: string; embedded?: boolean; hwnd?: number; pid?: number; width?: number; height?: number; error?: string }>;
+//   onExited: (callback: (info: CanvasExitedInfo) => void) => () => void;
+// }
+//
+// interface CanvasExitedInfo {
+//   sessionId: string;
+//   exitCode: number | null;
+//   signal: string | null;
+//   isCrash: boolean;
+//   stderr: string;
+//   message: string;
+// }
 
 interface AgentApi {
   on: (eventType: string, callback: (msg: unknown) => void) => () => void;
@@ -117,7 +113,8 @@ interface SoloForgeApi {
     chrome: string;
     node: string;
   };
-  canvas: CanvasApi;
+  // ★ 2026-07-16: canvas 注释掉 — 画布重构中
+  // canvas: CanvasApi;
   agent: AgentApi;
   ai: AiApi;
   controls: WindowControlsApi;

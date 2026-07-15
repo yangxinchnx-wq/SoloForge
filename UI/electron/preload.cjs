@@ -15,69 +15,33 @@ contextBridge.exposeInMainWorld('soloforge', {
   },
   // ── 2026-07-14: 手动重载 (HMR 已禁用, 渲染层可调用此方法触发完整页面重载) ──
   reload: () => ipcRenderer.invoke('app:reload'),
-  // 画布相关 IPC（受 contextBridge 沙箱约束，只暴露 invoke 包装）
-  canvas: {
-    start: (sessionId, width, height) =>
-      ipcRenderer.invoke('canvas:start', { sessionId, width, height }),
-    resize: (sessionId, width, height) =>
-      ipcRenderer.invoke('canvas:resize', { sessionId, width, height }),
-    stop: (sessionId) => ipcRenderer.invoke('canvas:stop', { sessionId }),
-    push: (sessionId, dsl) => ipcRenderer.invoke('canvas:push', { sessionId, dsl }),
-    status: (sessionId) => ipcRenderer.invoke('canvas:status', { sessionId }),
-    reportBounds: (bounds) => ipcRenderer.invoke('canvas:report-bounds', bounds),
-    hostInfo: () => ipcRenderer.invoke('canvas:host-info'),
-    // ★ 新增: 确保画布宿主窗口存在
-    ensureHost: () => ipcRenderer.invoke('canvas:ensure-host'),
-    // ★ 新增: pushUI — 推送 UI DSL (带 deviceId 关联)
-    pushUI: (sessionId, dsl, deviceId) =>
-      ipcRenderer.invoke('canvas:push-ui', { sessionId, dsl, deviceId }),
-    // ★ 新增: selectDevice — 加载 3D 设备模型到画布 (POST /render)
-    selectDevice: (sessionId, modelKey, file, nativeSize) =>
-      ipcRenderer.invoke('canvas:select-device', { sessionId, modelKey, file, nativeSize }),
-    // ★ 设备下拉框 (轻量 BrowserWindow, 盖住 Flutter HWND)
-    openDevicePopup: (payload) =>
-      ipcRenderer.invoke('canvas:open-device-popup', payload),
-    closeDevicePopup: () =>
-      ipcRenderer.invoke('canvas:close-device-popup'),
-    devicePopupSelect: (key) =>
-      ipcRenderer.send('canvas:device-popup-select', { key }),
-    devicePopupClose: () =>
-      ipcRenderer.send('canvas:device-popup-close'),
-    onDeviceSelected: (callback) => {
-      const handler = (_e, data) => callback(data);
-      ipcRenderer.on('canvas:device-selected', handler);
-      return () => ipcRenderer.removeListener('canvas:device-selected', handler);
-    },
-    // ★ 新增: transformDevice — 拖拽/旋转/缩放 3D 设备
-    transformDevice: (sessionId, deviceId, transform) =>
-      ipcRenderer.invoke('canvas:transform-device', { sessionId, deviceId, transform }),
-    // ★ 新增: clearDevices — 清除画布上所有 3D 设备
-    clearDevices: (sessionId) =>
-      ipcRenderer.invoke('canvas:clear-devices', { sessionId }),
-    // ★ 新增: setBackground — 设置画布背景色
-    setBackground: (sessionId, color) =>
-      ipcRenderer.invoke('canvas:set-background', { sessionId, color }),
-    // ★ 新增: screenshot — 截图画布
-    screenshot: (sessionId) =>
-      ipcRenderer.invoke('canvas:screenshot', { sessionId }),
-    // ★ 新增: getDeviceConfig — 获取设备配置
-    getDeviceConfig: () =>
-      ipcRenderer.invoke('canvas:get-device-config'),
-    // ★ 新增: listModels — 列出所有可用模型
-    listModels: () =>
-      ipcRenderer.invoke('canvas:list-models'),
-    // ★ 新增: embedStatus — 查询画布嵌入状态
-    embedStatus: (sessionId) =>
-      ipcRenderer.invoke('canvas:embed-status', { sessionId }),
-    // ★ 画布进程退出事件 (崩溃 / 正常退出), 由 main.cjs 的 child.on('exit') 推送
-    //   回调参数: { sessionId, exitCode, signal, isCrash, stderr, message }
-    //   返回取消订阅函数
-    onExited: (callback) => {
-      const handler = (_e, info) => callback(info);
-      ipcRenderer.on('canvas:exited', handler);
-      return () => ipcRenderer.removeListener('canvas:exited', handler);
-    },
-  },
+  // ★ 2026-07-16: 画布 IPC 全部注释掉 — 画布重构中
+  //   恢复方法: 取消下面 canvas 块的注释
+  // canvas: {
+  //   start: (sessionId, width, height) => ipcRenderer.invoke('canvas:start', { sessionId, width, height }),
+  //   resize: (sessionId, width, height) => ipcRenderer.invoke('canvas:resize', { sessionId, width, height }),
+  //   stop: (sessionId) => ipcRenderer.invoke('canvas:stop', { sessionId }),
+  //   push: (sessionId, dsl) => ipcRenderer.invoke('canvas:push', { sessionId, dsl }),
+  //   status: (sessionId) => ipcRenderer.invoke('canvas:status', { sessionId }),
+  //   reportBounds: (bounds) => ipcRenderer.invoke('canvas:report-bounds', bounds),
+  //   hostInfo: () => ipcRenderer.invoke('canvas:host-info'),
+  //   ensureHost: () => ipcRenderer.invoke('canvas:ensure-host'),
+  //   pushUI: (sessionId, dsl, deviceId) => ipcRenderer.invoke('canvas:push-ui', { sessionId, dsl, deviceId }),
+  //   selectDevice: (sessionId, modelKey, file, nativeSize) => ipcRenderer.invoke('canvas:select-device', { sessionId, modelKey, file, nativeSize }),
+  //   openDevicePopup: (payload) => ipcRenderer.invoke('canvas:open-device-popup', payload),
+  //   closeDevicePopup: () => ipcRenderer.invoke('canvas:close-device-popup'),
+  //   devicePopupSelect: (key) => ipcRenderer.send('canvas:device-popup-select', { key }),
+  //   devicePopupClose: () => ipcRenderer.send('canvas:device-popup-close'),
+  //   onDeviceSelected: (callback) => { const handler = (_e, data) => callback(data); ipcRenderer.on('canvas:device-selected', handler); return () => ipcRenderer.removeListener('canvas:device-selected', handler); },
+  //   transformDevice: (sessionId, deviceId, transform) => ipcRenderer.invoke('canvas:transform-device', { sessionId, deviceId, transform }),
+  //   clearDevices: (sessionId) => ipcRenderer.invoke('canvas:clear-devices', { sessionId }),
+  //   setBackground: (sessionId, color) => ipcRenderer.invoke('canvas:set-background', { sessionId, color }),
+  //   screenshot: (sessionId) => ipcRenderer.invoke('canvas:screenshot', { sessionId }),
+  //   getDeviceConfig: () => ipcRenderer.invoke('canvas:get-device-config'),
+  //   listModels: () => ipcRenderer.invoke('canvas:list-models'),
+  //   embedStatus: (sessionId) => ipcRenderer.invoke('canvas:embed-status', { sessionId }),
+  //   onExited: (callback) => { const handler = (_e, info) => callback(info); ipcRenderer.on('canvas:exited', handler); return () => ipcRenderer.removeListener('canvas:exited', handler); },
+  // },
   // ── 2026 自定义窗口控件(替代 Electron 的 titleBarOverlay,因为 Windows 11 22H2+ DWM 暗 tint) ──
   // 由 UI/src/components/WindowControls.tsx 调用
   window: {

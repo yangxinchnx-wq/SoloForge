@@ -1,966 +1,86 @@
-import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import {
-  RefreshCw, Play, Square, Loader2,
-  AlertCircle, Monitor, Smartphone, Tablet, Watch,
-  Palette, MonitorSmartphone, Info, ChevronDown, Check, Maximize2,
-  Code2, Box, Square as SquareIcon
-} from '../utils/icons';
-import { useCanvasDeviceStore, type CanvasDeviceInfo } from '../state/canvasDeviceStore';
-import { MountTransition } from './MountTransition';
-import { usePreviewStreamStore, restoreDslFromHotStore, restoreDslFromChatHistory } from '../state/previewStreamStore';
-import WebAstPreview from './WebAstPreview';
-import { scaleDsl } from '../services/canvas/scaleDsl';
-import {
-  selectModel as apiSelectModel,
-  deleteCanvas as apiDeleteCanvas,
-  type CanvasResource,
-} from '../services/canvas/sessionApi';
+/**
+ * PreviewPanel.tsx — 画布预览面板
+ *
+ * ★ 2026-07-16: 画布重构中 — 旧版 Flutter IPC + 设备选择 + 3D 渲染代码已全部注释掉
+ *   恢复方法: git checkout HEAD -- UI/src/components/PreviewPanel.tsx
+ *   或查看本文件底部 OLD CODE 注释块
+ *
+ * 当前状态: 仅保留面板容器 + CanvasResourceBar（画布选项卡）+ 占位提示
+ */
+
+import React from 'react';
 import { CanvasResourceBar } from './CanvasResourceBar';
-import { setCanvasSessionId, clearCanvasSessionId, clearByCanvasSessionId } from '../services/incrementalCanvasPusher';
-import { useLayoutMeta } from '../context/LayoutContext';
+import { usePreviewStreamStore } from '../state/previewStreamStore';
+import type { CanvasResource } from '../services/canvas/sessionApi';
 
-// ── 设备下拉框动画 variants (与协同副模型 SecondaryModelSelector 完全一致) ──
-// 柔和推出: y 位移 + opacity 同步淡入 + scale 微调, 顶部锚点
-const devicePanelVariants = {
-  hidden: {
-    opacity: 0,
-    scale: 0.94,
-    y: 20,
-    transition: {
-      duration: 0.14,
-      ease: [0.4, 0, 1, 1] as [number, number, number, number],
-    },
-  },
-  visible: {
-    opacity: 1,
-    scale: 1,
-    y: 0,
-    transition: {
-      duration: 0.38,
-      ease: [0.16, 1, 0.3, 1] as [number, number, number, number],
-    },
-  },
-};
-
-const deviceContentVariants = {
-  hidden: { opacity: 0, y: 8 },
-  visible: {
-    opacity: 1,
-    y: 0,
-    transition: {
-      duration: 0.32,
-      ease: [0.16, 1, 0.3, 1] as [number, number, number, number],
-      delay: 0.08,
-    },
-  },
-};
-
-const deviceBackdropVariants = {
-  hidden: { opacity: 0, transition: { duration: 0.18, ease: [0.4, 0, 1, 1] as [number, number, number, number] } },
-  visible: { opacity: 1, transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] } },
-};
+// ★ 以下 import 已注释掉 — 画布重构期间不需要
+// import { motion, AnimatePresence } from 'framer-motion';
+// import {
+//   RefreshCw, Play, Square, Loader2,
+//   AlertCircle, Monitor, Smartphone, Tablet, Watch,
+//   Palette, MonitorSmartphone, Info, ChevronDown, Check, Maximize2,
+//   Code2
+// } from '../utils/icons';
+// import { useCanvasDeviceStore, type CanvasDeviceInfo } from '../state/canvasDeviceStore';
+// import { MountTransition } from './MountTransition';
+// import { restoreDslFromHotStore, restoreDslFromChatHistory } from '../state/previewStreamStore';
+// import WebAstPreview from './WebAstPreview';
+// import { scaleDsl } from '../services/canvas/scaleDsl';
+// import {
+//   selectModel as apiSelectModel,
+//   deleteCanvas as apiDeleteCanvas,
+// } from '../services/canvas/sessionApi';
+// import { setCanvasSessionId, clearCanvasSessionId, clearByCanvasSessionId } from '../services/incrementalCanvasPusher';
+// import { useLayoutMeta } from '../context/LayoutContext';
 
 interface PreviewPanelProps {
   width?: number;
   isResizing?: boolean;
   dragStartWidth?: number;
   selectedChatId?: string;
-  /** P0: 由 useChatClickCanvasBridge 解析出的画布 ID (canvas_1 ... canvas_10) */
   canvasId?: string | null;
-  /** P0: 画布 ID 是否已就绪 (首次进入 chat 时, 后台拉取+建画布可能耗时) */
   canvasReady?: boolean;
-  /** P0: 画布池资源列表 (用于 CanvasResourceBar chip 栏) */
   canvases?: CanvasResource[];
-  /** P0: 画布池上限 */
   maxCanvases?: number;
-  /** P0: 切换画布 */
   onSelectCanvas?: (canvasId: string) => void;
-  /** P0: 新建画布 (返回新画布 ID; 已满返回 null) */
   onCreateCanvas?: () => Promise<string | null>;
-  /** P0: 改画布描述 */
   onRenameCanvas?: (canvasId: string, description: string) => Promise<boolean>;
-  /** P0: 删除画布 (仅 owner) */
   onDeleteCanvas?: (canvasId: string) => Promise<boolean>;
 }
 
-type CanvasState = 'idle' | 'starting' | 'running' | 'error';
-
-// ★ window.soloforge / CanvasApi / CanvasExitedInfo 类型定义已移至 src/global.d.ts (全局, 避免重复声明冲突)
-
-const isElectron = () => typeof window !== 'undefined' && !!window.soloforge;
-
-// 预设底色 — 满足"干净"要求
-const BG_PRESETS: { name: string; value: string; fg: string }[] = [
-  { name: '纯白', value: '#FFFFFF', fg: '#1f2937' },
-  { name: '纯黑', value: '#000000', fg: '#f3f4f6' },
-  { name: '深夜', value: '#0B1020', fg: '#cbd5e1' },
-  { name: '雪灰', value: '#F1F5F9', fg: '#1e293b' },
-  { name: '护眼', value: '#E8F0E8', fg: '#2f4f4f' },
-  { name: '暖灰', value: '#F4ECE0', fg: '#3a2e1f' },
-];
-
-// ── 设备分组类型 ──
-type SizeGroup = 'desktop' | 'mobile' | 'tablet' | 'watch';
-
-interface DevicePreset {
-  key: string; group: SizeGroup; groupLabel: string; icon: React.ComponentType<any>;
-  label: string; w: number; h: number;
-  /** 3D 模型的 GLB 文件路径 (相对于 models/3d/) */
-  glbFile?: string;
-  /** 2D 边框的 PNG 文件路径 (相对于 models/2d/) */
-  pngFile?: string;
-}
-
-// ── 2D 设备列表 (有 PNG 边框的设备) ──
-const DEVICES_2D: DevicePreset[] = [
-  // 手机
-  { key: 'd2-iphone16',        group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 16',          w: 393, h: 852, pngFile: 'mobile/iphone_16.png' },
-  { key: 'd2-iphone16plus',    group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 16 Plus',      w: 430, h: 932, pngFile: 'mobile/iphone_16_plus.png' },
-  { key: 'd2-iphone16pro',     group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 16 Pro',       w: 402, h: 869, pngFile: 'mobile/iphone_16_pro.png' },
-  { key: 'd2-iphone16promax',  group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 16 Pro Max',   w: 440, h: 956, pngFile: 'mobile/iphone_16_pro_max.png' },
-  // 平板
-  { key: 'd2-ipada16',         group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'iPad A16 (竖屏)',     w: 820, h: 1180, pngFile: 'tablet/ipad_a16.png' },
-  { key: 'd2-ipada16ls',       group: 'tablet',  groupLabel: '平板',   icon: Tablet,     label: 'iPad A16 (横屏)',     w: 1180, h: 820, pngFile: 'tablet/ipad_a16_landscape.png' },
-  // 桌面
-  { key: 'd2-imac',            group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'iMac M4 24"',         w: 2560, h: 1440, pngFile: 'desktop/imac_m4.png' },
-  { key: 'd2-macbookneo',      group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'MacBook Neo',         w: 1512, h: 982, pngFile: 'desktop/macbook_neo.png' },
-  { key: 'd2-macbookpro14',    group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'MacBook Pro M5 14"',  w: 1512, h: 982, pngFile: 'desktop/macbook_pro_m5_14.png' },
-  { key: 'd2-macbookpro16',    group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'MacBook Pro M5 16"',  w: 1728, h: 1117, pngFile: 'desktop/macbook_pro_m5_16.png' },
-  { key: 'd2-studiodisplay',   group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'Studio Display',      w: 2560, h: 1440, pngFile: 'desktop/studio_display.png' },
-  { key: 'd2-appletv',         group: 'desktop', groupLabel: '桌面',   icon: Monitor,    label: 'Apple TV 4K',         w: 1920, h: 1080, pngFile: 'desktop/apple_tv_4k.png' },
-  // 手表
-  { key: 'd2-watchs11_42',     group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch S11 42mm', w: 352, h: 352, pngFile: 'watch/apple_watch_s11_42.png' },
-  { key: 'd2-watchs11_46',     group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch S11 46mm', w: 396, h: 396, pngFile: 'watch/apple_watch_s11_46.png' },
-  { key: 'd2-watchultra2',     group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch Ultra 2',  w: 502, h: 410, pngFile: 'watch/apple_watch_ultra_2.png' },
-  { key: 'd2-watchultra3',     group: 'watch',   groupLabel: '手表',   icon: Watch,      label: 'Apple Watch Ultra 3',  w: 502, h: 410, pngFile: 'watch/apple_watch_ultra_3.png' },
-];
-
-// ── 3D 设备列表 (仅有真实 GLB 模型的设备, 文件 >10KB 才算真实) ──
-const DEVICES_3D: DevicePreset[] = [
-  // 手机 — 仅有真实 GLB 文件的
-  { key: 'm-iphone14pro',    group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 14 Pro',      w: 393, h: 852, glbFile: 'mobile/iphone_14_pro.glb' },
-  { key: 'm-iphone15promax', group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 15 Pro Max',  w: 430, h: 932, glbFile: 'mobile/iphone_15_pro_max.glb' },
-  { key: 'm-iphone11promax', group: 'mobile',  groupLabel: '手机',   icon: Smartphone, label: 'iPhone 11 Pro Max',  w: 414, h: 896, glbFile: 'mobile/iphone_11_pro_max.glb' },
-];
-
-const FILL_PRESET: DevicePreset = {
-  key: 'fill', group: 'desktop', groupLabel: '', icon: Maximize2, label: '填满当前宽度', w: 0, h: 0,
-};
-
-// ★ FIX 2026-07-14: 无设备选择时的默认画布尺寸 (iPhone 15 Pro Max: 430×932)
-//   用户未选择设备时, 画布按此尺寸渲染, LLM 也被告知此尺寸
-const DEFAULT_CANVAS_PRESET: DevicePreset = {
-  key: 'default', group: 'mobile', groupLabel: '手机', icon: Smartphone,
-  label: 'iPhone 15 Pro Max', w: 430, h: 932,
-};
-
-function findDevicePreset(key: string): DevicePreset {
-  if (key === 'fill') return FILL_PRESET;
-  return [...DEVICES_2D, ...DEVICES_3D].find(p => p.key === key) || FILL_PRESET;
-}
-
 export default function PreviewPanel({
-  width = 472, isResizing = false, dragStartWidth = 472,
-  selectedChatId, canvasId, canvasReady,
-  canvases = [], maxCanvases = 10,
-  onSelectCanvas, onRenameCanvas, onDeleteCanvas,
+  width = 472,
+  isResizing = false,
+  canvases = [],
+  maxCanvases = 10,
+  onSelectCanvas,
+  onRenameCanvas,
 }: PreviewPanelProps) {
-  // ★ 2026-07-15: 获取面板宽度是否已从服务器加载完毕, 避免画布用默认尺寸启动后闪烁
-  const { previewWidthLoaded } = useLayoutMeta();
-
-  // 2026-07-06 阶段3: 订阅 AST 预览流状态
-  const previewEntry = usePreviewStreamStore(s => selectedChatId ? s.entries[selectedChatId] : undefined);
-  const previewIsStreaming = previewEntry?.isStreaming ?? false;
-  const previewPayload = previewEntry?.payload ?? null;
-  const previewAst = previewEntry?.ast;
-  const previewSourceCode = previewEntry?.sourceCode ?? '';
-  const previewLanguage = previewEntry?.language ?? '';
-  const previewRawBytes = previewEntry?.rawBytes ?? 0;
-  const previewPushError = previewEntry?.pushError ?? null;
-  const [showSourceCode, setShowSourceCode] = useState(false);
-
-  const [canvasState, setCanvasState] = useState<CanvasState>('idle');
-  const [canvasError, setCanvasError] = useState<string>('');
-  // P0: 优先使用 App.tsx 解析出的画布 ID (canvas_1 ... canvas_10)
-  //   - 解析期间 fallback 到旧派生 ID 保证不会白屏
-  //   - canvasReady 后再切到真实 ID (canvas.stop 老 + canvas.start 新)
-  const fallbackId = `canvas-${selectedChatId || 'default'}`;
-  const effectiveCanvasId = canvasId || fallbackId;
-
-  // ★ 2026-07-13: 画布 DSL 恢复链路 (三级降级)
-  //   1. previewStreamStore 已有数据 → 不做任何事
-  //   2. GarnetStore 热存储 (24h TTL) → 快速恢复
-  //   3. 聊天历史 rawContent (持久) → 从最后一条 assistant 消息提取代码块重新翻译
-  useEffect(() => {
-    if (!selectedChatId) return;
-    const existing = usePreviewStreamStore.getState().entries[selectedChatId];
-    if (existing?.ast || existing?.payload) return; // 已有数据, 不覆盖
-    let cancelled = false;
-
-    // 公共: 将恢复的 DSL 写入 previewStreamStore
-    const applyRestored = (restored: { dsl: any; language: string; sourceCode: string }) => {
-      if (cancelled) return;
-      const ps = usePreviewStreamStore.getState();
-      ps.initEntry(selectedChatId, { language: restored.language, sessionId: effectiveCanvasId });
-      ps.updateStream(selectedChatId, {
-        raw: restored.sourceCode,
-        payload: {
-          language: restored.language,
-          framework: restored.language,
-          source_code: restored.sourceCode,
-          preview: { root: restored.dsl },
-        } as any,
-        errors: [],
-        done: true,
-      });
-      ps.confirmPayload(selectedChatId, {
-        language: restored.language,
-        framework: restored.language,
-        source_code: restored.sourceCode,
-        preview: { root: restored.dsl },
-      } as any);
-      // ★ FIX 2026-07-15: 恢复 DSL 时也记录当前画布尺寸为设计尺寸
-      const { w: rW, h: rH } = computeFrame(activePreset);
-      ps.setDesignSize(selectedChatId, { width: rW, height: rH });
-      console.log(`[PreviewPanel] DSL restored from ${restored.language}, sourceLen=${restored.sourceCode.length}`);
-    };
-
-    // Step 1: 尝试 GarnetStore 热存储
-    restoreDslFromHotStore(selectedChatId, effectiveCanvasId).then((hotResult) => {
-      if (cancelled) return;
-      if (hotResult) {
-        applyRestored(hotResult);
-        return;
-      }
-      // Step 2: 热存储没有 → 从聊天历史降级恢复
-      //   通过 window 全局引用获取 useChatStore.getState (避免循环依赖)
-      let messages: Array<{ sender: string; rawContent?: string; content: string }> = [];
-      const chatGetState = (window as any).__chatStoreGetState;
-      if (typeof chatGetState === 'function') {
-        const store = chatGetState();
-        if (store?.conversations?.[selectedChatId]) {
-          messages = store.conversations[selectedChatId];
-        }
-      }
-      if (messages.length === 0) return; // 没有聊天记录, 无法降级
-
-      const chatResult = restoreDslFromChatHistory(messages);
-      if (chatResult) {
-        console.log('[PreviewPanel] hot store empty, restoring from chat history fallback');
-        applyRestored(chatResult);
-      }
-    });
-
-    return () => { cancelled = true; };
-  }, [selectedChatId, effectiveCanvasId]);
-  // 待机状态已废弃: 始终显示工具栏 + 占位区, 用户可手动启动画布
-  const noCanvas = false;
-  const sessionIdRef = useRef<string>(effectiveCanvasId);
-  const [canvasInfo, setCanvasInfo] = useState<{ port: number; pid: number } | null>(null);
-  const [bgColor, setBgColor] = useState<string>(BG_PRESETS[0].value);
-  const [customColor, setCustomColor] = useState<string>('#FFFFFF');
-  const [showColorPicker, setShowColorPicker] = useState(false);
-  const [showDeviceDropdown, setShowDeviceDropdown] = useState(false);
-
-  // ★ 设备按钮 ref — toggleDeviceDropdown 据此计算独立悬浮窗口坐标
-  const deviceBtnRef = useRef<HTMLDivElement | null>(null);
-
-  // ★ 从 store 读取当前画布的设备信息 (按 canvasId 独立存储)
-  const deviceStore = useCanvasDeviceStore();
-  const currentDevice = effectiveCanvasId ? deviceStore.devices[effectiveCanvasId] ?? null : null;
-  const renderMode = deviceStore.renderMode;
-  const setRenderMode = deviceStore.setRenderMode;
-  const setDeviceInStore = deviceStore.setDevice;
-
-  // ★ 从设备信息反推当前 preset (用于兼容现有逻辑)
-  const activeSizeKey = currentDevice?.sizeKey ?? 'none';
-  // ★ 无设备时 preset = null, 画布填满可用区域 (动态尺寸)
-  const activePreset = currentDevice ? findDevicePreset(currentDevice.sizeKey) : null;
-  const activeDeviceList = renderMode === '2D' ? DEVICES_2D : DEVICES_3D;
-
-  // ★ canvasStateRef — 提前声明, 供 handleSelectDevice / 崩溃检测使用 (避免 TDZ)
-  const canvasStateRef = useRef(canvasState);
-  useEffect(() => { canvasStateRef.current = canvasState; }, [canvasState]);
-  const isStoppingRef = useRef(false);
-
-  // ★ 3D 设备选择: 通过 /render 端点加载 GLB 模型到当前画布
-  //   画布未 running 时, 把请求暂存到 pendingSelectRef,
-  //   canvasState 切到 running 后由 useEffect 自动重发 (避免 IPC 丢失)
-  const pendingSelectRef = useRef<DevicePreset | null>(null);
-  const handleSelectDevice = useCallback(async (preset: DevicePreset) => {
-    if (!sessionIdRef.current || !canvasId) return;
-    // 调用后端 selectModel (仅当前 canvas session) — 必须带 requester header (ACL)
-    if (selectedChatId) {
-      await apiSelectModel(sessionIdRef.current, preset.key, selectedChatId).catch(() => {});
-    }
-    // 通过 IPC selectDevice → POST /render → Flutter 加载 GLB 模型
-    // ★ running 立即发; 未 running 暂存, 等 startCanvas 成功后自动发
-    if (isElectron() && preset.glbFile) {
-      if (canvasStateRef.current === 'running') {
-        try {
-          await window.soloforge!.canvas.selectDevice(
-            sessionIdRef.current,
-            preset.key,
-            preset.glbFile,
-            { w: preset.w, h: preset.h },
-          );
-        } catch (e) {
-          console.warn('[handleSelectDevice] selectDevice failed:', e);
-        }
-      } else {
-        // 画布未启动 → 暂存, 等切换到 running 时自动发
-        pendingSelectRef.current = preset;
-        console.log('[handleSelectDevice] canvas not running, pending select saved:', preset.key);
-      }
-    }
-  }, [canvasId, selectedChatId]);
-
-  // ★ 画布进入 running 后, 自动发暂存的 selectDevice
-  useEffect(() => {
-    if (canvasState !== 'running' || !isElectron()) return;
-    const pending = pendingSelectRef.current;
-    if (!pending || !sessionIdRef.current) return;
-    pendingSelectRef.current = null;
-    (async () => {
-      try {
-        await window.soloforge!.canvas.selectDevice(
-          sessionIdRef.current,
-          pending.key,
-          pending.glbFile!,
-          { w: pending.w, h: pending.h },
-        );
-        console.log('[handleSelectDevice] pending select flushed:', pending.key);
-      } catch (e) {
-        console.warn('[handleSelectDevice] pending flush failed:', e);
-      }
-    })();
-  }, [canvasState]);
-
-  // ★ 选择设备时写入 store (按 canvasId)
-  const handleSelectSizeKey = useCallback((key: string) => {
-    if (!effectiveCanvasId) return;
-    if (key === 'none') {
-      setDeviceInStore(effectiveCanvasId, null);
-      // ★ FIX: 清除设备时通知 Flutter 切回 2D 模式 (清除 3D 模型)
-      if (isElectron() && canvasStateRef.current === 'running' && sessionIdRef.current) {
-        window.soloforge!.canvas.selectDevice(
-          sessionIdRef.current, 'none', '', { w: 0, h: 0 }
-        ).catch(() => {});
-      }
-      return;
-    }
-    const preset = findDevicePreset(key);
-    const deviceInfo: CanvasDeviceInfo = {
-      sizeKey: preset.key,
-      label: preset.label,
-      width: preset.w,
-      height: preset.h,
-      group: preset.group,
-      renderMode,
-      pngFile: preset.pngFile,
-      glbFile: preset.glbFile,
-    };
-    setDeviceInStore(effectiveCanvasId, deviceInfo);
-    if (renderMode === '3D' && preset.glbFile) {
-      // 3D 模式下选中设备 → 加载 GLB 模型到当前画布
-      void handleSelectDevice(preset);
-    } else if (renderMode === '2D' && isElectron() &&
-               canvasStateRef.current === 'running' && sessionIdRef.current) {
-      // ★ FIX: 2D 模式下选中设备 → 通知 Flutter 切回 2D 模式 (清除 3D 模型)
-      //   Flutter _handleDeviceAction 收到 'fill' key 会 _renderMode='material' + 清 3D 状态
-      window.soloforge!.canvas.selectDevice(
-        sessionIdRef.current, 'fill', '', { w: 0, h: 0 }
-      ).catch(() => {});
-    }
-  }, [effectiveCanvasId, renderMode, setDeviceInStore, handleSelectDevice]);
-
-  // ★ 下拉框: 轻量级 BrowserWindow (盖住 Flutter HWND, 不弹 DevTools)
-  //   窗口只创建一次, 后续只 setBounds + executeJavaScript 更新内容
-  //   画布不隐藏 — 只做选择, 不影响画布显示
-  //   - 不传 mode (箭头按钮): 切换开关
-  //   - 传 mode (2D/3D 按钮): 已打开则刷新内容, 未打开则打开
-  const toggleDeviceDropdown = (mode?: string) => {
-    const effectiveMode = (mode || renderMode) as '2D' | '3D';
-    if (effectiveMode !== renderMode) {
-      setRenderMode(effectiveMode);
-    }
-    if (!isElectron() || !window.soloforge?.canvas) return;
-    // 箭头按钮点击 (无 mode): 已开则关, 已关则开
-    if (!mode) {
-      if (showDeviceDropdown) {
-        window.soloforge.canvas.closeDevicePopup?.().catch(() => {});
-        setShowDeviceDropdown(false);
-        return;
-      }
-    }
-    // 2D/3D 按钮带 mode: 只刷新内容, 不重复打开
-    // (main.cjs 复用同一窗口, 重复 openDevicePopup 只是刷新内容, 不会产生第二个窗口)
-    const btn = deviceBtnRef.current;
-    if (!btn) return;
-    const rect = btn.getBoundingClientRect();
-    const deviceList = effectiveMode === '2D' ? DEVICES_2D : DEVICES_3D;
-    const cs = getComputedStyle(document.documentElement);
-    const cssVar = (n: string, fb: string) => (cs.getPropertyValue(n).trim() || fb);
-    const theme = {
-      surface: cssVar('--color-surface', '#ffffff'),
-      surfaceBright: cssVar('--color-surface-bright', '#f4f4f5'),
-      primary: cssVar('--color-primary', '#3b82f6'),
-      onSurface: cssVar('--color-on-surface', '#18181b'),
-      outline: cssVar('--color-outline', '#d4d4d8'),
-    };
-    const groups = (['mobile', 'tablet', 'desktop', 'watch'] as SizeGroup[]).map(g => {
-      const items = deviceList.filter(p => p.group === g).map(p => ({
-        key: p.key, label: p.label, w: p.w, h: p.h, group: p.group,
-      }));
-      const label = deviceList.find(p => p.group === g)?.groupLabel ?? g;
-      return { label, items };
-    }).filter(g => g.items.length > 0);
-    const panelW = 320, panelH = 460;
-    const payload = {
-      x: Math.max(8, rect.right - panelW),
-      y: rect.bottom + 14,
-      width: panelW,
-      height: panelH,
-      renderMode: effectiveMode,
-      currentKey: activeSizeKey,
-      currentLabel: activePreset?.w ? activePreset.label : undefined,
-      deviceCount: deviceList.length,
-      groups,
-      theme,
-    };
-    window.soloforge.canvas.openDevicePopup(payload).catch(() => {});
-    setShowDeviceDropdown(true);
-  };
-
-  // ★ 监听 BrowserWindow 弹窗的设备选择回调
-  useEffect(() => {
-    if (!isElectron()) return;
-    const unsub = window.soloforge!.canvas.onDeviceSelected((data: { key: string }) => {
-      handleSelectSizeKey(data.key);
-      setShowDeviceDropdown(false);
-    });
-    return () => { unsub(); };
-  }, [handleSelectSizeKey]);
-
-  const [showElectronHint, setShowElectronHint] = useState(false);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  // ★ canvas 区域专用 ref — reportBounds 只上报此区域, 避免Flutter窗口覆盖工具栏
-  const canvasAreaRef = useRef<HTMLDivElement | null>(null);
-  // ★ FIX 2026-07-14: 设备框 ref — reportBounds 上报设备框的精确位置, 而非外部全区域
-  //   确保 Flutter HWND 与用户看到的设备框完全对齐
-  const deviceFrameRef = useRef<HTMLDivElement | null>(null);
-
-  // ★ 追踪 canvas 实际区域尺寸 (无设备时用此尺寸作为画布逻辑尺寸)
-  // ★ FIX: 初始值 {0,0}, useLayoutEffect 在首帧绘制前同步读取真实尺寸, 避免刷新闪烁
-  // ★ 2026-07-15: 移到自动启动 effect 之前, 避免在依赖数组中引用未声明的变量 (TDZ)
-  const [canvasAreaSize, setCanvasAreaSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
-  useLayoutEffect(() => {
-    const el = canvasAreaRef.current;
-    if (!el) return;
-    const update = () => {
-      const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.height > 0) {
-        setCanvasAreaSize({ w: Math.floor(r.width), h: Math.floor(r.height) });
-      }
-    };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  // 画布跟随应用默认启用 — Electron 环境下自动启动
-  // 防重入: autoStartRef 防止同一生命周期内重复触发
-  // 失败不重试: autoStartFailed 标记防止 error→idle 循环
-  // ★ 2026-07-11: sessionId 变化时重置 autoStartRef + autoStartFailedRef
-  //   原因: 第一次用 fallbackId (canvas-1) 启动失败 → autoStartFailed=true
-  //   canvasReady 后 sessionId 切换为 canvas_1, 但 autoStartFailed 仍 true → 永远不自动启动
-  const autoStartRef = useRef(false);
-  const autoStartFailedRef = useRef(false);
-  const lastAutoStartSessionId = useRef<string>('');
-  useEffect(() => {
-    const prevId = lastAutoStartSessionId.current;
-    const newId = sessionIdRef.current;
-    // sessionId 变化 → 切换画布
-    if (newId && newId !== prevId) {
-      const wasRunning = canvasState === 'running';
-      // ★ 不立即停旧画布, 保持旧画布可见 (避免白屏 + "启动中"闪烁)
-      //   先启动新画布, 成功后再停旧画布
-      lastAutoStartSessionId.current = newId;
-      autoStartRef.current = false;
-      autoStartFailedRef.current = false;
-
-      if (wasRunning && isElectron() && prevId) {
-        // 切换模式: 后台启动新画布, 成功后停旧画布
-        //   不设 starting 状态 → 用户不会看到全屏"启动中"
-        (async () => {
-          try {
-            const { w: frameW, h: frameH } = computeFrame(activePreset);
-            const res = await window.soloforge!.canvas.start(newId, frameW, frameH);
-            if (!res.ok) {
-              // 新画布启动失败 → 保持旧画布运行, 显示错误
-              setCanvasError(res.error || '切换画布失败');
-              autoStartFailedRef.current = true;
-              return;
-            }
-            // 新画布启动成功 → 停旧画布
-            window.soloforge?.canvas.stop(prevId).catch(() => {});
-            setCanvasInfo({ port: res.session.port, pid: res.session.pid });
-            await pushBackground(bgColor);
-          } catch (e: any) {
-            setCanvasError(e?.message || String(e));
-            autoStartFailedRef.current = true;
-          }
-        })();
-      } else {
-        // 首次启动 (非切换): 正常走 idle → starting → running
-        if (canvasState !== 'idle') {
-          setCanvasState('idle');
-          canvasStateRef.current = 'idle';
-          setCanvasInfo(null);
-          setCanvasError('');
-        }
-        // 停掉旧画布 (如果存在)
-        if (prevId && isElectron()) {
-          window.soloforge?.canvas.stop(prevId).catch(() => {});
-        }
-      }
-    }
-    if (autoStartRef.current || autoStartFailedRef.current) return;
-    // ★ 2026-07-13: 只在有真实画布 ID 时自动启动 (不再用 fallback ID)
-    //   sessionIdRef 由 useLayoutEffect 同步更新, 保证此处的值是最新的
-    // ★ 2026-07-15: 等待面板宽度从服务器加载完毕 (previewWidthLoaded) 且画布区域已正确测量 (canvasAreaSize.w > 0)
-    //   避免启动时用默认 385px 尺寸, 服务器返回保存的宽度后又要 resize, 造成闪烁
-    if (isElectron() && canvasState === 'idle' && selectedChatId && sessionIdRef.current && canvasReady && canvasId && previewWidthLoaded && canvasAreaSize.w > 0) {
-      autoStartRef.current = true;
-      void startCanvas();
-    }
-  }, [canvasState, selectedChatId, canvasId, canvasReady, previewWidthLoaded, canvasAreaSize]);
-
-  // ─────────────────────────────────────────
-  // ★ 画布进程崩溃检测 (2026-07-08)
-  //   - 监听 main.cjs 推送的 'canvas:exited' IPC 事件
-  //   - 崩溃时: 更新 UI 状态 + 显示友好错误 + 允许重启
-  //   - 正常退出 (用户点停止): 不显示错误, 仅同步状态
-  // ─────────────────────────────────────────
-
-  useEffect(() => {
-    if (!isElectron() || !window.soloforge?.canvas?.onExited) return;
-    const unsubscribe = window.soloforge.canvas.onExited((info) => {
-      // 只处理当前 session 的退出事件
-      if (info.sessionId !== sessionIdRef.current) return;
-      // 用户主动停止 → 不显示崩溃错误
-      if (isStoppingRef.current) {
-        isStoppingRef.current = false;
-        return;
-      }
-      // 画布已不在 running 状态 → 无需处理 (避免重复设置)
-      if (canvasStateRef.current !== 'running' && canvasStateRef.current !== 'starting') {
-        return;
-      }
-      if (info.isCrash) {
-        console.error('[canvas] 进程崩溃:', info);
-        setCanvasState('error');
-        setCanvasInfo(null);
-        // 显示友好的崩溃信息 (而不是裸露的退出码如 100488)
-        const stderrHint = info.stderr
-          ? info.stderr.split('\n').filter(l => l.trim()).slice(-3).join(' | ')
-          : '';
-        setCanvasError(
-          stderrHint
-            ? `画布进程崩溃 (${info.message})\n${stderrHint}`
-            : info.message
-        );
-        // 允许用户手动重启 (清除 autoStartFailed 标记)
-        autoStartFailedRef.current = false;
-        autoStartRef.current = false;
-      } else {
-        // 正常退出 → 回到 idle
-        setCanvasState('idle');
-        setCanvasInfo(null);
-        setCanvasError('');
-      }
-    });
-    return unsubscribe;
-  }, []);
-
-  // ★ 2026-07-13: 改用 useLayoutEffect — 在 useEffect(自动启动) 之前同步执行
-  //   原因: React effect 按定义顺序执行, 自动启动 effect 在前, sessionId 更新 effect 在后
-  //   导致自动启动读到旧的 fallback ID (canvas-{chatId}), 而非真实画布 ID (canvas_1)
-  //   useLayoutEffect 在 useEffect 之前同步执行, 保证 sessionIdRef.current 始终是最新的
-  useLayoutEffect(() => {
-    // P0: 仅在 canvasReady 后才切到真实画布 ID
-    //   - ready=false 时保留 fallback (旧 canvas-${chatId})
-    //   - ready=true 时切到 canvas_1 ... canvas_10
-    if (canvasReady && canvasId) {
-      sessionIdRef.current = canvasId;
-    } else if (canvasReady && !canvasId) {
-      // 无画布待机: 清空 sessionId, 画布不会启动
-      sessionIdRef.current = '';
-    } else {
-      sessionIdRef.current = fallbackId;
-    }
-    // ★ 2026-07-11: 注册 canvas sessionId 到全局映射,
-    //   让 IncrementalCanvasPusher 能推送到正确的画布
-    if (selectedChatId && sessionIdRef.current) {
-      setCanvasSessionId(selectedChatId, sessionIdRef.current);
-    }
-  }, [canvasId, canvasReady, fallbackId, selectedChatId]);
-
-  // ─────────────────────────────────────────
-  // ★ 上报 canvas 设备框 (不含工具栏) 的位置和尺寸给主进程
-  //   Flutter 原生窗口只覆盖设备框区域, 不遮挡工具栏按钮
-  //   ★ FIX 2026-07-14: 优先上报 deviceFrameRef (内部缩放后的设备框),
-  //     而非 canvasAreaRef (外部全区域), 确保 Flutter 窗口与用户看到的设备框对齐
-  useEffect(() => {
-    if (!isElectron()) return;
-    const report = () => {
-      // ★ 优先用设备框 ref, 没有则降级到 canvas 区域 ref
-      const el = deviceFrameRef.current || canvasAreaRef.current;
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      if (r.width === 0 || r.height === 0) return;
-      window.soloforge!.canvas.reportBounds({
-        x: Math.round(r.left), y: Math.round(r.top),
-        width: Math.round(r.width), height: Math.round(r.height),
-      }).catch(() => {});
-    };
-    // 延迟一帧确保 layout 完成
-    const timer = setTimeout(report, 50);
-    const ro = new ResizeObserver(report);
-    if (canvasAreaRef.current) ro.observe(canvasAreaRef.current);
-    if (deviceFrameRef.current) ro.observe(deviceFrameRef.current);
-    window.addEventListener('resize', report);
-    window.addEventListener('scroll', report);
-    return () => {
-      clearTimeout(timer);
-      ro.disconnect();
-      window.removeEventListener('resize', report);
-      window.removeEventListener('scroll', report);
-    };
-  }, [width, canvasId, canvasReady]);
-
-  // 卸载时自动停掉画布
-  useEffect(() => {
-    return () => {
-      if (isElectron() && canvasState === 'running') {
-        window.soloforge!.canvas.stop(sessionIdRef.current).catch(() => {});
-      }
-      if (selectedChatId) {
-        clearCanvasSessionId(selectedChatId);
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // 把根容器 backgroundColor 合并进最近一次 DSL 重新 push
-  // ★ 2026-07-11: 去掉 canvasState 依赖 — 闭包陷阱!
-  //   startCanvas 调用 pushBackground 时, setCanvasState('running') 还没生效
-  //   pushBackground 闭包中的 canvasState 仍是 'idle' → 直接 return → 画布空白
-  //   修复: 不检查 canvasState, 调用方自己保证画布已运行
-  const pushBackground = useCallback(async (color: string) => {
-    if (!isElectron() || !sessionIdRef.current) return;
-    const dsl = {
-      ui: {
-        type: 'container',
-        props: { padding: 16, backgroundColor: color, layout: 'column', spacing: 8 },
-        children: [
-          { type: 'text', props: { content: '画布已就绪', fontSize: 18, fontWeight: 700, color: pickFg(color) } },
-          { type: 'text', props: { content: `当前底色: ${color}`, fontSize: 12, color: pickFg(color), opacity: 0.75 } },
-          { type: 'text', props: { content: `Session: ${sessionIdRef.current}`, fontSize: 11, color: pickFg(color), opacity: 0.6 } },
-          { type: 'text', props: { content: `通过左侧聊天窗口生成 UI 描述，会自动推送到这里`, fontSize: 12, color: pickFg(color), opacity: 0.55 } },
-        ],
-      },
-      platform: 'material',
-    };
-    try {
-      const r = await window.soloforge!.canvas.push(sessionIdRef.current, dsl);
-      if (!r.ok) {
-        // "session not found" 是 startCanvas 返回后、画布进程立即崩溃的竞态:
-        //   main.cjs exit handler 已从 canvasSessions 删除 session,
-        //   但 canvas:exited IPC 事件尚未到达渲染层。
-        //   onExited 监听器会显示真正的崩溃原因, 此处无需重复告警。
-        if (String(r.error).includes('session not found')) return;
-        console.warn('[pushBackground] push failed:', r.error);
-      }
-    } catch (e: any) {
-      console.warn('[pushBackground] exception:', e?.message || e);
-    }
-  }, []);
-
-  // 2026-07-11: IncrementalCanvasPusher 已经在 useChatStore 中直接推画布,
-  //   PreviewPanel 不再重复推送 — 避免双推冲突 + WebAstPreview 覆盖 Flutter 画布
-
-  // ★ 无设备时: 填满可用区域, 四边各留出血线
-  //   有设备时: 使用设备原生尺寸
-  //   确保 canvas.start() 使用的尺寸与 LLM 被告知的尺寸完全一致
-  const BLEED = 8; // 出血线总 px (每边 4px)
-  const computeFrame = useCallback((preset: DevicePreset | null) => {
-    if (preset && preset.w > 0) return { w: preset.w, h: preset.h };
-    return {
-      w: Math.max(320, canvasAreaSize.w - BLEED),
-      h: Math.max(400, canvasAreaSize.h - BLEED),
-    };
-  }, [canvasAreaSize]);
-
-  // ★ 2026-07-14: 将画布实际帧尺寸写入 store, 供 aiBackend (LLM prompt 注入) + incrementalCanvasPusher (canvas.start 参数) 读取
-  // ★ FIX 2026-07-14: 同时写入 fallback key, 确保时序不一致时 aiBackend 也能找到
-  const setFrameSizeInStore = deviceStore.setFrameSize;
-  useEffect(() => {
-    if (!effectiveCanvasId || !selectedChatId) return;
-    const { w, h } = computeFrame(activePreset);
-    const size = { width: w, height: h };
-    setFrameSizeInStore(effectiveCanvasId, size);
-    // ★ 同时写入 fallback key, 确保即使 bridge 还没更新, aiBackend 也能找到帧尺寸
-    const fallbackKey = `canvas-${selectedChatId}`;
-    if (effectiveCanvasId !== fallbackKey) {
-      setFrameSizeInStore(fallbackKey, size);
-    }
-  }, [effectiveCanvasId, activePreset, computeFrame, setFrameSizeInStore, selectedChatId]);
-
-  // ★ FIX 2026-07-15: 拖动面板时实时 resize + scaleDsl 等比例缩放, 确保 canvas 内容自适应
-  //   1. resize Flutter 窗口到新尺寸
-  //   2. 用 scaleDsl 按比例缩放当前 DSL, 重新 push 让 Flutter 按新尺寸重排
-  useEffect(() => {
-    if (!isElectron()) return;
-    if (canvasState !== 'running') return;
-    if (!sessionIdRef.current) return;
-    if (activePreset && activePreset.w > 0) return; // 有设备时不 resize
-    if (canvasAreaSize.w === 0 || canvasAreaSize.h === 0) return; // 尺寸未就绪
-    const { w, h } = computeFrame(activePreset);
-    const raf = requestAnimationFrame(() => {
-      // 1. resize Flutter 窗口
-      window.soloforge?.canvas.resize(sessionIdRef.current, w, h).catch(() => {});
-      // 2. scaleDsl 等比例缩放后重新 push
-      const entry = usePreviewStreamStore.getState().entries[selectedChatId ?? ''];
-      const payload = entry?.payload;
-      const designSize = entry?.designSize;
-      if (payload && designSize && designSize.width > 0 && designSize.height > 0) {
-        const rawDsl = (payload as any)?.preview?.root ?? (payload as any)?.dsl ?? null;
-        if (rawDsl) {
-          const scaleX = w / designSize.width;
-          const scaleY = h / designSize.height;
-          const scaledDsl = scaleDsl(rawDsl, scaleX, scaleY);
-          const wrapped = { ui: scaledDsl, platform: 'material' };
-          window.soloforge?.canvas.push(sessionIdRef.current, wrapped).catch(() => {});
-        }
-      }
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [canvasAreaSize, canvasState, activePreset, computeFrame, selectedChatId]);
-
-  // 启动画布 — 带 30s 超时保护，防止 IPC 卡死导致 UI 永远停在 "启动中"
-  const startCanvas = useCallback(async () => {
-    if (!isElectron()) {
-      setCanvasError('需要 Electron 环境运行画布（请使用 npm run dev 启动 IDE）');
-      setCanvasState('error');
-      setShowElectronHint(true);
-      return;
-    }
-    setCanvasState('starting');
-    canvasStateRef.current = 'starting';
-    setCanvasError('');
-    setShowElectronHint(false);
-    try {
-      const { w: frameW, h: frameH } = computeFrame(activePreset);
-      // 30s 超时：主进程 findWindowByPid 循环 + embed 可能慢，但不能无限等
-      const timeoutP = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('画布启动超时（30s），请检查 canvas_preview.exe 是否正常运行')), 30000)
-      );
-      const res = await Promise.race([
-        window.soloforge!.canvas.start(sessionIdRef.current, frameW, frameH),
-        timeoutP,
-      ]);
-      if (!res.ok) {
-        setCanvasError(res.error || '启动失败');
-        setCanvasState('error');
-        canvasStateRef.current = 'error';
-        autoStartFailedRef.current = true;
-        return;
-      }
-      setCanvasInfo({ port: res.session.port, pid: res.session.pid });
-      setCanvasState('running');
-      canvasStateRef.current = 'running';
-      // ★ 同步更新 ref 后再 pushBackground, 避免闭包陷阱
-      await pushBackground(bgColor);
-      // ★ 2026-07-14: 画布启动成功后, 自动加载 deviceStore 中已选择的 3D 设备 GLB 模型
-      //   修复"用户在画布未启动时选 3D 设备, 模型不加载"的问题
-      //   用 getState() 读取最新设备状态, 避免闭包陷阱
-      const deviceState = useCanvasDeviceStore.getState();
-      const savedDevice = deviceState.devices[sessionIdRef.current];
-      if (savedDevice && savedDevice.renderMode === '3D' && savedDevice.glbFile) {
-        try {
-          await window.soloforge!.canvas.selectDevice(
-            sessionIdRef.current,
-            savedDevice.sizeKey,
-            savedDevice.glbFile,
-            { w: savedDevice.width, h: savedDevice.height },
-          );
-          // 同步通知后端 selectModel (ACL)
-          if (selectedChatId) {
-            await apiSelectModel(sessionIdRef.current, savedDevice.sizeKey, selectedChatId).catch(() => {});
-          }
-        } catch (e) {
-          console.warn('[startCanvas] auto-load 3D device failed:', e);
-        }
-      }
-    } catch (e: any) {
-      setCanvasError(e?.message || String(e));
-      setCanvasState('error');
-      canvasStateRef.current = 'error';
-      autoStartFailedRef.current = true;
-    }
-  }, [activePreset, bgColor, pushBackground, computeFrame, selectedChatId]);
-
-  const stopCanvas = useCallback(async () => {
-    if (!isElectron()) return;
-    // 标记为用户主动停止 → 崩溃检测收到 exit 事件时不会误判为崩溃
-    isStoppingRef.current = true;
-    setCanvasState('idle');
-    setCanvasInfo(null);
-    setCanvasError('');
-    await window.soloforge!.canvas.stop(sessionIdRef.current).catch(() => {});
-  }, []);
-
-  const handlePickColor = (color: string) => {
-    setBgColor(color);
-    setShowColorPicker(false);
-    if (canvasState === 'running') pushBackground(color);
-  };
-
-  const handlePickCustom = () => {
-    setBgColor(customColor);
-    setShowColorPicker(false);
-    if (canvasState === 'running') pushBackground(customColor);
-  };
-
-  // ★ 删除画布 — 彻底清理: 后端数据库 + Electron 子进程 + 前端所有缓存
-  const handleDeleteCanvas = useCallback(async (targetCanvasId: string): Promise<boolean> => {
-    if (!selectedChatId) return false;
-    // 1. 停掉被删除画布的 Electron 子进程
-    if (isElectron()) {
-      window.soloforge?.canvas.stop(targetCanvasId).catch(() => {});
-    }
-    // 2. 调后端 DELETE — 清理内存 states/dirty + Garnet 热存储 + SurrealDB 持久层
-    const ok = await apiDeleteCanvas(targetCanvasId, selectedChatId);
-    if (ok) {
-      // 3. 前端缓存清理 — incrementalCanvasPusher (chatId→canvasId 映射 + _startedSessions)
-      clearByCanvasSessionId(targetCanvasId);
-      // 4. 前端缓存清理 — canvasDeviceStore (设备尺寸/渲染模式记录)
-      useCanvasDeviceStore.getState().removeDevice(targetCanvasId);
-      // 5. 前端缓存清理 — previewStreamStore (当前 chat 的流式预览数据)
-      usePreviewStreamStore.getState().clearEntry(selectedChatId);
-      // 6. 如果删除的是当前画布, 清除当前选中状态
-      if (canvasId === targetCanvasId) {
-        clearCanvasSessionId(selectedChatId);
-      }
-      // 7. 刷新画布列表 — 通过 bridge 的 refresh
-      window.dispatchEvent(new CustomEvent('soloforge-canvas-deleted', { detail: { canvasId: targetCanvasId } }));
-    }
-    return ok;
-  }, [selectedChatId, canvasId]);
-
-  // 画布状态指示器 — 已移除 (不再显示绿点)
-  const renderCanvasStatus = () => null;
-
-  // 待机渲染 — 无画布时显示闪电 logo (色调跟随主题)
-  const renderStandby = () => (
-    <div className="absolute inset-0 flex flex-col items-center justify-center select-none">
-      <div
-        className="w-20 h-20 opacity-40 transition-opacity duration-300"
-        style={{
-          backgroundColor: 'var(--color-primary)',
-          maskImage: 'url(/lightning_logo.png)',
-          maskSize: 'contain',
-          maskPosition: 'center',
-          maskRepeat: 'no-repeat',
-          WebkitMaskImage: 'url(/lightning_logo.png)',
-          WebkitMaskSize: 'contain',
-          WebkitMaskPosition: 'center',
-          WebkitMaskRepeat: 'no-repeat',
-        }}
-      />
-    </div>
-  );
-
-  // 占位渲染
-  const renderPlaceholder = () => {
-    // ★ FIX 2026-07-12: 当有 AST 预览数据时, 优先显示 WebAstPreview,
-    //   即使 canvasState === 'running'。原因: Flutter 嵌入窗口可能不可见
-    //   (嵌入失败 / 位置错误 / SVG 渲染不支持), 导致用户看到空白。
-    //   WebAstPreview 作为通用渲染层, 保证用户总能看到内容。
-    //   Flutter 画布仍在底层并行渲染 (如果可见则作为补充)。
-    if (previewAst || previewPayload) {
-      const root = previewPayload?.preview?.root || previewAst;
-      if (root) {
-        return <WebAstPreview root={root} bgColor={bgColor} />;
-      }
-    }
-    // canvas running 且无预览数据: Flutter 嵌入窗口在底层渲染
-    if (canvasState === 'running' && !previewPushError) {
-      // Flutter 画布在底层渲染, 这里只放透明占位
-      // 流式状态信息已由 top bar 的 previewIsStreaming / previewLanguage 显示
-      return (
-        <div
-          className="absolute inset-0 pointer-events-none"
-          style={{ background: 'transparent' }}
+  // ★ 画布重构占位 — 仅保留面板容器 + 选项卡 + 占位提示
+  return (
+    <div
+      style={{
+        width: `${width}px`,
+        transition: isResizing ? 'none' : 'width 250ms cubic-bezier(0.16, 1, 0.3, 1)'
+      }}
+      className="h-full bg-surface border-l border-outline/50 flex flex-col shrink-0 select-none z-10 overflow-hidden relative"
+    >
+      {/* 画布选项卡 — 用户明确要求保留 */}
+      {onSelectCanvas && onRenameCanvas && (
+        <CanvasResourceBar
+          canvases={canvases}
+          activeCanvasId={null}
+          maxCanvases={maxCanvases}
+          onSelect={onSelectCanvas}
+          onRename={onRenameCanvas}
         />
-      );
-    }
-    // 流式中 (还没有 AST 但正在生成)
-    if (previewIsStreaming && !previewAst) {
-      return (
-        <div
-          className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 select-none"
-          style={{ background: bgColor, transition: 'background 200ms ease' }}
-        >
-          <Loader2 className="w-8 h-8 animate-spin mb-3" style={{ color: pickFg(bgColor) }} />
-          <div className="text-[11px] font-mono mb-1" style={{ color: pickFg(bgColor) + 'AA' }}>
-            正在生成 AST 预览…
-          </div>
-          <div className="text-[9px] font-mono" style={{ color: pickFg(bgColor) + '66' }}>
-            {previewLanguage} · {previewRawBytes} bytes
-          </div>
-          {previewPushError && (
-            <div className="text-[9px] text-red-400 mt-2 max-w-[200px]">
-              推送错误: {previewPushError}
-            </div>
-          )}
-        </div>
-      );
-    }
-    // 预览失败 — 有错误但没有生成 AST
-    if (previewPushError && !previewAst && !previewPayload && !previewIsStreaming) {
-      return (
-        <div
-          className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 select-none"
-          style={{ background: bgColor, transition: 'background 200ms ease' }}
-        >
-          <div className="w-14 h-14 rounded-2xl border-2 border-dashed flex items-center justify-center mb-3"
-               style={{ borderColor: '#ef444440', color: '#ef4444AA' }}>
-            <AlertCircle className="w-7 h-7" />
-          </div>
-          <div className="font-display font-bold text-sm mb-1" style={{ color: pickFg(bgColor) }}>
-            AST 预览生成失败
-          </div>
-          <div className="text-[11px] max-w-[260px] leading-relaxed mb-3" style={{ color: pickFg(bgColor) + 'AA' }}>
-            {previewPushError}
-          </div>
-          <div className="text-[9px] font-mono" style={{ color: pickFg(bgColor) + '66' }}>
-            请检查后端 /api/llm/stream 是否可用 · {previewLanguage}
-          </div>
-        </div>
-      );
-    }
-    if (canvasState === 'error' || canvasState === 'idle') {
-      return (
-        <div
-          className="absolute inset-0 flex items-center justify-center select-none"
-          style={{ background: bgColor, transition: 'background 200ms ease' }}
-        >
+      )}
+
+      {/* 画布重构占位区 */}
+      <div className="flex-1 relative overflow-hidden flex items-center justify-center p-3">
+        <div className="flex flex-col items-center justify-center select-none">
           <div
-            className="w-16 h-16 opacity-40 transition-opacity duration-300"
+            className="w-16 h-16 opacity-30 mb-4"
             style={{
               backgroundColor: 'var(--color-primary)',
               maskImage: 'url(/lightning_logo.png)',
@@ -973,292 +93,56 @@ export default function PreviewPanel({
               WebkitMaskRepeat: 'no-repeat',
             }}
           />
-        </div>
-      );
-    }
-    if (canvasState === 'starting') {
-      return (
-        <div
-          className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 select-none"
-          style={{ background: bgColor, transition: 'background 200ms ease' }}
-        >
-          <Loader2 className="w-8 h-8 animate-spin mb-3" style={{ color: pickFg(bgColor) }} />
-          <div className="text-[11px] font-mono" style={{ color: pickFg(bgColor) + 'AA' }}>
-            正在启动画布进程…
+          <div className="text-[11px] font-mono text-on-surface/40">
+            画布重构中…
           </div>
-        </div>
-      );
-    }
-    // running: 透明背景 — 真正画布由嵌入的 canvasHostWindow 渲染
-    return (
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{ background: 'transparent' }}
-      />
-    );
-  };
-
-  return (
-    <div
-      ref={containerRef}
-      style={{
-        // 拖动期间 width 直接跟随鼠标实时变化, 让用户看到边缘被拉伸而非整体平移
-        width: `${width}px`,
-        transition: isResizing ? 'none' : 'width 250ms cubic-bezier(0.16, 1, 0.3, 1)'
-      }}
-      className="h-full bg-surface border-l border-outline/50 flex flex-col shrink-0 select-none z-10 overflow-hidden relative"
-    >
-      <div
-        style={{
-          width: '100%',
-          height: '100%',
-          display: 'flex',
-          flexDirection: 'column',
-          flexShrink: 0,
-          overflow: 'hidden'
-        }}
-      >
-        {/* P0: 画布资源池 chip 栏 — 切换画布 (置顶, 与 ChatPanel 头部对齐) */}
-        {!noCanvas && onSelectCanvas && onRenameCanvas && (
-          <CanvasResourceBar
-            canvases={canvases}
-            activeCanvasId={canvasId ?? null}
-            maxCanvases={maxCanvases}
-            onSelect={onSelectCanvas}
-            onRename={onRenameCanvas}
-            onDelete={handleDeleteCanvas}
-          />
-        )}
-
-
-
-        {/* TOOLBAR — 无画布待机时隐藏 */}
-        {!noCanvas && (
-        <div className="px-3 py-2 bg-surface-bright/35 border-b border-outline/30 flex items-center gap-1.5 shrink-0 flex-wrap">
-          {canvasState !== 'running' ? (
-            <button
-              onClick={() => { autoStartFailedRef.current = false; void startCanvas(); }}
-              disabled={canvasState === 'starting'}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-500 text-[10px] font-mono font-semibold disabled:opacity-50 transition-colors"
-            >
-              {canvasState === 'starting' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
-              <span>{canvasState === 'starting' ? '启动中' : '启动画布'}</span>
-            </button>
-          ) : (
-            <button
-              onClick={stopCanvas}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-500/15 hover:bg-red-500/25 text-red-500 text-[10px] font-mono font-semibold transition-colors"
-            >
-              <Square className="w-3 h-3" />
-              <span>停止</span>
-            </button>
-          )}
-
-          {/* 底色选择器 */}
-          <div className="relative">
-            <button
-              onClick={() => setShowColorPicker(s => !s)}
-              className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-surface-bright/60 hover:bg-surface-bright text-on-surface text-[10px] font-mono transition-colors"
-              title="底色"
-            >
-              <Palette className="w-3 h-3" />
-              <span
-                className="inline-block w-3 h-3 rounded-sm border border-outline/60"
-                style={{ background: bgColor }}
-              />
-              <span className="text-on-surface/70">{bgColor}</span>
-            </button>
-            <MountTransition show={showColorPicker} variant="fade" duration={140}>
-              <div
-                className="absolute top-full left-0 mt-1 z-50 bg-surface border border-outline rounded-lg shadow-2xl p-2 min-w-[200px]"
-              >
-                <div className="grid grid-cols-3 gap-1.5 mb-2">
-                  {BG_PRESETS.map(p => (
-                    <button
-                      key={p.value}
-                      onClick={() => handlePickColor(p.value)}
-                      className={`flex flex-col items-center gap-0.5 p-1.5 rounded border transition-all ${bgColor.toLowerCase() === p.value.toLowerCase() ? 'border-primary ring-1 ring-primary/40' : 'border-outline/50 hover:border-outline'}`}
-                    >
-                      <span className="w-9 h-6 rounded" style={{ background: p.value, border: '1px solid rgba(0,0,0,0.1)' }} />
-                      <span className="text-[9px] text-on-surface/70 font-mono">{p.name}</span>
-                    </button>
-                  ))}
-                </div>
-                <div className="flex items-center gap-1.5 pt-1.5 border-t border-outline/50">
-                  <input
-                    type="color"
-                    value={customColor}
-                    onChange={e => setCustomColor(e.target.value)}
-                    className="w-7 h-7 rounded cursor-pointer bg-transparent border-0 p-0"
-                  />
-                  <input
-                    type="text"
-                    value={customColor}
-                    onChange={e => setCustomColor(e.target.value)}
-                    className="flex-1 px-1.5 py-1 text-[10px] font-mono bg-bg border border-outline rounded text-on-surface"
-                  />
-                  <button
-                    onClick={handlePickCustom}
-                    className="px-2 py-1 text-[10px] font-mono bg-primary/15 hover:bg-primary/25 text-primary rounded"
-                  >
-                    应用
-                  </button>
-                </div>
-              </div>
-            </MountTransition>
-          </div>
-
-          {/* 2D / 3D 渲染模式 + 设备选择 — 下拉框走 BrowserWindow (盖住 Flutter HWND) */}
-          <div
-            ref={deviceBtnRef}
-            className="relative"
-            data-device-btn
-          >
-            <div className="flex items-center rounded-md overflow-hidden border border-[var(--color-outline)]/30">
-              <button
-                onClick={() => {
-                  setRenderMode('2D');
-                  // ★ 只切模式; 下拉框已打开则用新模式刷新内容, 不主动开关
-                  if (showDeviceDropdown) toggleDeviceDropdown('2D');
-                }}
-                className={`flex items-center gap-1 px-2 py-1 text-[10px] font-mono font-semibold transition-colors ${
-                  renderMode === '2D'
-                    ? 'bg-[var(--color-primary)]/15 text-[var(--color-primary)]'
-                    : 'bg-[var(--color-surface-bright)]/60 text-[var(--color-on-surface)]/50 hover:text-[var(--color-on-surface)]'
-                }`}
-                title="2D 模式"
-              >
-                <SquareIcon className="w-3 h-3" />
-                <span>2D</span>
-              </button>
-              <button
-                onClick={() => {
-                  setRenderMode('3D');
-                  if (showDeviceDropdown) toggleDeviceDropdown('3D');
-                }}
-                className={`flex items-center gap-1 px-2 py-1 text-[10px] font-mono font-semibold transition-colors border-l border-[var(--color-outline)]/30 ${
-                  renderMode === '3D'
-                    ? 'bg-[var(--color-primary)]/15 text-[var(--color-primary)]'
-                    : 'bg-[var(--color-surface-bright)]/60 text-[var(--color-on-surface)]/50 hover:text-[var(--color-on-surface)]'
-                }`}
-                title="3D 模式"
-              >
-                <Box className="w-3 h-3" />
-                <span>3D</span>
-              </button>
-              <motion.button
-                onClick={() => toggleDeviceDropdown()}
-                whileTap={{ scale: 0.94 }}
-                transition={{ type: 'spring', stiffness: 600, damping: 28 }}
-                className={`flex items-center px-1.5 py-1 text-[10px] font-mono transition-colors border-l border-[var(--color-outline)]/30 ${
-                  showDeviceDropdown
-                    ? 'bg-[var(--color-primary)]/15 text-[var(--color-primary)]'
-                    : 'bg-[var(--color-surface-bright)]/60 text-[var(--color-on-surface)]/70 hover:text-[var(--color-on-surface)]'
-                }`}
-                title="选择设备"
-              >
-                <motion.span
-                  aria-hidden="true"
-                  initial={false}
-                  animate={{ rotate: showDeviceDropdown ? 180 : 0 }}
-                  transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-                  className="flex items-center justify-center"
-                >
-                  <ChevronDown className="w-2.5 h-2.5" />
-                </motion.span>
-              </motion.button>
-            </div>
-
-            {/* 设备下拉框: 轻量级 BrowserWindow (main.cjs), 盖住 Flutter HWND,
-                不弹 DevTools, 窗口复用, 画布不隐藏。此处不渲染 DOM 下拉框。 */}
-          </div>
-
-          {canvasError && (
-            <span
-              className="flex-1 text-[10px] text-red-400 font-mono min-w-0 overflow-hidden text-ellipsis whitespace-nowrap"
-              title={canvasError}
-            >
-              {canvasError}
-            </span>
-          )}
-        </div>
-        )}
-
-        {/* CANVAS AREA — 整个剩余空间都是画布区 */}
-        <div ref={canvasAreaRef} className="flex-1 relative overflow-hidden flex items-center justify-center p-3">
-          {noCanvas ? renderStandby() : (
-            <div
-              ref={deviceFrameRef}
-              className="relative flex items-center justify-center"
-              style={(() => {
-                // ★ 设备尺寸约束: 选中具体设备时, 画布区域被限制在设备尺寸内
-                if (activePreset && activePreset.w > 0 && activePreset.h > 0) {
-                  // 计算缩放比例, 让设备框架适配可用空间
-                  const parentEl = containerRef.current;
-                  const availW = parentEl ? parentEl.clientWidth - 48 : 360;
-                  const availH = parentEl ? parentEl.clientHeight - 120 : 600;
-                  const scale = Math.min(availW / activePreset.w, availH / activePreset.h, 1);
-                  const scaledW = Math.round(activePreset.w * scale);
-                  const scaledH = Math.round(activePreset.h * scale);
-                return {
-                  width: `${scaledW}px`,
-                  height: `${scaledH}px`,
-                  overflow: 'hidden',
-                  border: '0.5px solid rgba(0, 0, 0, 0.35)',
-                  boxShadow: '0 0 20px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.15)',
-                  borderRadius: '3px',
-                  transition: isResizing ? 'none' : 'all 250ms cubic-bezier(0.16, 1, 0.3, 1)',
-                } as React.CSSProperties;
-                }
-                // ★ 无设备时填满可用区域 (四边各留 BLEED/2 出血线)
-                return {
-                  width: `calc(100% - ${BLEED}px)`,
-                  height: `calc(100% - ${BLEED}px)`,
-                  margin: `${BLEED / 2}px`,
-                  overflow: 'hidden',
-                  border: '0.5px solid rgba(0, 0, 0, 0.35)',
-                  boxShadow: '0 0 20px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.15)',
-                  borderRadius: '3px',
-                  transition: isResizing ? 'none' : 'all 250ms cubic-bezier(0.16, 1, 0.3, 1)',
-                } as React.CSSProperties;
-              })()}
-            >
-              {renderPlaceholder()}
-              {/* 2D 设备 PNG 边框图片 — 覆盖在内容上方 */}
-              {renderMode === '2D' && activePreset?.pngFile && (
-                <img
-                  src={`/canvas/models/2d/${activePreset.pngFile}`}
-                  alt={activePreset.label}
-                  className="absolute inset-0 w-full h-full object-contain pointer-events-none"
-                  style={{ zIndex: 10 }}
-                />
-              )}
-              {/* 设备尺寸标签 */}
-              {activePreset && activePreset.w > 0 ? (
-                <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-[9px] font-mono text-on-surface/40 whitespace-nowrap pointer-events-none">
-                  {activePreset.label} · {activePreset.w}×{activePreset.h}
-                </div>
-              ) : (
-                <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-[9px] font-mono text-on-surface/40 whitespace-nowrap pointer-events-none">
-                  自由画布 · {canvasAreaSize.w - BLEED}×{canvasAreaSize.h - BLEED}
-                </div>
-              )}
-            </div>
-          )}
         </div>
       </div>
     </div>
   );
 }
 
-// 根据背景色自动选前景色（深底浅字 / 浅底深字）
-function pickFg(bg: string): string {
-  const hex = bg.replace('#', '');
-  if (hex.length !== 6) return '#1f2937';
-  const r = parseInt(hex.slice(0, 2), 16);
-  const g = parseInt(hex.slice(2, 4), 16);
-  const b = parseInt(hex.slice(4, 6), 16);
-  // YIQ 亮度
-  const yiq = (r * 299 + g * 587 + b * 114) / 1000;
-  return yiq >= 140 ? '#1f2937' : '#f3f4f6';
-}
+// ═══════════════════════════════════════════════════════════════
+// OLD CODE — 画布重构期间注释掉, 恢复方法:
+//   git checkout HEAD -- UI/src/components/PreviewPanel.tsx
+//
+// 以下为旧版 PreviewPanel 的完整实现 (Flutter IPC + 2D/3D 设备选择 + 崩溃检测等)
+// 已全部注释掉, 不参与编译
+// ═══════════════════════════════════════════════════════════════
+
+/* OLD CODE START — see git history for full implementation
+*
+* // ── 设备下拉框动画 variants ──
+* const devicePanelVariants = { ... };
+* const deviceContentVariants = { ... };
+* const deviceBackdropVariants = { ... };
+*
+* type CanvasState = 'idle' | 'starting' | 'running' | 'error';
+* const isElectron = () => typeof window !== 'undefined' && !!window.soloforge;
+*
+* // 预设底色
+* const BG_PRESETS = [ ... ];
+*
+* // 2D/3D 设备列表
+* const DEVICES_2D: DevicePreset[] = [ ... ];
+* const DEVICES_3D: DevicePreset[] = [ ... ];
+*
+* // 完整组件实现:
+* // - canvasState / canvasError / canvasInfo 状态管理
+* // - DSL 恢复链路 (GarnetStore → 聊天历史降级)
+* // - handleSelectDevice / handleSelectSizeKey (IPC selectDevice)
+* // - toggleDeviceDropdown (BrowserWindow 弹窗)
+* // - onDeviceSelected 监听 (IPC 回调)
+* // - canvasAreaSize ResizeObserver
+* // - 自动启动画布 useEffect
+* // - 崩溃检测 onExited useEffect
+* // - sessionIdRef 同步 useLayoutEffect
+* // - reportBounds useEffect
+* // - 卸载时 stop useEffect
+* // - pushBackground / startCanvas / stopCanvas
+* // - handlePickColor / handlePickCustom
+* // - handleDeleteCanvas
+* // - renderStandby / renderPlaceholder
+* // - 完整 JSX: 工具栏 + 底色选择器 + 2D/3D 切换 + 画布区域 + PNG 边框
+*
+* OLD CODE END */

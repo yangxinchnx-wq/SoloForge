@@ -463,10 +463,10 @@ export default function HistoryAndEditorPanel({
 
       // 2. 逐个删除画布 — 停子进程 + DELETE 后端(含 Garnet state+DSL + SurrealDB) + 清前端缓存
       for (const canvasId of ownedCanvasIds) {
-        // 停 Electron 子进程
-        if (typeof window !== 'undefined' && window.soloforge?.canvas) {
-          window.soloforge.canvas.stop(canvasId).catch(() => {});
-        }
+// ★ 2026-07-16: 画布重构 — canvas.stop 注释掉
+// if (typeof window !== 'undefined' && window.soloforge?.canvas) {
+//   window.soloforge.canvas.stop(canvasId).catch(() => {});
+// }
         // DELETE 后端 — 清内存 + Garnet(state+dsl) + SurrealDB
         try {
           await fetch(`/api/canvas/sessions/${encodeURIComponent(canvasId)}`, {

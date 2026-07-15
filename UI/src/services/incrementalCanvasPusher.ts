@@ -160,63 +160,16 @@ export function clearByCanvasSessionId(canvasSessionId: string): void {
   _startedSessions.delete(canvasSessionId);
 }
 
-// ── 画布 session 自动启动 + push 重试 (辅助) ──
-
+// ★ 2026-07-16: 画布重构 — ensureCanvasAndPush 改为 no-op
+//   旧版通过 IPC 推送 DSL 到 Flutter 进程, 重构后直接写 previewStreamStore
+//   恢复方法: git checkout HEAD -- incrementalCanvasPusher.ts
 export async function ensureCanvasAndPush(
-  sessionId: string,
-  dsl: any,
-  chatSessionId?: string,
+  _sessionId: string,
+  _dsl: any,
+  _chatSessionId?: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  if (typeof window === 'undefined' || !window.soloforge?.canvas) {
-    return { ok: false, error: 'no electron canvas' };
-  }
-  const canvas = window.soloforge.canvas;
-
-  // 第一次尝试 push
-  try {
-    const r = await canvas.push(sessionId, dsl);
-    if (r?.ok) return { ok: true };
-
-    // 如果是 session not found, 尝试启动 session
-    if (r?.error && String(r.error).includes('not found')) {
-      console.warn(`[ensureCanvasAndPush] session "${sessionId}" not found, auto-starting...`);
-
-      // 启动画布 (如果尚未启动过)
-      if (!_startedSessions.has(sessionId)) {
-        _startedSessions.add(sessionId);
-        try {
-          // ★ FIX 2026-07-14: 使用 store 中的实际画布尺寸, 不再硬编码 width=0
-          const size = getCanvasSize(sessionId);
-          const startR = await canvas.start(sessionId, size.width, size.height);
-          if (!startR?.ok) {
-            console.warn(`[ensureCanvasAndPush] canvas.start failed:`, startR?.error);
-            return { ok: false, error: `start failed: ${startR?.error || 'unknown'}` };
-          }
-          console.log(`[ensureCanvasAndPush] canvas.start ok, port=${startR.session?.port}, retrying push...`);
-        } catch (startErr: any) {
-          console.warn(`[ensureCanvasAndPush] canvas.start exception:`, startErr?.message || startErr);
-          return { ok: false, error: `start exception: ${startErr?.message || 'unknown'}` };
-        }
-      }
-
-      // 重试 push
-      try {
-        const r2 = await canvas.push(sessionId, dsl);
-        if (r2?.ok) {
-          console.log(`[ensureCanvasAndPush] retry push ok after auto-start`);
-          return { ok: true };
-        }
-        console.warn(`[ensureCanvasAndPush] retry push still failed:`, r2?.error);
-        return { ok: false, error: r2?.error || 'retry failed' };
-      } catch (retryErr: any) {
-        return { ok: false, error: `retry exception: ${retryErr?.message || 'unknown'}` };
-      }
-    }
-
-    return { ok: false, error: r?.error || 'push failed' };
-  } catch (err: any) {
-    return { ok: false, error: err?.message || 'exception' };
-  }
+  // 画布重构中 — 不再通过 IPC 推送, 数据已由 previewStreamStore 直接处理
+  return { ok: true };
 }
 
 // ── 语言标识映射 ──

@@ -286,10 +286,10 @@ export const useChatsStore = create<ChatsState>()(subscribeWithSelector((set, ge
 
       const { useCanvasDeviceStore } = await import('../state/canvasDeviceStore');
       for (const cid of ownedCanvasIds) {
-        // 停 Electron 子进程
-        if (typeof window !== 'undefined' && window.soloforge?.canvas) {
-          window.soloforge.canvas.stop(cid).catch(() => {});
-        }
+        // ★ 2026-07-16: 画布重构 — canvas.stop 注释掉
+        // if (typeof window !== 'undefined' && window.soloforge?.canvas) {
+        //   window.soloforge.canvas.stop(cid).catch(() => {});
+        // }
         // 清 _startedSessions + 所有映射
         clearByCanvasSessionId(cid);
         // 清 canvasDeviceStore
