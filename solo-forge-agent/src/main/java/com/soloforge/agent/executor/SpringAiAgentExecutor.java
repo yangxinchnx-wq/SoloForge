@@ -82,7 +82,7 @@ public class SpringAiAgentExecutor {
                 .orElseThrow(() -> new IllegalArgumentException("Agent not found: " + agentId));
         if (!lawClient.checkLegal(agentId, settings)) return "Blocked: legal";
         if (!economyClient.checkCreditScore(agentId, settings)) return "Blocked: credit";
-        String systemPrompt = promptBuilder.build(agent, settings, null);
+        String systemPrompt = buildFullPrompt(agent, settings, userMessage);
         double temp = settings.getTemperature() != null ? settings.getTemperature() : 0.3;
         // ══ 容量校验 ══
         String capErr = commandCenter.checkCapacity(systemPrompt, userMessage, provider.getRateLimitProfile());
@@ -143,7 +143,7 @@ public class SpringAiAgentExecutor {
             return reactor.core.publisher.Flux.just("Blocked: legal");
         if (!economyClient.checkCreditScore(agentId, settings))
             return reactor.core.publisher.Flux.just("Blocked: credit");
-        String systemPrompt = promptBuilder.build(agent, settings, null);
+        String systemPrompt = buildFullPrompt(agent, settings, userMessage);
         double temp = settings.getTemperature() != null ? settings.getTemperature() : 0.3;
         String pKey = LlmCommandCenter.providerKey(provider.getBaseUrl(), provider.getModel());
         LlmCommandCenter.LlmDecision d = commandCenter.evaluate(provider.getBaseUrl(), provider.getModel(), provider.getRateLimitProfile());
@@ -162,6 +162,98 @@ public class SpringAiAgentExecutor {
                 .doOnError(e -> { commandCenter.release(pKey); commandCenter.recordFailure(pKey, LlmCommandCenter.extractStatusCode(e)); })
                 .doOnComplete(() -> commandCenter.recordSuccess(pKey, 0));
         return new StreamingResponseAdapter().adapt(responseFlux);
+    }
+
+    private void postExecuteSideEffects(AgentIdentityEntity agent, String response, ChatSettings settings) {
+        try {
+            marlTrainingClient.pushTrace(agent.getId(), buildObservation(agent, response), extractAction(response), 0.3);
+            reputationClient.pushReputationSync(agent.getId(), Map.of("lastAction", extractAction(response), "timestamp", System.currentTimeMillis()));
+            memoryClient.storeMemory(agent.getId(), "user", response);
+            cultureClient.evaluateCulturalImpact(agent.getId(), response);
+            coalitionClient.recordCoalitionAction(agent.getId(), extractAction(response));
+            institutionClient.recordInstitutionalInteraction(agent.getId(), response);
+        } catch (Exception e) { log.error("[SpringAiExec] side effects: {}", e.getMessage(), e); }
+    }
+
+    private String buildObservation(AgentIdentityEntity agent, String response) {
+        return String.format("{\"agentId\":\"%s\",\"agentName\":\"%s\",\"responseLength\":%d}", agent.getId(), agent.getName(), response.length());
+    }
+
+    private String extractAction(String response) {
+        if (response == null || response.isBlank()) return "unknown";
+        String[] parts = response.split("[\\s\\u3002\\uFF01\\uFF1F]", 3);
+        return parts[0].length() > 20 ? parts[0].substring(0, 20) : parts[0];
+    }
+}
+
+    /**
+     * 收集所有上下文数据，构建完整的 12 层 System Prompt
+     */
+    private String buildFullPrompt(AgentIdentityEntity agent, ChatSettings settings, String userMessage) {
+        List<String> capabilities = parseCapabilities(agent.getCapabilities());
+        String workspace = settings.getWorkspaceFolder();
+        List<String> toolDescs = null;
+        String canvasCtx = settings.getCanvasId() != null ? "canvas_id=" + settings.getCanvasId() : null;
+        List<String> skills = readSkillContents(settings.getEnabledSkills(), workspace);
+        List<String> knowledgeIds = settings.getEnabledKnowledge();
+        if (knowledgeIds == null || knowledgeIds.isEmpty()) knowledgeIds = null;
+        List<String> experiences = null;
+        try { experiences = memoryClient.getLessons(agent.getDomain()); } catch (Exception e) { log.warn("getLessons: {}", e.getMessage()); }
+        if (experiences != null && experiences.isEmpty()) experiences = null;
+        List<String> cases = null;
+        try { cases = caseRetriever.retrieve(userMessage, agent.getDomain(), 3); } catch (Exception e) { log.warn("cases: {}", e.getMessage()); }
+        if (cases != null && cases.isEmpty()) cases = null;
+        List<String> culturePrinciples = null;
+        try { culturePrinciples = cultureClient.getPrinciples(); } catch (Exception e) { log.warn("culture: {}", e.getMessage()); }
+        if (culturePrinciples != null && culturePrinciples.isEmpty()) culturePrinciples = null;
+        String prompt = promptBuilder.build(agent, settings, capabilities, toolDescs, workspace,
+                canvasCtx, skills, knowledgeIds, experiences, cases, culturePrinciples);
+        log.info("[SpringAiExec] prompt={} chars caps={} skills={} exp={} cases={} culture={}",
+                prompt.length(),
+                capabilities != null ? capabilities.size() : 0,
+                skills != null ? skills.size() : 0,
+                experiences != null ? experiences.size() : 0,
+                cases != null ? cases.size() : 0,
+                culturePrinciples != null ? culturePrinciples.size() : 0);
+        return prompt;
+    }
+
+    /** 解析 agent.capabilities JSON 字符串 → List<String> */
+    @SuppressWarnings("unchecked")
+    private List<String> parseCapabilities(String json) {
+        if (json == null || json.isBlank()) return null;
+        try {
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            return mapper.readValue(json, List.class);
+        } catch (Exception e) {
+            log.warn("parseCapabilities failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** 从磁盘读取启用的 Skill SKILL.md 内容 */
+    private List<String> readSkillContents(List<String> enabledSkills, String workspace) {
+        if (enabledSkills == null || enabledSkills.isEmpty()) return null;
+        List<String> contents = new java.util.ArrayList<>();
+        String baseDir = workspace != null ? workspace : System.getProperty("user.dir");
+        String skillsDir = baseDir + "/.agents/skills";
+        for (String skillId : enabledSkills) {
+            String skillPath = skillsDir + "/" + skillId + "/SKILL.md";
+            try {
+                java.nio.file.Path p = java.nio.file.Paths.get(skillPath);
+                if (java.nio.file.Files.exists(p)) {
+                    String content = java.nio.file.Files.readString(p, java.nio.charset.StandardCharsets.UTF_8);
+                    if (content.length() > 8000) content = content.substring(0, 8000) + "...(truncated)";
+                    contents.add(content);
+                    log.info("[SpringAiExec] loaded skill: {} ({} chars)", skillId, content.length());
+                } else {
+                    log.warn("[SpringAiExec] skill file not found: {}", skillPath);
+                }
+            } catch (Exception e) {
+                log.warn("[SpringAiExec] read skill {} failed: {}", skillId, e.getMessage());
+            }
+        }
+        return contents.isEmpty() ? null : contents;
     }
 
     private void postExecuteSideEffects(AgentIdentityEntity agent, String response, ChatSettings settings) {
