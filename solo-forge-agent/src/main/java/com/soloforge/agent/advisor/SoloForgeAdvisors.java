@@ -1,4 +1,4 @@
-﻿package com.soloforge.agent.advisor;
+package com.soloforge.agent.advisor;
 
 import com.soloforge.agent.aisociety.LawClient;
 import com.soloforge.agent.aisociety.EconomyClient;

@@ -1,10 +1,14 @@
-﻿package com.soloforge.agent.executor;
+package com.soloforge.agent.executor;
 
 import com.soloforge.agent.advisor.SystemPromptBuilder;
 import com.soloforge.agent.aisociety.*;
 import com.soloforge.agent.config.DynamicChatModelResolver;
 import com.soloforge.agent.dto.ChatRequest;
 import com.soloforge.agent.llm.LlmRateLimiter;
+import com.soloforge.agent.tools.SoloForgeTools;
+import com.soloforge.agent.advisor.SoloForgeAdvisors.LegalCheckAdvisor;
+import com.soloforge.agent.advisor.SoloForgeAdvisors.CreditCheckAdvisor;
+import com.soloforge.agent.advisor.SoloForgeAdvisors.PostCallAdvisor;
 import com.soloforge.agent.tools.SoloForgeTools;
 import com.soloforge.agent.advisor.SoloForgeAdvisors.LegalCheckAdvisor;
 import com.soloforge.agent.advisor.SoloForgeAdvisors.CreditCheckAdvisor;
@@ -58,6 +62,10 @@ public class SpringAiAgentExecutor {
     private final LegalCheckAdvisor legalCheckAdvisor;
     private final CreditCheckAdvisor creditCheckAdvisor;
     private final PostCallAdvisor postCallAdvisor;
+    private final SoloForgeTools soloForgeTools;
+    private final LegalCheckAdvisor legalCheckAdvisor;
+    private final CreditCheckAdvisor creditCheckAdvisor;
+    private final PostCallAdvisor postCallAdvisor;
 
     public SpringAiAgentExecutor(
             DynamicChatModelResolver modelResolver,
@@ -85,130 +93,77 @@ public class SpringAiAgentExecutor {
         this.cultureClient = cultureClient;
         this.coalitionClient = coalitionClient;
         this.institutionClient = institutionClient;
-        this.caseRetriever = caseRetriever;
-        this.rateLimiter = rateLimiter;
-        this.soloForgeTools = soloForgeTools;
-        this.legalCheckAdvisor = legalCheckAdvisor;
-        this.creditCheckAdvisor = creditCheckAdvisor;
-        this.postCallAdvisor = postCallAdvisor;
-    }
 
-    /**
-     * 鎵ц Agent 瀵硅瘽锛堥潪娴佸紡锛?     *
-     * <p>绛夋晥浜庡師 {@code AgentExecutor.execute()}锛屼絾浣跨敤 Spring AI 2.0 ChatClient銆?     */
     public String execute(String userMessage, ChatRequest request) {
         String agentId = request.getSettings().getAgentId();
         ChatSettings settings = request.getSettings();
         ChatRequest.LlmProvider provider = request.getProvider();
-
         log.info("[SpringAiExec] agent={} provider={}", agentId, provider);
-
-        // 鈹€鈹€ Step 1: 鍔犺浇 Agent 閰嶇疆锛堜繚鎸佷笉鍙橈級 鈹€鈹€
         AgentIdentityEntity agent = agentRepo.findById(agentId)
                 .orElseThrow(() -> new IllegalArgumentException("Agent not found: " + agentId));
-
-        // 鈹€鈹€ Step 2: 娉曞緥妫€鏌ワ紙淇濇寔涓嶅彉锛?鈹€鈹€
         if (!lawClient.checkLegal(agentId, settings)) {
-            log.warn("[SpringAiExec] 娉曞緥妫€鏌ユ湭閫氳繃: agent={}", agentId);
-            return "鈿栵笍 鎶辨瓑锛岃璇锋眰瑙﹀彂浜嗘硶寰嬪悎瑙勯檺鍒躲€?;
+            return "Blocked: legal compliance check failed";
         }
-
-        // 鈹€鈹€ Step 3: 淇＄敤鍒嗘鏌ワ紙淇濇寔涓嶅彉锛?鈹€鈹€
         if (!economyClient.checkCreditScore(agentId, settings)) {
-            log.warn("[SpringAiExec] 淇＄敤鍒嗕笉瓒? agent={}", agentId);
-            return "馃挵 鎶辨瓑锛岃 Agent 褰撳墠淇＄敤鍒嗕笉瓒炽€?;
+            return "Blocked: credit score insufficient";
         }
-
-        // 鈹€鈹€ Step 4: 鏋勫缓 System Prompt锛堜繚鎸佷笉鍙橈紝杈撳嚭涓哄瓧绗︿覆锛?鈹€鈹€
         String systemPrompt = promptBuilder.build(agent, settings, null);
-
-        // 鈹€鈹€ Step 5-7: 鍔ㄦ€佽В鏋?ChatModel + 鎵ц锛堚槄 鏍稿績鍙樻洿锛?鈹€鈹€
-        // 鍘?LlmGateway.chatCompletion() 鈫?ChatClient.call()
-        // 鍘?for 寰幆 FC 鈫?ToolCallingAdvisor 鑷姩椹卞姩
         ChatModel chatModel = modelResolver.resolve(provider);
-
-        ChatClient chatClient = ChatClient.builder(chatModel).build();
-
-        String pKey = LlmRateLimiter.providerKey(provider.getBaseUrl(), provider.getModel());
-        String response = null;
-        Exception lastError = null;
-        for (int attempt = 0; attempt <= 3; attempt++) {
-            rateLimiter.waitForRpmSlot(pKey);
-            rateLimiter.acquire(pKey);
-            try {
-                response = chatClient.prompt()
-                        .system(systemPrompt)
-                        .user(userMessage)
-                        .options(org.springframework.ai.chat.prompt.ChatOptions.builder()
-                                .temperature(settings.getTemperature() != null ? settings.getTemperature() : 0.3f)
-                                .build())
-                        .call()
-                        .content();
-                rateLimiter.recordSuccess(pKey);
-                break;
-            } catch (Exception e) {
-                int statusCode = LlmRateLimiter.extractStatusCode(e);
-                if (rateLimiter.shouldRetry(statusCode, attempt)) {
-                    Long retryAfter = LlmRateLimiter.extractRetryAfter(e);
-                    log.warn("[SpringAiExec] LLM call failed (HTTP {}), retrying #{}/3", statusCode, attempt + 1);
-                    rateLimiter.record429(pKey);
-                    rateLimiter.waitBeforeRetry(retryAfter, attempt);
-                    lastError = e;
-                    continue;
-                }
-                throw e;
-            } finally {
-                rateLimiter.release(pKey);
-            }
-        }
-        if (response == null) {
-            throw new RuntimeException("LLM retries exhausted", lastError);
-        }
-
+        ChatClient chatClient = ChatClient.builder(chatModel)
+                .defaultTools(soloForgeTools)
+                .defaultAdvisors(legalCheckAdvisor, creditCheckAdvisor, rateLimitAdvisor, postCallAdvisor)
+                .build();
+        java.util.Map<String, Object> ctx = new java.util.HashMap<>();
+        ctx.put("agent_id", agentId);
+        ctx.put("provider_base_url", provider.getBaseUrl());
+        ctx.put("provider_model", provider.getModel());
+        String response = chatClient.prompt()
+                .system(systemPrompt)
+                .user(userMessage)
+                .toolContext(ctx)
+                .options(org.springframework.ai.chat.prompt.ChatOptions.builder()
+                        .temperature(settings.getTemperature() != null ? settings.getTemperature() : 0.3)
+                        .build())
+                .call()
+                .content();
         log.info("[SpringAiExec] response_len={}", response.length());
-
-        // 鈹€鈹€ Step 8: 鍚庣疆鍓綔鐢紙淇濇寔涓嶅彉锛?鈹€鈹€
         postExecuteSideEffects(agent, response, settings);
-
         return response;
     }
 
-    /**
-     * 鎵ц Agent 瀵硅瘽锛堟祦寮忥級
-     *
-     * <p>绛夋晥浜庡師 {@code AgentExecutor.executeStream()}銆?     * 娴佸紡鍝嶅簲閫氳繃 {@link StreamingResponseAdapter} 澶勭悊 reasoning_content 鐨?\u0001 鍓嶇紑鏍囪銆?     */
+
     public reactor.core.publisher.Flux<String> executeStream(String userMessage, ChatRequest request) {
         String agentId = request.getSettings().getAgentId();
         ChatSettings settings = request.getSettings();
         ChatRequest.LlmProvider provider = request.getProvider();
-
         log.info("[SpringAiExec-Stream] agent={} provider={}", agentId, provider);
-
         AgentIdentityEntity agent = agentRepo.findById(agentId)
                 .orElseThrow(() -> new IllegalArgumentException("Agent not found: " + agentId));
-
-        // 娉曞緥/淇＄敤妫€鏌ワ紙鍚岄潪娴佸紡锛?        if (!lawClient.checkLegal(agentId, settings)) {
-            return reactor.core.publisher.Flux.just("鈿栵笍 鎶辨瓑锛岃璇锋眰瑙﹀彂浜嗘硶寰嬪悎瑙勯檺鍒躲€?);
+        if (!lawClient.checkLegal(agentId, settings)) {
+            return reactor.core.publisher.Flux.just("Blocked: legal compliance check failed");
         }
         if (!economyClient.checkCreditScore(agentId, settings)) {
-            return reactor.core.publisher.Flux.just("馃挵 鎶辨瓑锛岃 Agent 褰撳墠淇＄敤鍒嗕笉瓒炽€?);
+            return reactor.core.publisher.Flux.just("Blocked: credit score insufficient");
         }
-
         String systemPrompt = promptBuilder.build(agent, settings, null);
         ChatModel chatModel = modelResolver.resolve(provider);
-
-        ChatClient chatClient = ChatClient.builder(chatModel).build();
-
-        // 鈽?娴佸紡璋冪敤锛氳繑鍥?Flux<ChatResponse>
+        ChatClient chatClient = ChatClient.builder(chatModel)
+                .defaultTools(soloForgeTools)
+                .defaultAdvisors(legalCheckAdvisor, creditCheckAdvisor, rateLimitAdvisor, postCallAdvisor)
+                .build();
+        java.util.Map<String, Object> ctx = new java.util.HashMap<>();
+        ctx.put("agent_id", agentId);
+        ctx.put("provider_base_url", provider.getBaseUrl());
+        ctx.put("provider_model", provider.getModel());
         String pKey = LlmRateLimiter.providerKey(provider.getBaseUrl(), provider.getModel());
         rateLimiter.waitForRpmSlot(pKey);
         rateLimiter.acquire(pKey);
-
         reactor.core.publisher.Flux<ChatResponse> responseFlux = chatClient.prompt()
                 .system(systemPrompt)
                 .user(userMessage)
+                .toolContext(ctx)
                 .options(org.springframework.ai.chat.prompt.ChatOptions.builder()
-                        .temperature(settings.getTemperature() != null ? settings.getTemperature() : 0.3f)
+                        .temperature(settings.getTemperature() != null ? settings.getTemperature() : 0.3)
                         .build())
                 .stream()
                 .chatResponse()
@@ -219,8 +174,6 @@ public class SpringAiAgentExecutor {
                     int sc = LlmRateLimiter.extractStatusCode(e);
                     if (sc == 429 || sc == 503) rateLimiter.record429(pKey);
                 });
-
-        // 鈽?閫氳繃 Adapter 澶勭悊 reasoning_content 鈫?\u0001 鍓嶇紑
         return new StreamingResponseAdapter().adapt(responseFlux);
     }
 
