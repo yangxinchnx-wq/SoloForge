@@ -39,12 +39,43 @@ export function useFileOperations() {
 
   // 防抖自动保存定时器
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // ★ FIX #18: BroadcastChannel 单例复用, 避免每次编辑都 new+close
+  const syncChannelRef = useRef<BroadcastChannel | null>(null);
 
-  // 卸载时清理定时器
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      syncChannelRef.current = new BroadcastChannel('soloforge-editor-sync-channel');
+    } catch (e) {
+      console.warn('[useFileOperations] BroadcastChannel not available', e);
+    }
+    return () => {
+      syncChannelRef.current?.close();
+      syncChannelRef.current = null;
+    };
+  }, []);
+
+  // ★ FIX #15: 卸载时不仅清除定时器, 还要 flush 待保存的内容
+  //   原代码只 clearTimeout, 最后 1000ms 防抖窗口内的编辑内容会丢失
   useEffect(() => {
     return () => {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
+        // 同步 flush: 将待保存内容写入 localStorage + 广播
+        const latestCache = fileCacheRef.current;
+        const latestFile = selectedFileRef.current;
+        const latestContent = latestCache[latestFile] || '';
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('soloforge_fileCache', JSON.stringify(latestCache));
+          window.dispatchEvent(new CustomEvent('soloforge-file-saved'));
+          try {
+            syncChannelRef.current?.postMessage({
+              type: 'EDIT',
+              file: latestFile,
+              content: latestContent,
+            });
+          } catch { /* channel 可能已关闭, 静默 */ }
+        }
       }
     };
   }, []);
@@ -91,14 +122,13 @@ export function useFileOperations() {
         localStorage.setItem('soloforge_fileCache', JSON.stringify(latestCache));
         window.dispatchEvent(new CustomEvent('soloforge-file-saved'));
 
+        // ★ FIX #18: 使用单例 channel, 避免反复 new+close
         try {
-          const channel = new BroadcastChannel('soloforge-editor-sync-channel');
-          channel.postMessage({
+          syncChannelRef.current?.postMessage({
             type: 'EDIT',
             file: latestFile,
-            content: latestContent
+            content: latestContent,
           });
-          channel.close();
         } catch (e) {
           console.warn(e);
         }
@@ -123,25 +153,39 @@ export function useFileOperations() {
       const fontNameDisplay = filename.replace(/\.[^/.]+$/, "") + " (Local)";
       const rawContent = fileCacheRef.current[file] || '';
 
-      const fontUrl = rawContent.startsWith('data:')
-        ? rawContent
-        : `data:font/woff2;base64,${btoa(rawContent || 'mock-binary-font-package-data')}`;
+      // ★ FIX #11: btoa() 对非 Latin-1 字符会抛 InvalidCharacterError
+      //   fileCache 存的是编辑器文本, 不是二进制字体数据, btoa 编码后也不是有效字体
+      //   修复策略:
+      //   1. 如果 rawContent 已是 data: URL, 直接用
+      //   2. 否则用文件路径作为相对 URL (addCustomFont 最终通过 @font-face url() 加载)
+      //   3. 不再尝试 btoa 编码文本内容作为字体 data URL
+      let fontUrl: string | undefined;
+      if (rawContent.startsWith('data:')) {
+        fontUrl = rawContent;
+      } else {
+        // 用文件路径作为 URL — @font-face 的 src: url() 会处理加载
+        // 确保路径不以 / 开头 (相对路径)
+        fontUrl = file.startsWith('/') ? file.slice(1) : file;
+      }
 
-      addCustomFont(fontNameDisplay, fontUrl);
-      setSelectedFont(fontNameDisplay);
-      setToastMsg(`已自动从资源管理器加载本地字体「${fontNameDisplay}」并设为激活！`);
+      if (fontUrl) {
+        addCustomFont(fontNameDisplay, fontUrl);
+        setSelectedFont(fontNameDisplay);
+        setToastMsg(`已自动从资源管理器加载本地字体「${fontNameDisplay}」并设为激活！`);
+      } else {
+        setToastMsg(`字体「${fontNameDisplay}」无法加载: 文件内容无效且路径不可用`);
+      }
     }
 
     const content = fileCacheRef.current[file] !== undefined ? fileCacheRef.current[file] : '';
     if (typeof window !== 'undefined') {
+      // ★ FIX #18: 使用单例 channel
       try {
-        const channel = new BroadcastChannel('soloforge-editor-sync-channel');
-        channel.postMessage({
+        syncChannelRef.current?.postMessage({
           type: 'FILE_SELECT',
           file: file,
-          content: content
+          content: content,
         });
-        channel.close();
       } catch (e) {
         console.warn(e);
       }

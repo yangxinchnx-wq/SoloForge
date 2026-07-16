@@ -131,22 +131,29 @@ export const usePreviewStreamStore = create<PreviewStreamState>()(
     },
 
     confirmPayload: (chatId, payload) => {
+      // ★ FIX #16: 将 fetch 移到 set 之外 — zustand set updater 应为纯函数
+      //   原代码在 set updater 内部触发 fetch, 违反纯函数约定
+      //   修复: 先用 set 计算并更新状态, 再在 set 之外触发异步写入
+      let pendingFetch: (() => void) | null = null;
+
       set((s) => {
         const prev = s.entries[chatId];
         if (!prev) return s;
         const newAst = payload?.preview.root ?? prev.ast;
-        // ★ 2026-07-13: confirmPayload 时异步写入 Garnet 热存储
+        const sessionId = prev.sessionId || `canvas-${chatId}`;
+        // 准备 fetch 参数 (但不在此执行)
         if (payload && newAst) {
-          const sessionId = prev.sessionId || `canvas-${chatId}`;
-          fetch(`/api/canvas/sessions/${encodeURIComponent(sessionId)}/dsl`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              dsl: newAst,
-              language: payload.language || prev.language,
-              sourceCode: payload.source_code || prev.sourceCode,
-            }),
-          }).catch(() => {}); // 火后即忘, 不阻塞 UI
+          pendingFetch = () => {
+            fetch(`/api/canvas/sessions/${encodeURIComponent(sessionId)}/dsl`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                dsl: newAst,
+                language: payload.language || prev.language,
+                sourceCode: payload.source_code || prev.sourceCode,
+              }),
+            }).catch(() => {}); // 火后即忘, 不阻塞 UI
+          };
         }
         return {
           entries: {
@@ -161,6 +168,9 @@ export const usePreviewStreamStore = create<PreviewStreamState>()(
           },
         };
       });
+
+      // 在 set 之外执行副作用
+      if (pendingFetch) pendingFetch();
     },
 
     recordPushError: (chatId, error) => {

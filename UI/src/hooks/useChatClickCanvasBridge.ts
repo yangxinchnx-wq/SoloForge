@@ -244,9 +244,9 @@ export function useChatClickCanvasBridge(
     maxCanvases,
     ready,
     error,
-    refresh: () => {
+    refresh: async () => {
       lastResolvedFor.current = null;
-      return resolve(chatId || '');
+      await resolve(chatId || '');
     },
     selectCanvas: (cid: string) => {
       // 立刻本地切, 不等服务端 round-trip; 后台拉列表顺便记 access

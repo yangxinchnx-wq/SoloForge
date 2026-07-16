@@ -133,9 +133,14 @@ const CollapsibleProcess = memo(function CollapsibleProcess({ parts, isStreaming
   const [userToggled, setUserToggled] = useState(false);
 
   // ★ 2026-07-14 v2: streaming 时展开; 完成后自动折叠 (用户可手动展开)
+  // ★ FIX #13: isStreaming 分支也需检查 userToggled
+  //   原代码: 用户手动关闭后 (userToggled=true), 新一轮流式开始时 isStreaming→true
+  //   会强制 setIsOpen(true), 覆盖用户的关闭操作
+  //   修复: 如果用户已手动操作过, 不再自动展开
   useEffect(() => {
     if (isStreaming) {
-      if (!isOpen) setIsOpen(true);
+      // 用户手动关闭过 → 尊重用户选择, 不自动展开
+      if (!userToggled && !isOpen) setIsOpen(true);
       return;
     }
     // streaming 结束后自动折叠 (仅在用户未手动操作过时)
@@ -143,7 +148,7 @@ const CollapsibleProcess = memo(function CollapsibleProcess({ parts, isStreaming
       const timer = setTimeout(() => setIsOpen(false), 2000);
       return () => clearTimeout(timer);
     }
-  }, [isStreaming]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isStreaming, userToggled, isOpen]);
 
   const handleToggle = useCallback(() => {
     setUserToggled(true);
