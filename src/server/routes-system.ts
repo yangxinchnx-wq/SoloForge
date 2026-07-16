@@ -788,31 +788,57 @@ export async function handleJavaAgentSSE(
   let aborted = false;
   req.on('close', () => { aborted = true; });
 
+  // EventBus listener 定义 (在 try 外定义, 以便 finally 能清理)
+  let onWorkerStarted: ((payload: any) => void) | null = null;
+  let onWorkerChunk: ((payload: any) => void) | null = null;
+  let onWorkerDone: ((payload: any) => void) | null = null;
+  let onWorkerFailed: ((payload: any) => void) | null = null;
+  let onWorkerStoppedByJudge: ((payload: any) => void) | null = null;
+  let onDispatchDone: ((payload: any) => void) | null = null;
+  let listenersAttached = false;
+
+  // 统一清理函数: 移除 EventBus listener + 注销 DispatchTracker
+  // 必须在所有退出路径 (正常/!ok/异常/超时/客户端断开) 调用, 避免内存泄漏
+  const cleanupListeners = (): void => {
+    if (!listenersAttached) return;
+    if (onWorkerStarted) kernel.eventBus.off('worker_started', onWorkerStarted);
+    if (onWorkerChunk) kernel.eventBus.off('worker_chunk', onWorkerChunk);
+    if (onWorkerDone) kernel.eventBus.off('worker_done', onWorkerDone);
+    if (onWorkerFailed) kernel.eventBus.off('worker_failed', onWorkerFailed);
+    if (onWorkerStoppedByJudge) kernel.eventBus.off('worker_stopped_by_judge', onWorkerStoppedByJudge);
+    if (onDispatchDone) kernel.eventBus.off('dispatch_done', onDispatchDone);
+    listenersAttached = false;
+    // 清理实时裁判跟踪器
+    if (judgeStop && typeof judgeStop.unregisterDispatch === 'function') {
+      judgeStop.unregisterDispatch(dispatchId);
+    }
+  };
+
   try {
     // 1. 先订阅 EventBus 事件, 再发 dispatch 请求 (避免 race condition: worker_started 在订阅前就发出)
     let completed = false;
 
-    const onWorkerStarted = (payload: any) => {
+    onWorkerStarted = (payload: any) => {
       if (payload?.dispatchId !== dispatchId) return;
       writeSSE('worker_started', payload);
     };
-    const onWorkerChunk = (payload: any) => {
+    onWorkerChunk = (payload: any) => {
       if (payload?.dispatchId !== dispatchId) return;
       writeSSE('worker_chunk', payload);
     };
-    const onWorkerDone = (payload: any) => {
+    onWorkerDone = (payload: any) => {
       if (payload?.dispatchId !== dispatchId) return;
       writeSSE('worker_done', payload);
     };
-    const onWorkerFailed = (payload: any) => {
+    onWorkerFailed = (payload: any) => {
       if (payload?.dispatchId !== dispatchId) return;
       writeSSE('worker_failed', payload);
     };
-    const onWorkerStoppedByJudge = (payload: any) => {
+    onWorkerStoppedByJudge = (payload: any) => {
       if (payload?.dispatchId !== dispatchId) return;
       writeSSE('worker_stopped_by_judge', payload);
     };
-    const onDispatchDone = (payload: any) => {
+    onDispatchDone = (payload: any) => {
       if (payload?.dispatchId !== dispatchId) return;
       writeSSE('dispatch_done', payload);
       completed = true;
@@ -824,6 +850,7 @@ export async function handleJavaAgentSSE(
     kernel.eventBus.on('worker_failed', onWorkerFailed);
     kernel.eventBus.on('worker_stopped_by_judge', onWorkerStoppedByJudge);
     kernel.eventBus.on('dispatch_done', onDispatchDone);
+    listenersAttached = true;
 
     // 2. 通过 HTTP 启动 dispatch (Java Agent 端口 8770)
     const executeBody = { ...body, dispatchId, chatId };
@@ -836,15 +863,7 @@ export async function handleJavaAgentSSE(
     if (!executeRes.ok) {
       const errText = await executeRes.text();
       writeSSE('error', { error: `Java Agent dispatch failed: ${errText}` });
-      // cleanup
-      kernel.eventBus.off('worker_started', onWorkerStarted);
-      kernel.eventBus.off('worker_chunk', onWorkerChunk);
-      kernel.eventBus.off('worker_done', onWorkerDone);
-      kernel.eventBus.off('worker_failed', onWorkerFailed);
-      kernel.eventBus.off('worker_stopped_by_judge', onWorkerStoppedByJudge);
-      kernel.eventBus.off('dispatch_done', onDispatchDone);
-      res.end();
-      return;
+      return; // cleanup 在 finally 中统一执行
     }
 
     // 3. 等待 dispatch_done 或客户端断开 (最长 5 分钟)
@@ -859,23 +878,13 @@ export async function handleJavaAgentSSE(
     } else if (!aborted) {
       writeSSE('done', { dispatchId });
     }
-
-    // cleanup
-    kernel.eventBus.off('worker_started', onWorkerStarted);
-    kernel.eventBus.off('worker_chunk', onWorkerChunk);
-    kernel.eventBus.off('worker_done', onWorkerDone);
-    kernel.eventBus.off('worker_failed', onWorkerFailed);
-    kernel.eventBus.off('worker_stopped_by_judge', onWorkerStoppedByJudge);
-    kernel.eventBus.off('dispatch_done', onDispatchDone);
-    // 清理实时裁判跟踪器
-    if (judgeStop && typeof judgeStop.unregisterDispatch === 'function') {
-      judgeStop.unregisterDispatch(dispatchId);
-    }
+    // cleanup 在 finally 中统一执行
   } catch (err: any) {
     if (!aborted) {
       writeSSE('error', { error: `Java Agent service not started: ${err.message}` });
     }
   } finally {
+    cleanupListeners();
     try { if (!aborted) res.end(); } catch { /* ignore */ }
   }
 }

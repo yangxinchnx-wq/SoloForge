@@ -191,7 +191,7 @@ Only mark off_track=true if the output is clearly useless. Minor imperfections s
         tools: [],
         model: cfg.defaultModel,
         temperature: 0.2,
-        maxTokens: 256,
+        maxTokens: 1024,
         maxRounds: 1,
       });
 

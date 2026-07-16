@@ -2,6 +2,7 @@ node_modules/
 dist/
 data/
 rust_core/target/
+solo-forge-agent/target/
 
 # Python
 .venv/

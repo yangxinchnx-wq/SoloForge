@@ -38,8 +38,8 @@ import java.util.stream.Collectors;
 @Component
 public class MultiWorkerExecutionService {
     private static final Logger log = LoggerFactory.getLogger(MultiWorkerExecutionService.class);
-    private static final int LLM_TIMEOUT_SECONDS = 40;
-    private static final int TOOL_TIMEOUT_SECONDS = 20;
+    private static final int LLM_TIMEOUT_SECONDS = 120;
+    private static final int TOOL_TIMEOUT_SECONDS = 30;
 
     private final ChatModel chatModel;
     private final SystemPromptAdvisor systemPromptAdvisor;
