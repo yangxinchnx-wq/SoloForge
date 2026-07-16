@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Plus, Trash2, FolderOpen, X, Brain, Play, Square, Loader2,
-  ChevronDown, RefreshCw,
 } from '../../utils/icons';
 
 // ── 类型定义 ──────────────────────────────────────────────────────
@@ -39,9 +38,6 @@ export default function LocalModelTab() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
-  // 模型选择
-  const [selectedPath, setSelectedPath] = useState<string>('');
-
   // ── 初始化 ──────────────────────────────────────────────────
 
   const initialize = useCallback(async () => {
@@ -55,11 +51,6 @@ export default function LocalModelTab() {
       ]);
       setModels(listRes.models || []);
       setStatus(statusRes);
-
-      // 如果有模型已加载，选中它
-      if (statusRes.loaded && statusRes.model_path) {
-        setSelectedPath(statusRes.model_path);
-      }
     } catch (e) {
       console.error('[LocalModelTab] init failed:', e);
     }
@@ -74,6 +65,11 @@ export default function LocalModelTab() {
   const refreshModels = async () => {
     const res = await window.soloforge.localLLM.list();
     setModels(res.models || []);
+  };
+
+  const refreshStatus = async () => {
+    const res = await window.soloforge.localLLM.status();
+    setStatus(res);
   };
 
   const handleBrowse = async () => {
@@ -98,7 +94,6 @@ export default function LocalModelTab() {
 
   const handleRemoveModel = async (modelPath: string) => {
     await window.soloforge.localLLM.remove(modelPath);
-    if (selectedPath === modelPath) setSelectedPath('');
     await refreshModels();
     setInfo('模型已从列表移除');
   };
@@ -109,7 +104,6 @@ export default function LocalModelTab() {
 
     const res = await window.soloforge.localLLM.delete(modelPath);
     if (res.ok) {
-      if (selectedPath === modelPath) setSelectedPath('');
       await refreshModels();
       setInfo('模型已删除');
     } else {
@@ -117,83 +111,51 @@ export default function LocalModelTab() {
     }
   };
 
-  // ── 推理服务启停 ─────────────────────────────────────────
+  // ── 模型启停（开关） ──────────────────────────────────────
 
-  const handleStartServer = async () => {
-    setError(null);
-    setInfo(null);
-    setLoading(true);
-    try {
-      const res = await window.soloforge.localLLM.startServer();
-      if (res.ok) {
-        setServerRunning(true);
-        const statusRes = await window.soloforge.localLLM.status();
-        setStatus(statusRes);
-        setInfo('推理服务已启动');
-      } else {
-        setError(res.error || '启动失败');
+  const handleToggleModel = async (modelPath: string) => {
+    const isThisLoaded = loaded && status?.model_path === modelPath;
+
+    if (isThisLoaded) {
+      // 停止：卸载模型 + 停止服务
+      setLoading(true);
+      await window.soloforge.localLLM.stopServer();
+      setServerRunning(false);
+      setStatus(null);
+      setLoading(false);
+      setInfo('推理服务已停止');
+    } else {
+      // 启动：如果服务未运行，先启动
+      setLoading(true);
+      setError(null);
+      setInfo(null);
+      try {
+        if (!serverRunning) {
+          const startRes = await window.soloforge.localLLM.startServer();
+          if (!startRes.ok) {
+            setError(startRes.error || '启动失败');
+            setLoading(false);
+            return;
+          }
+          setServerRunning(true);
+        }
+        // 加载模型
+        const loadRes = await window.soloforge.localLLM.load(modelPath, {
+          n_ctx: 4096,
+          n_threads: 4,
+          n_gpu_layers: 0,
+        });
+        if (loadRes.ok) {
+          await refreshStatus();
+          setInfo(`模型 ${loadRes.model_name} 加载成功`);
+        } else {
+          setError(loadRes.error || '加载失败');
+        }
+      } catch (e: any) {
+        setError(e.message || '操作失败');
       }
-    } catch (e: any) {
-      setError(e.message || '启动失败');
+      setLoading(false);
     }
-    setLoading(false);
-  };
-
-  const handleStopServer = async () => {
-    setLoading(true);
-    await window.soloforge.localLLM.stopServer();
-    setServerRunning(false);
-    setStatus(null);
-    setSelectedPath('');
-    setLoading(false);
-    setInfo('推理服务已停止');
-  };
-
-  // ── 模型加载 ─────────────────────────────────────────────
-
-  const refreshStatus = async () => {
-    const res = await window.soloforge.localLLM.status();
-    setStatus(res);
-  };
-
-  const handleSelectModel = async (modelPath: string) => {
-    if (!modelPath) {
-      setSelectedPath('');
-      return;
-    }
-    setSelectedPath(modelPath);
-
-    // 如果服务已运行且当前没有加载模型，自动加载
-    if (serverRunning && (!status?.loaded || status.model_path !== modelPath)) {
-      await doLoadModel(modelPath);
-    }
-  };
-
-  const doLoadModel = async (modelPath: string) => {
-    setError(null);
-    setInfo(null);
-    setLoading(true);
-    try {
-      const res = await window.soloforge.localLLM.load(modelPath, {
-        n_ctx: 4096,
-        n_threads: 4,
-        n_gpu_layers: 0,
-      });
-      if (res.ok) {
-        await refreshStatus();
-        setInfo(`模型 ${res.model_name} 加载成功`);
-      } else {
-        setError(res.error || '加载失败');
-      }
-    } catch (e: any) {
-      setError(e.message || '加载失败');
-    }
-    setLoading(false);
-  };
-
-  const handleReload = async () => {
-    if (!selectedPath) return;
-    await doLoadModel(selectedPath);
   };
 
   // ── 渲染 ────────────────────────────────────────────────────
@@ -206,7 +168,7 @@ export default function LocalModelTab() {
       <div className="border-b border-[var(--color-outline)]/20 pb-3 mb-2">
         <h3 className="text-base font-bold text-[var(--color-on-surface)]">本地模型管理</h3>
         <p className="text-xs text-on-surface/50 mt-1">
-          管理 GGUF 模型文件，启动推理服务后可选择模型加载
+          管理 GGUF 模型文件，点击模型右侧开关启停推理
         </p>
       </div>
 
@@ -240,60 +202,10 @@ export default function LocalModelTab() {
         </span>
       </div>
 
-      {/* 模型选择 + 启停按钮 */}
-      <div className="flex items-center gap-3">
-        <div className="flex-1 relative">
-          <select
-            value={selectedPath}
-            onChange={(e) => handleSelectModel(e.target.value)}
-            disabled={!serverRunning}
-            className="w-full appearance-none bg-[var(--color-surface)] border border-[var(--color-outline)]/20 rounded-lg px-3 py-2.5 text-sm text-[var(--color-on-surface)] cursor-pointer hover:border-[var(--color-primary)]/30 transition-all focus:outline-none focus:border-[var(--color-primary)]/50 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <option value="">— 选择模型 —</option>
-            {models.map((m) => (
-              <option key={m.path} value={m.path}>
-                {m.name}{m.sizeMb ? ` (${m.sizeMb} MB)` : ''}
-              </option>
-            ))}
-          </select>
-          <ChevronDown className="w-4 h-4 text-on-surface/40 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-        </div>
-        {serverRunning ? (
-          <button
-            onClick={handleStopServer}
-            disabled={loading}
-            className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 hover:border-red-500/30 active:scale-[0.96] text-red-400 px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 shrink-0"
-          >
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
-            停止
-          </button>
-        ) : (
-          <button
-            onClick={handleStartServer}
-            disabled={loading}
-            className="bg-[var(--color-primary)] hover:opacity-90 active:scale-[0.96] disabled:opacity-50 text-[var(--color-bg)] px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-all cursor-pointer shrink-0"
-          >
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-            启动推理
-          </button>
-        )}
-        {loaded && selectedPath === status?.model_path && (
-          <button
-            onClick={handleReload}
-            disabled={loading}
-            className="text-xs text-[var(--color-primary)]/70 hover:text-[var(--color-primary)] disabled:opacity-50 flex items-center gap-1 transition-colors cursor-pointer shrink-0"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            重新加载
-          </button>
-        )}
-      </div>
-
-      {/* ── 模型列表 ── */}
+      {/* 添加模型 */}
       <div className="space-y-2">
         <span className="text-xs text-[var(--color-primary)] font-mono font-semibold block">添加模型</span>
 
-        {/* 添加模型 */}
         <div className="flex items-center gap-2">
           <input
             type="text"
@@ -345,7 +257,28 @@ export default function LocalModelTab() {
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 shrink-0">
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {/* 启停开关 */}
+                    {isLoaded ? (
+                      <button
+                        onClick={() => handleToggleModel(m.path)}
+                        disabled={loading}
+                        className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 hover:border-red-500/30 active:scale-[0.96] text-red-400 px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Square className="w-3.5 h-3.5" />}
+                        停止
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleToggleModel(m.path)}
+                        disabled={loading}
+                        className="bg-[var(--color-primary)] hover:opacity-90 active:scale-[0.96] disabled:opacity-50 text-[var(--color-bg)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-all cursor-pointer"
+                      >
+                        {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                        启动
+                      </button>
+                    )}
+                    {/* 移除 */}
                     <button
                       onClick={() => handleRemoveModel(m.path)}
                       className="text-on-surface/30 hover:text-amber-400 p-1.5 rounded transition-colors"
@@ -353,6 +286,7 @@ export default function LocalModelTab() {
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
+                    {/* 删除 */}
                     <button
                       onClick={() => handleDeleteModel(m.path)}
                       className="text-on-surface/30 hover:text-red-400 p-1.5 rounded transition-colors"
