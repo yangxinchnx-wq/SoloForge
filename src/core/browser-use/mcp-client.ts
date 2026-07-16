@@ -5,6 +5,10 @@
 // 跟 python/browser_use_service/server.py 通过 JSON-RPC 2.0 over stdio 通信
 // 协议细节参考 MCP 规范: https://modelcontextprotocol.io/
 //
+// 帧格式: LSP/MCP Content-Length 分帧
+//   发送: Content-Length: <len>\r\n\r\n<JSON body>
+//   接收: 同上, 多帧可拼接在同一个 chunk 中
+//
 // 生命周期:
 //   - 第一次调用时 lazy 启动 Python 子进程
 //   - 服务异常退出时自动重启 (最多 3 次)
@@ -52,7 +56,8 @@ export class BrowserUseMcpClient extends EventEmitter {
   private proc: ChildProcessWithoutNullStreams | null = null;
   private nextId = 1;
   private pending = new Map<number, PendingResolver>();
-  private buffer = '';
+  /** LSP/MCP Content-Length 帧解析缓冲区 */
+  private _stdoutBuf = '';
   private started = false;
   private initializing: Promise<void> | null = null;
   private restartCount = 0;
@@ -138,6 +143,7 @@ export class BrowserUseMcpClient extends EventEmitter {
     this.proc.stderr.setEncoding('utf-8');
 
     this.proc.stdout.on('data', (chunk: string) => this._onStdout(chunk));
+    this.proc.stdout.on('close', () => this._onStdoutClose());
     this.proc.stderr.on('data', (chunk: string) => {
       console.debug('[bu-mcp stderr]', chunk.trim());
     });
@@ -157,22 +163,61 @@ export class BrowserUseMcpClient extends EventEmitter {
     this._notify('notifications/initialized', {});
   }
 
+  /**
+   * LSP/MCP Content-Length 帧解析器
+   *
+   * 帧格式: Content-Length: <len>\r\n\r\n<body of <len> bytes>
+   * 多帧可拼接在同一个 chunk 中, 也可跨 chunk 分片.
+   */
   private _onStdout(chunk: string): void {
-    this.buffer += chunk;
-    // LSP/MCP 风格: headers + \r\n\r\n + body
-    // 我们简化为按行 \n 分割 (Python mcp SDK 输出每行一条 JSON)
-    let idx: number;
-    while ((idx = this.buffer.indexOf('\n')) >= 0) {
-      const line = this.buffer.slice(0, idx).trim();
-      this.buffer = this.buffer.slice(idx + 1);
-      if (!line) continue;
+    this._stdoutBuf += chunk;
+
+    // 循环处理所有完整帧
+    while (true) {
+      const headerEnd = this._stdoutBuf.indexOf('\r\n\r\n');
+      if (headerEnd === -1) break; // 还没有完整 header, 等待更多数据
+
+      const header = this._stdoutBuf.slice(0, headerEnd);
+      const m = /content-length:\s*(\d+)/i.exec(header);
+      if (!m) {
+        // 非法头部, 丢弃到下一个换行后重试
+        const nextNl = this._stdoutBuf.indexOf('\n');
+        if (nextNl === -1) {
+          this._stdoutBuf = '';
+          break;
+        }
+        this._stdoutBuf = this._stdoutBuf.slice(nextNl + 1);
+        continue;
+      }
+
+      const len = parseInt(m[1], 10);
+      const frameStart = headerEnd + 4; // 4 = '\r\n\r\n'.length
+      const frameEnd = frameStart + len;
+
+      if (this._stdoutBuf.length < frameEnd) {
+        // body 还没收全, 等待更多数据
+        break;
+      }
+
+      const body = this._stdoutBuf.slice(frameStart, frameEnd);
+      this._stdoutBuf = this._stdoutBuf.slice(frameEnd);
+
       try {
-        const msg = JSON.parse(line);
+        const msg = JSON.parse(body);
         this._handleMessage(msg);
       } catch (e) {
-        // 非 JSON 行可能是 banner
-        console.debug('[bu-mcp stdout non-json]', line.slice(0, 200));
+        console.debug('[bu-mcp stdout bad json]', String(e));
       }
+    }
+  }
+
+  /**
+   * stdout 流关闭 (EOF) 时, 清理所有 pending 请求避免悬挂
+   */
+  private _onStdoutClose(): void {
+    if (this._stdoutBuf.length > 0) {
+      console.debug('[bu-mcp] stdout closed with residual buffer:', this._stdoutBuf.length, 'bytes');
+      this._stdoutBuf = '';
     }
   }
 
@@ -196,6 +241,7 @@ export class BrowserUseMcpClient extends EventEmitter {
   private _onExit(code: number | null): void {
     console.warn(`[bu-mcp] process exited with code ${code}`);
     this.proc = null;
+    this._stdoutBuf = '';
     for (const [id, p] of this.pending) {
       p.reject(new Error(`MCP process exited (code ${code})`));
       this.pending.delete(id);
@@ -229,7 +275,7 @@ export class BrowserUseMcpClient extends EventEmitter {
       this.pending.set(id, { resolve, reject });
       const req: McpRequest = { jsonrpc: '2.0', id, method, params };
       try {
-        this.proc.stdin.write(JSON.stringify(req) + '\n');
+        this._writeFrame(JSON.stringify(req));
       } catch (e) {
         this.pending.delete(id);
         reject(e as Error);
@@ -248,10 +294,19 @@ export class BrowserUseMcpClient extends EventEmitter {
     if (!this.proc || !this.proc.stdin.writable) return;
     const msg = { jsonrpc: '2.0', method, params };
     try {
-      this.proc.stdin.write(JSON.stringify(msg) + '\n');
+      this._writeFrame(JSON.stringify(msg));
     } catch (e) {
       console.error('[bu-mcp] notify write failed', e);
     }
+  }
+
+  /**
+   * 以 LSP/MCP Content-Length 帧格式写入一条消息到 stdin
+   */
+  private _writeFrame(body: string): void {
+    if (!this.proc || !this.proc.stdin.writable) return;
+    const frame = `Content-Length: ${Buffer.byteLength(body, 'utf-8')}\r\n\r\n${body}`;
+    this.proc.stdin.write(frame);
   }
 
   private _buildCommand(): string[] {

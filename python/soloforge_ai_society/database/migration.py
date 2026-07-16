@@ -409,6 +409,7 @@ class MigrationManager:
     def get_status(self) -> dict:
         """获取迁移状态"""
         conn = sqlite3.connect(str(self.db_path))
+        apply_p6_baseline(conn)
         conn.row_factory = sqlite3.Row
 
         try:

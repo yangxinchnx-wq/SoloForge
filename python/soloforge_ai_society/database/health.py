@@ -189,6 +189,7 @@ class HealthChecker:
         """获取性能指标"""
         try:
             conn = sqlite3.connect(str(self.db_path))
+            apply_p6_baseline(conn)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
@@ -257,7 +258,9 @@ class BackupManager:
         start_time = time.time()
 
         conn_src = sqlite3.connect(str(self.db_path))
+        apply_p6_baseline(conn_src)
         conn_dst = sqlite3.connect(str(backup_path))
+        apply_p6_baseline(conn_dst)
 
         conn_src.backup(conn_dst)
 

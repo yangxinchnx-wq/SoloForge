@@ -9,6 +9,7 @@ export interface ShadowConfig {
   maxLineBytes: number;       // 单行报文防爆硬上限
   maxLinesPerTick: number;    // 单次微任务 Tick 最大平摊处理行数，彻底防 CPU 尖刺
   bufferPoolSize: number;     // 物理环形滑窗缓冲区分配空间
+  maxPendingRequests: number; // pendingRequests Map 容量硬上限, 超限降级 fallback 防内存暴涨
 }
 
 interface ShadowRequest {
@@ -43,7 +44,8 @@ export const DEFAULT_SHADOW_CONFIG: Partial<ShadowConfig> = {
   fallbackEnabled: true,
   maxLineBytes: 8192,
   maxLinesPerTick: 50,
-  bufferPoolSize: 65536
+  bufferPoolSize: 65536,
+  maxPendingRequests: 500    // 突发流控: 超过 500 个 pending 请求时降级 fallback, 防止 Map 无限增长
 };
 
 export interface TelemetryVector {
@@ -84,7 +86,7 @@ export class ShadowGovernorClient {
   private bufferOffset = 0;
   private isDiscardMode = false;
 
-  private stats = { requestsSent: 0, predictionsReceived: 0, errors: 0, reconnects: 0, bufferOverflows: 0 };
+  private stats = { requestsSent: 0, predictionsReceived: 0, errors: 0, reconnects: 0, bufferOverflows: 0, pendingOverflows: 0 };
   private kernelRef: any;
 
   constructor(kernel: any, config?: Partial<ShadowConfig>) {
@@ -101,14 +103,15 @@ export class ShadowGovernorClient {
   private loadConstitutionalConfigurations(config?: Partial<ShadowConfig>): void {
     const cc = this.kernelRef.configCenter;
 
-    this.config = {
+      this.config = {
       host: config?.host || cc.get('governor.ppo.host', '127.0.0.1'),
       port: config?.port || cc.get('governor.ppo.port', 8765),
       timeout: config?.timeout || cc.get('governor.ppo.timeout', 5000),
       fallbackEnabled: config?.fallbackEnabled ?? cc.get('governor.ppo.fallback_enabled', true),
       maxLineBytes: config?.maxLineBytes || cc.get('governor.ppo.max_line_bytes', 8192),
       maxLinesPerTick: config?.maxLinesPerTick || cc.get('governor.ppo.max_lines_per_tick', 50),
-      bufferPoolSize: config?.bufferPoolSize || cc.get('governor.ppo.buffer_pool_size', 65536)
+      bufferPoolSize: config?.bufferPoolSize || cc.get('governor.ppo.buffer_pool_size', 65536),
+      maxPendingRequests: config?.maxPendingRequests || cc.get('governor.ppo.max_pending_requests', 500)
     };
 
     this.maxReconnectAttempts = cc.get('governor.reconnect.max_attempts', 3);
@@ -301,6 +304,14 @@ export class ShadowGovernorClient {
     return new Promise((resolve, reject) => {
       if (!this.socket || !this.connected || !this.isWritable) {
         resolve({ id, action: 0, action_name: this.actionLabels[0], prob: 1.0 });
+        return;
+      }
+
+      // 🔒 突发流控: pendingRequests 超过上限时降级 fallback, 防止 Map 无限增长导致内存暴涨
+      if (this.pendingRequests.size >= this.config.maxPendingRequests) {
+        this.stats.pendingOverflows++;
+        this.pushMetricsToMonitorBus('governor.pending.overflow', 1);
+        resolve({ id, action: 0, action_name: this.actionLabels[0], prob: 0.0 });
         return;
       }
 

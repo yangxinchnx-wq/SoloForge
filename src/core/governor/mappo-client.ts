@@ -15,7 +15,7 @@
 //     - src/core/governor/ipc/ (IPCClient)
 //
 //   当前行为:
-//     - 尝试通过 net.Socket 连接 127.0.0.1:8765 发送 POLICY_QUERY 做真实推理
+//     - 尝试通过 net.Socket 连接 127.0.0.1:8765 发送 { id, obs } 做真实推理
 //       (与 training-scheduler 使用相同的 MARL 服务和 JSON 行分隔协议)
 //     - 连接成功则使用返回的 action;连接失败/超时则 fallback 到 heuristicFallback
 //     - 通过 marlAvailable 标记 + 冷却期避免反复探测已下线的服务
@@ -41,13 +41,20 @@ interface BatchRequest {
 }
 
 /**
+ * @deprecated 此类为历史遗留兼容文件, 仅被集成测试引用.
+ * 生产路径请使用 src/kernel/shadow-governor-client.ts (ShadowGovernorClient).
+ *
  * MAPPO 资源控流客户端(真实推理 + 启发式兜底)
  *
- * 优先尝试通过 net.Socket 连接 127.0.0.1:8765 的 MARL 服务做真实策略推理;
+ * 优先尝试通过 net.Socket 连接 127.0.0.1:8765 的 shadow_server 做真实策略推理;
  * 连接失败/超时时 fallback 到 heuristicFallback:
  *   - CPU > 0.95 → 2 (熔断)
  *   - CPU > 0.70 → 1 (降级)
  *   - 其他      → 0 (放行)
+ *
+ * 协议 (与 python/governor_rl/shadow_server.py 一致):
+ *   发送: { "id": "<str>", "obs": [..10维..] }\n
+ *   接收: { "id": "<str>", "action": 0-5, "action_name": "...", "prob": 0.x }\n
  *
  * 历史命名: GeminiMappoResourceGovernorClient → MappoHeuristicGovernor
  */
@@ -75,7 +82,7 @@ export class MappoHeuristicGovernor {
   private marlLastProbeTime: number = 0;
   /** 服务不可用时的重试冷却期 (ms) */
   private marlProbeCooldown: number = 10_000;
-  /** 单次 POLICY_QUERY 超时 (ms) */
+  /** 单次推理请求超时 (ms) */
   private marlQueryTimeout: number = 1000;
   /** TCP 探测超时 (ms) */
   private marlProbeTimeout: number = 500;
@@ -147,10 +154,10 @@ export class MappoHeuristicGovernor {
   }
 
   /**
-   * 向 MARL 服务发送单条 POLICY_QUERY 并等待 POLICY_ANSWER
-   * 协议与 training-scheduler.queryTrainedPolicy 一致:
-   *   发送: { frameId, type:'POLICY_QUERY', payload:{ observation }, timestamp }\n
-   *   接收: { type:'POLICY_ANSWER', payload:{ action, confidence, source } }\n
+   * 向 shadow_server 发送单条推理请求并等待响应
+   * 协议与 python/governor_rl/shadow_server.py 一致:
+   *   发送: { "id": "<str>", "obs": [..] }\n
+   *   接收: { "id": "<str>", "action": 0-5, "action_name": "...", "prob": 0.x }\n
    *
    * 失败/超时返回 null
    */
@@ -175,11 +182,10 @@ export class MappoHeuristicGovernor {
         });
 
         client.connect(8765, '127.0.0.1', () => {
+          // 与 shadow_server.py 协议一致: { id, obs }\n
           const frame = JSON.stringify({
-            frameId: `mappo_q_${Date.now()}`,
-            type: 'POLICY_QUERY',
-            payload: { observation },
-            timestamp: Date.now(),
+            id: `mappo_q_${Date.now()}`,
+            obs: observation,
           }) + '\n';
           client.write(frame);
         });
@@ -190,15 +196,12 @@ export class MappoHeuristicGovernor {
           if (idx >= 0) {
             clearTimeout(timer);
             try {
-              const ack = JSON.parse(buf.slice(0, idx).trim());
-              if (ack.type === 'POLICY_ANSWER' && ack.payload) {
-                const action = typeof ack.payload.action === 'number'
-                  ? ack.payload.action
-                  : null;
-                finish(action);
-              } else {
-                finish(null);
-              }
+              const resp = JSON.parse(buf.slice(0, idx).trim());
+              // shadow_server 直接返回 { id, action, action_name, prob }
+              const action = typeof resp.action === 'number'
+                ? resp.action
+                : null;
+              finish(action);
             } catch {
               finish(null);
             }
@@ -258,7 +261,7 @@ export class MappoHeuristicGovernor {
    *
    * 流程:
    *   1. 检查 marlAvailable 状态,若未探测或冷却期已过则重新探测 8765
-   *   2. 若服务可用,对批中每条请求并行发送 POLICY_QUERY
+   *   2. 若服务可用,对批中每条请求并行发送推理请求
    *   3. 成功的用真实 action 响应,失败的用 heuristicFallback
    *   4. 若服务不可用,全部走 heuristicFallback
    */
@@ -282,7 +285,7 @@ export class MappoHeuristicGovernor {
       }
 
       if (this.marlAvailable) {
-        // 并行发送 POLICY_QUERY(每条一个 socket,与 training-scheduler 模式一致)
+        // 并行发送推理请求(每条一个 socket,与 shadow_server JSON 行分隔协议一致)
         const observations = batch.map(req => [...req.globalState, ...req.localObs]);
         const results = await Promise.all(
           observations.map(obs => this.queryMarlPolicy(obs))
