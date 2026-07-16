@@ -218,6 +218,17 @@ export async function assembleSystem(kernel: RuntimeKernel): Promise<AssemblyCon
   await raftConsensusNode.bootConsensusRegistry();
   kernel.raftConsensusEngineProxy = raftConsensusNode;
 
+  // ── 10. 实时裁判喊停组件 (非阻塞，失败不阻断启动) ──
+  try {
+    const { RealtimeJudgeStopComponent } = await import('./realtime-judge-stop-component');
+    const judgeStop = new RealtimeJudgeStopComponent(kernel, kernel.eventBus);
+    await judgeStop.start();
+    (kernel as any).realtimeJudgeStop = judgeStop;
+    logger.info('SystemAssembler', '🧑‍⚖️ [RealtimeJudgeStop] Real-time judge stop component started');
+  } catch (judgeErr: any) {
+    logger.warn('SystemAssembler', '⚠️ [RealtimeJudgeStop] Initialization failed', { error: judgeErr.message });
+  }
+
   logger.info('SystemAssembler', '🏆 共享总装厂纯净交付完成');
 
   return {

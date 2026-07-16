@@ -32,6 +32,21 @@ spring:
   application:
     name: solo-forge-agent
 
+  # 允许覆盖 Spring AI 自动配置的同名 Bean (如 anthropicChatModel)
+  main:
+    allow-bean-definition-overriding: true
+
+  # 禁用 Spring AI 自动配置的 ChatModel Bean (我们用 LlmConfig.java 手动管理)
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiChatAutoConfiguration
+      - org.springframework.ai.model.anthropic.autoconfigure.AnthropicChatAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiAudioSpeechAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiAudioTranscriptionAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiImageAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiModerationAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiEmbeddingAutoConfiguration
+
   # Spring AI 2.0.0 GA 配置 — 动态多 Provider 由 LlmConfig.java 管理
   # 不再使用静态 spring.ai.* 配置，改为请求级动态注入
   # ChatModel Bean 在 LlmConfig 中按 provider 名称注册，运行时按需路由

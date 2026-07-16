@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 
 /**
@@ -39,6 +40,7 @@ public class LlmConfig {
     // ──────────────────────────────────────────────
 
     @Bean(name = "openAiChatModel")
+    @Primary
     public ChatModel openAiChatModel(
             @Value("${soloforge.llm.openai.api-key:placeholder}") String apiKey,
             @Value("${soloforge.llm.openai.base-url:https://api.openai.com}") String baseUrl,

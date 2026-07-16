@@ -404,6 +404,29 @@ export async function bootstrapSystemNetwork(
   // 阶段 5：网络通信层（DistributedBroker + Sandbox + Telemetry + Raft + Garnet Bridge）
   await initNetworkLayer(kernel);
 
+  // 阶段 5.1：Java Agent TCP 组件 (连接 Java Agent 8771, 非阻塞)
+  try {
+    const { JavaAgentTcpComponent } = await import('./kernel/java-agent-tcp-component');
+    const javaAgentTcp = new JavaAgentTcpComponent(kernel, kernel.eventBus);
+    await javaAgentTcp.start();
+    const lifecycleManager = kernel.getLifecycleManager();
+    lifecycleManager.register(javaAgentTcp);
+    logger.info('Bootstrap', '🔗 [JavaAgentTcp] Java Agent TCP component initialized');
+  } catch (tcpErr: any) {
+    logger.warn('Bootstrap', '⚠️ [JavaAgentTcp] Initialization failed', { error: tcpErr instanceof Error ? tcpErr.message : String(tcpErr) });
+  }
+
+  // 阶段 5.5：实时裁判喊停组件 (非阻塞，失败不阻断启动)
+  try {
+    const { RealtimeJudgeStopComponent } = await import('./kernel/realtime-judge-stop-component');
+    const judgeStop = new RealtimeJudgeStopComponent(kernel, kernel.eventBus);
+    await judgeStop.start();
+    (kernel as any).realtimeJudgeStop = judgeStop;
+    logger.info('Bootstrap', '🧑‍⚖️ [RealtimeJudgeStop] Real-time judge stop component started');
+  } catch (judgeErr: any) {
+    logger.warn('Bootstrap', '⚠️ [RealtimeJudgeStop] Initialization failed', { error: judgeErr instanceof Error ? judgeErr.message : String(judgeErr) });
+  }
+
   logger.info('Bootstrap', '🏆 总装厂纯净交付完成 - 架构零污染闭合');
 }
 

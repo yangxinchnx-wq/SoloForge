@@ -227,7 +227,11 @@ export class AgentDecisionOrchestrator {
           actualTokenUsage: execResult.actualTokenUsage,
         };
       },
-      req.adaptiveContext
+      // 注入 taskHint 给 LLM-as-judge, 让评分知道目标
+      {
+        ...req.adaptiveContext,
+        taskHint: prompt,
+      }
     );
 
     // 5) 使用 RACER 返回的 winner

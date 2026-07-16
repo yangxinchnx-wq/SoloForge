@@ -1288,7 +1288,7 @@ function deviceIconSvg(group) {
 
 // 固定 HTML 模板 (只加载一次), 内容通过 #app 容器动态填充
 function buildDeviceDropdownShell() {
-  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+  return '<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   html, body {
@@ -1370,7 +1370,7 @@ function buildDeviceDropdownShell() {
   function fire(key) { window.soloforge && window.soloforge.canvas && window.soloforge.canvas.devicePopupSelect(key); }
   document.addEventListener('keydown', e => { if (e.key === 'Escape') window.soloforge.canvas.devicePopupClose(); });
 </script>
-</body></html>`;
+</body></html>';
 }
 
 // 动态填充内容 (通过 executeJavaScript 调用, 避免 re-loadURL)

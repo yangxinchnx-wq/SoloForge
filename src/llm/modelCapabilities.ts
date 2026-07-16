@@ -79,9 +79,9 @@ const BUILTIN_DB: Record<string, ModelCapability> = {
   'glm-4':              { supportsTools: true,  supportsVision: true,  supportsJson: true,  supportsStreaming: true,  contextWindow: 128000,  maxOutput: 4096,   source: 'builtin', updatedAt: 0 },
   'glm-4-flash':        { supportsTools: true,  supportsVision: false, supportsJson: true,  supportsStreaming: true,  contextWindow: 128000,  maxOutput: 4096,   source: 'builtin', updatedAt: 0 },
 
-  // ── 小米 MiMo (不支持 function calling) ──
-  'mimo-v2.5':          { supportsTools: false, supportsVision: false, supportsJson: true,  supportsStreaming: true,  contextWindow: 128000,  maxOutput: 8192,   source: 'builtin', updatedAt: 0 },
-  'mimo-v2.5-pro':      { supportsTools: false, supportsVision: false, supportsJson: true,  supportsStreaming: true,  contextWindow: 128000,  maxOutput: 8192,   source: 'builtin', updatedAt: 0 },
+  // ── 小米 MiMo (2026-07-16 实测：支持 function calling + reasoning_content) ──
+  'mimo-v2.5':          { supportsTools: true,  supportsVision: false, supportsJson: true,  supportsStreaming: true,  contextWindow: 32768,   maxOutput: 4096,   source: 'builtin', updatedAt: 0 },
+  'mimo-v2.5-pro':      { supportsTools: true,  supportsVision: false, supportsJson: true,  supportsStreaming: true,  contextWindow: 32768,   maxOutput: 4096,   source: 'builtin', updatedAt: 0 },
 
   // ── Moonshot Kimi ──
   'moonshot-v1-8k':     { supportsTools: true,  supportsVision: false, supportsJson: true,  supportsStreaming: true,  contextWindow: 8192,    maxOutput: 4096,   source: 'builtin', updatedAt: 0 },
@@ -108,7 +108,7 @@ const PREFIX_RULES: Array<{ prefix: string; capability: Partial<ModelCapability>
   { prefix: 'deepseek-r1',    capability: { supportsTools: false, supportsVision: false } },
   { prefix: 'qwen',           capability: { supportsTools: true,  supportsVision: false } },
   { prefix: 'glm-4',          capability: { supportsTools: true,  supportsVision: true  } },
-  { prefix: 'mimo',           capability: { supportsTools: false, supportsVision: false } },
+  { prefix: 'mimo',           capability: { supportsTools: true,  supportsVision: false } },
   { prefix: 'moonshot',       capability: { supportsTools: true,  supportsVision: false } },
   { prefix: 'doubao',         capability: { supportsTools: true,  supportsVision: false } },
   { prefix: 'yi-',            capability: { supportsTools: true,  supportsVision: false } },

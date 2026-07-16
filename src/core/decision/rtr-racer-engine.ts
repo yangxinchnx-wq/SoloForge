@@ -8,6 +8,8 @@ import { DecisionEvent } from '../events/decision-events';
 import { SoloForgeRustSchedulerClient } from '../../kernel/scheduler-client';
 // 🧠 引入训练调度器：用于在置信度计算后注入 MARL POLICY_QUERY 信号
 import { TrainingScheduler } from '../agent/evolution/training-scheduler';
+// 🧑‍⚖️ LLM-as-judge: 多 worker 输出语义评分, 替代 output.length 启发式
+import { judgeWorkerOutputs } from '../court/llm-judge';
 
 export interface RuntimeKernelInterface {
   verifyOwnership(domain: string, key: string): boolean;
@@ -24,7 +26,9 @@ export interface ModelStrategyCandidate {
 }
 
 export interface SystemAdaptiveContext {
-  globalFailureRate: number; 
+  globalFailureRate: number;
+  /** 原始任务描述, 传给 LLM-as-judge 让评分知道目标 */
+  taskHint?: string;
 }
 
 /** RACER 流控结果：包含获胜者模型名、输出文本、获胜者得分 */
@@ -272,13 +276,17 @@ export class SoloForgeRTRRacerEngine {
       } as WorkerExecResult)))
     );
 
-    // 选 winner: 优先用 score 最高的成功 worker
-    // (并行场景下各 worker 用不同模型,不能用 LLM 自评分,改用 RACER score)
-    let winnerIdx = 0;
-    for (let i = 1; i < workerResults.length; i++) {
-      if (!workerResults[i].output.startsWith('[WORKER_ERROR]') &&
-          workerResults[i].output.length > workerResults[winnerIdx].output.length) {
-        winnerIdx = i;
+    // 选 winner: 用 LLM-as-judge 做语义评分, 失败回退到 output.length 启发式
+    const judgeVerdict = await judgeWorkerOutputs(workerResults, adaptiveContext?.taskHint);
+    let winnerIdx = judgeVerdict.winnerIdx;
+    if (winnerIdx < 0 || winnerIdx >= workerResults.length) {
+      // 防御性 fallback: 比 output.length
+      winnerIdx = 0;
+      for (let i = 1; i < workerResults.length; i++) {
+        if (!workerResults[i].output.startsWith('[WORKER_ERROR]') &&
+            workerResults[i].output.length > workerResults[winnerIdx].output.length) {
+          winnerIdx = i;
+        }
       }
     }
     const winnerCandidate = workers[winnerIdx];
@@ -287,11 +295,11 @@ export class SoloForgeRTRRacerEngine {
     return {
       winnerModelName: winnerCandidate.instance.modelName,
       output: winnerResult.output,
-      winnerScore: winnerCandidate.score,
+      winnerScore: judgeVerdict.scores[winnerIdx] ?? winnerCandidate.score,
       allOutputs: workers.map((w, i) => ({
         agentId: w.instance.modelName,
         output: workerResults[i].output,
-        score: w.score,
+        score: judgeVerdict.scores[i] ?? w.score,
         durationMs: workerResults[i].durationMs,
         provider: workerResults[i].provider,
         actualTokenUsage: workerResults[i].actualTokenUsage,

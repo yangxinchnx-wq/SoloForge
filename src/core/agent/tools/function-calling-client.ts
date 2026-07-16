@@ -505,11 +505,16 @@ async function callLLMOnce(opts: CallOnceOptions): Promise<LLMMessage> {
   const body: Record<string, any> = {
     model: opts.model,
     messages: messagesForBody,
-    tools: toolsForBody,
-    tool_choice: 'auto',
     temperature: opts.temperature,
     max_tokens: opts.maxTokens,
   };
+  // Only include tools/tool_choice when there are actual tools.
+  // Some OpenAI-compatible providers (e.g. MiMo) return empty responses
+  // when `tools: []` or `tool_choice: 'auto'` is sent without any tools.
+  if (toolsForBody && toolsForBody.length > 0) {
+    body.tools = toolsForBody;
+    body.tool_choice = 'auto';
+  }
 
   // ── 429/5xx 指数退避重试 ──────────────────────────────────────────
   // 避免单次限流导致整个 Agent Loop 失败(已积累的工具调用历史会全部丢失)

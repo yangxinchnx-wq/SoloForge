@@ -1,35 +1,30 @@
 # SoloForge Agent Service 配置
 #
-# *** FALLBACK STATUS (2026-07-09) ***
-# 本 Java Agent 已降级为 fallback 路径。以下模块已被 Node.js RACER 系统替代：
+# *** TRAINING-ONLY STATUS (2026-07-15) ***
+# 本 Java Agent 仅保留离线训练功能。
+# 所有聊天/执行/fallback 路径已删除，RACER (Node.js) 是唯一执行路径。
+# RACER 不可用时直接报错，不降级到 Java Agent。
 #
-#   [已替代] controller/ChatController      → src/server/routes-agent.ts (POST /api/agents/dispatch)
-#   [已替代] orchestrator/AgentOrchestrator   → src/core/agent/agent-decision-orchestrator.ts (RACER routing)
-#   [已替代] orchestrator/MultiAgentCoordinator → RACER court + coalition 系统
-#   [已替代] orchestrator/TaskComplexityEvaluator → RACER complexity scoring
-#   [已替代] executor/AgentExecutor           → RACER agent-loop + MCP tools
-#   [已替代] llm/LlmGateway                  → src/llm/llmProxy.ts (多 provider 动态路由)
-#   [已替代] tools/* (6个工具)                → MCP tools 系统
-#   [已替代] advisor/SystemPromptBuilder      → agent-registry.ts prompt 构建
-#   [已替代] aisociety/ReputationClient       → src/server/routes-agent.ts reputation bridge
-#   [已替代] aisociety/EconomyClient          → src/core/agent/ credit 系统
-#   [已替代] aisociety/GovernanceClient       → src/core/agent/ court 系统
-#   [已替代] aisociety/CoalitionClient        → RACER coalition 系统
-#   [已替代] aisociety/LawClient              → RACER 规则引擎
-#   [已替代] aisociety/CultureClient          → RACER 文化约束
-#   [已替代] aisociety/MemoryClient           → SurrealDB 持久化
-#   [已替代] aisociety/InstitutionClient      → RACER 制度系统
-#   [已替代] aisociety/MarlTrainingClient     → MAPPO IPC (src/kernel/)
-#   [已替代] aisociety/CaseRetriever          → RACER 经验检索
+# 已删除的模块 (功能由 RACER 完全替代，无 fallback):
+#   controller/ChatController (chat/stream 端点)  → src/server/routes-agent.ts
+#   executor/* (SpringAiAgentExecutor 等)          → src/core/agent/tools/function-calling-client.ts
+#   advisor/* (SoloForgeAdvisors/SystemPromptBuilder) → RACER advisor 链
+#   orchestrator/* (5个文件)                       → src/core/agent/agent-decision-orchestrator.ts
+#   aisociety/* (10个文件)                         → RACER 社会子系统
+#   tools/* (SoloForgeTools/DelegationTools)       → src/core/agent/tools/ (MCP tools)
+#   llm/LlmGateway/LlmRateLimiter/LlmCommandCenter/RateLimitProfile → src/llm/ (llmProxyHandler + circuit-breaker)
 #
-#   [保留]   training/* (7个文件)             → 离线训练/Prompt优化 (Node.js 无对等实现)
-#   [保留]   persistence/AgentTrainingHistory → 训练历史记录
-#   [保留]   config/SqliteConfig              → SQLite 连接配置
-#
-# 保留本服务的场景：Node.js RACER 不可用时的 fallback 路径
+# 保留的模块 (Java 独占，RACER 无对等实现):
+  #   config/LlmConfig                 → Spring AI 2.0.0 GA ChatModel Bean (训练用)
+#   config/DynamicChatModelResolver  → 运行时 provider 路由 (训练用)
+#   config/SqliteConfig              → SQLite 连接配置
+#   controller/ChatController        → Agent 管理 CRUD + 健康检查 (无聊天端点)
+#   training/* (7个文件)             → 离线 Prompt 优化 + 反馈案例库
+#   persistence/* (6个文件)          → Agent 身份/训练历史/经验案例 持久化
+#   dto/* (2个文件)                  → ChatRequest/ChatSettings (训练用)
 # ****************************************************
 server:
-  port: 8770   # 注意：Node.js RACER 使用 src/api-server.ts 监听端口，本端口仅 fallback 时使用
+  port: 8770   # Java Agent 端口，仅训练和管理 API 使用。聊天由 RACER (Node.js) 处理。
   servlet:
     context-path: /
 
@@ -37,29 +32,26 @@ spring:
   application:
     name: solo-forge-agent
 
-  # Spring AI OpenAI 兼容配置（默认占位，实际从请求体动态注入）
-  # [已替代] 对应功能已由 src/llm/llmProxy.ts 的多 provider 动态路由覆盖
-  ai:
-    openai:
-      api-key: ${SOLOFORGE_LLM_API_KEY:placeholder}
-      base-url: ${SOLOFORGE_LLM_BASE_URL:https://api.openai.com}
-      chat:
-        options:
-          model: ${SOLOFORGE_LLM_MODEL:gpt-4o}
-          temperature: 0.3
+  # 允许覆盖 Spring AI 自动配置的同名 Bean (如 anthropicChatModel)
+  main:
+    allow-bean-definition-overriding: true
 
-  # Garnet (Redis 协议) - ChatMemory 持久化
-  # [已替代] Node.js RACER 使用 SurrealDB 持久化，Redis 仅 Java Agent fallback 时使用
-  data:
-    redis:
-      host: 127.0.0.1
-      port: 6379
-      timeout: 2000ms
-      lettuce:
-        pool:
-          max-active: 16
-          max-idle: 8
-          min-idle: 2
+  # 禁用 Spring AI 自动配置的 ChatModel Bean (我们用 LlmConfig.java 手动管理)
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiChatAutoConfiguration
+      - org.springframework.ai.model.anthropic.autoconfigure.AnthropicChatAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiAudioSpeechAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiAudioTranscriptionAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiImageAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiModerationAutoConfiguration
+      - org.springframework.ai.model.openai.autoconfigure.OpenAiEmbeddingAutoConfiguration
+
+  # Spring AI 2.0.0 GA 配置 — 动态多 Provider 由 LlmConfig.java 管理
+  # 不再使用静态 spring.ai.* 配置，改为请求级动态注入
+  # ChatModel Bean 在 LlmConfig 中按 provider 名称注册，运行时按需路由
+  ai:
+    chatbot:
 
   # SQLite (AI Society 共享数据库) - AgentConfig + 业务表
   # 路径解析优先级:
