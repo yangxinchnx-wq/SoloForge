@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Plus, Trash2, FolderOpen, X, Cpu, Play, Square, Loader2,
+  Plus, Trash2, FolderOpen, X, Zap, Play, Square, Loader2,
+  ChevronDown, RefreshCw,
 } from '../../utils/icons';
 
 // ── 类型定义 ──────────────────────────────────────────────────────
@@ -31,12 +32,15 @@ export default function LocalModelTab() {
   const [models, setModels] = useState<ModelEntry[]>([]);
   const [newModelPath, setNewModelPath] = useState('');
 
-  // 服务状态（仅用于显示指示器）
+  // 服务状态
   const [serverRunning, setServerRunning] = useState(false);
   const [status, setStatus] = useState<ModelStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+
+  // 模型选择
+  const [selectedPath, setSelectedPath] = useState<string>('');
 
   // ── 初始化 ──────────────────────────────────────────────────
 
@@ -51,6 +55,11 @@ export default function LocalModelTab() {
       ]);
       setModels(listRes.models || []);
       setStatus(statusRes);
+
+      // 如果有模型已加载，选中它
+      if (statusRes.loaded && statusRes.model_path) {
+        setSelectedPath(statusRes.model_path);
+      }
     } catch (e) {
       console.error('[LocalModelTab] init failed:', e);
     }
@@ -89,6 +98,7 @@ export default function LocalModelTab() {
 
   const handleRemoveModel = async (modelPath: string) => {
     await window.soloforge.localLLM.remove(modelPath);
+    if (selectedPath === modelPath) setSelectedPath('');
     await refreshModels();
     setInfo('模型已从列表移除');
   };
@@ -99,6 +109,7 @@ export default function LocalModelTab() {
 
     const res = await window.soloforge.localLLM.delete(modelPath);
     if (res.ok) {
+      if (selectedPath === modelPath) setSelectedPath('');
       await refreshModels();
       setInfo('模型已删除');
     } else {
@@ -133,8 +144,56 @@ export default function LocalModelTab() {
     await window.soloforge.localLLM.stopServer();
     setServerRunning(false);
     setStatus(null);
+    setSelectedPath('');
     setLoading(false);
     setInfo('推理服务已停止');
+  };
+
+  // ── 模型加载 ─────────────────────────────────────────────
+
+  const refreshStatus = async () => {
+    const res = await window.soloforge.localLLM.status();
+    setStatus(res);
+  };
+
+  const handleSelectModel = async (modelPath: string) => {
+    if (!modelPath) {
+      setSelectedPath('');
+      return;
+    }
+    setSelectedPath(modelPath);
+
+    // 如果服务已运行且当前没有加载模型，自动加载
+    if (serverRunning && (!status?.loaded || status.model_path !== modelPath)) {
+      await doLoadModel(modelPath);
+    }
+  };
+
+  const doLoadModel = async (modelPath: string) => {
+    setError(null);
+    setInfo(null);
+    setLoading(true);
+    try {
+      const res = await window.soloforge.localLLM.load(modelPath, {
+        n_ctx: 4096,
+        n_threads: 4,
+        n_gpu_layers: 0,
+      });
+      if (res.ok) {
+        await refreshStatus();
+        setInfo(`模型 ${res.model_name} 加载成功`);
+      } else {
+        setError(res.error || '加载失败');
+      }
+    } catch (e: any) {
+      setError(e.message || '加载失败');
+    }
+    setLoading(false);
+  };
+
+  const handleReload = async () => {
+    if (!selectedPath) return;
+    await doLoadModel(selectedPath);
   };
 
   // ── 渲染 ────────────────────────────────────────────────────
@@ -142,12 +201,12 @@ export default function LocalModelTab() {
   const loaded = status?.loaded ?? false;
 
   return (
-    <div className="space-y-6 animate-fadeIn">
+    <div className="space-y-5 animate-fadeIn">
       {/* 标题 */}
       <div className="border-b border-[var(--color-outline)]/20 pb-3 mb-2">
         <h3 className="text-base font-bold text-[var(--color-on-surface)]">本地模型管理</h3>
         <p className="text-xs text-on-surface/50 mt-1">
-          管理 GGUF 模型文件列表，点击右侧按钮启停推理服务
+          管理 GGUF 模型文件，启动推理服务后可选择模型加载
         </p>
       </div>
 
@@ -170,37 +229,66 @@ export default function LocalModelTab() {
         </div>
       )}
 
-      {/* 推理服务 */}
-      <div className="flex items-center justify-between py-2">
-        <div className="flex items-center gap-2">
-          <Cpu className="w-4 h-4 text-on-surface/40" />
-          <span className="text-sm text-[var(--color-on-surface)]">推理服务</span>
-          <span className={`text-xs font-mono tabular-nums ${serverRunning ? 'text-emerald-400' : 'text-on-surface/30'}`}>
-            {serverRunning
-              ? `运行中${loaded ? ` · ${status?.model_name}` : ''}`
-              : '未启动'}
-          </span>
-        </div>
+      {/* 推理服务 + 启停按钮 */}
+      <div className="flex items-center gap-3">
+        <Zap className="w-4 h-4 text-on-surface/40" />
+        <span className="text-sm text-[var(--color-on-surface)]">推理服务</span>
         {serverRunning ? (
           <button
             onClick={handleStopServer}
             disabled={loading}
-            className="text-xs text-red-400/60 hover:text-red-400 disabled:opacity-50 flex items-center gap-1 transition-colors cursor-pointer"
+            className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 hover:border-red-500/30 active:scale-[0.96] text-red-400 px-4 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
           >
-            {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Square className="w-3.5 h-3.5" />}
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
             停止
           </button>
         ) : (
           <button
             onClick={handleStartServer}
             disabled={loading}
-            className="text-xs text-[var(--color-primary)]/70 hover:text-[var(--color-primary)] disabled:opacity-50 flex items-center gap-1 transition-colors cursor-pointer"
+            className="bg-[var(--color-primary)] hover:opacity-90 active:scale-[0.96] disabled:opacity-50 text-[var(--color-bg)] px-4 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-all cursor-pointer"
           >
-            {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-            启动
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+            启动推理
           </button>
         )}
+        <span className={`text-xs font-mono tabular-nums ml-auto ${serverRunning ? 'text-emerald-400' : 'text-on-surface/30'}`}>
+          {serverRunning
+            ? `运行中${loaded ? ` · ${status?.model_name}` : ''}`
+            : '未启动'}
+        </span>
       </div>
+
+      {/* 模型选择下拉框 */}
+      {serverRunning && (
+        <div className="flex items-center gap-3">
+          <div className="flex-1 relative">
+            <select
+              value={selectedPath}
+              onChange={(e) => handleSelectModel(e.target.value)}
+              className="w-full appearance-none bg-[var(--color-surface)] border border-[var(--color-outline)]/20 rounded-lg px-3 py-2.5 text-sm text-[var(--color-on-surface)] cursor-pointer hover:border-[var(--color-primary)]/30 transition-all focus:outline-none focus:border-[var(--color-primary)]/50"
+            >
+              <option value="">— 选择模型 —</option>
+              {models.map((m) => (
+                <option key={m.path} value={m.path}>
+                  {m.name}{m.sizeMb ? ` (${m.sizeMb} MB)` : ''}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="w-4 h-4 text-on-surface/40 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          </div>
+          {loaded && selectedPath === status?.model_path && (
+            <button
+              onClick={handleReload}
+              disabled={loading}
+              className="text-xs text-[var(--color-primary)]/70 hover:text-[var(--color-primary)] disabled:opacity-50 flex items-center gap-1 transition-colors cursor-pointer shrink-0"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              重新加载
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ── 模型列表 ── */}
       <div className="space-y-2">
