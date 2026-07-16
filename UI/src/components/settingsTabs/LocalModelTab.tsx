@@ -170,43 +170,36 @@ export default function LocalModelTab() {
         </div>
       )}
 
-      {/* 推理服务入口 */}
-      <div className="p-4 bg-[var(--color-surface)] border border-[var(--color-outline)]/15 rounded-xl">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Cpu className="w-5 h-5 text-[var(--color-primary)]/70" />
-            <div>
-              <p className="text-sm font-semibold text-[var(--color-on-surface)]">推理服务</p>
-              <p className="text-xs text-on-surface/40 mt-0.5">
-                {serverRunning
-                  ? `服务运行中${loaded ? ` · 已加载 ${status?.model_name}` : ' · 未加载模型'}`
-                  : '服务未启动'}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className={`w-2 h-2 rounded-full ${serverRunning ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-            {serverRunning ? (
-              <button
-                onClick={handleStopServer}
-                disabled={loading}
-                className="bg-red-500/15 hover:bg-red-500/25 border border-red-500/25 hover:border-red-500/35 active:scale-[0.96] text-red-400 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
-              >
-                {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Square className="w-3.5 h-3.5" />}
-                停止服务
-              </button>
-            ) : (
-              <button
-                onClick={handleStartServer}
-                disabled={loading}
-                className="bg-[var(--color-primary)] hover:opacity-90 active:scale-[0.96] disabled:opacity-50 text-[var(--color-bg)] px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
-              >
-                {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-                启动推理
-              </button>
-            )}
-          </div>
+      {/* 推理服务 */}
+      <div className="flex items-center justify-between py-2">
+        <div className="flex items-center gap-2">
+          <Cpu className="w-4 h-4 text-on-surface/40" />
+          <span className="text-sm text-[var(--color-on-surface)]">推理服务</span>
+          <span className={`text-xs font-mono tabular-nums ${serverRunning ? 'text-emerald-400' : 'text-on-surface/30'}`}>
+            {serverRunning
+              ? `运行中${loaded ? ` · ${status?.model_name}` : ''}`
+              : '未启动'}
+          </span>
         </div>
+        {serverRunning ? (
+          <button
+            onClick={handleStopServer}
+            disabled={loading}
+            className="text-xs text-red-400/60 hover:text-red-400 disabled:opacity-50 flex items-center gap-1 transition-colors cursor-pointer"
+          >
+            {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Square className="w-3.5 h-3.5" />}
+            停止
+          </button>
+        ) : (
+          <button
+            onClick={handleStartServer}
+            disabled={loading}
+            className="text-xs text-[var(--color-primary)]/70 hover:text-[var(--color-primary)] disabled:opacity-50 flex items-center gap-1 transition-colors cursor-pointer"
+          >
+            {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+            启动
+          </button>
+        )}
       </div>
 
       {/* ── 模型列表 ── */}
