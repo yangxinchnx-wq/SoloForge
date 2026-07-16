@@ -104,6 +104,21 @@ interface LocalLLMApi {
     repeat_penalty?: number;
   }) => LocalLLMChatStream;
   chatReset: () => Promise<{ ok: boolean }>;
+
+  // HTTP 服务器（局域网共享）
+  startHttpServer: (host: string, port: number) => Promise<{ ok: boolean; error?: string; host?: string; port?: number; lanIP?: string }>;
+  stopHttpServer: () => Promise<{ ok: boolean }>;
+  getHttpServerInfo: () => Promise<{
+    running: boolean;
+    host: string;
+    port: number;
+    lanIP: string;
+    url: string | null;
+    localUrl: string | null;
+    requestCount: number;
+    modelLoaded: boolean;
+    modelName: string | null;
+  }>;
 }
 
 interface SoloForgeApi {

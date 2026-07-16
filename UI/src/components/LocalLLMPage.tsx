@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   X, ChevronDown, RefreshCw, Cpu, Play, Square, Send,
-  AlertCircle, CheckCircle2, Loader2,
+  AlertCircle, CheckCircle2, Loader2, Globe, Copy,
 } from '../utils/icons';
 import { useAppStore } from '../state/appStore';
 
@@ -50,6 +50,18 @@ interface ChatMessage {
   content: string;
 }
 
+interface HttpServerInfo {
+  running: boolean;
+  host: string;
+  port: number;
+  lanIP: string;
+  url: string | null;
+  localUrl: string | null;
+  requestCount: number;
+  modelLoaded: boolean;
+  modelName: string | null;
+}
+
 // ── 组件 ──────────────────────────────────────────────────────────
 
 export default function LocalLLMPage() {
@@ -89,6 +101,13 @@ export default function LocalLLMPage() {
   // 确认对话框
   const [confirmSwitch, setConfirmSwitch] = useState<string | null>(null);
 
+  // 局域网共享
+  const [httpRunning, setHttpRunning] = useState(false);
+  const [httpPort, setHttpPort] = useState(8768);
+  const [httpInfo, setHttpInfo] = useState<HttpServerInfo | null>(null);
+  const httpPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [copied, setCopied] = useState(false);
+
   // ── 初始化 ──────────────────────────────────────────────────
 
   const initialize = useCallback(async () => {
@@ -113,6 +132,15 @@ export default function LocalLLMPage() {
             setNThreads(statusRes.params.n_threads);
             setNGpuLayers(statusRes.params.n_gpu_layers);
           }
+        }
+
+        // 检查 HTTP 服务器状态
+        const httpInfo = await window.soloforge.localLLM.getHttpServerInfo();
+        setHttpInfo(httpInfo);
+        setHttpRunning(httpInfo.running);
+        if (httpInfo.running) {
+          setHttpPort(httpInfo.port);
+          _startHttpPolling();
         }
       } else {
         // 服务未运行时也加载模型列表（只读参考）
@@ -249,6 +277,10 @@ export default function LocalLLMPage() {
     setChatMessages([]);
     setMetrics(null);
     setChatStreaming(false);
+    // 后端 unloadModel 会自动停止 HTTP 服务器，同步 UI 状态
+    setHttpRunning(false);
+    setHttpInfo(null);
+    _stopHttpPolling();
     setLoading(false);
     setInfo('模型已卸载');
   };
@@ -256,6 +288,65 @@ export default function LocalLLMPage() {
   const handleReload = async () => {
     if (!selectedPath) return;
     await doLoadModel(selectedPath);
+  };
+
+  // ── 局域网共享 ────────────────────────────────────────────
+
+  const _startHttpPolling = useCallback(() => {
+    if (httpPollRef.current) clearInterval(httpPollRef.current);
+    httpPollRef.current = setInterval(async () => {
+      try {
+        const info = await window.soloforge.localLLM.getHttpServerInfo();
+        setHttpInfo(info);
+      } catch {}
+    }, 2000);
+  }, []);
+
+  const _stopHttpPolling = useCallback(() => {
+    if (httpPollRef.current) {
+      clearInterval(httpPollRef.current);
+      httpPollRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => _stopHttpPolling();
+  }, [_stopHttpPolling]);
+
+  const handleStartHttpServer = async () => {
+    setError(null);
+    setInfo(null);
+    try {
+      const res = await window.soloforge.localLLM.startHttpServer('0.0.0.0', httpPort);
+      if (res.ok) {
+        setHttpRunning(true);
+        const info = await window.soloforge.localLLM.getHttpServerInfo();
+        setHttpInfo(info);
+        _startHttpPolling();
+        setInfo(`局域网共享已启动: http://${res.lanIP}:${res.port}`);
+      } else {
+        setError(res.error || '启动失败');
+      }
+    } catch (e: any) {
+      setError(e.message || '启动失败');
+    }
+  };
+
+  const handleStopHttpServer = async () => {
+    await window.soloforge.localLLM.stopHttpServer();
+    setHttpRunning(false);
+    setHttpInfo(null);
+    _stopHttpPolling();
+    setInfo('局域网共享已停止');
+  };
+
+  const handleCopyUrl = async () => {
+    if (!httpInfo?.url) return;
+    try {
+      await navigator.clipboard.writeText(httpInfo.url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {}
   };
 
   // ── 聊天测试 ────────────────────────────────────────────────
@@ -573,6 +664,91 @@ export default function LocalLLMPage() {
                   <Square className="w-3 h-3" />
                   卸载模型
                 </button>
+              )}
+
+              {/* ── 局域网共享 ── */}
+              {loaded && (
+                <div className="p-4 bg-[var(--color-surface)] border border-[var(--color-outline)]/15 rounded-xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-[var(--color-primary)] font-mono font-semibold flex items-center gap-1.5">
+                      <Globe className="w-3.5 h-3.5" />
+                      局域网共享
+                    </span>
+                    {httpRunning && (
+                      <span className="text-xs text-on-surface/40 font-mono tabular-nums">
+                        请求: {httpInfo?.requestCount ?? 0}
+                      </span>
+                    )}
+                  </div>
+
+                  {!httpRunning ? (
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-on-surface/50">端口</label>
+                        <input
+                          type="number"
+                          value={httpPort}
+                          onChange={(e) => setHttpPort(parseInt(e.target.value) || 8768)}
+                          min={1024}
+                          max={65535}
+                          className="w-20 bg-[var(--color-bg)]/50 border border-[var(--color-outline)]/15 rounded-lg px-2.5 py-1.5 text-xs text-[var(--color-on-surface)] font-mono tabular-nums focus:outline-none focus:border-[var(--color-primary)]/30 transition-all"
+                        />
+                      </div>
+                      <button
+                        onClick={handleStartHttpServer}
+                        className="bg-[var(--color-primary)] hover:opacity-90 active:scale-[0.96] text-[var(--color-bg)] px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <Globe className="w-3.5 h-3.5" />
+                        启动共享
+                      </button>
+                      <p className="text-xs text-on-surface/30">
+                        启动后局域网内其他设备可通过 OpenAI 兼容 API 连接
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {/* 局域网地址 */}
+                      {httpInfo?.url && (
+                        <div className="flex items-center gap-2 p-2.5 bg-[var(--color-bg)]/50 border border-[var(--color-outline)]/15 rounded-lg">
+                          <span className="text-xs text-on-surface/40 font-mono shrink-0">局域网</span>
+                          <code className="flex-1 text-xs text-[var(--color-primary)] font-mono truncate">
+                            {httpInfo.url}
+                          </code>
+                          <button
+                            onClick={handleCopyUrl}
+                            className="text-on-surface/40 hover:text-[var(--color-primary)] transition-colors shrink-0"
+                            title="复制地址"
+                          >
+                            {copied
+                              ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                              : <Copy className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      )}
+                      {/* 本机地址 */}
+                      {httpInfo?.localUrl && (
+                        <div className="flex items-center gap-2 p-2.5 bg-[var(--color-bg)]/50 border border-[var(--color-outline)]/15 rounded-lg">
+                          <span className="text-xs text-on-surface/40 font-mono shrink-0">本机  </span>
+                          <code className="flex-1 text-xs text-on-surface/60 font-mono truncate">
+                            {httpInfo.localUrl}
+                          </code>
+                        </div>
+                      )}
+                      {/* 说明 */}
+                      <p className="text-xs text-on-surface/30 leading-relaxed">
+                        其他设备可将此地址设为 OpenAI base_url，兼容 <code className="text-on-surface/50">/v1/chat/completions</code> 和 <code className="text-on-surface/50">/v1/models</code>
+                      </p>
+                      {/* 停止按钮 */}
+                      <button
+                        onClick={handleStopHttpServer}
+                        className="text-xs text-red-400/70 hover:text-red-400 border border-red-500/20 hover:border-red-500/30 active:scale-[0.96] px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5"
+                      >
+                        <Square className="w-3 h-3" />
+                        停止共享
+                      </button>
+                    </div>
+                  )}
+                </div>
               )}
 
               {/* ── 聊天测试 ── */}

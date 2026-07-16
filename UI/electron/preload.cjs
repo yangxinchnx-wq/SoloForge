@@ -148,5 +148,10 @@ contextBridge.exposeInMainWorld('soloforge', {
       };
     },
     chatReset: () => ipcRenderer.invoke('local-llm:chat-reset'),
+
+    // HTTP 服务器（局域网共享）
+    startHttpServer: (host, port) => ipcRenderer.invoke('local-llm:start-http-server', { host, port }),
+    stopHttpServer:  () => ipcRenderer.invoke('local-llm:stop-http-server'),
+    getHttpServerInfo: () => ipcRenderer.invoke('local-llm:http-server-info'),
   },
 });

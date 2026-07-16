@@ -17,6 +17,7 @@
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const http = require('http');
 const { execSync } = require('child_process');
 const { createSettingsStorage } = require('./settingsStorage.cjs');
 
@@ -51,6 +52,15 @@ let _lastMetrics = {
 
 // 活跃的 chat abort controller（按 streamId 索引）
 const _chatAbortControllers = new Map();
+
+// ── HTTP 服务器状态（局域网共享） ────────────────────────────────
+let _httpServer = null;
+let _httpHost = '0.0.0.0';
+let _httpPort = 8768;
+let _httpContext = null;        // 独立 context（不干扰 UI 调试对话）
+let _httpSession = null;        // 独立 session
+let _httpLock = false;          // 请求锁：串行化推理，避免并发崩溃
+let _httpRequestCount = 0;
 
 // ── 初始化 ──────────────────────────────────────────────────────
 
@@ -201,7 +211,8 @@ async function loadModel(modelPath, params) {
 
   _isLoadingModel = true;
   try {
-    // 先卸载当前模型
+    // 先停止 HTTP 服务器 + 卸载当前模型
+    await stopHttpServer();
     await _cleanupModel();
 
     const nCtx = params?.n_ctx ?? 4096;
@@ -253,6 +264,8 @@ async function loadModel(modelPath, params) {
 }
 
 async function unloadModel() {
+  // 先停止 HTTP 服务器（其 context/session 依赖当前 model）
+  await stopHttpServer();
   await _cleanupModel();
   return { ok: true };
 }
@@ -418,6 +431,293 @@ function resetChat() {
   return { ok: true };
 }
 
+// ── HTTP 服务器（局域网共享） ────────────────────────────────────
+
+/**
+ * 获取局域网 IP 地址
+ */
+function getLanIP() {
+  const nets = os.networkInterfaces();
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name] || []) {
+      if (net.family === 'IPv4' && !net.internal) {
+        return net.address;
+      }
+    }
+  }
+  return '127.0.0.1';
+}
+
+async function startHttpServer(host, port) {
+  if (_httpServer) {
+    return { ok: false, error: 'HTTP 服务器已运行' };
+  }
+  if (!_model || !_loadedModelPath) {
+    return { ok: false, error: '请先加载模型' };
+  }
+
+  _httpHost = host || '0.0.0.0';
+  _httpPort = port || 8768;
+
+  try {
+    // 创建独立 context + session（不干扰 UI 调试对话）
+    _httpContext = await _model.createContext({
+      contextSize: _loadedParams.n_ctx,
+      threads: _loadedParams.n_threads,
+    });
+    const mod = await _ensureModule();
+    const sequence = _httpContext.getSequence();
+    _httpSession = new mod.LlamaChatSession({ contextSequence: sequence });
+
+    _httpServer = http.createServer(handleHttpRequest);
+    await new Promise((resolve, reject) => {
+      _httpServer.on('error', reject);
+      _httpServer.listen(_httpPort, _httpHost, resolve);
+    });
+
+    _httpRequestCount = 0;
+    const lanIP = getLanIP();
+    console.log(`[local-llm] HTTP API server on http://${_httpHost}:${_httpPort} (LAN: http://${lanIP}:${_httpPort})`);
+    return { ok: true, host: _httpHost, port: _httpPort, lanIP };
+  } catch (e) {
+    console.error('[local-llm] Failed to start HTTP server:', e);
+    await _cleanupHttpModel();
+    _httpServer = null;
+    return { ok: false, error: e.message || 'Failed to start HTTP server' };
+  }
+}
+
+async function stopHttpServer() {
+  if (_httpServer) {
+    await new Promise((resolve) => _httpServer.close(resolve));
+    _httpServer = null;
+  }
+  await _cleanupHttpModel();
+  _httpLock = false;
+  _httpRequestCount = 0;
+  console.log('[local-llm] HTTP server stopped');
+  return { ok: true };
+}
+
+async function _cleanupHttpModel() {
+  if (_httpSession) {
+    try { _httpSession.dispose(); } catch {}
+    _httpSession = null;
+  }
+  if (_httpContext) {
+    try { await _httpContext.dispose(); } catch {}
+    _httpContext = null;
+  }
+}
+
+function isHttpServerRunning() {
+  return _httpServer !== null;
+}
+
+function getHttpServerInfo() {
+  return {
+    running: _httpServer !== null,
+    host: _httpHost,
+    port: _httpPort,
+    lanIP: getLanIP(),
+    url: _httpServer ? `http://${getLanIP()}:${_httpPort}` : null,
+    localUrl: _httpServer ? `http://127.0.0.1:${_httpPort}` : null,
+    requestCount: _httpRequestCount,
+    modelLoaded: _httpSession !== null,
+    modelName: _loadedModelName,
+  };
+}
+
+// ── HTTP 请求处理 ────────────────────────────────────────────────
+
+function _readBody(req) {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    req.on('data', chunk => { data += chunk; });
+    req.on('end', () => resolve(data));
+    req.on('error', reject);
+  });
+}
+
+function _setCors(res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+}
+
+async function handleHttpRequest(req, res) {
+  _setCors(res);
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  // GET 路由
+  if (req.method === 'GET') {
+    if (req.url === '/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'ok',
+        model_loaded: _httpSession !== null,
+        model_name: _loadedModelName,
+        request_count: _httpRequestCount,
+      }));
+      return;
+    }
+    if (req.url === '/v1/models') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        object: 'list',
+        data: [{
+          id: _loadedModelName,
+          object: 'model',
+          owned_by: 'soloforge-local',
+        }],
+      }));
+      return;
+    }
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Not found' }));
+    return;
+  }
+
+  // POST 路由
+  if (req.method === 'POST' && (req.url === '/v1/chat/completions' || req.url === '/chat/completions')) {
+    await _handleChatCompletion(req, res);
+    return;
+  }
+
+  res.writeHead(404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Not found' }));
+}
+
+async function _handleChatCompletion(req, res) {
+  // 请求锁：串行化推理
+  if (_httpLock) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Server is busy, another request is being processed' }));
+    return;
+  }
+  _httpLock = true;
+  _httpRequestCount++;
+
+  try {
+    const body = await _readBody(req);
+    const data = JSON.parse(body);
+
+    const messages = data.messages || [];
+    const temperature = data.temperature ?? 0.3;
+    const topP = data.top_p ?? 1.0;
+    const maxTokens = data.max_tokens ?? 1024;
+    const repeatPenalty = data.repeat_penalty ?? 1.1;
+    const stream = data.stream ?? false;
+
+    if (messages.length === 0) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'messages is empty' }));
+      return;
+    }
+
+    // 重置 session，构建全新对话上下文
+    _httpSession.resetChatHistory();
+
+    // 设置 system message
+    const systemMsg = messages.find(m => m.role === 'system');
+    if (systemMsg) {
+      _httpSession.setSystemMessage(systemMsg.content);
+    }
+
+    // 提取最后一条 user 消息
+    const conversationMessages = messages.filter(m => m.role !== 'system');
+    const lastUserMsg = [...conversationMessages].reverse().find(m => m.role === 'user');
+    if (!lastUserMsg) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'No user message found' }));
+      return;
+    }
+
+    const completionId = `chatcmpl-${Date.now()}`;
+    const created = Math.floor(Date.now() / 1000);
+
+    if (stream) {
+      // SSE 流式输出
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      });
+
+      await _httpSession.prompt(lastUserMsg.content, {
+        temperature,
+        topP,
+        maxTokens,
+        repeatPenalty: { penalty: repeatPenalty },
+        onTextChunk: (chunk) => {
+          const sseData = {
+            id: completionId,
+            object: 'chat.completion.chunk',
+            created,
+            model: _loadedModelName,
+            choices: [{
+              index: 0,
+              delta: { content: chunk },
+              finish_reason: null,
+            }],
+          };
+          res.write(`data: ${JSON.stringify(sseData)}\n\n`);
+        },
+      });
+
+      // 结束 chunk
+      const finalChunk = {
+        id: completionId,
+        object: 'chat.completion.chunk',
+        created,
+        model: _loadedModelName,
+        choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+      };
+      res.write(`data: ${JSON.stringify(finalChunk)}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    } else {
+      // 非流式
+      const responseText = await _httpSession.prompt(lastUserMsg.content, {
+        temperature,
+        topP,
+        maxTokens,
+        repeatPenalty: { penalty: repeatPenalty },
+      });
+
+      const result = {
+        id: completionId,
+        object: 'chat.completion',
+        created,
+        model: _loadedModelName,
+        choices: [{
+          index: 0,
+          message: { role: 'assistant', content: responseText },
+          finish_reason: 'stop',
+        }],
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      };
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    }
+  } catch (e) {
+    console.error('[local-llm] HTTP chat completion error:', e);
+    if (!res.headersSent) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message || 'Internal error' }));
+    } else {
+      try { res.end(); } catch {}
+    }
+  } finally {
+    _httpLock = false;
+  }
+}
+
 // ── IPC 注册 ────────────────────────────────────────────────────
 
 function registerIpc(ipcMain, dialog) {
@@ -498,6 +798,19 @@ function registerIpc(ipcMain, dialog) {
   ipcMain.handle('local-llm:chat-reset', () => {
     return resetChat();
   });
+
+  // HTTP 服务器（局域网共享）
+  ipcMain.handle('local-llm:start-http-server', async (_e, { host, port }) => {
+    return startHttpServer(host, port);
+  });
+
+  ipcMain.handle('local-llm:stop-http-server', async () => {
+    return stopHttpServer();
+  });
+
+  ipcMain.handle('local-llm:http-server-info', () => {
+    return getHttpServerInfo();
+  });
 }
 
 // ── 清理 ────────────────────────────────────────────────────────
@@ -508,6 +821,9 @@ async function cleanup() {
     try { controller.abort(); } catch {}
   }
   _chatAbortControllers.clear();
+
+  // 停止 HTTP 服务器
+  await stopHttpServer();
 
   await _cleanupModel();
   if (_llama) {
@@ -535,4 +851,9 @@ module.exports = {
   deleteModel,
   abortChat,
   resetChat,
+  // HTTP 服务器（局域网共享）
+  startHttpServer,
+  stopHttpServer,
+  isHttpServerRunning,
+  getHttpServerInfo,
 };
