@@ -8,11 +8,15 @@
  *   当 LLM 返回 json 代码块时, pushRawDsl 直接写入 Flutter DSL 到 previewStreamStore,
  *   WebAstPreview 需要同时处理 UniversalNode 和 Flutter DSL 两种格式。
  *
- * 支持 12 种节点类型: container/row/column/stack/text/button/input/image/divider/spacer/svg/canvas
+ * ★ 2026-07-16: 新增 icon/progress/chart/video 节点类型，支持 canvas draw 指令
+ *
+ * 支持 16 种节点类型: container/row/column/stack/text/button/input/image/divider/spacer
+ *                    svg/canvas/icon/progress/chart/video
  */
 
 import React from 'react';
-import type { UniversalNode, UniversalStyle } from '../services/canvas/UniversalAST';
+import type { UniversalNode, UniversalStyle, CanvasDrawOp } from '../services/canvas/UniversalAST';
+import { play2DLayoutTransition, playScrambleText } from '../services/canvas/canvasAnimations';
 
 // ── Flutter DSL → UniversalNode 格式转换 ──
 // Flutter DSL: { type: 'text', props: { content: 'Hello', color: '#fff' }, children: [...] }
@@ -164,6 +168,32 @@ function justifyToCSS(justify?: string): React.CSSProperties {
 
 // ── 节点渲染 ──
 
+/**
+ * ★ anime.js: 文本节点 scramble 解码效果
+ *
+ * 文本变化时用 anime.js scrambleText 做乱码→揭示过渡，
+ * 让 LLM 流式生成的文字有科技感解码效果。
+ * 首次渲染直接显示（无 scramble），后续变化才触发效果。
+ */
+function ScrambleText({ text, style }: { text: string; style: React.CSSProperties }) {
+  const ref = React.useRef<HTMLDivElement>(null);
+  const prevText = React.useRef<string | null>(null);
+
+  React.useEffect(() => {
+    if (!ref.current) return;
+    if (prevText.current === null) {
+      // 首次渲染，直接显示
+      ref.current.textContent = text;
+    } else if (prevText.current !== text) {
+      // 文本变化 — anime.js scramble 解码效果
+      playScrambleText(ref.current, text, 500);
+    }
+    prevText.current = text;
+  }, [text]);
+
+  return <div ref={ref} style={style} />;
+}
+
 function renderNode(node: UniversalNode, key: string): React.ReactNode {
   // ★ 归一化: 同时支持 UniversalNode 和 Flutter DSL 格式
   const n = normalizeNode(node) as any;
@@ -181,7 +211,7 @@ function renderNode(node: UniversalNode, key: string): React.ReactNode {
       );
 
     case 'text':
-      return <div key={key} style={style}>{n.content}</div>;
+      return <ScrambleText key={key} style={style} text={n.content} />;
 
     case 'svg': {
       // ★ 2026-07-12: 支持 SVG 类型 — LLM 经常用 SVG 画图
@@ -207,8 +237,66 @@ function renderNode(node: UniversalNode, key: string): React.ReactNode {
     }
 
     case 'canvas': {
-      // ★ 2026-07-12: 支持 canvas 类型 — 可能包含 SVG 或自定义绘制
+      // ★ 2026-07-16: canvas 节点 — 支持 draw 指令数组（优先）+ 兼容旧 SVG content
+      const drawOps: CanvasDrawOp[] | undefined = n.draw || n.props?.draw;
       const innerContent = n.props?.content || n.content || '';
+
+      // 优先：draw 指令数组 → HTML5 Canvas 2D API
+      if (drawOps && Array.isArray(drawOps) && drawOps.length > 0) {
+        const cw = n.width || n.props?.width || 300;
+        const ch = n.height || n.props?.height || 200;
+        return (
+          <canvas
+            key={key}
+            ref={(canvas: HTMLCanvasElement | null) => {
+              if (!canvas) return;
+              const ctx = canvas.getContext('2d');
+              if (!ctx) return;
+              ctx.clearRect(0, 0, cw, ch);
+              for (const op of drawOps) {
+                if (op.fill) ctx.fillStyle = op.fill;
+                if (op.stroke) ctx.strokeStyle = op.stroke;
+                if (op.width != null) ctx.lineWidth = op.width;
+                switch (op.op) {
+                  case 'rect':
+                    ctx.fillRect(op.x || 0, op.y || 0, op.w || 0, op.h || 0);
+                    if (op.stroke) ctx.strokeRect(op.x || 0, op.y || 0, op.w || 0, op.h || 0);
+                    break;
+                  case 'circle':
+                    ctx.beginPath();
+                    ctx.arc(op.cx || 0, op.cy || 0, op.r || 0, 0, Math.PI * 2);
+                    if (op.fill) ctx.fill();
+                    if (op.stroke) ctx.stroke();
+                    break;
+                  case 'line':
+                    ctx.beginPath();
+                    ctx.moveTo((op.from || [0,0])[0], (op.from || [0,0])[1]);
+                    ctx.lineTo((op.to || [0,0])[0], (op.to || [0,0])[1]);
+                    ctx.stroke();
+                    break;
+                  case 'text':
+                    if (op.fontSize) ctx.font = `${op.fontSize}px sans-serif`;
+                    if (op.fill) ctx.fillText(op.content || '', op.x || 0, op.y || 0);
+                    if (op.stroke) ctx.strokeText(op.content || '', op.x || 0, op.y || 0);
+                    break;
+                  case 'path':
+                    try {
+                      const path = new Path2D(op.d || '');
+                      if (op.fill) ctx.fill(path);
+                      if (op.stroke) ctx.stroke(path);
+                    } catch { /* ignore invalid path */ }
+                    break;
+                }
+              }
+            }}
+            width={cw}
+            height={ch}
+            style={{ ...style, width: cw, height: ch, display: 'block' }}
+          />
+        );
+      }
+
+      // 兼容旧格式：SVG content 字符串
       if (innerContent) {
         return (
           <div
@@ -273,6 +361,140 @@ function renderNode(node: UniversalNode, key: string): React.ReactNode {
     case 'spacer':
       return <div key={key} style={{ ...style, flex: style.flex ?? 1 }} />;
 
+    case 'icon': {
+      // ★ 2026-07-16: icon 节点 — 用 emoji 或 Heroicons name 渲染
+      const iconSize = n.size || 24;
+      const iconColor = n.color || style.color || 'currentColor';
+      const emojiMap: Record<string, string> = {
+        'home': '🏠', 'search': '🔍', 'settings': '⚙️', 'user': '👤',
+        'heart': '❤️', 'star': '⭐', 'check': '✓', 'close': '✕',
+        'plus': '+', 'minus': '−', 'menu': '☰', 'back': '←',
+        'forward': '→', 'edit': '✎', 'delete': '🗑', 'save': '💾',
+        'download': '⬇', 'upload': '⬆', 'share': '↗', 'info': 'ℹ',
+        'warning': '⚠', 'error': '✕', 'success': '✓', 'loading': '◐',
+      };
+      const emoji = emojiMap[n.name?.toLowerCase()] || '◇';
+      return (
+        <span key={key} style={{
+          ...style, fontSize: `${iconSize}px`, color: iconColor,
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          width: `${iconSize}px`, height: `${iconSize}px`,
+        }}>
+          {emoji}
+        </span>
+      );
+    }
+
+    case 'progress': {
+      // ★ 2026-07-16: progress 节点 — linear/circular
+      const value = Math.max(0, Math.min(100, n.value || 0));
+      const color = n.color || '#3b82f6';
+      const trackColor = n.trackColor || '#e5e7eb';
+      if (n.variant === 'circular') {
+        const size = 48;
+        const stroke = 4;
+        const radius = (size - stroke) / 2;
+        const circ = 2 * Math.PI * radius;
+        const offset = circ - (value / 100) * circ;
+        return (
+          <div key={key} style={{ ...style, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg width={size} height={size}>
+              <circle cx={size/2} cy={size/2} r={radius} fill="none" stroke={trackColor} strokeWidth={stroke} />
+              <circle cx={size/2} cy={size/2} r={radius} fill="none" stroke={color} strokeWidth={stroke}
+                strokeDasharray={circ} strokeDashoffset={offset}
+                transform={`rotate(-90 ${size/2} ${size/2})`} strokeLinecap="round" />
+            </svg>
+          </div>
+        );
+      }
+      return (
+        <div key={key} style={{
+          ...style, width: style.width || '100%', height: style.height || 8,
+          background: trackColor, borderRadius: 4, overflow: 'hidden',
+        }}>
+          <div style={{
+            width: `${value}%`, height: '100%', background: color,
+            borderRadius: 4, transition: 'width 0.3s ease',
+          }} />
+        </div>
+      );
+    }
+
+    case 'chart': {
+      // ★ 2026-07-16: chart 节点 — 用 recharts 渲染 bar/line/pie
+      // recharts 已是项目依赖，直接动态 import 拆 chunk
+      const ChartRenderer = React.lazy(async () => {
+        const R = await import('recharts');
+        const Comp = n.chartType === 'bar' ? R.BarChart
+          : n.chartType === 'line' ? R.LineChart
+          : R.PieChart;
+        return {
+          default: ({ data, series, width, height }: any) => {
+            if (n.chartType === 'pie') {
+              return (
+                <Comp width={width} height={height}>
+                  <R.Pie data={data} dataKey={series[0].name} nameKey="name" cx="50%" cy="50%" outerRadius={Math.min(width, height) / 3} />
+                  <R.Tooltip />
+                </Comp>
+              );
+            }
+            const SeriesComp = n.chartType === 'bar' ? R.Bar : R.Line;
+            return (
+              <Comp data={data} width={width} height={height}>
+                <R.XAxis dataKey="name" />
+                <R.YAxis />
+                <R.Tooltip />
+                <R.Legend />
+                {series.map((s: any, idx: number) => (
+                  <SeriesComp key={idx} type="monotone" dataKey={s.name} stroke={s.color} fill={s.color} />
+                ))}
+              </Comp>
+            );
+          },
+        };
+      });
+      const chartWidth = n.width || 300;
+      const chartHeight = n.height || 200;
+      const hasData = n.series && n.series.length > 0 && n.series[0].data && n.series[0].data.length > 0;
+      if (!hasData) return <div key={key} style={style}>图表无数据</div>;
+
+      // 转换为 recharts 数据格式
+      const data = (n.labels || n.series[0].data.map((_: number, i: number) => `项 ${i+1}`)).map((label: string, i: number) => {
+        const row: Record<string, any> = { name: label };
+        n.series.forEach((s: any) => { row[s.name] = s.data[i] ?? 0; });
+        return row;
+      });
+
+      return (
+        <div key={key} style={{ ...style, width: chartWidth, height: chartHeight }}>
+          <React.Suspense fallback={<div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100%'}}>加载图表...</div>}>
+            <ChartRenderer data={data} series={n.series} width={chartWidth} height={chartHeight} />
+          </React.Suspense>
+        </div>
+      );
+    }
+
+    case 'video': {
+      // ★ 2026-07-16: video 节点 — 直接用 <video> 标签
+      if (!n.src) return null;
+      return (
+        <video
+          key={key}
+          src={n.src}
+          poster={n.poster}
+          autoPlay={n.autoPlay ?? false}
+          loop={n.loop ?? false}
+          controls={n.controls ?? true}
+          style={{
+            ...style,
+            width: style.width || '100%',
+            height: style.height || '100%',
+            objectFit: 'contain',
+          }}
+        />
+      );
+    }
+
     default: {
       // ★ 2026-07-12: 未知类型尝试从 props.content 渲染
       const fallbackContent = n.props?.content || n.content;
@@ -307,8 +529,21 @@ export interface WebAstPreviewProps {
 export default function WebAstPreview({ root, bgColor = '#ffffff' }: WebAstPreviewProps) {
   // ★ 归一化 root: 同时支持 UniversalNode 和 Flutter DSL
   const normalizedRoot = normalizeNode(root);
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const prevRootRef = React.useRef<UniversalNode>(root);
+
+  // ★ anime.js: DSL 更新时 FLIP 布局过渡
+  // 当 root 变化时，先用 createLayout 记录旧布局，DOM 更新后 reposition 平滑过渡
+  React.useEffect(() => {
+    if (containerRef.current && prevRootRef.current !== root) {
+      prevRootRef.current = root;
+      play2DLayoutTransition(containerRef.current);
+    }
+  }, [root]);
+
   return (
     <div
+      ref={containerRef}
       className="absolute inset-0 overflow-hidden flex flex-col items-center"
       style={{ background: bgColor }}
     >
