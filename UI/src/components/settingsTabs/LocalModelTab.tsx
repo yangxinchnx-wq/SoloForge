@@ -244,57 +244,46 @@ export default function LocalModelTab() {
               return (
                 <div
                   key={m.path}
-                  className="p-3 bg-[var(--color-surface)] border border-[var(--color-outline)]/10 rounded-lg flex items-center justify-between hover:border-[var(--color-primary)]/15 transition-all"
+                  className="p-2.5 bg-[var(--color-surface)] border border-[var(--color-outline)]/10 rounded-lg flex items-center gap-2.5 hover:border-[var(--color-primary)]/15 transition-all"
                 >
-                  <div className="flex items-center gap-2.5 flex-1 min-w-0">
-                    <div className={`w-2 h-2 rounded-full shrink-0 ${isLoaded ? 'bg-emerald-400' : 'bg-on-surface/20'}`} />
-                    <div className="min-w-0">
-                      <span className="text-xs font-semibold text-[var(--color-on-surface)] block truncate">
-                        {m.name}
-                      </span>
-                      {m.sizeMb && (
-                        <span className="text-xs text-on-surface/30 font-mono tabular-nums">{m.sizeMb} MB</span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    {/* 启停开关 */}
-                    {isLoaded ? (
-                      <button
-                        onClick={() => handleToggleModel(m.path)}
-                        disabled={loading}
-                        className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 hover:border-red-500/30 active:scale-[0.96] text-red-400 px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-all cursor-pointer disabled:opacity-50"
-                      >
-                        {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Square className="w-3.5 h-3.5" />}
-                        停止
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => handleToggleModel(m.path)}
-                        disabled={loading}
-                        className="bg-[var(--color-primary)] hover:opacity-90 active:scale-[0.96] disabled:opacity-50 text-[var(--color-bg)] px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 transition-all cursor-pointer"
-                      >
-                        {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-                        启动
-                      </button>
+                  <button
+                    onClick={() => handleToggleModel(m.path)}
+                    disabled={loading}
+                    className={`shrink-0 p-1 rounded transition-colors cursor-pointer disabled:opacity-50 ${
+                      isLoaded
+                        ? 'text-emerald-400 hover:text-emerald-300'
+                        : 'text-on-surface/30 hover:text-[var(--color-primary)]'
+                    }`}
+                    title={isLoaded ? '停止推理' : '启动推理'}
+                  >
+                    {loading && (isLoaded || (!loaded && !serverRunning))
+                      ? <Loader2 className="w-4 h-4 animate-spin" />
+                      : isLoaded
+                        ? <Square className="w-4 h-4" />
+                        : <Play className="w-4 h-4" />}
+                  </button>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-xs font-semibold text-[var(--color-on-surface)] block truncate">
+                      {m.name}
+                    </span>
+                    {m.sizeMb && (
+                      <span className="text-xs text-on-surface/30 font-mono tabular-nums">{m.sizeMb} MB</span>
                     )}
-                    {/* 移除 */}
-                    <button
-                      onClick={() => handleRemoveModel(m.path)}
-                      className="text-on-surface/30 hover:text-amber-400 p-1.5 rounded transition-colors"
-                      title="从列表移除（保留文件）"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                    {/* 删除 */}
-                    <button
-                      onClick={() => handleDeleteModel(m.path)}
-                      className="text-on-surface/30 hover:text-red-400 p-1.5 rounded transition-colors"
-                      title="从列表移除并删除文件"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
                   </div>
+                  <button
+                    onClick={() => handleRemoveModel(m.path)}
+                    className="text-on-surface/25 hover:text-amber-400 p-1 rounded transition-colors shrink-0"
+                    title="从列表移除（保留文件）"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => handleDeleteModel(m.path)}
+                    className="text-on-surface/25 hover:text-red-400 p-1 rounded transition-colors shrink-0"
+                    title="从列表移除并删除文件"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               );
             })}
