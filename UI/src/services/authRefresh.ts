@@ -142,8 +142,12 @@ export function ensureToken(): Promise<void> {
   if (readToken()) return Promise.resolve();
   if (!tokenReadyPromise) {
     tokenReadyPromise = doFetchStartupToken().finally(() => {
-      // 保留 resolved 状态, 后续调用直接返回;
-      // 如果 token 仍为空 (fetch 失败), per-request 拦截器会兜底 401 refresh
+      // ★ FIX: 如果 token 仍为空 (fetch 失败/后端未启动), 重置 promise 允许下次重试。
+      //   原代码永久缓存 resolved promise, 导致后端恢复后仍不重试 startup-token,
+      //   每次请求都要先走 401 → singleflightRefresh 弯路。
+      if (!readToken()) {
+        tokenReadyPromise = null;
+      }
     });
   }
   return tokenReadyPromise;

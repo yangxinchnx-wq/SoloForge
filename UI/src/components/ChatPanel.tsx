@@ -236,7 +236,7 @@ export default function ChatPanel({
   // ==========================================
   // 派生值 (用 useMemo 计算, 避免每次 store 状态变化都重算)
   // ==========================================
-  const activeChatId = selectedChatId || '1';
+  const activeChatId = selectedChatId;
   const localChatInfo = useMemo(() => chatsList.find(c => c.id === activeChatId) || null, [chatsList, activeChatId]);
   // ── 用户头像 + 名字 (与右上角 UserBadgeSelector 同步) ──────────────
   // 支持: 内置头像 idx / 自定义头像 dataUrl / 动态头像列表 (从 /api/files/list 读取)

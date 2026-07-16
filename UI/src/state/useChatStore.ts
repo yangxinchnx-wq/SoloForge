@@ -1,4 +1,4 @@
-﻿/**
+/**
  * ChatPanel 核心 store
  *
  * 2026-07-03 阶段3.1.E 从 ChatPanel.tsx 抽出。
@@ -404,11 +404,7 @@ async function tryLocalTranslateAndPush(text: string, chatSessionId: string): Pr
   else if (dsl && dsl.ui) { dsl.ui = normalizeDsl(dsl.ui); root = dsl.ui; }
   else { const found = deepFindDslInJson(dsl); if (found) root = found; }
   if (!root) return false;
-  const flutterDsl = root.ui ? root : { ui: root, platform: 'material' };
-  if (!flutterDsl.platform) flutterDsl.platform = 'material';
-  if (typeof window !== 'undefined' && window.soloforge?.canvas) {
-  await ensureCanvasAndPush(canvasSessionId, flutterDsl, chatSessionId);
-  }
+  // ★ 2026-07-16: 画布重构 — 旧 Flutter IPC 已删除，直接写 previewStreamStore
   const ps = usePreviewStreamStore.getState();
   if (!ps.getEntry(chatSessionId)) ps.initEntry(chatSessionId, { language: 'json', sessionId: canvasSessionId });
   ps.updateStream(chatSessionId, { raw: code, payload: { language: 'json', framework: 'json', source_code: code, preview: { root } } as any, errors: [], done: true });
@@ -423,21 +419,11 @@ async function tryLocalTranslateAndPush(text: string, chatSessionId: string): Pr
   const ast = translateCode(code, lang);
   const canvasSessionId = getCanvasSessionId(chatSessionId);
   const flutterRoot = universalNodeToFlutterDSL(ast);
-  const dsl = { ui: flutterRoot, platform: 'material' };
-  if (typeof window !== 'undefined' && window.soloforge?.canvas) {
-  await ensureCanvasAndPush(canvasSessionId, dsl, chatSessionId);
-  }
+  // ★ 2026-07-16: 画布重构 — 旧 Flutter IPC 已删除，直接写 previewStreamStore
   const ps = usePreviewStreamStore.getState();
   ps.initEntry(chatSessionId, { language: lang, sessionId: canvasSessionId });
   ps.updateStream(chatSessionId, { raw: code, payload: { language: lang, framework: lang, source_code: code, preview: { root: ast } } as any, errors: [], done: true });
   ps.confirmPayload(chatSessionId, { language: lang, framework: lang, source_code: code, preview: { root: ast } } as any);
-  // relay push (非 Electron 环境)
-  if (typeof window === 'undefined' || !window.soloforge?.canvas) {
-  try {
-  const resp = await fetch('/api/canvas/relay/push-ui', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: chatSessionId, dsl: flutterRoot, language: lang }) });
-  if (!resp.ok) console.warn('[tryLocalTranslateAndPush] relay HTTP', resp.status);
-  } catch {}
-  }
   return true;
   } catch (err) {
   console.warn('[tryLocalTranslateAndPush] translate failed:', (err as Error).message);
@@ -628,7 +614,8 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
   discardPausedGeneration: () => {
     activeStreamContext = null;
     set((s) => {
-      const chatId = s.options.selectedChatId || '1';
+      const chatId = s.options.selectedChatId;
+      if (!chatId) return { isPaused: false, isGenerating: false, activeChatHandle: null, streamState: { ...emptyStreamState } };
       const cl = s.conversations[chatId] || [];
       // 移除最后一条 assistant 消息 (被放弃的部分生成内容)
       if (cl.length > 0 && cl[cl.length - 1].sender === 'assistant') {
@@ -675,7 +662,8 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
   },
 
   handleUpdateActiveSettings: (updates) => {
-    const { options, configs } = get(); const activeChatId = options.selectedChatId || '1';
+    const { options, configs } = get(); const activeChatId = options.selectedChatId;
+    if (!activeChatId) return;
     const activeSettings = configs[activeChatId] || fallbackActiveSettings;
     set({ configs: { ...configs, [activeChatId]: { ...activeSettings, ...updates } } });
   },
@@ -821,7 +809,8 @@ const pr = detectPreviewTrigger(accumulatedText, localPushed, detectPreviewFromR
   handleAcceptEnable: async (candidateName) => {
     const state = get(); const { lastReqBody, options, configs } = state; if (!lastReqBody) return;
     const entry = (options.modelProviderMap || {})[candidateName]; if (!entry || !entry.apiKey) return;
-    const activeChatId = options.selectedChatId || '1';
+    const activeChatId = options.selectedChatId;
+    if (!activeChatId) return;
     const newSub = { baseUrl: entry.baseUrl, apiKey: entry.apiKey, model: entry.model };
     const newReqBody = { ...lastReqBody, subProviders: [...(lastReqBody.subProviders as any[]), newSub], candidateProviders: (lastReqBody.candidateProviders as any[]).filter((c: any) => c.modelName !== candidateName), enableDecision: { candidateName, accept: true } };
     set({ streamState: { ...emptyStreamState }, isGenerating: true });
@@ -842,7 +831,8 @@ const pr = detectPreviewTrigger(accumulatedText, localPushed, detectPreviewFromR
 
   handlePhase: (evt, _currentChatMsgs) => {
     if (evt.kind !== 'phase') return;
-    const { options } = get(); const activeChatId = options.selectedChatId || '1';
+    const { options } = get(); const activeChatId = options.selectedChatId;
+    if (!activeChatId) return;
     set((s) => { const prev = s.streamState; const next: StreamState = { ...prev };
       switch (evt.phase) {
         case 'phase0_subtask': { const st = (evt as any).subtasks; if (Array.isArray(st)) next.workerOutputs = st.map((st2: any, i: number) => ({ workerIdx: st2.workerIdx ?? i, modelName: st2.modelName ?? `Worker ${i}`, content: '', status: 'pending' as const })); break; }

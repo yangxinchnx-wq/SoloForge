@@ -108,7 +108,7 @@ export const useAppStore = create<AppState>()(
     fileCache: loadFileCache(),
     editorContent: loadEditorContent(),
 
-    selectedChatId: '1',
+    selectedChatId: '',
 
     activeTab: 'explorer',
     showHistory: true,
