@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Plus, Trash2, FolderOpen, X, Zap, Play, Square, Loader2,
+  Plus, Trash2, FolderOpen, X, Brain, Play, Square, Loader2,
   ChevronDown, RefreshCw,
 } from '../../utils/icons';
 
@@ -229,15 +229,40 @@ export default function LocalModelTab() {
         </div>
       )}
 
-      {/* 推理服务 + 启停按钮 */}
-      <div className="flex items-center gap-3">
-        <Zap className="w-4 h-4 text-on-surface/40" />
+      {/* 推理服务状态 */}
+      <div className="flex items-center gap-2">
+        <Brain className="w-4 h-4 text-on-surface/40" />
         <span className="text-sm text-[var(--color-on-surface)]">推理服务</span>
+        <span className={`text-xs font-mono tabular-nums ml-auto ${serverRunning ? 'text-emerald-400' : 'text-on-surface/30'}`}>
+          {serverRunning
+            ? `运行中${loaded ? ` · ${status?.model_name}` : ''}`
+            : '未启动'}
+        </span>
+      </div>
+
+      {/* 模型选择 + 启停按钮 */}
+      <div className="flex items-center gap-3">
+        <div className="flex-1 relative">
+          <select
+            value={selectedPath}
+            onChange={(e) => handleSelectModel(e.target.value)}
+            disabled={!serverRunning}
+            className="w-full appearance-none bg-[var(--color-surface)] border border-[var(--color-outline)]/20 rounded-lg px-3 py-2.5 text-sm text-[var(--color-on-surface)] cursor-pointer hover:border-[var(--color-primary)]/30 transition-all focus:outline-none focus:border-[var(--color-primary)]/50 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <option value="">— 选择模型 —</option>
+            {models.map((m) => (
+              <option key={m.path} value={m.path}>
+                {m.name}{m.sizeMb ? ` (${m.sizeMb} MB)` : ''}
+              </option>
+            ))}
+          </select>
+          <ChevronDown className="w-4 h-4 text-on-surface/40 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+        </div>
         {serverRunning ? (
           <button
             onClick={handleStopServer}
             disabled={loading}
-            className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 hover:border-red-500/30 active:scale-[0.96] text-red-400 px-4 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+            className="bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 hover:border-red-500/30 active:scale-[0.96] text-red-400 px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 shrink-0"
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
             停止
@@ -246,53 +271,27 @@ export default function LocalModelTab() {
           <button
             onClick={handleStartServer}
             disabled={loading}
-            className="bg-[var(--color-primary)] hover:opacity-90 active:scale-[0.96] disabled:opacity-50 text-[var(--color-bg)] px-4 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-all cursor-pointer"
+            className="bg-[var(--color-primary)] hover:opacity-90 active:scale-[0.96] disabled:opacity-50 text-[var(--color-bg)] px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-all cursor-pointer shrink-0"
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
             启动推理
           </button>
         )}
-        <span className={`text-xs font-mono tabular-nums ml-auto ${serverRunning ? 'text-emerald-400' : 'text-on-surface/30'}`}>
-          {serverRunning
-            ? `运行中${loaded ? ` · ${status?.model_name}` : ''}`
-            : '未启动'}
-        </span>
+        {loaded && selectedPath === status?.model_path && (
+          <button
+            onClick={handleReload}
+            disabled={loading}
+            className="text-xs text-[var(--color-primary)]/70 hover:text-[var(--color-primary)] disabled:opacity-50 flex items-center gap-1 transition-colors cursor-pointer shrink-0"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            重新加载
+          </button>
+        )}
       </div>
-
-      {/* 模型选择下拉框 */}
-      {serverRunning && (
-        <div className="flex items-center gap-3">
-          <div className="flex-1 relative">
-            <select
-              value={selectedPath}
-              onChange={(e) => handleSelectModel(e.target.value)}
-              className="w-full appearance-none bg-[var(--color-surface)] border border-[var(--color-outline)]/20 rounded-lg px-3 py-2.5 text-sm text-[var(--color-on-surface)] cursor-pointer hover:border-[var(--color-primary)]/30 transition-all focus:outline-none focus:border-[var(--color-primary)]/50"
-            >
-              <option value="">— 选择模型 —</option>
-              {models.map((m) => (
-                <option key={m.path} value={m.path}>
-                  {m.name}{m.sizeMb ? ` (${m.sizeMb} MB)` : ''}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="w-4 h-4 text-on-surface/40 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          </div>
-          {loaded && selectedPath === status?.model_path && (
-            <button
-              onClick={handleReload}
-              disabled={loading}
-              className="text-xs text-[var(--color-primary)]/70 hover:text-[var(--color-primary)] disabled:opacity-50 flex items-center gap-1 transition-colors cursor-pointer shrink-0"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              重新加载
-            </button>
-          )}
-        </div>
-      )}
 
       {/* ── 模型列表 ── */}
       <div className="space-y-2">
-        <span className="text-xs text-[var(--color-primary)] font-mono font-semibold block">已添加模型</span>
+        <span className="text-xs text-[var(--color-primary)] font-mono font-semibold block">添加模型</span>
 
         {/* 添加模型 */}
         <div className="flex items-center gap-2">
