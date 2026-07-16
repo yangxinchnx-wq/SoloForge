@@ -251,12 +251,12 @@ export default function LocalModelTab() {
                     disabled={loading}
                     className={`shrink-0 p-1 rounded transition-colors cursor-pointer disabled:opacity-50 ${
                       isLoaded
-                        ? 'text-emerald-400 hover:text-emerald-300'
-                        : 'text-on-surface/30 hover:text-[var(--color-primary)]'
+                        ? 'text-red-400 hover:text-red-300'
+                        : 'text-[var(--color-primary)] hover:opacity-70'
                     }`}
                     title={isLoaded ? '停止推理' : '启动推理'}
                   >
-                    {loading && (isLoaded || (!loaded && !serverRunning))
+                    {loading
                       ? <Loader2 className="w-4 h-4 animate-spin" />
                       : isLoaded
                         ? <Square className="w-4 h-4" />
