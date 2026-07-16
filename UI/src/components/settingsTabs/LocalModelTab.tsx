@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Plus, Trash2, FolderOpen, X, Cpu, ExternalLink, Loader2,
+  Plus, Trash2, FolderOpen, X, Cpu, Play, Square, Loader2,
 } from '../../utils/icons';
-import { useAppStore } from '../../state/appStore';
 
 // ── 类型定义 ──────────────────────────────────────────────────────
 
@@ -28,8 +27,6 @@ interface ModelStatus {
 // ── 组件 ──────────────────────────────────────────────────────────
 
 export default function LocalModelTab() {
-  const setShowLocalLLMPage = useAppStore((s) => s.setShowLocalLLMPage);
-
   // 模型列表
   const [models, setModels] = useState<ModelEntry[]>([]);
   const [newModelPath, setNewModelPath] = useState('');
@@ -109,6 +106,37 @@ export default function LocalModelTab() {
     }
   };
 
+  // ── 推理服务启停 ─────────────────────────────────────────
+
+  const handleStartServer = async () => {
+    setError(null);
+    setInfo(null);
+    setLoading(true);
+    try {
+      const res = await window.soloforge.localLLM.startServer();
+      if (res.ok) {
+        setServerRunning(true);
+        const statusRes = await window.soloforge.localLLM.status();
+        setStatus(statusRes);
+        setInfo('推理服务已启动');
+      } else {
+        setError(res.error || '启动失败');
+      }
+    } catch (e: any) {
+      setError(e.message || '启动失败');
+    }
+    setLoading(false);
+  };
+
+  const handleStopServer = async () => {
+    setLoading(true);
+    await window.soloforge.localLLM.stopServer();
+    setServerRunning(false);
+    setStatus(null);
+    setLoading(false);
+    setInfo('推理服务已停止');
+  };
+
   // ── 渲染 ────────────────────────────────────────────────────
 
   const loaded = status?.loaded ?? false;
@@ -119,7 +147,7 @@ export default function LocalModelTab() {
       <div className="border-b border-[var(--color-outline)]/20 pb-3 mb-2">
         <h3 className="text-base font-bold text-[var(--color-on-surface)]">本地模型管理</h3>
         <p className="text-xs text-on-surface/50 mt-1">
-          管理 GGUF 模型文件列表，推理服务请点击下方按钮进入
+          管理 GGUF 模型文件列表，点击右侧按钮启停推理服务
         </p>
       </div>
 
@@ -158,13 +186,25 @@ export default function LocalModelTab() {
           </div>
           <div className="flex items-center gap-2">
             <span className={`w-2 h-2 rounded-full ${serverRunning ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-            <button
-              onClick={() => setShowLocalLLMPage(true)}
-              className="bg-[var(--color-primary)] hover:opacity-90 active:scale-[0.96] text-[var(--color-bg)] px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
-            >
-              <ExternalLink className="w-3.5 h-3.5" />
-              打开推理服务
-            </button>
+            {serverRunning ? (
+              <button
+                onClick={handleStopServer}
+                disabled={loading}
+                className="bg-red-500/15 hover:bg-red-500/25 border border-red-500/25 hover:border-red-500/35 active:scale-[0.96] text-red-400 px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+              >
+                {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Square className="w-3.5 h-3.5" />}
+                停止服务
+              </button>
+            ) : (
+              <button
+                onClick={handleStartServer}
+                disabled={loading}
+                className="bg-[var(--color-primary)] hover:opacity-90 active:scale-[0.96] disabled:opacity-50 text-[var(--color-bg)] px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+              >
+                {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                启动推理
+              </button>
+            )}
           </div>
         </div>
       </div>
