@@ -67,6 +67,7 @@ interface AppState {
   showThemeCustomizer: boolean;
   showSettingsModal: boolean;
   showStatsModal: boolean;
+  showLocalLLMPage: boolean;
   showFloatingEditor: boolean;
   activeSettingsChat: { id: string; title: string } | null;
   toastMsg: string | null;
@@ -88,6 +89,7 @@ interface AppState {
   setShowThemeCustomizer: (v: boolean) => void;
   setShowSettingsModal: (v: boolean) => void;
   setShowStatsModal: (v: boolean) => void;
+  setShowLocalLLMPage: (v: boolean) => void;
   setShowFloatingEditor: (v: boolean) => void;
   setActiveSettingsChat: (v: { id: string; title: string } | null) => void;
   setToastMsg: (v: string | null) => void;
@@ -115,6 +117,7 @@ export const useAppStore = create<AppState>()(
     showThemeCustomizer: false,
     showSettingsModal: false,
     showStatsModal: false,
+    showLocalLLMPage: false,
     showFloatingEditor: false,
     activeSettingsChat: null,
     toastMsg: null,
@@ -137,6 +140,7 @@ export const useAppStore = create<AppState>()(
     setShowThemeCustomizer: (v) => set({ showThemeCustomizer: v }),
     setShowSettingsModal: (v) => set({ showSettingsModal: v }),
     setShowStatsModal: (v) => set({ showStatsModal: v }),
+    setShowLocalLLMPage: (v) => set({ showLocalLLMPage: v }),
     setShowFloatingEditor: (v) => set({ showFloatingEditor: v }),
     setActiveSettingsChat: (v) => set({ activeSettingsChat: v }),
     setToastMsg: (v) => set({ toastMsg: v }),

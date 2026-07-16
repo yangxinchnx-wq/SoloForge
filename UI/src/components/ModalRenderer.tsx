@@ -14,6 +14,7 @@ import { useHotTheme } from '../context/ThemeContext';
 const ThemeModal = lazy(() => import('./ThemeModal').then(m => ({ default: m.default })));
 const SettingsModal = lazy(() => import('./SettingsModal').then(m => ({ default: m.default })));
 const StatsModal = lazy(() => import('./StatsModal').then(m => ({ default: m.default })));
+const LocalLLMPage = lazy(() => import('./LocalLLMPage').then(m => ({ default: m.default })));
 const FloatingEditorWindow = lazy(() => import('./FloatingEditorWindow').then(m => ({ default: m.default })));
 const AgentSettingsModal = lazy(() => import('./AgentSettingsModal').then(m => ({ default: m.default })));
 
@@ -46,6 +47,7 @@ export const ModalRenderer: React.FC<ModalRendererProps> = ({
     showThemeCustomizer, setShowThemeCustomizer,
     showSettingsModal, setShowSettingsModal,
     showStatsModal, setShowStatsModal,
+    showLocalLLMPage, setShowLocalLLMPage,
     showFloatingEditor, setShowFloatingEditor,
     activeSettingsChat, setActiveSettingsChat,
     toastMsg, setToastMsg,
@@ -83,6 +85,15 @@ export const ModalRenderer: React.FC<ModalRendererProps> = ({
               onClose={() => setShowSettingsModal(false)}
               permissionMode={currentPermissionMode}
             />
+          )}
+        </Suspense>
+      </MountTransition>
+
+      {/* Local LLM Inference Service Page */}
+      <MountTransition show={showLocalLLMPage} variant="fade" className="fixed inset-0 z-[1001]">
+        <Suspense fallback={<ModalFallback />}>
+          {showLocalLLMPage && (
+            <LocalLLMPage />
           )}
         </Suspense>
       </MountTransition>
