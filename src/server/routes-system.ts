@@ -23,12 +23,6 @@
 //   POST /api/archiver/start       — start archiver
 //   POST /api/archiver/stop        — stop archiver
 //   GET  /api/archiver/stats       — archiver stats
-//   GET  /api/analytics/health     — DuckDB probe
-//   GET  /api/analytics/queries    — built-in query templates
-//   GET  /api/analytics/run/:name  — run named query
-//   POST /api/analytics/direct     — arbitrary SQL (read-only)
-//   POST /api/analytics/snapshot   — SQLite -> .duckdb
-//   POST /api/analytics/parquet    — SQLite -> .parquet
 //   POST /api/terminal/run         — spawn shell command
 //   POST /api/names/update         — custom name
 //   GET  /api/llm/config           — LLM config (non-stream)
@@ -752,265 +746,136 @@ export async function handleJavaAgentProxy(reqPath: string, method: string, body
 
 /**
  * Java Agent SSE 流式代理
- * 直接 pipe Java 的 SSE 流到客户端，不缓冲
+ *
+ * 架构:
+ *   1. 通过 HTTP POST /api/chat/execute 启动 Java dispatch (非阻塞)
+ *   2. 订阅 EventBus 上的 worker_* 事件 (由 TCP 8771 桥接到 EventBus)
+ *   3. 将匹配 dispatchId 的事件以 SSE 格式流式返回给前端
+ *
+ * Java Agent 不再有 /api/chat/stream 端点 — 后续通信全部走 TCP 8771。
  */
 export async function handleJavaAgentSSE(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   body: any,
+  kernel: RuntimeKernel,
 ): Promise<void> {
-  const javaUrl = 'http://127.0.0.1:8770/api/chat/stream';
-  try {
-    const javaRes = await fetch(javaUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-      body: typeof body === 'string' ? body : JSON.stringify(body),
-    });
+  const dispatchId: string = body?.dispatchId ?? `dispatch_${Date.now()}`;
+  const chatId: string = body?.chatId ?? `chat-${Date.now()}`;
+  const taskHint: string = typeof body?.prompt === 'string' ? body.prompt : '';
 
-    if (!javaRes.ok) {
-      const errText = await javaRes.text();
-      res.writeHead(javaRes.status, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: errText }));
-      return;
-    }
+  // 注册到实时裁判喊停组件 (如果可用), 让它监听本次 Java dispatch 的 worker_chunk
+  const judgeStop = (kernel as any)?.realtimeJudgeStop;
+  if (judgeStop && typeof judgeStop.registerDispatch === 'function' && taskHint) {
+    judgeStop.registerDispatch(dispatchId, taskHint);
+  }
 
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream; charset=utf-8',
-      'Cache-Control': 'no-cache, no-transform',
-      'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    });
+  // SSE headers
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
 
-    const reader = javaRes.body?.getReader();
-    if (!reader) {
-      res.write('event: error\ndata: {"error":"No response body from Java Agent"}\n\n');
-      res.end();
-      return;
-    }
-
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    req.on('close', () => {
-      try { reader.cancel(); } catch { /* ignore */ }
-    });
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (line.startsWith('event:') || line.startsWith('data:') || line === '') {
-          res.write(line + '\n');
-        }
-      }
-      if (buffer === '' || buffer === '\n') {
-        res.write('\n');
-      }
-    }
-
-    if (buffer.trim()) {
-      res.write(buffer + '\n\n');
-    }
-
-    res.end();
-  } catch (err: any) {
+  const writeSSE = (event: string, data: any): void => {
     try {
-      res.writeHead(502, { 'Content-Type': 'text/event-stream; charset=utf-8' });
-      res.write(`event: error\ndata: ${JSON.stringify({ error: `Java Agent service not started: ${err.message}` })}\n\n`);
-      res.end();
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     } catch { /* client disconnected */ }
-  }
-}
-
-// ============================================================
-// DuckDB Analytics
-// ============================================================
-
-export const ANALYTICS_QUERIES: Record<string, { description: string; sql: string }> = {
-  governance_summary: {
-    description: 'Governance compliance records aggregated by action_taken',
-    sql: `SELECT action_taken, compliant, COUNT(*) AS cnt FROM db.main.governance_record GROUP BY action_taken, compliant ORDER BY cnt DESC LIMIT 20`,
-  },
-  top_institutions: {
-    description: 'Top institutions by reputation score',
-    sql: `SELECT entity_id, entity_type, score, name FROM db.main.reputation ORDER BY CAST(score AS DOUBLE) NULLS LAST LIMIT 10`,
-  },
-  law_violation_by_type: {
-    description: 'Law violations aggregated by status',
-    sql: `SELECT status, COUNT(*) AS cnt, COUNT(DISTINCT law_id) AS distinct_laws FROM db.main.law_violation GROUP BY status HAVING cnt > 0 ORDER BY cnt DESC LIMIT 20`,
-  },
-  memory_table_counts: {
-    description: 'Row counts per business table (DuckDB view)',
-    sql: `SELECT 'coalition' AS table_name, COUNT(*) AS row_count FROM db.main.coalition UNION ALL SELECT 'economy', COUNT(*) FROM db.main.economy UNION ALL SELECT 'governance', COUNT(*) FROM db.main.governance UNION ALL SELECT 'governance_record', COUNT(*) FROM db.main.governance_record UNION ALL SELECT 'law', COUNT(*) FROM db.main.law UNION ALL SELECT 'law_violation', COUNT(*) FROM db.main.law_violation UNION ALL SELECT 'reputation', COUNT(*) FROM db.main.reputation UNION ALL SELECT 'reputation_record', COUNT(*) FROM db.main.reputation_record UNION ALL SELECT 'social_memory', COUNT(*) FROM db.main.social_memory UNION ALL SELECT 'credit_transaction', COUNT(*) FROM db.main.credit_transaction UNION ALL SELECT 'economy_record', COUNT(*) FROM db.main.economy_record UNION ALL SELECT 'culture', COUNT(*) FROM db.main.culture UNION ALL SELECT 'institution', COUNT(*) FROM db.main.institution ORDER BY row_count DESC`,
-  },
-};
-
-export const ANALYTICS_SNAPSHOT_TABLES: string[] = [
-  'institution', 'governance', 'reputation', 'culture', 'economy', 'law',
-  'law_violation', 'coalition', 'social_memory',
-  'credit_transaction', 'economy_record', 'governance_record',
-  'reputation_record', 'reputation_sync_log',
-];
-
-function resolveDuckDbBinary(): string | null {
-  const candidates = [
-    path.resolve(process.cwd(), 'bin', 'duckdb', 'duckdb.exe'),
-    'C:/Users/yangx/Desktop/SoloForge/bin/duckdb/duckdb.exe',
-  ];
-  for (const c of candidates) { if (fs.existsSync(c)) return c; }
-  return null;
-}
-
-function resolveAnalyticsSqlitePath(): string | null {
-  const candidates = [
-    path.resolve(process.cwd(), 'python', 'data', 'ai_society', 'ai_society.db'),
-    'C:/Users/yangx/Desktop/SoloForge/python/data/ai_society/ai_society.db',
-  ];
-  for (const c of candidates) { if (fs.existsSync(c)) return c; }
-  return null;
-}
-
-function runDuckDbQuery(sql: string, timeoutMs: number = 30000): { ok: boolean; csv: string; stderr: string; elapsedMs: number } {
-  const bin = resolveDuckDbBinary();
-  if (!bin) return { ok: false, csv: '', stderr: 'duckdb.exe not found', elapsedMs: 0 };
-  const sqlite = resolveAnalyticsSqlitePath();
-  if (!sqlite) return { ok: false, csv: '', stderr: 'ai_society.db not found', elapsedMs: 0 };
-  const attach = sqlite.replace(/\\/g, '/');
-  const fullSql = `INSTALL sqlite; LOAD sqlite; ATTACH '${attach}' AS db (TYPE sqlite, READ_ONLY); ${sql}`;
-  const t0 = Date.now();
-  const proc = spawnSync(bin, ['-csv', '-c', fullSql], { encoding: 'utf8', timeout: timeoutMs, windowsHide: true });
-  return { ok: proc.status === 0, csv: proc.stdout || '', stderr: proc.stderr || '', elapsedMs: Date.now() - t0 };
-}
-
-function parseCsv(csv: string): string[][] {
-  return csv.split('\n').filter((l) => l.length > 0).map((l) => l.split(','));
-}
-
-export function handleAnalyticsHealth(): ApiResponse {
-  const bin = resolveDuckDbBinary();
-  const sqlite = resolveAnalyticsSqlitePath();
-  const versionProc = bin ? spawnSync(bin, ['-version'], { encoding: 'utf8', timeout: 5000, windowsHide: true }) : null;
-  const version = versionProc?.status === 0 ? (versionProc.stdout || '').trim() : null;
-  return {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-    body: {
-      duckdb_available: !!bin, duckdb_binary: bin, duckdb_version: version,
-      sqlite_path: sqlite, sqlite_exists: !!sqlite,
-      queries_defined: Object.keys(ANALYTICS_QUERIES), snapshot_tables: ANALYTICS_SNAPSHOT_TABLES,
-    },
   };
-}
 
-export function handleAnalyticsQueries(): ApiResponse {
-  return {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-    body: { queries: Object.entries(ANALYTICS_QUERIES).map(([name, spec]) => ({ name, description: spec.description })) },
-  };
-}
+  // Track client disconnect
+  let aborted = false;
+  req.on('close', () => { aborted = true; });
 
-export function handleAnalyticsRun(name: string): ApiResponse {
-  const spec = ANALYTICS_QUERIES[name];
-  if (!spec) return { status: 404, headers: { 'Content-Type': 'application/json' }, body: { error: `Unknown query: ${name}`, available: Object.keys(ANALYTICS_QUERIES) } };
-  const r = runDuckDbQuery(spec.sql);
-  if (!r.ok) return { status: 500, headers: { 'Content-Type': 'application/json' }, body: { error: 'duckdb query failed', stderr: r.stderr, query: name } };
-  const rows = parseCsv(r.csv);
-  return {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-    body: { query_name: name, description: spec.description, row_count: Math.max(0, rows.length - 1), rows, elapsed_ms: r.elapsedMs },
-  };
-}
+  try {
+    // 1. 先订阅 EventBus 事件, 再发 dispatch 请求 (避免 race condition: worker_started 在订阅前就发出)
+    let completed = false;
 
-export function handleAnalyticsDirect(body: any): ApiResponse {
-  const rawSql = String(body?.sql || '').trim();
-  if (!rawSql) return { status: 400, headers: { 'Content-Type': 'application/json' }, body: { error: "sql is required (POST body: { sql: 'SELECT ...' })" } };
-  const upper = rawSql.toUpperCase().replace(/\s+/g, ' ');
-  if (/\b(DROP|TRUNCATE)\b/.test(upper) || (/\b(DELETE\s+FROM|UPDATE\s+\w+\s+SET)\b/.test(upper) && !upper.includes('WHERE'))) {
-    return { status: 403, headers: { 'Content-Type': 'application/json' }, body: { error: 'destructive statement rejected' } };
-  }
-  const sql = rawSql.replace(/\bCAST\s*\(/gi, 'TRY_CAST(');
-  const r = runDuckDbQuery(sql);
-  if (!r.ok) return { status: 500, headers: { 'Content-Type': 'application/json' }, body: { error: 'duckdb query failed', stderr: r.stderr, sql: rawSql, transformed_sql: sql } };
-  const rows = parseCsv(r.csv);
-  return {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-    body: { row_count: Math.max(0, rows.length - 1), rows, elapsed_ms: r.elapsedMs, cast_transformed: sql !== rawSql },
-  };
-}
+    const onWorkerStarted = (payload: any) => {
+      if (payload?.dispatchId !== dispatchId) return;
+      writeSSE('worker_started', payload);
+    };
+    const onWorkerChunk = (payload: any) => {
+      if (payload?.dispatchId !== dispatchId) return;
+      writeSSE('worker_chunk', payload);
+    };
+    const onWorkerDone = (payload: any) => {
+      if (payload?.dispatchId !== dispatchId) return;
+      writeSSE('worker_done', payload);
+    };
+    const onWorkerFailed = (payload: any) => {
+      if (payload?.dispatchId !== dispatchId) return;
+      writeSSE('worker_failed', payload);
+    };
+    const onWorkerStoppedByJudge = (payload: any) => {
+      if (payload?.dispatchId !== dispatchId) return;
+      writeSSE('worker_stopped_by_judge', payload);
+    };
+    const onDispatchDone = (payload: any) => {
+      if (payload?.dispatchId !== dispatchId) return;
+      writeSSE('dispatch_done', payload);
+      completed = true;
+    };
 
-export function handleAnalyticsSnapshot(body: any): ApiResponse {
-  const outPathRaw = body?.out_path || path.resolve(process.cwd(), 'python', 'data', 'ai_society', 'analytics', 'snapshot.duckdb');
-  const outPath = path.resolve(outPathRaw);
-  const tables: string[] = Array.isArray(body?.tables) && body.tables.length > 0 ? body.tables : ANALYTICS_SNAPSHOT_TABLES;
-  const allowed = new Set(ANALYTICS_SNAPSHOT_TABLES);
-  for (const t of tables) {
-    if (!allowed.has(t)) return { status: 400, headers: { 'Content-Type': 'application/json' }, body: { error: `table not in whitelist: ${t}`, allowed: [...allowed] } };
-  }
-  fs.mkdirSync(path.dirname(outPath), { recursive: true });
-  if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
-  const bin = resolveDuckDbBinary();
-  const sqlite = resolveAnalyticsSqlitePath();
-  if (!bin || !sqlite) return { status: 503, headers: { 'Content-Type': 'application/json' }, body: { error: 'duckdb.exe or ai_society.db not available' } };
-  const attachSrc = sqlite.replace(/\\/g, '/');
-  const attachDst = outPath.replace(/\\/g, '/');
-  const prefix = `INSTALL sqlite; LOAD sqlite; ATTACH '${attachSrc}' AS src (TYPE sqlite, READ_ONLY); ATTACH '${attachDst}' AS dst; CREATE SCHEMA IF NOT EXISTS dst.main; `;
-  const t0 = Date.now();
-  const results: Array<{ table: string; row_count: number }> = [];
-  for (const table of tables) {
-    const r1 = spawnSync(bin, ['-c', prefix + `CREATE OR REPLACE TABLE dst.main.${table} AS SELECT * FROM src.main.${table} WHERE 0`], { encoding: 'utf8', timeout: 30000, windowsHide: true });
-    if (r1.status !== 0) return { status: 500, headers: { 'Content-Type': 'application/json' }, body: { error: `schema copy failed for ${table}`, stderr: r1.stderr } };
-    const r2 = spawnSync(bin, ['-c', prefix + `INSERT INTO dst.main.${table} SELECT * FROM src.main.${table}`], { encoding: 'utf8', timeout: 30000, windowsHide: true });
-    if (r2.status !== 0) return { status: 500, headers: { 'Content-Type': 'application/json' }, body: { error: `data copy failed for ${table}`, stderr: r2.stderr } };
-    const r3 = spawnSync(bin, ['-csv', '-c', prefix + `SELECT COUNT(*) FROM dst.main.${table}`], { encoding: 'utf8', timeout: 10000, windowsHide: true });
-    const cnt = parseInt((r3.stdout || '').trim().split('\n').pop() || '0', 10) || 0;
-    results.push({ table, row_count: cnt });
-  }
-  const elapsedMs = Date.now() - t0;
-  const sizeBytes = fs.existsSync(outPath) ? fs.statSync(outPath).size : 0;
-  return {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-    body: { out_path: outPath, tables_exported: results, total_rows: results.reduce((s, r) => s + r.row_count, 0), size_bytes: sizeBytes, elapsed_ms: elapsedMs },
-  };
-}
+    kernel.eventBus.on('worker_started', onWorkerStarted);
+    kernel.eventBus.on('worker_chunk', onWorkerChunk);
+    kernel.eventBus.on('worker_done', onWorkerDone);
+    kernel.eventBus.on('worker_failed', onWorkerFailed);
+    kernel.eventBus.on('worker_stopped_by_judge', onWorkerStoppedByJudge);
+    kernel.eventBus.on('dispatch_done', onDispatchDone);
 
-export function handleAnalyticsParquet(body: any): ApiResponse {
-  const outDirRaw = body?.out_dir || path.resolve(process.cwd(), 'python', 'data', 'ai_society', 'analytics', 'parquet');
-  const outDir = path.resolve(outDirRaw);
-  const tables: string[] = Array.isArray(body?.tables) && body.tables.length > 0 ? body.tables : ANALYTICS_SNAPSHOT_TABLES;
-  const allowed = new Set(ANALYTICS_SNAPSHOT_TABLES);
-  for (const t of tables) {
-    if (!allowed.has(t)) return { status: 400, headers: { 'Content-Type': 'application/json' }, body: { error: `table not in whitelist: ${t}`, allowed: [...allowed] } };
+    // 2. 通过 HTTP 启动 dispatch (Java Agent 端口 8770)
+    const executeBody = { ...body, dispatchId, chatId };
+    const executeRes = await fetch('http://127.0.0.1:8770/api/chat/execute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(executeBody),
+    });
+
+    if (!executeRes.ok) {
+      const errText = await executeRes.text();
+      writeSSE('error', { error: `Java Agent dispatch failed: ${errText}` });
+      // cleanup
+      kernel.eventBus.off('worker_started', onWorkerStarted);
+      kernel.eventBus.off('worker_chunk', onWorkerChunk);
+      kernel.eventBus.off('worker_done', onWorkerDone);
+      kernel.eventBus.off('worker_failed', onWorkerFailed);
+      kernel.eventBus.off('worker_stopped_by_judge', onWorkerStoppedByJudge);
+      kernel.eventBus.off('dispatch_done', onDispatchDone);
+      res.end();
+      return;
+    }
+
+    // 3. 等待 dispatch_done 或客户端断开 (最长 5 分钟)
+    const timeoutMs = 5 * 60 * 1000;
+    const start = Date.now();
+    while (!completed && !aborted && (Date.now() - start) < timeoutMs) {
+      await new Promise(r => setTimeout(r, 100));
+    }
+
+    if (!aborted && !completed) {
+      writeSSE('error', { error: 'Dispatch timeout (5min)' });
+    } else if (!aborted) {
+      writeSSE('done', { dispatchId });
+    }
+
+    // cleanup
+    kernel.eventBus.off('worker_started', onWorkerStarted);
+    kernel.eventBus.off('worker_chunk', onWorkerChunk);
+    kernel.eventBus.off('worker_done', onWorkerDone);
+    kernel.eventBus.off('worker_failed', onWorkerFailed);
+    kernel.eventBus.off('worker_stopped_by_judge', onWorkerStoppedByJudge);
+    kernel.eventBus.off('dispatch_done', onDispatchDone);
+    // 清理实时裁判跟踪器
+    if (judgeStop && typeof judgeStop.unregisterDispatch === 'function') {
+      judgeStop.unregisterDispatch(dispatchId);
+    }
+  } catch (err: any) {
+    if (!aborted) {
+      writeSSE('error', { error: `Java Agent service not started: ${err.message}` });
+    }
+  } finally {
+    try { if (!aborted) res.end(); } catch { /* ignore */ }
   }
-  fs.mkdirSync(outDir, { recursive: true });
-  const bin = resolveDuckDbBinary();
-  if (!bin) return { status: 503, headers: { 'Content-Type': 'application/json' }, body: { error: 'duckdb.exe not available' } };
-  const sqlite = resolveAnalyticsSqlitePath();
-  if (!sqlite) return { status: 503, headers: { 'Content-Type': 'application/json' }, body: { error: 'ai_society.db not available' } };
-  const attachSrc = sqlite.replace(/\\/g, '/');
-  const tmpDuckDb = path.join(outDir, '_snapshot.duckdb');
-  if (fs.existsSync(tmpDuckDb)) fs.unlinkSync(tmpDuckDb);
-  const attachTmp = tmpDuckDb.replace(/\\/g, '/');
-  const prefix = `INSTALL sqlite; LOAD sqlite; ATTACH '${attachSrc}' AS src (TYPE sqlite, READ_ONLY); ATTACH '${attachTmp}' AS dst; `;
-  for (const table of tables) {
-    const r1 = spawnSync(bin, ['-c', prefix + `CREATE OR REPLACE TABLE dst.main.${table} AS SELECT * FROM src.main.${table}`], { encoding: 'utf8', timeout: 30000, windowsHide: true });
-    if (r1.status !== 0) return { status: 500, headers: { 'Content-Type': 'application/json' }, body: { error: `snapshot copy failed for ${table}`, stderr: r1.stderr } };
-  }
-  const files: Array<{ table: string; path: string; size_bytes: number }> = [];
-  for (const table of tables) {
-    const parquetPath = path.join(outDir, `${table}.parquet`);
-    const r = spawnSync(bin, ['-c', prefix + `COPY dst.main.${table} TO '${parquetPath.replace(/\\/g, '/')}' (FORMAT PARQUET)`], { encoding: 'utf8', timeout: 30000, windowsHide: true });
-    if (r.status !== 0) return { status: 500, headers: { 'Content-Type': 'application/json' }, body: { error: `parquet export failed for ${table}`, stderr: r.stderr } };
-    files.push({ table, path: parquetPath, size_bytes: fs.existsSync(parquetPath) ? fs.statSync(parquetPath).size : 0 });
-  }
-  try { fs.unlinkSync(tmpDuckDb); } catch { /* ignore */ }
-  return { status: 200, headers: { 'Content-Type': 'application/json' }, body: { out_dir: outDir, files } };
 }

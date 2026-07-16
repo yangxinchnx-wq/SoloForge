@@ -101,20 +101,6 @@ def main() -> int:
     except Exception as e:
         print(f"  [WARN] Qdrant check skipped: {e}")
 
-    # 5b) DuckDB 二进制检查（2026-07-02 新增；L5 OLAP 分析层）
-    print("\n[step 5b] DuckDB binary check (L5 OLAP):")
-    try:
-        from soloforge_ai_society.services.analytics import AnalyticsService
-        svc = AnalyticsService(duckdb_path=str(cfg.duckdb_binary))
-        h = svc.health()
-        ok = h["duckdb_available"] and h["sqlite_exists"]
-        print(f"  [{'OK' if ok else 'WARN'}] duckdb={h['duckdb_binary']}")
-        print(f"             sqlite={h['sqlite_path']}")
-        print(f"             snapshot_dir={cfg.duckdb_snapshot_dir}")
-        print(f"             queries={', '.join(h['queries_defined'])}")
-    except Exception as e:
-        print(f"  [WARN] DuckDB check skipped: {e}")
-
     # 6) 预置数据抽样
     print("\n[step 6] Preset data sample:")
     import sqlite3

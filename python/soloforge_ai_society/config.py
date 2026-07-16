@@ -56,22 +56,10 @@ class AISocietyConfig:
     qdrant_collection: str = "ai_society_events"
     qdrant_vector_dim: int = 384  # MiniLM paraphrase-multilingual-MiniLM-L12-v2
 
-    # DuckDB 配置（OLAP 分析层，2026-07-02 新增）
-    # 走嵌入式二进制（不依赖 pip duckdb 包），单文件 .duckdb 快照 + Parquet 导出
-    duckdb_binary: Path = field(
-        default_factory=lambda: Path(__file__).resolve().parents[2] / "bin" / "duckdb" / "duckdb.exe"
-    )
-    duckdb_snapshot_dir: Path = field(
-        default_factory=lambda: Path("./data/ai_society/analytics")
-    )
-
     def __post_init__(self):
         """确保数据目录存在"""
         self.data_dir = Path(self.data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        # 2026-07-02: analytics 子目录也预创建
-        self.duckdb_snapshot_dir = Path(self.duckdb_snapshot_dir)
-        self.duckdb_snapshot_dir.mkdir(parents=True, exist_ok=True)
 
     @property
     def sqlite_path(self) -> Path:

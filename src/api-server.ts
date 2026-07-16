@@ -83,12 +83,6 @@ import {
   handleTestNav,
   handleJavaAgentProxy,
   handleJavaAgentSSE,
-  handleAnalyticsHealth,
-  handleAnalyticsQueries,
-  handleAnalyticsRun,
-  handleAnalyticsDirect,
-  handleAnalyticsSnapshot,
-  handleAnalyticsParquet,
 } from './server/routes-system';
 import type { VaultRouteDeps } from './server/routes-vault';
 import {
@@ -403,7 +397,7 @@ export class SoloForgeApiServer {
       if (reqPath === '/api/java-agent/api/chat/stream' && method === 'POST') {
         const acceptHeader = String(req.headers['accept'] || '');
         if (acceptHeader.includes('text/event-stream')) {
-          await handleJavaAgentSSE(req, res, apiReq.body);
+          await handleJavaAgentSSE(req, res, apiReq.body, this.kernel);
           return;
         }
       }
@@ -596,15 +590,6 @@ export class SoloForgeApiServer {
     if (reqPath === '/api/observation/start' && method === 'POST') return handleObservationStart(sysDeps);
     if (reqPath === '/api/observation/stop' && method === 'POST') return handleObservationStop(sysDeps);
     if (reqPath === '/api/observation/clear' && method === 'POST') return handleObservationClear(sysDeps);
-
-    // Analytics
-    if (reqPath === '/api/analytics/health' && method === 'GET') return handleAnalyticsHealth();
-    if (reqPath === '/api/analytics/queries' && method === 'GET') return handleAnalyticsQueries();
-    const analyticsRunMatch = reqPath.match(/^\/api\/analytics\/run\/([A-Za-z0-9_-]{1,64})$/);
-    if (analyticsRunMatch && method === 'GET') return handleAnalyticsRun(decodeURIComponent(analyticsRunMatch[1]));
-    if (reqPath === '/api/analytics/direct' && method === 'POST') return handleAnalyticsDirect(req.body);
-    if (reqPath === '/api/analytics/snapshot' && method === 'POST') return handleAnalyticsSnapshot(req.body);
-    if (reqPath === '/api/analytics/parquet' && method === 'POST') return handleAnalyticsParquet(req.body);
 
     // LLM proxy (non-stream)
     if (reqPath === '/api/llm/config' && method === 'GET') return handleLlmConfig();

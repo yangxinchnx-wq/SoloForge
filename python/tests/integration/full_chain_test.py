@@ -4,13 +4,12 @@ SoloForge AI Society — 阶段 4 集成联调测试 (D8 / D9)
 Path: python/tests/integration/full_chain_test.py
 Date: 2026-06-30
 
-对应 数据库升级方案.md §11.2 的 6 个联调场景（实况修正版）：
+对应 数据库升级方案.md §11.2 的 5 个联调场景（实况修正版）：
   1. JSON RPC 落库 → reputation_sync_receiver.py 写入 reputation_sync_log
   2. Qdrant 检索 → qdrant_adapter.py 端到端
   3. MARL ONNX 推理 → server_prod.py ONNX 后端
-  4. DuckDB 报表 → analytics.py 内置查询
-  5. MiniLM 跨语种 → minilm_embedder.py (zh vs en 相似度)
-  6. JSON RPC 端到端 → 发送 → 接收 → SQLite 落库
+  4. MiniLM 跨语种 → minilm_embedder.py (zh vs en 相似度)
+  5. JSON RPC 端到端 → 发送 → 接收 → SQLite 落库
 
 零破坏：不写任何新文件到生产路径，全部 read-only + 临时表测试。
 
@@ -243,30 +242,6 @@ def scenario_3_marl_onnx() -> Dict[str, Any]:
     }
 
 
-# ── 场景 4：DuckDB 报表 ─────────────────────────────────────────────
-def scenario_4_duckdb_analytics() -> Dict[str, Any]:
-    """AnalyticsService 跑内置查询 memory_table_counts"""
-    from soloforge_ai_society.services.analytics import AnalyticsService
-
-    service = AnalyticsService()
-    health = service.health()
-    assert health["duckdb_available"], "DuckDB 二进制不可用"
-    assert health["sqlite_exists"], "SQLite 不可用"
-
-    t0 = time.time()
-    result = service.run_analytics("memory_table_counts")
-    elapsed_ms = (time.time() - t0) * 1000
-
-    assert elapsed_ms < 1500, f"DuckDB 查询 {elapsed_ms:.2f}ms 超过 1500ms"
-    assert result["row_count"] >= 1, "memory_table_counts 应该返回 ≥ 1 行"
-
-    return {
-        "elapsed_ms": elapsed_ms,
-        "row_count": result["row_count"],
-        "duckdb": health["duckdb_binary"],
-    }
-
-
 # ── 场景 5：MiniLM 跨语种 ──────────────────────────────────────────
 def scenario_5_minilm_crosslang() -> Dict[str, Any]:
     """中文↔英文 MiniLM 相似度应 > 0.6（来自跨语种 MiniLM-L12-v2）"""
@@ -372,7 +347,6 @@ SCENARIOS: List[tuple] = [
     ("S1 JSON RPC 落库",                scenario_1_jsonrpc_sink),
     ("S2 Qdrant 检索",                  scenario_2_qdrant_search),
     ("S3 MARL ONNX 推理",               scenario_3_marl_onnx),
-    ("S4 DuckDB 报表",                  scenario_4_duckdb_analytics),
     ("S5 MiniLM 跨语种",                scenario_5_minilm_crosslang),
     ("S6 JSON RPC 端到端",              scenario_6_jsonrpc_e2e),
 ]
