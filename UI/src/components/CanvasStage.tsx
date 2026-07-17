@@ -26,6 +26,7 @@ import type { UniversalNode } from '../services/canvas/UniversalAST';
 import { useCanvasDeviceStore, type CanvasDeviceInfo } from '../state/canvasDeviceStore';
 import { play2DLayoutTransition } from '../services/canvas/canvasAnimations';
 import { animate } from 'animejs';
+import { getDefaultTheme, type ThemeId } from '../services/canvas/modelThemes';
 import WebAstPreview from './WebAstPreview';
 
 // 3D 模式按需加载（bundle 拆分，避免首屏加载 three.js）
@@ -186,9 +187,10 @@ interface Stage3DProps {
   dsl: UniversalNode;
   device: CanvasDeviceInfo;
   bgColor: string;
+  theme: ThemeId;
 }
 
-function Stage3D({ dsl, device, bgColor }: Stage3DProps) {
+function Stage3D({ dsl, device, bgColor, theme }: Stage3DProps) {
   const modelUrl = useMemo(() => {
     if (device.glbFile) return `/canvas/models/3d/${device.glbFile}`;
     return null;
@@ -219,7 +221,7 @@ function Stage3D({ dsl, device, bgColor }: Stage3DProps) {
           </div>
         }
       >
-        <CanvasStage3D modelUrl={modelUrl} dsl={dsl} bgColor={bgColor} />
+        <CanvasStage3D modelUrl={modelUrl} dsl={dsl} bgColor={bgColor} theme={theme} />
       </React.Suspense>
     </div>
   );
@@ -230,14 +232,17 @@ function Stage3D({ dsl, device, bgColor }: Stage3DProps) {
 export interface CanvasStageProps {
   /** DSL 根节点 */
   dsl: UniversalNode;
-  /** 画布 ID（用于从 store 读取设备信息，不传则无设备约束） */
+  /** 设备信息 (由 PreviewPanel 传入, 解耦 canvasId 依赖) */
+  device: CanvasDeviceInfo | null;
+  /** 画布 ID (仅用于 setFrameSize, 可选) */
   canvasId?: string;
-  /** 背景色（默认白色） */
+  /** 背景色 (默认白色) */
   bgColor?: string;
+  /** 3D 模型主题 (仅 3D 模式生效) */
+  theme?: ThemeId;
 }
 
-export default function CanvasStage({ dsl, canvasId, bgColor = '#ffffff' }: CanvasStageProps) {
-  const device = useCanvasDeviceStore((s) => (canvasId ? s.devices[canvasId] ?? null : null));
+export default function CanvasStage({ dsl, device, canvasId, bgColor = '#ffffff', theme }: CanvasStageProps) {
   const renderMode = useCanvasDeviceStore((s) => s.renderMode);
 
   // ★ anime.js: 模式切换过渡
@@ -262,10 +267,12 @@ export default function CanvasStage({ dsl, canvasId, bgColor = '#ffffff' }: Canv
   // 不再强制覆盖 bgColor（修复 5：尊重用户选择）
   const is3D = renderMode === '3D' && device && device.glbFile;
 
+  console.log('[CanvasStage] renderMode=', renderMode, 'device=', device?.label ?? 'null', 'glbFile=', device?.glbFile ?? 'none', '→ is3D=', is3D);
+
   return (
     <div ref={stageRef} style={{ position: 'absolute', inset: 0 }}>
       {is3D ? (
-        <Stage3D dsl={dsl} device={device} bgColor={bgColor} />
+        <Stage3D dsl={dsl} device={device} bgColor={bgColor} theme={theme ?? getDefaultTheme()} />
       ) : (
         <Stage2D dsl={dsl} device={device} bgColor={bgColor} canvasId={canvasId} />
       )}

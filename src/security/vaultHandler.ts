@@ -32,7 +32,12 @@ function jsonResponse(status: number, body: any): VaultRouteResult {
   return { status, headers: { 'Content-Type': 'application/json' }, body };
 }
 
-const ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
+// ID 字符集必须与 api-server.ts 的路由正则 /api/vault/keys/:id 保持一致
+//   路由正则: [A-Za-z0-9_.-]{1,64} (含点号)
+//   旧版 /^[a-zA-Z0-9_-]{1,64}$/ 不含点号 → 'soloforge.api.tokens.v2' 被
+//   路由匹配但此处 isValidId 拒绝, 导致 reveal 端点返回 400 Bad Request。
+// 2026-07-17 修复: 加入 .(dot) 字符, 与路由层一致。
+const ID_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
 function isValidId(id: string): boolean {
   return typeof id === 'string' && ID_PATTERN.test(id);
 }

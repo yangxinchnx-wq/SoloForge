@@ -43,17 +43,30 @@ const getProviderIdForModel = (modelName: string): string => {
 const getModelStatusResolver = (): ((modelName: string) => ModelStatus) => {
   try {
     const saved = localStorage.getItem('cherry_providers_v2');
-    const providers = saved ? JSON.parse(saved) : [];
-    const providerMap = Array.isArray(providers)
-      ? providers.reduce((acc: Record<string, any>, p: any) => {
-          acc[p.id] = p;
-          return acc;
-        }, {})
-      : {};
+        const providers = saved ? JSON.parse(saved) : [];
+        const providerMap = Array.isArray(providers)
+          ? providers.reduce((acc: Record<string, any>, p: any) => {
+            acc[p.id] = p;
+            return acc;
+          }, {})
+          : {};
 
     return (modelName: string): ModelStatus => {
       const providerId = getProviderIdForModel(modelName);
       if (providerId === 'local') {
+        // ★ 本地 LLM 状态判定: 跳过 apiKey 检查, 只需 provider 存在
+        const prov = providerMap[providerId];
+        if (!prov) {
+          return { state: 'warning', message: '本地推理服务未配置' };
+        }
+        const isEnabled = !!prov.enabled;
+        const isError = prov.status === 'error';
+        if (!isEnabled) {
+          return { state: 'offline', message: '本地推理服务未启用' };
+        }
+        if (isError) {
+          return { state: 'warning', message: '本地推理服务配置错误' };
+        }
         return { state: 'online', message: '本地离线模型，已就绪' };
       }
       const prov = providerMap[providerId];

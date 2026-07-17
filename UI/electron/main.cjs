@@ -11,12 +11,14 @@
 // ─────────────────────────────────────────────────────────────────
 
 // ★ 2026-07-11: 必须在 require('electron') 之前清除 ELECTRON_RUN_AS_NODE
-//   CatPaw IDE 等宿主环境会设置此变量, 导致 Electron 以纯 Node.js 模式运行
+//   CatPaw IDE / TRAE SOLO CN 等宿主环境会设置此变量, 导致 Electron 以纯 Node.js 模式运行
 //   → sandbox 渲染器崩溃: "Cannot destructure property 'preloadScripts' of 'binding.startupData' as it is null"
 //   清除后 Electron 才能正常以主进程模式启动
-if (process.env.ELECTRON_RUN_AS_NODE) {
-  delete process.env.ELECTRON_RUN_AS_NODE;
-}
+// ★ 2026-07-17: 必须无条件 delete, 不能用 if (process.env.ELECTRON_RUN_AS_NODE)
+//   原因: Windows 上空字符串 "" 仍被视为"已设置", truthy 检查会漏掉
+//   ELECTRON_RUN_AS_NODE= → if 判定为 false → 不删除 → 渲染器仍崩溃
+delete process.env.ELECTRON_RUN_AS_NODE;
+delete process.env.ELECTRON_NO_ATTACH_CONSOLE;
 
 const { app, BrowserWindow, shell, Menu, session, ipcMain, nativeImage, screen, dialog } = require('electron');
 const path = require('path');
@@ -300,7 +302,7 @@ function buildCspHeader() {
     "style-src 'self' 'unsafe-inline' http: https:",
     "img-src 'self' data: blob: http: https:",
     "font-src 'self' data: http: https:",
-    "connect-src 'self' ws: wss: http: https:",
+    "connect-src 'self' blob: data: ws: wss: http: https:",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -1287,90 +1289,9 @@ function deviceIconSvg(group) {
 }
 
 // 固定 HTML 模板 (只加载一次), 内容通过 #app 容器动态填充
+const DEVICE_DROPDOWN_SHELL_PATH = path.join(__dirname, 'device-dropdown-shell.html');
 function buildDeviceDropdownShell() {
-  return '<!DOCTYPE html><html><head><meta charset="utf-8">
-<style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  html, body {
-    width:100%; height:100%; background:transparent; overflow:hidden;
-    font-family: "Inter", "Segoe UI", "SF Pro Text", system-ui, sans-serif;
-    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
-  }
-  :root {
-    --surface:#ffffff; --surface-bright:#f4f4f5;
-    --primary:#6366f1; --primary-rgb:99,102,241;
-    --on-surface:#18181b; --on-surface-rgb:24,24,27;
-    --outline:#e4e4e7;
-  }
-  /* ★ 复用 MainModelSelector 风格 */
-  .panel {
-    width:100%; height:100%;
-    background:var(--surface);
-    border:1px solid rgba(var(--primary-rgb), 0.18);
-    border-radius:14px;
-    padding:6px;
-    display:flex; flex-direction:column;
-    color:var(--on-surface);
-    overflow:hidden;
-    box-shadow: 0 10px 32px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.55);
-    animation: panelIn 0.19s cubic-bezier(0.16,1,0.3,1);
-    transform-origin: 50% 0%;
-  }
-  @keyframes panelIn {
-    from { opacity:0; transform:scale(0.94) translateY(8px); }
-    to   { opacity:1; transform:scale(1) translateY(0); }
-  }
-  .header {
-    font-size:9px; font-weight:600; color:rgba(var(--primary-rgb),0.7);
-    padding:5px 8px 4px; letter-spacing:0.08em; text-transform:uppercase;
-    border-bottom:1px solid var(--outline);
-    margin-bottom:3px;
-  }
-  .item {
-    display:flex; align-items:center; gap:8px; width:100%;
-    padding:7px 10px; border-radius:8px;
-    font-size:11.5px; font-weight:500;
-    border:none; background:transparent;
-    color:rgba(var(--on-surface-rgb), 0.8);
-    cursor:pointer;
-    transition: background 0.12s ease, color 0.12s ease, transform 0.12s ease;
-  }
-  .item:hover {
-    background:rgba(var(--primary-rgb), 0.08);
-    color:var(--primary);
-    transform: translateX(2px);
-  }
-  .item.active {
-    color:var(--primary);
-    font-weight:700;
-  }
-  .item .label { flex:1; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .item .dim {
-    color:rgba(var(--on-surface-rgb), 0.38);
-    font-size:9.5px; font-family:"JetBrains Mono", ui-monospace, monospace;
-  }
-  .item .dot {
-    width:5px; height:5px; border-radius:50%;
-    background:var(--primary);
-    flex-shrink:0;
-  }
-  .group { display:flex; flex-direction:column; gap:1px; }
-  .group-label {
-    font-size:9px; font-weight:600;
-    color:rgba(var(--on-surface-rgb), 0.38);
-    padding:6px 10px 2px;
-    letter-spacing:0.04em;
-  }
-  .list { display:flex; flex-direction:column; gap:4px; overflow-y:auto; flex:1; }
-  .list::-webkit-scrollbar { width:0; display:none; }
-  .empty { text-align:center; padding:24px 12px; font-size:11px; color:rgba(var(--on-surface-rgb), 0.38); }
-</style></head>
-<body><div class="panel" id="app"></div>
-<script>
-  function fire(key) { window.soloforge && window.soloforge.canvas && window.soloforge.canvas.devicePopupSelect(key); }
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') window.soloforge.canvas.devicePopupClose(); });
-</script>
-</body></html>';
+  return fs.readFileSync(DEVICE_DROPDOWN_SHELL_PATH, 'utf8');
 }
 
 // 动态填充内容 (通过 executeJavaScript 调用, 避免 re-loadURL)

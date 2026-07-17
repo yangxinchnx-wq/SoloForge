@@ -105,23 +105,6 @@
       "community": "https://sketchfab.com/search?q=2k+monitor"
     },
 
-    "m-iphone14pro": {
-      "key": "m-iphone14pro",
-      "label": "iPhone 14 Pro",
-      "group": "mobile",
-      "type": "3d",
-      "file": "mobile/iphone_14_pro.glb",
-      "screenUV": {
-        "bl": [0.06, 0.04],
-        "br": [0.94, 0.04],
-        "tr": [0.94, 0.96],
-        "tl": [0.06, 0.96]
-      },
-      "nativeSize": { "w": 393, "h": 852 },
-      "note": "iPhone 14 Pro 屏幕 393x852 逻辑像素（@3x = 1179x2556 物理像素）",
-      "official": "https://developer.apple.com/augmented-reality/quick-look/",
-      "community": "https://sketchfab.com/search?q=iphone+14+pro+free"
-    },
     "m-iphone14": {
       "key": "m-iphone14",
       "label": "iPhone 14",

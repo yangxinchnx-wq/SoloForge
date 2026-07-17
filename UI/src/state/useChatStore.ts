@@ -14,7 +14,7 @@
 
 import { create } from 'zustand';
 import { Code, Key, Brain, Database, CreditCard, HelpCircle } from '../utils/icons';
-import { AndroidIcon, WindowsIcon, HarmonyOSIcon, DefaultChatIcon } from '../components/HistoryAndEditorPanel';
+import { AndroidIcon, WindowsIcon, HarmonyOSIcon, DefaultChatIcon } from '../components/brandIcons';
 import { sanitizeConversations } from '../utils/chatMessageSanitizer';
 import { startChat, ChatStreamEvent } from '../services/aiBackend';
 import { useChatsStore } from './chatsStore';
@@ -725,14 +725,16 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     set({ conversations: { ...conversations, [activeChatId]: currentChatMsgs }, inputValue: '', pendingAttachment: null, isGenerating: true, isPaused: false, activeChatHandle: null, streamState: { ...emptyStreamState } });
 
     const mainEntry = modelProviderMap[mainModel];
-    if (!mainEntry || !mainEntry.apiKey) {
+    // ★ 本地 LLM (apiKey='local') 不需要真实密钥,只需 baseUrl 指向本地 HTTP 服务器
+    if (!mainEntry || (mainEntry.apiKey !== 'local' && !mainEntry.apiKey)) {
       set((s) => ({ conversations: { ...s.conversations, [activeChatId]: [...currentChatMsgs, { sender: 'assistant', content: `\u274C **主模型未配置**：请在「设置 → 模型」中测试通过主模型「${mainModel}」后再试。`, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), avatar: '' }] }, isGenerating: false, activeChatHandle: null }));
       return;
     }
 
     const subModelIds = (secModels || []).map((s: any) => s.id || s.name);
-    const subEntries = subModelIds.map((name: string) => modelProviderMap[name]).filter((e: any): e is NonNullable<typeof e> => !!e && e.enabledInSettings && !!e.apiKey);
-    const candidateEntries = Object.values(modelProviderMap).filter((e: any) => e.enabledInSettings && !!e.apiKey && !subModelIds.includes(e.model));
+    // ★ 副模型也放行本地 LLM (apiKey='local')
+    const subEntries = subModelIds.map((name: string) => modelProviderMap[name]).filter((e: any): e is NonNullable<typeof e> => !!e && e.enabledInSettings && (e.apiKey === 'local' || !!e.apiKey));
+    const candidateEntries = Object.values(modelProviderMap).filter((e: any) => e.enabledInSettings && (e.apiKey === 'local' || !!e.apiKey) && !subModelIds.includes(e.model));
     const rmState = useResourceManagerStore.getState();
     const activeTools = Array.from(rmState.activeTools); const activeSkills = Array.from(rmState.activeSkills); const activeKnowledge = Array.from(rmState.activeKnowledge);
 
@@ -871,6 +873,66 @@ useChatStore.subscribe((state, prevState) => {
 // ★ 2026-07-13: 挂到 window 上, 供 PreviewPanel 等模块无循环依赖地读取 conversations
 if (typeof window !== 'undefined') {
   (window as any).__chatStoreGetState = () => useChatStore.getState();
+}
+
+// ── HMR full-reload 输入保护 (2026-07-18) ──────────────────────
+// dev 模式下,改 store/utils 等非组件文件会触发 Vite full page reload,
+// 导致用户在输入框里还没发送的内容丢失。
+// 这里在 full-reload 前把 inputValue + pendingAttachment 存到 sessionStorage,
+// 页面重载后从 sessionStorage 恢复。
+//
+// 工作流程:
+//   1. store 创建后立即检查 sessionStorage 是否有 HMR 保存的输入
+//   2. 如果有,恢复到 store (inputValue + pendingAttachment)
+//   3. 恢复后清除 sessionStorage (避免下次启动误恢复)
+//   4. 监听 vite:beforeFullReload 事件,在 full-reload 前保存当前输入
+//
+// 注意: 只在 dev 模式生效 (import.meta.hot 存在时),生产环境不执行。
+const HMR_INPUT_KEY = '__soloforge_hmr_input__';
+
+if (typeof window !== 'undefined' && import.meta.hot) {
+  // 1. store 创建后立即从 sessionStorage 恢复
+  try {
+    const saved = sessionStorage.getItem(HMR_INPUT_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed && typeof parsed === 'object') {
+        if (typeof parsed.inputValue === 'string' && parsed.inputValue) {
+          useChatStore.setState({ inputValue: parsed.inputValue });
+        }
+        if (parsed.pendingAttachment && typeof parsed.pendingAttachment === 'object') {
+          useChatStore.setState({ pendingAttachment: parsed.pendingAttachment });
+        }
+      }
+      sessionStorage.removeItem(HMR_INPUT_KEY);
+    }
+  } catch {}
+
+  // 2. full-reload 前保存当前输入
+  import.meta.hot.on('vite:beforeFullReload', () => {
+    try {
+      const { inputValue, pendingAttachment } = useChatStore.getState();
+      if (inputValue || pendingAttachment) {
+        sessionStorage.setItem(HMR_INPUT_KEY, JSON.stringify({
+          inputValue,
+          pendingAttachment,
+        }));
+      }
+    } catch {}
+  });
+
+  // 3. HMR accept:改 store 代码时热替换 store 实例,不触发 full page reload。
+  //    React 组件树保持挂载,输入框内容 / 滚动位置 / 打开的 Modal 不丢失。
+  //    store state 会重置为初始值,但 inputValue/pendingAttachment 会被保留
+  //    (因为上面第 1 步的 sessionStorage 恢复逻辑 + accept 回调中的保留)。
+  import.meta.hot.accept((m) => {
+    if (!m) return;
+    const cur = useChatStore.getState();
+    m.useChatStore.setState(
+      { ...m.useChatStore.getState(), inputValue: cur.inputValue, pendingAttachment: cur.pendingAttachment },
+      true,
+    );
+  });
 }
 
 export { defaultChatDetails, defaultConversations, defaultConfigs, fallbackActiveSettings };

@@ -5,15 +5,10 @@
 // Modal 渲染委托给 ModalRenderer（从 appStore 直接读取状态）
 // ─────────────────────────────────────────────────────────────────
 
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import Header from '../components/Header';
 import ActivityBar from '../components/ActivityBar';
-import FileExplorer from '../components/FileExplorer';
-import GitPanel from '../components/GitPanel';
-import HistoryAndEditorPanel from '../components/HistoryAndEditorPanel';
-import SourceCodeEditor from '../components/SourceCodeEditor';
 import ChatPanel from '../components/ChatPanel';
-import PreviewPanel from '../components/PreviewPanel';
 import StatusBar from '../components/StatusBar';
 import { ModalRenderer } from '../components/ModalRenderer';
 import { SidebarResizeHandle, HistoryResizeHandle, PreviewResizeHandle } from '../components/ResizeHandles';
@@ -22,6 +17,26 @@ import { useLayoutState, useLayoutStatus } from '../context/LayoutContext';
 import { useChatClickCanvasBridge } from '../hooks/useChatClickCanvasBridge';
 import { useAppStore } from '../state/appStore';
 import type { SecondaryModel } from '../types';
+
+// ── 面板 lazy 化 (2026-07-18) ──────────────────────────────
+// 每个 IDE 面板拆成独立 chunk,首屏只加载核心 (Header/ActivityBar/ChatPanel/StatusBar),
+// 其余面板首次渲染时才请求对应 chunk。
+// 收益:
+//   - 主 bundle 体积大幅减小 (PreviewPanel 依赖链含 three.js ~600KB+)
+//   - React 先渲染应用骨架,面板 chunk 并行加载,感知性能更好
+//   - 修改单个面板只影响该 chunk,浏览器缓存命中率更高
+const FileExplorer = lazy(() => import('../components/FileExplorer'));
+const GitPanel = lazy(() => import('../components/GitPanel'));
+const HistoryAndEditorPanel = lazy(() => import('../components/HistoryAndEditorPanel'));
+const SourceCodeEditor = lazy(() => import('../components/SourceCodeEditor'));
+const PreviewPanel = lazy(() => import('../components/PreviewPanel'));
+
+// 面板加载中的轻量占位 (避免黑屏闪烁)
+const PanelFallback = () => (
+  <div className="flex items-center justify-center h-full w-full bg-surface/50">
+    <div className="w-5 h-5 rounded-full border-2 border-[var(--color-primary)]/20 border-t-[var(--color-primary)] animate-spin" />
+  </div>
+);
 
 export interface MainLayoutProps {
   mainModel: string;
@@ -124,27 +139,33 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', flexShrink: 0, overflow: 'hidden' }}>
             {activeTab === 'explorer' ? (
               <div className="flex-1 flex flex-col overflow-hidden">
-                <FileExplorer
-                  selectedFile={selectedFile}
-                  setSelectedFile={handleFileChange}
-                  onNewFile={handleNewFile}
-                  onClose={() => setActiveTab('')}
-                  isFloatingEditorOpen={showFloatingEditor}
-                />
+                <Suspense fallback={<PanelFallback />}>
+                  <FileExplorer
+                    selectedFile={selectedFile}
+                    setSelectedFile={handleFileChange}
+                    onNewFile={handleNewFile}
+                    onClose={() => setActiveTab('')}
+                    isFloatingEditorOpen={showFloatingEditor}
+                  />
+                </Suspense>
               </div>
             ) : activeTab === 'git' ? (
               <div className="flex-grow flex flex-col overflow-hidden">
-                <GitPanel onClose={() => setActiveTab('')} />
+                <Suspense fallback={<PanelFallback />}>
+                  <GitPanel onClose={() => setActiveTab('')} />
+                </Suspense>
               </div>
             ) : null}
 
             {activeTab !== 'git' && showCodeEditor && (
               <div className={`${activeTab === 'explorer' ? 'h-[340px] border-t border-[var(--color-primary)]/50' : 'flex-1'} flex flex-col overflow-hidden bg-surface`}>
-                <SourceCodeEditor
-                  selectedFile={selectedFile}
-                  editorContent={editorContent}
-                  setEditorContent={handleEditorChange}
-                />
+                <Suspense fallback={<PanelFallback />}>
+                  <SourceCodeEditor
+                    selectedFile={selectedFile}
+                    editorContent={editorContent}
+                    setEditorContent={handleEditorChange}
+                  />
+                </Suspense>
               </div>
             )}
           </div>
@@ -164,19 +185,21 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           } as React.CSSProperties}
         >
           <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', flexShrink: 0, overflow: 'hidden' }}>
-            <HistoryAndEditorPanel
-              isResizing={isResizingSidebar}
-              selectedFile={selectedFile}
-              selectedChatId={selectedChatId}
-              setSelectedChatId={setSelectedChatId}
-              editorContent={editorContent}
-              setEditorContent={handleEditorChange}
-              onClose={() => setShowHistory(false)}
-              width={sidebarWidth}
-              parentPermissionMode={currentPermissionMode}
-              onPermissionChange={setCurrentPermissionMode}
-              isFloatingEditorOpen={showFloatingEditor}
-            />
+            <Suspense fallback={<PanelFallback />}>
+              <HistoryAndEditorPanel
+                isResizing={isResizingSidebar}
+                selectedFile={selectedFile}
+                selectedChatId={selectedChatId}
+                setSelectedChatId={setSelectedChatId}
+                editorContent={editorContent}
+                setEditorContent={handleEditorChange}
+                onClose={() => setShowHistory(false)}
+                width={sidebarWidth}
+                parentPermissionMode={currentPermissionMode}
+                onPermissionChange={setCurrentPermissionMode}
+                isFloatingEditorOpen={showFloatingEditor}
+              />
+            </Suspense>
           </div>
         </div>
 
@@ -200,20 +223,22 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
         <PreviewResizeHandle />
 
-        {/* Column 5: Preview Panel */}
-        <PreviewPanel
-          width={previewWidth}
-          isResizing={isResizingPreview}
-          dragStartWidth={dragStartPreviewWidth}
-          selectedChatId={selectedChatId}
-          canvasId={bridge.canvasId}
-          canvasReady={bridge.ready}
-          canvases={bridge.canvases}
-          maxCanvases={bridge.maxCanvases}
-          onSelectCanvas={bridge.selectCanvas}
-          onCreateCanvas={bridge.createCanvasForChat}
-          onRenameCanvas={bridge.renameCanvas}
-        />
+        {/* Column 5: Preview Panel (lazy — 依赖链含 three.js ~600KB+,首屏延迟加载) */}
+        <Suspense fallback={<PanelFallback />}>
+          <PreviewPanel
+            width={previewWidth}
+            isResizing={isResizingPreview}
+            dragStartWidth={dragStartPreviewWidth}
+            selectedChatId={selectedChatId}
+            canvasId={bridge.canvasId}
+            canvasReady={bridge.ready}
+            canvases={bridge.canvases}
+            maxCanvases={bridge.maxCanvases}
+            onSelectCanvas={bridge.selectCanvas}
+            onCreateCanvas={bridge.createCanvasForChat}
+            onRenameCanvas={bridge.renameCanvas}
+          />
+        </Suspense>
       </div>
 
       {/* Status Bar */}

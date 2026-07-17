@@ -1,0 +1,83 @@
+<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body {
+    width:100%; height:100%; background:transparent; overflow:hidden;
+    font-family: "Inter", "Segoe UI", "SF Pro Text", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+  }
+  :root {
+    --surface:#ffffff; --surface-bright:#f4f4f5;
+    --primary:#6366f1; --primary-rgb:99,102,241;
+    --on-surface:#18181b; --on-surface-rgb:24,24,27;
+    --outline:#e4e4e7;
+  }
+  /* ★ 复用 MainModelSelector 风格 */
+  .panel {
+    width:100%; height:100%;
+    background:var(--surface);
+    border:1px solid rgba(var(--primary-rgb), 0.18);
+    border-radius:14px;
+    padding:6px;
+    display:flex; flex-direction:column;
+    color:var(--on-surface);
+    overflow:hidden;
+    box-shadow: 0 10px 32px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.55);
+    animation: panelIn 0.19s cubic-bezier(0.16,1,0.3,1);
+    transform-origin: 50% 0%;
+  }
+  @keyframes panelIn {
+    from { opacity:0; transform:scale(0.94) translateY(8px); }
+    to   { opacity:1; transform:scale(1) translateY(0); }
+  }
+  .header {
+    font-size:9px; font-weight:600; color:rgba(var(--primary-rgb),0.7);
+    padding:5px 8px 4px; letter-spacing:0.08em; text-transform:uppercase;
+    border-bottom:1px solid var(--outline);
+    margin-bottom:3px;
+  }
+  .item {
+    display:flex; align-items:center; gap:8px; width:100%;
+    padding:7px 10px; border-radius:8px;
+    font-size:11.5px; font-weight:500;
+    border:none; background:transparent;
+    color:rgba(var(--on-surface-rgb), 0.8);
+    cursor:pointer;
+    transition: background 0.12s ease, color 0.12s ease, transform 0.12s ease;
+  }
+  .item:hover {
+    background:rgba(var(--primary-rgb), 0.08);
+    color:var(--primary);
+    transform: translateX(2px);
+  }
+  .item.active {
+    color:var(--primary);
+    font-weight:700;
+  }
+  .item .label { flex:1; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .item .dim {
+    color:rgba(var(--on-surface-rgb), 0.38);
+    font-size:9.5px; font-family:"JetBrains Mono", ui-monospace, monospace;
+  }
+  .item .dot {
+    width:5px; height:5px; border-radius:50%;
+    background:var(--primary);
+    flex-shrink:0;
+  }
+  .group { display:flex; flex-direction:column; gap:1px; }
+  .group-label {
+    font-size:9px; font-weight:600;
+    color:rgba(var(--on-surface-rgb), 0.38);
+    padding:6px 10px 2px;
+    letter-spacing:0.04em;
+  }
+  .list { display:flex; flex-direction:column; gap:4px; overflow-y:auto; flex:1; }
+  .list::-webkit-scrollbar { width:0; display:none; }
+  .empty { text-align:center; padding:24px 12px; font-size:11px; color:rgba(var(--on-surface-rgb), 0.38); }
+</style></head>
+<body><div class="panel" id="app"></div>
+<script>
+  function fire(key) { window.soloforge && window.soloforge.canvas && window.soloforge.canvas.devicePopupSelect(key); }
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') window.soloforge.canvas.devicePopupClose(); });
+</script>
+</body></html>

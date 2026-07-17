@@ -1,11 +1,37 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import fs from 'fs';
 import {defineConfig} from 'vite';
+
+// ─────────────────────────────────────────────────────────────
+// ★ 2026-07-17: Vite 缓存清理插件
+// 问题: Vite 在 node_modules/.vite/deps/ 缓存预构建依赖, 源文件变化后
+//   有时不会重新转译 (Windows 文件监视不可靠 + ETag 304),
+//   导致浏览器一直加载旧代码, 修改不生效。
+// 方案: 每次 dev server 启动时自动清理 .vite 缓存目录,
+//   配合 server.headers no-store 防止浏览器缓存。
+// ─────────────────────────────────────────────────────────────
+function clearViteCachePlugin() {
+  return {
+    name: 'clear-vite-cache-on-start',
+    configureServer() {
+      const cacheDir = path.resolve(__dirname, 'node_modules/.vite');
+      try {
+        if (fs.existsSync(cacheDir)) {
+          fs.rmSync(cacheDir, {recursive: true, force: true});
+          console.log('[vite-cache] ✓ 已清理 node_modules/.vite 缓存');
+        }
+      } catch (e) {
+        console.warn('[vite-cache] 清理失败:', e);
+      }
+    },
+  };
+}
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), clearViteCachePlugin()],
     resolve: {
       // 2026-07-02: Vite 8 / Rolldown 不再自动补 .tsx 扩展名, .ts 文件里 import '../context/Foo'
       //   (无扩展名) 会报 Module not found. 这里显式列出全部可能的扩展名, .ts 文件 import
@@ -33,6 +59,9 @@ export default defineConfig(() => {
     // 2026-06-29 (Vite 6→8 升级): esbuildOptions 已 deprecated,Vite 8 用 Rolldown 也不再有
     // rolldownOptions.alias 字段。所有别名收归上层 resolve.alias (上方数组形式)。
     optimizeDeps: {
+      // ★ 2026-07-17: 每次启动强制重新预构建依赖, 确保 node_modules 里的包是最新的
+      //   (代价: 启动慢 1-2 秒, 但避免缓存导致的诡异 bug)
+      force: true,
       exclude: [
         'antd-style',
         '@lobehub/fluent-emoji',
@@ -59,29 +88,72 @@ export default defineConfig(() => {
       ],
     },
     server: {
-      // 2026-07-14: HMR 已永久禁用 (start.mjs 传 DISABLE_HMR=true)。
-      //   原因: Vite HMR 在 agent 编辑文件时频繁触发页面重载, 干扰开发。
-      //   改为手动重载: Ctrl+R / F5 / window.soloforge.reload() IPC。
-      //   保留 env 开关仅为向后兼容: 未设 DISABLE_HMR 时 hmr 仍为 true。
+      // ★ 2026-07-18: HMR 重新启用 (之前因 agent 编辑干扰而禁用)。
+      //   解法不是禁用 HMR,而是收紧 watch.ignored 让 agent 写的数据文件
+      //   (DB/log/JSON/surql) 不触发 Vite 重新编译。只有 src/ 下代码改动
+      //   才走 HMR 热替换,保留 React 状态不丢失。
+      //   - React 组件: @vitejs/plugin-react 自动 Fast Refresh,改组件不刷新整页
+      //   - store/utils: 暂无 HMR 边界,改这些文件会 full reload (后续可补 import.meta.hot)
       hmr: process.env.DISABLE_HMR !== 'true',
-      // HMR 禁用时同时关闭文件监听, 节省 CPU (agent 编辑不触发 Vite watch)
-      watch: process.env.DISABLE_HMR === 'true' ? null : {
+      // ★ 2026-07-17 关键修复: 即使 HMR 禁用, 也必须保留文件监听!
+      //   原配置 watch: null 导致 vite 不重新编译修改的文件,
+      //   F5 刷新也只能拿到旧代码 (vite 内存里是旧版本)。
+      //   现在保留 watch 让 vite 重新编译, 只是不推送 HMR,
+      //   用户 F5 刷新时拿到最新编译的代码, 且不会被 agent 编辑干扰。
+      watch: {
         // [2026-06-28 关键修复] .soloforge/ 在项目根目录, 不在 UI/ 下; 必须用绝对路径
         //   才能让 Vite 跳过监听。**/.soloforge/** 只能匹配 UI/.soloforge, 漏掉了
         //   根目录的 .soloforge/chats.json (用户每次 chat 都会写这个文件, Vite 监听到
         //   → page reload → 用户看到 "对话框一输入就崩溃")。
+        //
+        // ★ 2026-07-18: 大幅收紧 watch 范围。agent 运行时会频繁写以下文件,
+        //   全部忽略,只保留 src/ + index.html + vite.config.ts 的监听:
+        //   - 数据库目录 (canvas_sessions_db / soloforge_vault / canvas_surreal_db)
+        //   - 日志文件 (*.log — UI/ 下有几十个)
+        //   - 构建产物 (dist / coverage / release / build)
+        //   - 静态资源 (resources / stubs / public)
+        //   - Go 服务 (git-service)
+        //   - Electron 主进程 (electron/*.cjs — 主进程代码,不影响渲染器 HMR)
+        //   - 根目录 JSON 数据文件 (probe cache / metadata / providers db)
         ignored: [
+          // ── 数据文件 ──
           '**/active_resources_db.json',
           '**/providers_db.json',
           '**/metadata.json',
+          '**/model_context_db.json',
+          '**/model_probe_cache.json',
+          '**/provider_probe_cache.json',
           '**/*.surql',
-          '**/resources/**',
-          '**/release/**',
+          '**/data/**',
           '**/.soloforge_settings.json*',
           '**/.soloforge/**',
           path.resolve(__dirname, '..', '.soloforge').replace(/\\/g, '/'),
           path.resolve(__dirname, '..', '.soloforge').replace(/\\/g, '/') + '/**',
+          // ── 日志 ──
+          '**/*.log',
+          '**/*.err',
+          '**/*.out',
+          // ── 构建产物 / 静态资源 ──
+          '**/resources/**',
+          '**/release/**',
+          '**/dist/**',
+          '**/coverage/**',
+          '**/build/**',
+          '**/stubs/**',
+          '**/public/**',
+          // ── 后端服务 ──
+          '**/git-service/**',
+          '**/electron/**',
         ],
+      },
+      // ★ 2026-07-17: 强制浏览器不缓存 dev 资源
+      //   原因: Vite 用 ETag/Last-Modified 做条件请求, 文件变化后浏览器
+      //   可能仍返回 304 Not Modified, 导致加载旧代码。
+      //   no-store 彻底禁止浏览器缓存, 每次都重新请求。
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
       },
       // 2026-07-05 加速 React mount (强制刷新时减少黑屏时间):
       // Vite dev server 按需转换文件 — 浏览器请求 main.tsx → Vite 转换 →
@@ -99,13 +171,8 @@ export default defineConfig(() => {
           './src/state/appStore.ts',
           './src/components/Header.tsx',
           './src/components/ChatPanel.tsx',
-          './src/components/HistoryAndEditorPanel.tsx',
-          './src/components/HistoryItem.tsx',
-          './src/components/FileExplorer.tsx',
-          './src/components/SourceCodeEditor.tsx',
-          './src/components/StatusBar.tsx',
-          './src/components/PreviewPanel.tsx',
           './src/components/ActivityBar.tsx',
+          './src/components/StatusBar.tsx',
           './src/components/MountTransition.tsx',
           './src/styles/animations.css',
           './src/data/defaultChats.ts',
@@ -135,33 +202,128 @@ export default defineConfig(() => {
           manualChunks: (id) => {
             // node_modules 里的包按需拆
             if (!id.includes('node_modules')) return;
+
+            // ── 2026-07-18: 精细化 chunk 拆分 ──────────────────────
+            // 之前所有未匹配的包都进 vendor-misc (3.4MB),导致首屏加载
+            // three.js / @vue/compiler-sfc / recharts 等只有 lazy 组件才需要的重依赖。
+            // 现在按依赖用途分组,让每个 chunk 只在对应的 lazy 组件加载时才下载。
+            //
+            // 关键原理: manualChunks 只决定模块归属哪个 chunk,
+            // 浏览器何时加载该 chunk 仍由 import 图决定。
+            // 如果 three 只被 PreviewPanel (lazy) 引用,vendor-three 就只在
+            // PreviewPanel 加载时才请求。这样首屏不加载 3D 库。
+
             // Lobehub 图标库(已知很大,1-2MB minified)
-            // 仅当实际被 ModelIcon.tsx 引用时才打入 lobehub chunk,
-            // 让其他路过引用不强制打整个 lobehub-icons (B 优化)
             if (id.includes('@lobehub/icons') && id.includes('node_modules/@lobehub/icons')) {
               return 'vendor-lobehub-icons';
             }
+
+            // ── React 核心 (首屏必需,所有页面共享) ──
+            // react 442KB + react-dom + react-router 86KB + scheduler
+            // ★ 重要: 必须显式匹配 node_modules/react/ (不是 react-dom),
+            //   否则 react 的 CJS wrapper 会被 Rolldown 放进引用它的 lazy chunk
+            //   (如 vendor-charts),导致主 bundle 静态 import 该 lazy chunk。
+            if (
+              id.includes('react-dom') ||
+              id.includes('react-router') ||
+              id.includes('scheduler/') ||
+              id.includes('node_modules/react/')
+            ) {
+              return 'vendor-react';
+            }
+
+            // ── 3D 渲染栈 (只被 PreviewPanel → CanvasStage3D 引用,lazy) ──
+            // three 1099KB + @react-three/fiber 229KB + three-stdlib 205KB
+            // + @monogrid/gainmap-js 29KB + animejs 384KB (CanvasStage 动画)
+            if (
+              id.includes('/three/') || id.includes('/three-stdlib/') ||
+              id.includes('@react-three/fiber') || id.includes('@react-three/drei') ||
+              id.includes('@monogrid/gainmap-js') ||
+              id.includes('/animejs/')
+            ) {
+              return 'vendor-three';
+            }
+
+            // ── 翻译器/解析器栈 (只被 PreviewPanel → vueTranslator 引用,lazy) ──
+            // @vue/compiler-sfc 1079KB + @babel/parser 418KB + parse5 194KB
+            // + cheerio 40KB + htmlparser2 75KB + css-select 26KB + entities 37KB
+            if (
+              id.includes('@vue/compiler-sfc') || id.includes('@vue/compiler-dom') ||
+              id.includes('@vue/compiler-core') || id.includes('@babel/parser') ||
+              id.includes('/parse5/') || id.includes('/cheerio/') ||
+              id.includes('/htmlparser2/') || id.includes('/css-select/') ||
+              id.includes('/entities/')
+            ) {
+              return 'vendor-translate';
+            }
+
+            // ── 图表 (只被 StatsModal 引用,已 lazy) ──
+            // recharts 805KB — 只匹配 recharts 自身。
+            // d3-scale/d3-shape/decimal.js-light 不放这里:它们可能被主 bundle
+            // 中的其他包共享,如果放进 vendor-charts 会导致首屏加载整个 recharts。
+            // 让它们落入 vendor-misc (254KB,首屏加载无压力)。
+            if (id.includes('/recharts/')) {
+              return 'vendor-charts';
+            }
+
+            // ── 动画 (只被 PreviewPanel 引用,lazy) ──
+            // framer-motion 67KB + motion-dom 193KB
+            if (id.includes('/framer-motion/') || id.includes('/motion-dom/') || id.includes('/motion-utils/')) {
+              return 'vendor-motion';
+            }
+
+            // ── 图标 (Header/ActivityBar/ChatPanel 等首屏组件用) ──
+            if (id.includes('@heroicons/react')) {
+              return 'vendor-icons';
+            }
+
+            // ── 以下保持原有规则 ──
             // React-virtuoso 虚拟列表
             if (id.includes('react-virtuoso') || id.includes('react-window')) return 'vendor-virtuoso';
             // Lucide 图标
             if (id.includes('lucide-react')) return 'vendor-lucide';
             // Monaco / 代码编辑器
             if (id.includes('monaco-') || id.includes('@monaco-editor')) return 'vendor-monaco';
-            // 2026-07-02 优化:状态管理单独 chunk(Zustand + 持久化中间件)
+            // 状态管理(Zustand + 持久化中间件)
             if (id.includes('zustand') || id.includes('immer')) return 'vendor-zustand';
-            // 2026-07-02 优化:LLM / SSE / 解析库(pako / jszip / event-source-polyfill 等)
+            // LLM / SSE / 解析库
             if (id.includes('eventsource') || id.includes('event-source-polyfill')) return 'vendor-sse';
-            // dnd-kit 拖拽核心(独立,避免和主包混在一起)
+            // dnd-kit 拖拽核心
             if (id.includes('@dnd-kit')) return 'vendor-dnd';
-            // SurrealDB 嵌入式客户端(独立,体量大)
+            // SurrealDB 嵌入式客户端
             if (id.includes('surrealdb')) return 'vendor-surrealdb';
-            // 兜底:其它 node_modules 一起打包,避免每个包都拆出来
+
+            // 兜底:其余小包合并,体积已大幅缩小 (从 3.4MB → ~200KB)
             return 'vendor-misc';
           },
         },
       },
       // 2026-06-24:提升单 chunk 大小警告阈值,避免 CI 报错
       chunkSizeWarningLimit: 1500,
+      // ★ 2026-07-18: 精细化 modulepreload 控制
+      //   Vite 默认为所有 chunk (包括 lazy chunk 的依赖) 生成 <link rel="modulepreload">,
+      //   导致首屏预加载 vendor-three (1169KB) / vendor-translate (1065KB) / vendor-motion (128KB)
+      //   等 lazy-only chunk,抵消了代码拆分的优势。
+      //   resolveDependencies 让我们过滤:只预加载首屏直接需要的 chunk,
+      //   lazy chunk 的依赖在 lazy chunk 实际加载时才下载。
+      modulePreload: {
+        polyfill: true,
+        resolveDependencies: (_filename, deps, { hostType }) => {
+          // 只对主 HTML 入口过滤 lazy-only chunk。
+          // lazy import (hostType='js') 保留全部 deps — 它们是 lazy chunk 加载时需要的。
+          if (hostType !== 'html') return deps;
+          // 这些 chunk 只被 lazy 组件 (PreviewPanel/StatsModal/SourceCodeEditor) 引用,
+          // 不应在首屏预加载。它们会在对应 lazy 组件加载时才下载。
+          const lazyOnlyPatterns = [
+            'vendor-three',
+            'vendor-translate',
+            'vendor-motion',
+            'vendor-monaco',
+            'vendor-surrealdb',
+          ];
+          return deps.filter((dep) => !lazyOnlyPatterns.some((p) => dep.includes(p)));
+        },
+      },
     },
   };
 });

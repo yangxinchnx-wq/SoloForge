@@ -15,6 +15,7 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { getDefaultTheme, type ThemeId } from '../services/canvas/modelThemes';
 
 export interface CanvasDeviceInfo {
   /** 设备 key (如 'd2-iphone16', 'm-iphone14pro') */
@@ -46,6 +47,8 @@ interface CanvasDeviceStoreState {
   devices: Record<string, CanvasDeviceInfo | null>;
   /** 全局渲染模式 (2D/3D) */
   renderMode: '2D' | '3D';
+  /** 3D 模型主题 (银/金/蓝/黑/绿等, 仅 3D 模式生效) */
+  modelTheme: ThemeId;
   /** canvasId → 实际渲染帧尺寸 (运行时, 不持久化) */
   frameSizes: Record<string, CanvasFrameSize>;
 
@@ -56,6 +59,8 @@ interface CanvasDeviceStoreState {
   getDevice: (canvasId: string) => CanvasDeviceInfo | null;
   /** 设置全局渲染模式 */
   setRenderMode: (mode: '2D' | '3D') => void;
+  /** 设置 3D 模型主题 */
+  setModelTheme: (theme: ThemeId) => void;
   /** 删除画布设备记录 */
   removeDevice: (canvasId: string) => void;
   /** 设置画布实际帧尺寸 (PreviewPanel 调用) */
@@ -69,6 +74,7 @@ export const useCanvasDeviceStore = create<CanvasDeviceStoreState>()(
     (set, get) => ({
       devices: {},
       renderMode: '2D',
+      modelTheme: getDefaultTheme(),
       frameSizes: {},
 
       setDevice: (canvasId, info) =>
@@ -83,6 +89,9 @@ export const useCanvasDeviceStore = create<CanvasDeviceStoreState>()(
 
       setRenderMode: (mode) =>
         set({ renderMode: mode }),
+
+      setModelTheme: (theme) =>
+        set({ modelTheme: theme }),
 
       removeDevice: (canvasId) =>
         set((s) => {
@@ -102,11 +111,12 @@ export const useCanvasDeviceStore = create<CanvasDeviceStoreState>()(
     }),
     {
       name: 'solo-forge-canvas-devices',
-      version: 2,
+      version: 3,
       // ★ frameSizes 不持久化 (运行时窗口尺寸, 重启后需重新计算)
       partialize: (state) => ({
         devices: state.devices,
         renderMode: state.renderMode,
+        modelTheme: state.modelTheme,
       }),
     }
   )

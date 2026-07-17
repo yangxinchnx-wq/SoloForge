@@ -134,7 +134,7 @@ function startNode() {
     cwd: __dirname,
     stdio: "inherit",
     shell: true,
-    env: { ...process.env, GIT_SERVICE_URL: "http://localhost:3002", DISABLE_HMR: "true" },
+    env: { ...process.env, GIT_SERVICE_URL: "http://localhost:3002" },
   });
 
   nodeProcess.on("exit", (code) => {

@@ -11,25 +11,69 @@ import { initActorSystem } from './services/actorIntegration';
 import { installAuthRefreshInterceptor, ensureToken } from './services/authRefresh';
 import { getDefaultStore } from './state/settings';
 
-// ── 认证拦截器: 必须在所有其他代码之前安装 ──────────────────────
-// patch fetch 以自动注入 auth token, 并在 401 时自动刷新。
-// 不安装此拦截器 → /api/settings 等 protected 端点全部 401 →
-// 设置无法同步 → cherry_providers_v2 为空 → "主模型未配置" 错误。
+// ═══════════════════════════════════════════════════════════════════
+// Phase 0: render 前必须同步执行的全局副作用
+//
+// 只有 auth 拦截器需要在 render 前安装 — 它 patch 全局 fetch,
+// 任何其他代码发出的 HTTP 请求都依赖它注入 auth token + 401 自动刷新。
+// 其他所有副作用 (store 初始化、数据加载、事件桥接、dev hooks 等)
+// 全部移到 render 之后,让 React 首屏尽快挂载。
+// ═══════════════════════════════════════════════════════════════════
 if (typeof window !== 'undefined') {
+  // patch fetch 以自动注入 auth token, 并在 401 时自动刷新。
+  // 不安装此拦截器 → /api/settings 等 protected 端点全部 401 →
+  // 设置无法同步 → cherry_providers_v2 为空 → "主模型未配置" 错误。
   installAuthRefreshInterceptor();
-  // 尽早启动 token 预获取 (单飞, 不阻塞)。
+
+  // 尽早启动 token 预获取 (单飞, 不阻塞 render)。
   // patchedFetch 中的 await ensureToken() 会等待此 Promise,
   // 确保所有业务请求在 token 就绪后才发出, 消除首次 401 刷屏。
   ensureToken();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ★ render — 尽早挂载 React,让首屏 UI 先出来
+//
+// 原来这里被 100+ 行初始化代码 (数据清理、store 加载、actor 系统、
+// dev hooks、ResizeObserver 处理...) 阻塞,导致 createRoot().render()
+// 延迟执行。现在把这些全部移到 render 之后,首屏 DOM 更快出现。
+// ═══════════════════════════════════════════════════════════════════
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <ThemeProvider>
+      <App />
+    </ThemeProvider>
+  </StrictMode>,
+);
+
+// ═══════════════════════════════════════════════════════════════════
+// Phase 1: render 后立即执行 — 首屏关键路径
+//
+// 这些任务影响首屏数据展示 (对话列表、设置同步、字体),必须尽快启动。
+// 但它们不需要阻塞 render — React mount 与数据 fetch 并行进行:
+//   - React 先渲染空状态 (loading/骨架屏)
+//   - fetch 完成后 store 更新 → 组件自动 re-render 显示数据
+// ═══════════════════════════════════════════════════════════════════
+if (typeof window !== 'undefined') {
   // 立即初始化设置存储, 触发服务端 → localStorage 同步。
   // 同步完成后会派发 'providers_updated' 事件, App.tsx 据此重建 modelProviderMap。
   getDefaultStore();
-}
 
-// ── 一次性清理: 移除旧版占位 mock 数据 (v1 → v2 迁移) ──────────
-// 旧版在 localStorage 里写入了 6 条硬编码假对话 (id 1~6),
-// 新版已清空这些占位数据, 需要在启动时把残留清掉
-if (typeof window !== 'undefined') {
+  // initChatsEventBridge: 让旧的 soloforge-chats-updated / soloforge-selected-chat-changed
+  //   事件仍能正常分发 (ChatPanel / AgentSettingsModal 等仍订阅这些事件)
+  // 必须在 loadFromBackend 之前安装,确保数据加载后事件桥接已就绪。
+  initChatsEventBridge();
+
+  // 启动时预取默认字体（OPPOSans）。等 ThemeProvider 把 @font-face 注入 <head> 后，
+  // 浏览器已经看到 <link rel="preload" as="font">，会优先下载，避免首屏中文先以 Inter 渲染再回弹
+  if (DEFAULT_FONT_URL) {
+    preloadFontByUrl(DEFAULT_FONT_URL);
+  }
+
+  // ── 一次性清理: 移除旧版占位 mock 数据 (v1 → v2 迁移) ──────────
+  // 旧版在 localStorage 里写入了 6 条硬编码假对话 (id 1~6),
+  // 新版已清空这些占位数据, 需要在启动时把残留清掉。
+  // 必须在 loadFromBackend 之前执行,避免旧残留数据干扰后端加载。
   const MIGRATION_KEY = 'soloforge_data_version';
   if (localStorage.getItem(MIGRATION_KEY) !== '2') {
     const OLD_TITLES = ['电商平台原型开发', '用户认证 system 设计', 'API 接口文档生成',
@@ -73,17 +117,12 @@ if (typeof window !== 'undefined') {
     } catch {}
     localStorage.setItem(MIGRATION_KEY, '2');
   }
-}
 
-// ── 对话列表 + 消息内容后端化: 启动时从后端加载 ──────────────
-// initChatsEventBridge: 让旧的 soloforge-chats-updated / soloforge-selected-chat-changed
-//   事件仍能正常分发 (ChatPanel / AgentSettingsModal 等仍订阅这些事件)
-// loadFromBackend: 从 /api/chats/list 拉取后端持久化的对话列表
-// loadConversationsFromBackend: 从 /api/conversations 拉取所有对话消息 + 配置
-//   两者失败都不阻塞 UI, store 降级为空状态
-if (typeof window !== 'undefined') {
-  initChatsEventBridge();
-
+  // ── 对话列表 + 消息内容后端化: 启动时从后端加载 ──────────────
+  // loadFromBackend: 从 /api/chats/list 拉取后端持久化的对话列表
+  // loadConversationsFromBackend: 从 /api/conversations 拉取所有对话消息 + 配置
+  //   两者失败都不阻塞 UI, store 降级为空状态
+  //
   // ★ 2026-07-14: 并行发起 chats list + conversations 加载
   //   原来是两个独立的异步调用 (各自内部 await), 但由于 patchedFetch 的
   //   ensureToken() 单飞门控, 它们实际是并行的。这里显式用 Promise.allSettled
@@ -99,106 +138,114 @@ if (typeof window !== 'undefined') {
       console.warn('[main] conversations 加载失败:', convResult.reason);
     }
   });
-
-  // 2026-07-10: 初始化 Actor 系统 + 持久化恢复 (P3 集成)
-  //   - 从 IndexedDB/localStorage 恢复热状态 (tasks, actors, messages)
-  //   - 注册监督策略错误回调
-  //   - 失败不阻塞 UI, 降级为纯 streamingStore 模式
-  initActorSystem().catch((e) => {
-    console.warn('[main] Actor 系统初始化失败, 降级为纯 streamingStore 模式', e);
-  });
 }
 
-// 2026-07-02: 挂载 streaming dev hook 到 window (perf test / 控制台调试)
-// 始终启用, 体积小 (~几百字节), 暴露 applyEvent / getTask / createTask
+// ═══════════════════════════════════════════════════════════════════
+// Phase 2: 浏览器空闲时执行 — 非关键后台任务
+//
+// 这些任务不影响首屏渲染,延迟到 requestIdleCallback 时执行:
+//   - Actor 系统恢复 (IndexedDB,失败降级)
+//   - Dev hooks / Workdir 同步 (调试 + 多窗口同步)
+//   - Drag-state 监听 (窗口拖动性能优化)
+//   - ResizeObserver 错误抑制 (控制台噪音)
+//   - beforeunload flush (退出前持久化)
+//
+// requestIdleCallback 确保: 首屏渲染和交互优先,空闲时才跑后台任务。
+// timeout: 2000 保证最迟 2 秒后强制执行 (避免极端情况下 idle 一直不触发)。
+// ═══════════════════════════════════════════════════════════════════
 if (typeof window !== 'undefined') {
-  installStreamDevHooks();
-  installWorkdirSyncChannel();
-
-  // 2026-07-04 拖动窗口时, 主进程推送 drag-state 事件
-  // 渲染器在 <html> 上加 .is-dragging class, CSS 临时禁用所有 backdrop-filter
-  // 原因: transparent:true 窗口移动时, backdrop-filter 让 Chromium 重新采样合成
-  //   → 拖动卡顿 + 风扇起飞。拖动期间临时禁用可大幅降低合成开销
-  const sf = (window as any).soloforge;
-  if (sf?.onDragState) {
-    sf.onDragState((isDragging: boolean) => {
-      document.documentElement.classList.toggle('is-dragging', !!isDragging);
+  const runIdleTasks = () => {
+    // 2026-07-10: 初始化 Actor 系统 + 持久化恢复 (P3 集成)
+    //   - 从 IndexedDB/localStorage 恢复热状态 (tasks, actors, messages)
+    //   - 注册监督策略错误回调
+    //   - 失败不阻塞 UI, 降级为纯 streamingStore 模式
+    initActorSystem().catch((e) => {
+      console.warn('[main] Actor 系统初始化失败, 降级为纯 streamingStore 模式', e);
     });
+
+    // 2026-07-02: 挂载 streaming dev hook 到 window (perf test / 控制台调试)
+    // 始终启用, 体积小 (~几百字节), 暴露 applyEvent / getTask / createTask
+    installStreamDevHooks();
+
+    // Workdir 同步 channel (多窗口工作目录同步)
+    installWorkdirSyncChannel();
+
+    // 2026-07-04 拖动窗口时, 主进程推送 drag-state 事件
+    // 渲染器在 <html> 上加 .is-dragging class, CSS 临时禁用所有 backdrop-filter
+    // 原因: transparent:true 窗口移动时, backdrop-filter 让 Chromium 重新采样合成
+    //   → 拖动卡顿 + 风扇起飞。拖动期间临时禁用可大幅降低合成开销
+    const sf = (window as any).soloforge;
+    if (sf?.onDragState) {
+      sf.onDragState((isDragging: boolean) => {
+        document.documentElement.classList.toggle('is-dragging', !!isDragging);
+      });
+    }
+
+    // ★ 2026-07-14: 移除全局 mousedown 捕获器
+    //   原来用于排查 Header 点击问题, 但每次鼠标点击都会 console.log + 序列化 DOM,
+    //   在 Electron 中 console.log 走 IPC 到主进程, 高频输出阻塞渲染进程。
+    //   问题已修复, 不再需要此诊断探针。
+
+    // ── Suppress harmless 'ResizeObserver loop completed with undelivered notifications' ──
+    const isResizeObserverError = (msg: any): boolean => {
+      if (!msg) return false;
+      const str = String(msg).toLowerCase();
+      return str.includes('resizeobserver') ||
+             str.includes('resize observer') ||
+             str.includes('loop limit') ||
+             str.includes('undelivered notifications');
+    };
+
+    const ignoreResizeObserverError = (e: ErrorEvent) => {
+      const msg = e.message || (e.error && e.error.message);
+      if (isResizeObserverError(msg)) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+      }
+    };
+
+    window.addEventListener('error', ignoreResizeObserverError, true);
+
+    // Suppress in window.onerror as well
+    const originalOnError = window.onerror;
+    window.onerror = function (message, source, lineno, colno, error) {
+      if (isResizeObserverError(message) || (error && isResizeObserverError(error.message))) {
+        return true; // Suppress reporting
+      }
+      if (originalOnError) {
+        return originalOnError.apply(this, arguments as any);
+      }
+      return false;
+    };
+
+    // Suppress in unhandled promise rejections
+    window.addEventListener('unhandledrejection', (e: PromiseRejectionEvent) => {
+      const msg = e.reason?.message || e.reason;
+      if (isResizeObserverError(msg)) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+      }
+    }, true);
+
+    // ── 退出前 flush: 确保 SettingsStore 的 pending 写入落盘 ──────────
+    // Electron 的 localStorage (leveldb) 在异常退出 (kill / crash / 断电) 时
+    // 可能丢失最后几条写入。beforeunload / pagehide 时主动 flush, 最大化持久化成功率。
+    // 场景: 用户在设置页输入 apiKey → 关闭窗口 → leveldb 未落盘 → 重启后丢失
+    const flushSettings = () => {
+      try {
+        getDefaultStore().flushSync();
+      } catch {}
+    };
+    window.addEventListener('beforeunload', flushSettings, { capture: true });
+    window.addEventListener('pagehide', flushSettings, { capture: true });
+  };
+
+  // requestIdleCallback: 首屏渲染优先,空闲时执行后台任务。
+  // 降级: 不支持 requestIdleCallback 的环境用 setTimeout(100) 兜底。
+  const idleCallback = (window as any).requestIdleCallback;
+  if (typeof idleCallback === 'function') {
+    idleCallback(runIdleTasks, { timeout: 2000 });
+  } else {
+    setTimeout(runIdleTasks, 100);
   }
-
-  // ★ 2026-07-14: 移除全局 mousedown 捕获器
-  //   原来用于排查 Header 点击问题, 但每次鼠标点击都会 console.log + 序列化 DOM,
-  //   在 Electron 中 console.log 走 IPC 到主进程, 高频输出阻塞渲染进程。
-  //   问题已修复, 不再需要此诊断探针。
-}
-
-// Suppress harmless 'ResizeObserver loop completed with undelivered notifications' browser engine warnings
-if (typeof window !== 'undefined') {
-  const isResizeObserverError = (msg: any): boolean => {
-    if (!msg) return false;
-    const str = String(msg).toLowerCase();
-    return str.includes('resizeobserver') || 
-           str.includes('resize observer') || 
-           str.includes('loop limit') ||
-           str.includes('undelivered notifications');
-  };
-
-  const ignoreResizeObserverError = (e: ErrorEvent) => {
-    const msg = e.message || (e.error && e.error.message);
-    if (isResizeObserverError(msg)) {
-      e.stopImmediatePropagation();
-      e.preventDefault();
-    }
-  };
-
-  window.addEventListener('error', ignoreResizeObserverError, true);
-
-  // Suppress in window.onerror as well
-  const originalOnError = window.onerror;
-  window.onerror = function (message, source, lineno, colno, error) {
-    if (isResizeObserverError(message) || (error && isResizeObserverError(error.message))) {
-      return true; // Suppress reporting
-    }
-    if (originalOnError) {
-      return originalOnError.apply(this, arguments as any);
-    }
-    return false;
-  };
-
-  // Suppress in unhandled promise rejections
-  window.addEventListener('unhandledrejection', (e: PromiseRejectionEvent) => {
-    const msg = e.reason?.message || e.reason;
-    if (isResizeObserverError(msg)) {
-      e.stopImmediatePropagation();
-      e.preventDefault();
-    }
-  }, true);
-}
-
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <ThemeProvider>
-      <App />
-    </ThemeProvider>
-  </StrictMode>,
-);
-
-// ── 退出前 flush: 确保 SettingsStore 的 pending 写入落盘 ──────────
-// Electron 的 localStorage (leveldb) 在异常退出 (kill / crash / 断电) 时
-// 可能丢失最后几条写入。beforeunload / pagehide 时主动 flush, 最大化持久化成功率。
-// 场景: 用户在设置页输入 apiKey → 关闭窗口 → leveldb 未落盘 → 重启后丢失
-if (typeof window !== 'undefined') {
-  const flushSettings = () => {
-    try {
-      getDefaultStore().flushSync();
-    } catch {}
-  };
-  window.addEventListener('beforeunload', flushSettings, { capture: true });
-  window.addEventListener('pagehide', flushSettings, { capture: true });
-}
-
-// 启动时预取默认字体（OPPOSans）。等 ThemeProvider 把 @font-face 注入 <head> 后，
-// 浏览器已经看到 <link rel="preload" as="font">，会优先下载，避免首屏中文先以 Inter 渲染再回弹
-if (typeof window !== 'undefined' && DEFAULT_FONT_URL) {
-  preloadFontByUrl(DEFAULT_FONT_URL);
 }

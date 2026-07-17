@@ -166,6 +166,8 @@ async function startServer() {
 }
 
 async function stopServer() {
+  // ★ 必须先停止 HTTP 服务器，否则 _model 被释放后 HTTP 仍持有 _httpContext/_httpSession
+  await stopHttpServer();
   await _cleanupModel();
   if (_llama) {
     try { await _llama.dispose(); } catch {}

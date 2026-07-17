@@ -1,6 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { MainLayout } from './layouts/MainLayout';
-import { PopoutLayout } from './components/PopoutLayout';
+import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { useHotTheme } from './context/ThemeContext';
 import { LayoutProvider } from './context/LayoutContext';
 import { useChatClickCanvasBridge } from './hooks/useChatClickCanvasBridge';
@@ -10,6 +9,19 @@ import { useFileOperations } from './hooks/useFileOperations';
 import { useAppStore } from './state/appStore';
 import { useChatsStore } from './state/chatsStore';
 import { useWorkspaceStore } from './state/useWorkspaceStore';
+
+// ── 页面级 lazy 化 (2026-07-18) ──────────────────────────────
+// MainLayout 和 PopoutLayout 拆成独立 chunk,通过路由按需加载。
+// App.tsx 只保留路由壳 + 认证 + 数据加载,首屏 bundle 极小。
+const MainLayout = lazy(() => import('./layouts/MainLayout').then(m => ({ default: m.MainLayout })));
+const PopoutLayout = lazy(() => import('./components/PopoutLayout').then(m => ({ default: m.PopoutLayout })));
+
+// 路由级加载占位
+const AppFallback = () => (
+  <div className="flex items-center justify-center h-screen w-screen bg-bg">
+    <div className="w-8 h-8 rounded-full border-2 border-[var(--color-primary)]/30 border-t-[var(--color-primary)] animate-spin" />
+  </div>
+);
 
 export default function App() {
   // ── 启动诊断 ──
@@ -93,7 +105,8 @@ export default function App() {
         }> = {};
         for (const prov of parsed) {
           // ★ '__VAULT__:' 是旧版占位符, 不是真实密钥, 跳过
-          if (!prov.enabled || !prov.apiKey || prov.apiKey === '__VAULT__:') continue;
+          // ★ 'local' 是本地 LLM 特殊密钥, 用于标识本地推理服务
+          if (!prov.enabled || !prov.apiKey || (prov.apiKey === '__VAULT__:' && prov.id !== 'local-llm')) continue;
           const enabledInSettings = prov.status === 'success';
           if (Array.isArray(prov.models)) {
             for (const m of prov.models) {
@@ -256,59 +269,67 @@ export default function App() {
   const onOpenSettingsModal = useCallback(() => setShowSettingsModal(true), [setShowSettingsModal]);
   const onOpenStatsModal = useCallback(() => setShowStatsModal(true), [setShowStatsModal]);
 
-  // popout 模式检测
-  const isPopout = typeof window !== 'undefined' && window.location.search.includes('popout=editor');
+  // popout 模式检测 — 通过初始 URL query 参数决定路由起点
+  // Electron 弹出窗口加载 http://localhost:3000/?popout=editor
+  // MemoryRouter 用 initialEntries 设置起始路由,不依赖真实 URL
+  const initialPath = typeof window !== 'undefined' && window.location.search.includes('popout=editor')
+    ? '/popout' : '/';
 
   const { currentThemeId, setCurrentThemeId } = useHotTheme();
   const editorContent = useAppStore((s) => s.editorContent);
 
-  if (isPopout) {
-    return (
-      <LayoutProvider>
-        <PopoutLayout
-          selectedFile={selectedFile}
-          handleFileChange={handleFileChange}
-          handleNewFile={handleNewFile}
-          editorContent={editorContent}
-          handleEditorChange={handleEditorChange}
-        />
-      </LayoutProvider>
-    );
-  }
-
   return (
     <LayoutProvider>
-      <MainLayout
-        mainModel={mainModel}
-        setMainModel={setMainModel}
-        secModels={secModels}
-        setSecModels={setSecModels}
-        mixedTasks={mixedTasks}
-        setMixedTasks={setMixedTasks}
-        currentPermissionMode={currentPermissionMode}
-        setCurrentPermissionMode={setCurrentPermissionMode}
-        selectedFile={selectedFile}
-        selectedChatId={selectedChatId}
-        setSelectedChatId={setSelectedChatId}
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        setShowHistory={setShowHistory}
-        setShowCodeEditor={setShowCodeEditor}
-        showHistory={showHistory}
-        showCodeEditor={showCodeEditor}
-        handleFileChange={handleFileChange}
-        handleEditorChange={handleEditorChange}
-        handleNewFile={handleNewFile}
-        bridge={bridge}
-        onOpenThemeCustomizer={onOpenThemeCustomizer}
-        onOpenSettingsModal={onOpenSettingsModal}
-        onOpenStatsModal={onOpenStatsModal}
-        modelProviderMap={modelProviderMap}
-        onEditorChange={handleEditorChange}
-        currentThemeId={currentThemeId}
-        setCurrentThemeId={setCurrentThemeId}
-        editorContent={editorContent}
-      />
+      <MemoryRouter initialEntries={[initialPath]}>
+        <Suspense fallback={<AppFallback />}>
+          <Routes>
+            {/* 主工作区 — IDE 布局 (Header + ActivityBar + ChatPanel + 面板) */}
+            <Route path="/" element={
+              <MainLayout
+                mainModel={mainModel}
+                setMainModel={setMainModel}
+                secModels={secModels}
+                setSecModels={setSecModels}
+                mixedTasks={mixedTasks}
+                setMixedTasks={setMixedTasks}
+                currentPermissionMode={currentPermissionMode}
+                setCurrentPermissionMode={setCurrentPermissionMode}
+                selectedFile={selectedFile}
+                selectedChatId={selectedChatId}
+                setSelectedChatId={setSelectedChatId}
+                activeTab={activeTab}
+                setActiveTab={setActiveTab}
+                setShowHistory={setShowHistory}
+                setShowCodeEditor={setShowCodeEditor}
+                showHistory={showHistory}
+                showCodeEditor={showCodeEditor}
+                handleFileChange={handleFileChange}
+                handleEditorChange={handleEditorChange}
+                handleNewFile={handleNewFile}
+                bridge={bridge}
+                onOpenThemeCustomizer={onOpenThemeCustomizer}
+                onOpenSettingsModal={onOpenSettingsModal}
+                onOpenStatsModal={onOpenStatsModal}
+                modelProviderMap={modelProviderMap}
+                onEditorChange={handleEditorChange}
+                currentThemeId={currentThemeId}
+                setCurrentThemeId={setCurrentThemeId}
+                editorContent={editorContent}
+              />
+            } />
+            {/* 弹出编辑器窗口 — 独立 chunk,主窗口不加载 */}
+            <Route path="/popout" element={
+              <PopoutLayout
+                selectedFile={selectedFile}
+                handleFileChange={handleFileChange}
+                handleNewFile={handleNewFile}
+                editorContent={editorContent}
+                handleEditorChange={handleEditorChange}
+              />
+            } />
+          </Routes>
+        </Suspense>
+      </MemoryRouter>
     </LayoutProvider>
   );
 }

@@ -15,6 +15,7 @@ import { CanvasResourceBar } from './CanvasResourceBar';
 import CanvasStage from './CanvasStage';
 import { usePreviewStreamStore } from '../state/previewStreamStore';
 import { useCanvasDeviceStore, type CanvasDeviceInfo } from '../state/canvasDeviceStore';
+import { MODEL_THEMES, type ThemeId } from '../services/canvas/modelThemes';
 import type { UniversalNode } from '../services/canvas/UniversalAST';
 import type { CanvasResource } from '../services/canvas/sessionApi';
 import { ChevronDown, Check } from '../utils/icons';
@@ -45,7 +46,6 @@ const DEVICES_2D: DevicePreset[] = [
 const DEVICES_3D: DevicePreset[] = [
   { sizeKey: 'iphone-15-pro-max', label: 'iPhone 15 Pro Max', width: 430, height: 932, group: 'mobile', glbFile: 'mobile/iphone_15_pro_max.glb' },
   { sizeKey: 'iphone-11-pro-max', label: 'iPhone 11 Pro Max', width: 414, height: 896, group: 'mobile', glbFile: 'mobile/iphone_11_pro_max.glb' },
-  { sizeKey: 'iphone-14-pro', label: 'iPhone 14 Pro', width: 393, height: 852, group: 'mobile', glbFile: 'mobile/iphone_14_pro.glb' },
 ];
 
 // ── 底色预设 ──
@@ -60,7 +60,10 @@ const BG_PRESETS = [
 function IosToggle({ on, onChange, labels }: { on: boolean; onChange: (v: boolean) => void; labels: [string, string] }) {
   return (
     <div
-      onClick={() => onChange(!on)}
+      onClick={() => {
+        console.log('[IosToggle] onClick fired, current on=', on, '→ calling onChange(!on)');
+        onChange(!on);
+      }}
       style={{
         display: 'flex',
         alignItems: 'center',
@@ -124,7 +127,10 @@ function DeviceDropdown({
   return (
     <div style={{ position: 'relative' }}>
       <button
-        onClick={() => setOpen(!open)}
+        onClick={() => {
+          console.log('[DeviceDropdown] button onClick, open=', open, '→ setOpen=', !open);
+          setOpen(!open);
+        }}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -137,10 +143,12 @@ function DeviceDropdown({
           borderRadius: '8px',
           cursor: 'pointer',
           fontFamily: 'inherit',
+          position: 'relative',
+          zIndex: 101,
         }}
       >
         {current?.label || '选择设备'}
-        <ChevronDown className="w-3 h-3 opacity-50" />
+        <ChevronDown className="w-3 h-3 opacity-90" />
       </button>
 
       <AnimatePresence>
@@ -198,7 +206,7 @@ function DeviceDropdown({
                   onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                 >
                   <span>{d.label}</span>
-                  {current?.sizeKey === d.sizeKey && <Check className="w-3.5 h-3.5 opacity-60" />}
+                  {current?.sizeKey === d.sizeKey && <Check className="w-3.5 h-3.5 opacity-100" />}
                 </button>
               ))}
             </motion.div>
@@ -206,6 +214,102 @@ function DeviceDropdown({
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+// ── 3D 模型主题右键弹出框 ──
+function ThemeContextMenu({
+  themes,
+  current,
+  onSelect,
+  position,
+  onClose,
+}: {
+  themes: { id: ThemeId; label: string; swatch: string }[];
+  current: ThemeId;
+  onSelect: (id: ThemeId) => void;
+  position: { x: number; y: number };
+  onClose: () => void;
+}) {
+  // 防止菜单溢出视口
+  const adjustedX = Math.min(position.x, window.innerWidth - 160);
+  const adjustedY = Math.min(position.y, window.innerHeight - 320);
+
+  return (
+    <>
+      {/* 透明遮罩 — 点击/右键关闭 */}
+      <div
+        style={{ position: 'fixed', inset: 0, zIndex: 9998 }}
+        onClick={onClose}
+        onContextMenu={(e) => { e.preventDefault(); onClose(); }}
+      />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.92 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.92 }}
+        transition={{ type: 'spring', stiffness: 400, damping: 28, mass: 0.7 }}
+        style={{
+          position: 'fixed',
+          left: adjustedX,
+          top: adjustedY,
+          minWidth: '140px',
+          background: 'var(--color-surface, #fff)',
+          border: '1px solid var(--color-outline, rgba(0,0,0,0.1))',
+          borderRadius: '10px',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.08)',
+          padding: '6px',
+          zIndex: 9999,
+          overflow: 'hidden',
+        }}
+      >
+        <div style={{
+          fontSize: '10px',
+          fontWeight: 600,
+          color: 'var(--color-on-surface-variant, #999)',
+          padding: '4px 8px 6px',
+          textTransform: 'uppercase',
+          letterSpacing: '0.05em',
+        }}>
+          模型主题
+        </div>
+        {themes.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => { onSelect(t.id); onClose(); }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              width: '100%',
+              padding: '7px 8px',
+              fontSize: '12px',
+              color: 'var(--color-on-surface)',
+              background: current === t.id ? 'var(--color-surface-variant, rgba(0,0,0,0.04))' : 'transparent',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              textAlign: 'left',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-variant, rgba(0,0,0,0.06))'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = current === t.id ? 'var(--color-surface-variant, rgba(0,0,0,0.04))' : 'transparent'; }}
+          >
+            <span
+              style={{
+                width: '14px',
+                height: '14px',
+                borderRadius: '50%',
+                background: t.swatch,
+                border: '1px solid rgba(0,0,0,0.15)',
+                flexShrink: 0,
+              }}
+            />
+            <span style={{ flex: 1 }}>{t.label}</span>
+            {current === t.id && <Check className="w-3.5 h-3.5 opacity-100" />}
+          </button>
+        ))}
+      </motion.div>
+    </>
   );
 }
 
@@ -238,12 +342,22 @@ export default function PreviewPanel({
 }: PreviewPanelProps) {
   // ── 从 store 读取 DSL 和设备状态 ──
   const entry = usePreviewStreamStore((s) => (selectedChatId ? s.entries[selectedChatId] : undefined));
-  const device = useCanvasDeviceStore((s) => (canvasId ? s.devices[canvasId] ?? null : null));
+  // ★ 修复 2026-07-17: canvasId 为 null 时用虚拟 key '__ephemeral__' 存 device,
+  //   这样无选中画布时也能切换 2D/3D 和选择设备 (修复 "点击 3D 毫无反应" bug)
+  const deviceKey = canvasId ?? '__ephemeral__';
+  const device = useCanvasDeviceStore((s) => s.devices[deviceKey] ?? null);
   const renderMode = useCanvasDeviceStore((s) => s.renderMode);
+  const modelTheme = useCanvasDeviceStore((s) => s.modelTheme);
   const setDevice = useCanvasDeviceStore((s) => s.setDevice);
   const setRenderMode = useCanvasDeviceStore((s) => s.setRenderMode);
+  const setModelTheme = useCanvasDeviceStore((s) => s.setModelTheme);
 
   const [bgColor, setBgColor] = useState('#ffffff');
+  // ★ 右键主题菜单状态 (仅 3D 模式)
+  const [themeMenu, setThemeMenu] = useState<{ x: number; y: number } | null>(null);
+
+  // ★ 诊断: 确认新代码已加载 (2026-07-17)
+  console.log('[PreviewPanel] render, deviceKey=', deviceKey, 'renderMode=', renderMode, 'device=', device?.label ?? 'null');
 
   // DSL 来源：previewStreamStore → 兜底空节点
   const dsl: UniversalNode = useMemo(() => {
@@ -252,7 +366,6 @@ export default function PreviewPanel({
 
   // ── 设备选择处理 ──
   const handleSelectDevice = useCallback((preset: DevicePreset) => {
-    if (!canvasId) return;
     const info: CanvasDeviceInfo = {
       sizeKey: preset.sizeKey,
       label: preset.label,
@@ -263,8 +376,8 @@ export default function PreviewPanel({
       pngFile: preset.pngFile,
       glbFile: preset.glbFile,
     };
-    setDevice(canvasId, info);
-  }, [canvasId, renderMode, setDevice]);
+    setDevice(deviceKey, info);
+  }, [deviceKey, renderMode, setDevice]);
 
   // 当前设备预设（从 store 的 device 反查）
   const currentPreset = useMemo(() => {
@@ -278,38 +391,47 @@ export default function PreviewPanel({
 
   // ── 2D/3D 切换 ──
   const handleToggleMode = useCallback((is3D: boolean) => {
+    console.log('[handleToggleMode] called, is3D=', is3D, 'deviceKey=', deviceKey, 'current device=', device);
     const mode = is3D ? '3D' : '2D';
     setRenderMode(mode);
-    if (canvasId) {
-      const list = is3D ? DEVICES_3D : DEVICES_2D;
-      const matching = list.find((d) => d.sizeKey === device?.sizeKey);
-      if (!matching) {
-        // ★ 修复 3: 当前设备在新模式下不存在，自动选第一个兼容设备（而非清除）
-        const firstDevice = list[0];
-        if (firstDevice) {
-          setDevice(canvasId, {
-            sizeKey: firstDevice.sizeKey,
-            label: firstDevice.label,
-            width: firstDevice.width,
-            height: firstDevice.height,
-            group: firstDevice.group,
-            renderMode: mode,
-            pngFile: firstDevice.pngFile,
-            glbFile: firstDevice.glbFile,
-          });
-        } else {
-          setDevice(canvasId, null);
-        }
-      } else if (device) {
-        setDevice(canvasId, {
-          ...device,
+    const list = is3D ? DEVICES_3D : DEVICES_2D;
+    const matching = list.find((d) => d.sizeKey === device?.sizeKey);
+    console.log('[handleToggleMode] matching=', matching ?? 'NONE', 'list.length=', list.length);
+    if (!matching) {
+      // ★ 修复 3: 当前设备在新模式下不存在，自动选第一个兼容设备（而非清除）
+      const firstDevice = list[0];
+      if (firstDevice) {
+        console.log('[handleToggleMode] setting device=', firstDevice.label, 'mode=', mode);
+        setDevice(deviceKey, {
+          sizeKey: firstDevice.sizeKey,
+          label: firstDevice.label,
+          width: firstDevice.width,
+          height: firstDevice.height,
+          group: firstDevice.group,
           renderMode: mode,
-          pngFile: matching.pngFile,
-          glbFile: matching.glbFile,
+          pngFile: firstDevice.pngFile,
+          glbFile: firstDevice.glbFile,
         });
+      } else {
+        setDevice(deviceKey, null);
       }
+    } else if (device) {
+      console.log('[handleToggleMode] updating existing device renderMode=', mode);
+      setDevice(deviceKey, {
+        ...device,
+        renderMode: mode,
+        pngFile: matching.pngFile,
+        glbFile: matching.glbFile,
+      });
     }
-  }, [canvasId, device, setRenderMode, setDevice]);
+  }, [deviceKey, device, setRenderMode, setDevice]);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    // 仅 3D 模式拦截右键 → 弹出主题选择菜单
+    if (renderMode !== '3D') return;
+    e.preventDefault();
+    setThemeMenu({ x: e.clientX, y: e.clientY });
+  }, [renderMode]);
 
   const hasDsl = entry?.ast != null;
 
@@ -353,6 +475,8 @@ export default function PreviewPanel({
           onSelect={handleSelectDevice}
         />
 
+        {/* 主题选择已移至画布右键菜单 */}
+
         {/* 底色选择 */}
         <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto' }}>
           {BG_PRESETS.map((preset) => (
@@ -377,16 +501,19 @@ export default function PreviewPanel({
         </div>
       </div>
 
-      {/* 画布渲染区 */}
-      <div className="flex-1 relative overflow-hidden">
-        {hasDsl ? (
-          <CanvasStage dsl={dsl} canvasId={canvasId ?? undefined} bgColor={bgColor} />
+      {/* 画布渲染区 — 3D 模式右键弹出主题菜单 */}
+      <div
+        className="flex-1 relative overflow-hidden"
+        onContextMenu={handleContextMenu}
+      >
+        {hasDsl || (renderMode === '3D' && device) ? (
+          <CanvasStage dsl={dsl} device={device} canvasId={canvasId ?? undefined} bgColor={bgColor} theme={modelTheme} />
         ) : (
           // 无 DSL 时的占位
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="flex flex-col items-center justify-center select-none">
               <div
-                className="w-16 h-16 opacity-30 mb-4"
+                className="w-16 h-16 opacity-70 mb-4"
                 style={{
                   backgroundColor: 'var(--color-primary)',
                   maskImage: 'url(/lightning_logo.png)',
@@ -400,11 +527,24 @@ export default function PreviewPanel({
                 }}
               />
               <div className="text-[11px] font-mono text-on-surface/40">
-                等待生成预览...
+                {renderMode === '3D' ? '右键画布选择主题...' : '等待生成预览...'}
               </div>
             </div>
           </div>
         )}
+
+        {/* 3D 模式右键主题菜单 */}
+        <AnimatePresence>
+          {themeMenu && renderMode === '3D' && (
+            <ThemeContextMenu
+              themes={MODEL_THEMES}
+              current={modelTheme}
+              onSelect={setModelTheme}
+              position={themeMenu}
+              onClose={() => setThemeMenu(null)}
+            />
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );

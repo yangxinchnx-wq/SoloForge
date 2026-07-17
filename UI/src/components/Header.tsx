@@ -106,8 +106,10 @@ export default function Header({
       if (!saved) return map;
       const parsed = JSON.parse(saved);
       if (!Array.isArray(parsed)) return map;
-      parsed.forEach((prov: any) => {
-        if (!prov.enabled || !prov.apiKey || prov.apiKey === '__VAULT__:') return;
+          parsed.forEach((prov: any) => {
+            // ★ '__VAULT__:' 是旧版占位符, 跳过
+            // ★ 'local' 是本地 LLM 特殊密钥, 用于标识本地推理服务
+            if (!prov.enabled || !prov.apiKey || (prov.apiKey === '__VAULT__:' && prov.id !== 'local-llm')) return;
         const info = { providerId: prov.id, iconType: prov.iconType };
         if (Array.isArray(prov.models)) {
           prov.models.forEach((m: any) => {

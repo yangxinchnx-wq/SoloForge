@@ -28,9 +28,6 @@ import { useChatStore, emptyStreamState } from '../state/useChatStore';
 import { useWorkspaceStore } from '../state/useWorkspaceStore';
 import type { FileNode } from '../shared/types/file';
 
-// 兼容性 re-export
-export { AndroidIcon, WindowsIcon, HarmonyOSIcon, DefaultChatIcon } from './brandIcons';
-
 // ── ChatItem → DraggableChatHistoryItem 映射 ──────────────────
 // chatsStore 的 ChatItem 不含 icon (icon 是纯前端渲染关注点),
 // 这里根据 tag 映射到对应的 React 图标组件

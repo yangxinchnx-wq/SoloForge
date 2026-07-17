@@ -146,3 +146,12 @@ export const useAppStore = create<AppState>()(
     setToastMsg: (v) => set({ toastMsg: v }),
   })),
 );
+
+// ── HMR 边界:改 store 代码时热替换 store 实例,不触发 full page reload ──
+// React 组件树保持挂载,滚动位置/打开的 Modal 等不丢失。
+// store state 会重置为初始值 (runtime 数据如 selectedFile/fileCache 会重新从 localStorage 加载)。
+if (import.meta.hot) {
+  import.meta.hot.accept((m) => {
+    if (m) useAppStore.setState(m.useAppStore.getState(), true);
+  });
+}

@@ -2407,14 +2407,48 @@ async function startServer() {
     }
   });
 
+  // ============================================================
+  // 画布设备模型静态资源服务
+  //   /canvas/models/* → resources/canvas/models/*
+  //
+  // 背景: 设备 GLB/PNG 文件存放在 resources/canvas/models/,
+  //   前端通过 /canvas/models/... URL 访问。用 express.static
+  //   直接服务, 避免 vite 插件机制的潜在兼容性问题。
+  //   dev 和 production 模式都挂载 (production 时 vite.middlewares 不可用,
+  //   所以必须在此处统一处理)。
+  //
+  // 2026-07-17: 初版
+  // ============================================================
+  const canvasModelsDir = path.join(__dirname_srv, 'resources', 'canvas', 'models');
+  if (fs.existsSync(canvasModelsDir)) {
+    app.use('/canvas/models', express.static(canvasModelsDir, {
+      fallthrough: true,  // 找不到文件让后续中间件处理 (vite.middlewares / 404)
+      setHeaders: (res, filePath) => {
+        // GLB 必须设置正确的 MIME, 否则 three.js useGLTF 解析失败
+        if (filePath.endsWith('.glb')) {
+          res.setHeader('Content-Type', 'model/gltf-binary');
+        } else if (filePath.endsWith('.gltf')) {
+          res.setHeader('Content-Type', 'model/gltf+json');
+        } else if (filePath.endsWith('.hdr')) {
+          // HDR 环境贴图 — RGBELoader 不检查 MIME, 但设置正确类型避免浏览器警告
+          res.setHeader('Content-Type', 'image/vnd.radiance');
+        }
+      },
+    }));
+    console.log(`[canvas-models] 静态资源服务已挂载: /canvas/models/* → ${canvasModelsDir}`);
+  } else {
+    console.warn(`[canvas-models] ⚠️ 目录不存在: ${canvasModelsDir}`);
+  }
+
   // Serve static assets / handle Vite development server middleware
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        // 2026-07-14: HMR 已永久禁用 (start.mjs 传 DISABLE_HMR=true)。
-        //   用户通过 Ctrl+R / F5 / window.soloforge.reload() 手动重载。
-        //   vite.config.ts 中也有相同的 server.hmr 配置。
+        // ★ 2026-07-18: HMR 重新启用 (之前因 agent 编辑干扰而禁用)。
+        //   解法: vite.config.ts 中收紧 watch.ignored,让 agent 写的数据文件
+        //   不触发 Vite 重新编译,只有 src/ 下代码改动才走 HMR 热替换。
+        //   React 组件走 Fast Refresh 不刷新整页;store/utils 暂无 HMR 边界。
         hmr: process.env.DISABLE_HMR !== 'true',
       },
       appType: "spa",
