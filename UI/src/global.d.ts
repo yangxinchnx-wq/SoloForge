@@ -119,6 +119,25 @@ interface LocalLLMApi {
     modelLoaded: boolean;
     modelName: string | null;
   }>;
+
+  // ★ 推理参数 (LM Studio 风格可调面板)
+  getInferParams: () => Promise<{
+    temperature: number;
+    top_p: number;
+    top_k: number;
+    repeat_penalty: number;
+    max_tokens: number;
+    seed: number;
+  }>;
+  setInferParams: (params: {
+    temperature?: number;
+    top_p?: number;
+    top_k?: number;
+    repeat_penalty?: number;
+    max_tokens?: number;
+    seed?: number;
+  }) => Promise<{ ok: boolean; error?: string; params?: any }>;
+  resetInferParams: () => Promise<{ ok: boolean; params?: any }>;
 }
 
 interface SoloForgeApi {

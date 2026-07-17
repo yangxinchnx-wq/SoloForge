@@ -1,37 +1,11 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import fs from 'fs';
 import {defineConfig} from 'vite';
-
-// ─────────────────────────────────────────────────────────────
-// ★ 2026-07-17: Vite 缓存清理插件
-// 问题: Vite 在 node_modules/.vite/deps/ 缓存预构建依赖, 源文件变化后
-//   有时不会重新转译 (Windows 文件监视不可靠 + ETag 304),
-//   导致浏览器一直加载旧代码, 修改不生效。
-// 方案: 每次 dev server 启动时自动清理 .vite 缓存目录,
-//   配合 server.headers no-store 防止浏览器缓存。
-// ─────────────────────────────────────────────────────────────
-function clearViteCachePlugin() {
-  return {
-    name: 'clear-vite-cache-on-start',
-    configureServer() {
-      const cacheDir = path.resolve(__dirname, 'node_modules/.vite');
-      try {
-        if (fs.existsSync(cacheDir)) {
-          fs.rmSync(cacheDir, {recursive: true, force: true});
-          console.log('[vite-cache] ✓ 已清理 node_modules/.vite 缓存');
-        }
-      } catch (e) {
-        console.warn('[vite-cache] 清理失败:', e);
-      }
-    },
-  };
-}
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss(), clearViteCachePlugin()],
+    plugins: [react(), tailwindcss()],
     resolve: {
       // 2026-07-02: Vite 8 / Rolldown 不再自动补 .tsx 扩展名, .ts 文件里 import '../context/Foo'
       //   (无扩展名) 会报 Module not found. 这里显式列出全部可能的扩展名, .ts 文件 import
@@ -59,32 +33,53 @@ export default defineConfig(() => {
     // 2026-06-29 (Vite 6→8 升级): esbuildOptions 已 deprecated,Vite 8 用 Rolldown 也不再有
     // rolldownOptions.alias 字段。所有别名收归上层 resolve.alias (上方数组形式)。
     optimizeDeps: {
-      // ★ 2026-07-17: 每次启动强制重新预构建依赖, 确保 node_modules 里的包是最新的
-      //   (代价: 启动慢 1-2 秒, 但避免缓存导致的诡异 bug)
-      force: true,
+      // ★ 2026-07-18: 移除 force: true 和 clearViteCachePlugin。
+      //   之前每次启动都清缓存 + 强制重新预构建,导致依赖缓存不稳定。
+      //   每次文件变化时 Vite 都重新扫描依赖 → page reload (而非 HMR)。
+      //   现在让 Vite 正常缓存依赖,只在 package.json 变化时才重新预构建。
+      //   浏览器缓存问题已由 server.headers no-store 解决,不需要清 Vite 缓存。
+      //
+      // ★ 2026-07-18: noDiscovery: true — 禁止运行时依赖发现。
+      //   Vite 8 的 optimizer 在文件变化时会重新扫描依赖,即使没有新依赖,
+      //   也会触发 page reload,覆盖 HMR 热更新。
+      //   设置 noDiscovery 后,Vite 只使用 include 中列出的依赖,
+      //   不会在文件变化时重新扫描,HMR 可以正常工作。
+      //   代价:新增依赖时需要手动加到 include 中。
+      noDiscovery: true,
       exclude: [
         'antd-style',
         '@lobehub/fluent-emoji',
       ],
-      // 2026-07-05 加速 React mount:
-      // Vite 默认按需 pre-bundle (浏览器第一次 import 时才触发)。
-      // 列在这里的包会在 dev server 启动时就 pre-bundle,
-      // 浏览器请求时直接拿到打包好的单文件,不需要几百个 ESM 请求。
-      // 这是减少刷新黑屏时间最有效的手段。
+      // 2026-07-05 加速 React mount + 2026-07-18 完整列出所有依赖:
+      // noDiscovery: true 要求所有需要预构建的依赖都在这里列出。
+      // 列表从 .vite/deps/_metadata.json 中提取 (Vite 之前自动发现的依赖)。
       include: [
         'react',
         'react-dom',
         'react-dom/client',
+        'react/jsx-dev-runtime',
+        'react/jsx-runtime',
+        'react-router-dom',
         'zustand',
-        'lucide-react',
+        'zustand/middleware',
+        'zustand/react/shallow',
         '@dnd-kit/core',
         '@dnd-kit/sortable',
         '@dnd-kit/modifiers',
         '@dnd-kit/utilities',
-        // 2026-07-14: recharts 被 StatsModal.tsx 懒加载引用,如果不预打包,
-        //   Vite 按需优化时缓存过期会 504 Outdated Optimize Dep,
-        //   导致动态导入 StatsModal.tsx 也连带失败。
+        '@heroicons/react/24/outline',
+        '@lobehub/icons',
+        '@react-three/drei',
+        '@react-three/fiber',
+        '@vue/compiler-dom',
+        '@vue/compiler-sfc',
+        '@babel/parser',
+        'animejs',
+        'cheerio',
+        'framer-motion',
         'recharts',
+        'three',
+        'xstate',
       ],
     },
     server: {
@@ -124,7 +119,11 @@ export default defineConfig(() => {
           '**/model_probe_cache.json',
           '**/provider_probe_cache.json',
           '**/*.surql',
-          '**/data/**',
+          // ★ 2026-07-18: 修复 **/data/** 误伤 src/data/ 的问题。
+          //   **/data/** 会匹配任何路径下的 data 目录,包括 src/data/。
+          //   现在用绝对路径只忽略 UI 根目录的 data/ (数据库目录),
+          //   不影响 src/data/ (defaultChats.ts 等源码)。
+          path.resolve(__dirname, 'data').replace(/\\/g, '/') + '/**',
           '**/.soloforge_settings.json*',
           '**/.soloforge/**',
           path.resolve(__dirname, '..', '.soloforge').replace(/\\/g, '/'),
@@ -280,8 +279,8 @@ export default defineConfig(() => {
             // ── 以下保持原有规则 ──
             // React-virtuoso 虚拟列表
             if (id.includes('react-virtuoso') || id.includes('react-window')) return 'vendor-virtuoso';
-            // Lucide 图标
-            if (id.includes('lucide-react')) return 'vendor-lucide';
+            // 2026-07-18: lucide-react 已移除 (所有图标迁移到 @heroicons/react),
+            //   chunk 规则也已清理。
             // Monaco / 代码编辑器
             if (id.includes('monaco-') || id.includes('@monaco-editor')) return 'vendor-monaco';
             // 状态管理(Zustand + 持久化中间件)

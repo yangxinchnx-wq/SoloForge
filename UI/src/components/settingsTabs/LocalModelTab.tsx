@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Plus, Trash2, FolderOpen, X, Brain, Play, Square, Loader2,
-  Globe, Copy, CheckCircle2, Network,
+  Globe, Copy, CheckCircle2, Network, RotateCcw,
 } from '../../utils/icons';
 import { ToggleSwitch } from '../header-bar/ToggleSwitch';
 import { toLocalModelId } from '../../utils/localModelName';
@@ -174,6 +174,22 @@ export default function LocalModelTab() {
   const [copied, setCopied] = useState(false);
   const httpPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // ★ 推理参数 (LM Studio 风格可调面板)
+  const [inferParams, setInferParams] = useState({
+    temperature: 0.8,
+    top_p: 0.95,
+    top_k: 40,
+    repeat_penalty: 1.1,
+    max_tokens: 2048,
+    seed: -1,
+  });
+  const [paramsExpanded, setParamsExpanded] = useState(false);
+  const [modelParams, setModelParams] = useState({
+    n_ctx: 4096,
+    n_threads: 4,
+    n_gpu_layers: 0,
+  });
+
   // ── 初始化 ──────────────────────────────────────────────────
 
   const _startHttpPolling = useCallback(() => {
@@ -198,12 +214,17 @@ export default function LocalModelTab() {
       const { running } = await window.soloforge.localLLM.serverRunning();
       setServerRunning(running);
 
-      const [listRes, statusRes] = await Promise.all([
+      const [listRes, statusRes, inferRes] = await Promise.all([
         window.soloforge.localLLM.list(),
         running ? window.soloforge.localLLM.status() : Promise.resolve({ loaded: false }),
+        window.soloforge.localLLM.getInferParams().catch(() => ({
+          temperature: 0.8, top_p: 0.95, top_k: 40,
+          repeat_penalty: 1.1, max_tokens: 2048, seed: -1,
+        })),
       ]);
       setModels(listRes.models || []);
       setStatus(statusRes);
+      setInferParams(inferRes);
 
       // 检查 HTTP 服务器状态
       if (running) {
@@ -340,9 +361,9 @@ export default function LocalModelTab() {
         }
         // 加载模型
         const loadRes = await window.soloforge.localLLM.load(modelPath, {
-          n_ctx: 4096,
-          n_threads: 4,
-          n_gpu_layers: 0,
+          n_ctx: modelParams.n_ctx,
+          n_threads: modelParams.n_threads,
+          n_gpu_layers: modelParams.n_gpu_layers,
         });
         if (loadRes.ok) {
           await refreshStatus();
@@ -428,6 +449,47 @@ export default function LocalModelTab() {
   // ── 渲染 ────────────────────────────────────────────────────
 
   const loaded = status?.loaded ?? false;
+
+  // ★ 更新单个推理参数 (即时持久化到后端)
+  const handleInferParamChange = useCallback(async (key: string, value: number) => {
+    const next = { ...inferParams, [key]: value };
+    setInferParams(next);
+    try {
+      await window.soloforge.localLLM.setInferParams(next);
+    } catch (e) {
+      console.warn('[LocalModelTab] 保存推理参数失败:', e);
+    }
+  }, [inferParams]);
+
+  // ★ 更新模型加载参数 (仅前端 state, 下次加载模型时生效)
+  const handleModelParamChange = useCallback((key: string, value: number) => {
+    setModelParams(prev => ({ ...prev, [key]: value }));
+  }, []);
+
+  // ★ 重置所有参数为设备最优:
+  //   推理参数 → DEFAULT_INFER_PARAMS (后端重置)
+  //   模型加载参数 → _suggestParams(deviceInfo) (基于设备 CPU/RAM/GPU)
+  const handleResetParams = useCallback(async () => {
+    try {
+      // 1. 重置推理参数到默认值 (后端持久化)
+      const res = await window.soloforge.localLLM.resetInferParams();
+      if (res.ok && res.params) {
+        setInferParams(res.params);
+      }
+      // 2. 获取设备信息, 用 suggested 设置模型加载参数
+      const dev = await window.soloforge.localLLM.device();
+      if (dev?.suggested) {
+        setModelParams({
+          n_ctx: dev.suggested.n_ctx,
+          n_threads: dev.suggested.n_threads,
+          n_gpu_layers: dev.suggested.n_gpu_layers,
+        });
+      }
+      setInfo('已重置为设备最优参数');
+    } catch (e: any) {
+      setError(e.message || '重置失败');
+    }
+  }, []);
 
   return (
     <div className="space-y-5 animate-fadeIn">
@@ -555,6 +617,132 @@ export default function LocalModelTab() {
         )}
       </div>
 
+      {/* ★ 推理参数调节面板 (LM Studio 风格) */}
+      <div className="p-3.5 bg-[var(--color-surface)] border border-[var(--color-outline)]/10 rounded-xl">
+        <button
+          onClick={() => setParamsExpanded(v => !v)}
+          className="w-full flex items-center gap-2 text-left cursor-pointer"
+        >
+          <Brain className={`w-4 h-4 text-on-surface/40 shrink-0 transition-transform ${paramsExpanded ? 'rotate-90' : ''}`} />
+          <span className="text-sm text-[var(--color-on-surface)]">推理参数</span>
+          <span className="text-xs text-on-surface/30 ml-1">
+            T={inferParams.temperature.toFixed(2)} · P={inferParams.top_p.toFixed(2)} · K={inferParams.top_k}
+          </span>
+          <span className="text-xs text-on-surface/30 ml-auto">
+            {paramsExpanded ? '收起' : '展开'}
+          </span>
+        </button>
+
+        {paramsExpanded && (
+          <div className="mt-3 pt-3 border-t border-[var(--color-outline)]/8 space-y-3.5">
+            {/* 操作栏: 重置为设备最优 */}
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-on-surface/40">
+                推理参数即时生效 · 加载参数需重新加载模型
+              </span>
+              <button
+                onClick={handleResetParams}
+                className="flex items-center gap-1.5 text-xs text-on-surface/50 hover:text-[var(--color-primary)] transition-colors cursor-pointer"
+                title="根据当前设备 CPU/RAM/GPU 重置为最优参数"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>重置为设备最优</span>
+              </button>
+            </div>
+
+            {/* Temperature */}
+            <ParamSlider
+              label="Temperature"
+              hint="采样温度，越高越随机有创造性，越低越确定保守"
+              value={inferParams.temperature}
+              min={0} max={2} step={0.05}
+              onChange={(v) => handleInferParamChange('temperature', v)}
+            />
+            {/* Top-P */}
+            <ParamSlider
+              label="Top-P"
+              hint="核采样，只从累积概率达到 P 的 token 中采样，越低越保守"
+              value={inferParams.top_p}
+              min={0} max={1} step={0.01}
+              onChange={(v) => handleInferParamChange('top_p', v)}
+            />
+            {/* Top-K */}
+            <ParamSlider
+              label="Top-K"
+              hint="只从概率最高的 K 个 token 中采样，0 = 禁用"
+              value={inferParams.top_k}
+              min={0} max={200} step={1}
+              isInteger
+              onChange={(v) => handleInferParamChange('top_k', v)}
+            />
+            {/* Repeat Penalty */}
+            <ParamSlider
+              label="Repeat Penalty"
+              hint="重复惩罚，>1 抑制重复，1.0 = 禁用"
+              value={inferParams.repeat_penalty}
+              min={0.5} max={2} step={0.01}
+              onChange={(v) => handleInferParamChange('repeat_penalty', v)}
+            />
+            {/* Max Tokens */}
+            <ParamSlider
+              label="Max Tokens"
+              hint="单次生成的最大 token 数"
+              value={inferParams.max_tokens}
+              min={64} max={8192} step={64}
+              isInteger
+              onChange={(v) => handleInferParamChange('max_tokens', v)}
+            />
+            {/* Seed */}
+            <div className="flex items-center gap-3">
+              <div className="flex-1">
+                <label className="text-xs font-semibold text-[var(--color-on-surface)] block">Seed</label>
+                <span className="text-xs text-on-surface/40">随机种子，-1 = 随机</span>
+              </div>
+              <input
+                type="number"
+                value={inferParams.seed}
+                onChange={(e) => handleInferParamChange('seed', parseInt(e.target.value || '-1', 10))}
+                className="w-28 bg-[var(--color-bg)] border border-[var(--color-outline)]/15 rounded-lg px-2.5 py-1.5 text-xs text-[var(--color-on-surface)] font-mono tabular-nums focus:outline-none focus:border-[var(--color-primary)]/30 transition-all"
+              />
+            </div>
+
+            {/* 分隔线: 模型加载参数 (需要重新加载才生效) */}
+            <div className="pt-3 border-t border-[var(--color-outline)]/8">
+              <span className="text-xs text-on-surface/40 block mb-2">
+                ↓ 以下参数需重新加载模型生效
+              </span>
+            </div>
+            {/* Context Size */}
+            <ParamSlider
+              label="Context Size (n_ctx)"
+              hint="上下文窗口大小，越大越能记住更多对话，但更耗内存"
+              value={modelParams.n_ctx}
+              min={512} max={32768} step={512}
+              isInteger
+              onChange={(v) => handleModelParamChange('n_ctx', v)}
+            />
+            {/* Threads */}
+            <ParamSlider
+              label="Threads (n_threads)"
+              hint="CPU 推理线程数"
+              value={modelParams.n_threads}
+              min={1} max={16} step={1}
+              isInteger
+              onChange={(v) => handleModelParamChange('n_threads', v)}
+            />
+            {/* GPU Layers */}
+            <ParamSlider
+              label="GPU Layers (n_gpu_layers)"
+              hint="卸载到 GPU 的层数，0 = 纯 CPU，-1 = 全部卸载"
+              value={modelParams.n_gpu_layers}
+              min={-1} max={100} step={1}
+              isInteger
+              onChange={(v) => handleModelParamChange('n_gpu_layers', v)}
+            />
+          </div>
+        )}
+      </div>
+
       {/* 添加模型 */}
       <div className="space-y-2">
         <span className="text-xs text-[var(--color-primary)] font-mono font-semibold block">添加模型</span>
@@ -643,6 +831,53 @@ export default function LocalModelTab() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── 参数滑块组件 (LM Studio 风格) ─────────────────────────────────
+
+interface ParamSliderProps {
+  label: string;
+  hint: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  isInteger?: boolean;
+  onChange: (value: number) => void;
+}
+
+function ParamSlider({ label, hint, value, min, max, step, isInteger, onChange }: ParamSliderProps) {
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-3">
+        <div className="flex-1 min-w-0">
+          <label className="text-xs font-semibold text-[var(--color-on-surface)] block">{label}</label>
+          <span className="text-xs text-on-surface/40 truncate block">{hint}</span>
+        </div>
+        <input
+          type="number"
+          value={value}
+          min={min}
+          max={max}
+          step={step}
+          onChange={(e) => {
+            const v = parseFloat(e.target.value);
+            if (!isNaN(v)) onChange(isInteger ? Math.round(v) : v);
+          }}
+          className="w-20 bg-[var(--color-bg)] border border-[var(--color-outline)]/15 rounded-lg px-2 py-1 text-xs text-[var(--color-on-surface)] font-mono tabular-nums focus:outline-none focus:border-[var(--color-primary)]/30 transition-all"
+        />
+      </div>
+      <input
+        type="range"
+        value={value}
+        min={min}
+        max={max}
+        step={step}
+        onChange={(e) => onChange(isInteger ? Math.round(parseFloat(e.target.value)) : parseFloat(e.target.value))}
+        className="w-full h-1.5 bg-[var(--color-outline)]/15 rounded-full appearance-none cursor-pointer accent-[var(--color-primary)]"
+      />
     </div>
   );
 }

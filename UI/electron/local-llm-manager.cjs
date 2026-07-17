@@ -42,6 +42,19 @@ let _loadedModelName = null;
 let _loadedFileSizeMb = null;
 let _loadedParams = null;      // { n_ctx, n_threads, n_gpu_layers }
 
+// ── 推理参数 (持久化到 settingsStorage, LM Studio 风格可调) ────
+// 这些参数作为 HTTP API 和 IPC chat 的默认值,
+// 请求体中显式传参会覆盖默认值。
+const DEFAULT_INFER_PARAMS = {
+  temperature: 0.8,       // 采样温度 (0~2, 越高越随机)
+  top_p: 0.95,            // 核采样 (0~1, 越低越保守)
+  top_k: 40,              // Top-K 采样 (0=禁用, 只从概率最高的 K 个 token 中采样)
+  repeat_penalty: 1.1,    // 重复惩罚 (1.0=禁用, >1 抑制重复)
+  max_tokens: 2048,       // 最大生成 token 数
+  seed: -1,               // 随机种子 (-1=随机)
+};
+let _inferenceParams = { ...DEFAULT_INFER_PARAMS };
+
 // 性能指标
 let _lastMetrics = {
   tokens_per_second: 0,
@@ -66,6 +79,7 @@ let _httpRequestCount = 0;
 
 function init(settingsStorage) {
   _settingsStorage = settingsStorage || createSettingsStorage(SETTINGS_FILE);
+  _loadInferenceParams();
 }
 
 // 延迟加载 ESM 模块
@@ -79,6 +93,64 @@ async function _ensureModule() {
 
 function _getStore() {
   return _settingsStorage.getStore(STORE_NAME);
+}
+
+// ── 推理参数持久化 ──────────────────────────────────────────────
+
+function getInferenceParams() {
+  return { ..._inferenceParams };
+}
+
+function setInferenceParams(params) {
+  if (!params || typeof params !== 'object') return { ok: false, error: 'Invalid params' };
+  const updated = {};
+  if (typeof params.temperature === 'number') {
+    updated.temperature = Math.max(0, Math.min(2, params.temperature));
+  }
+  if (typeof params.top_p === 'number') {
+    updated.top_p = Math.max(0, Math.min(1, params.top_p));
+  }
+  if (typeof params.top_k === 'number') {
+    updated.top_k = Math.max(0, Math.min(1000, Math.floor(params.top_k)));
+  }
+  if (typeof params.repeat_penalty === 'number') {
+    updated.repeat_penalty = Math.max(0.5, Math.min(2, params.repeat_penalty));
+  }
+  if (typeof params.max_tokens === 'number') {
+    updated.max_tokens = Math.max(1, Math.min(32768, Math.floor(params.max_tokens)));
+  }
+  if (typeof params.seed === 'number') {
+    updated.seed = Math.floor(params.seed);
+  }
+  _inferenceParams = { ..._inferenceParams, ...updated };
+
+  // 持久化到磁盘
+  const store = _getStore();
+  store.inferenceParams = { ..._inferenceParams };
+  _settingsStorage.scheduleWrite();
+
+  return { ok: true, params: { ..._inferenceParams } };
+}
+
+function _loadInferenceParams() {
+  try {
+    const store = _getStore();
+    if (store.inferenceParams) {
+      _inferenceParams = { ...DEFAULT_INFER_PARAMS, ...store.inferenceParams };
+      console.log('[local-llm] 推理参数已加载:', _inferenceParams);
+    }
+  } catch (e) {
+    console.warn('[local-llm] 加载推理参数失败:', e.message);
+  }
+}
+
+function resetInferenceParams() {
+  _inferenceParams = { ...DEFAULT_INFER_PARAMS };
+  const store = _getStore();
+  store.inferenceParams = { ..._inferenceParams };
+  _settingsStorage.scheduleWrite();
+  console.log('[local-llm] 推理参数已重置为默认值:', _inferenceParams);
+  return { ok: true, params: { ..._inferenceParams } };
 }
 
 function getModelList() {
@@ -233,6 +305,7 @@ async function loadModel(modelPath, params) {
     _context = await _model.createContext({
       contextSize: nCtx,
       threads: nThreads,
+      seed: _inferenceParams.seed >= 0 ? _inferenceParams.seed : undefined,
     });
 
     // 创建聊天会话
@@ -368,12 +441,15 @@ async function chat(event, { text, params, streamId }) {
   let tokenCount = 0;
 
   try {
+    // 合并推理参数: 持久化默认值 < 请求 params (请求级覆盖)
+    const p = { ..._inferenceParams, ...params };
     await _session.prompt(text, {
-      temperature: params?.temperature ?? 0.3,
-      topP: params?.top_p ?? 1.0,
-      maxTokens: params?.max_tokens ?? 1024,
+      temperature: p.temperature ?? 0.8,
+      topP: p.top_p ?? 0.95,
+      topK: p.top_k > 0 ? p.top_k : undefined,
+      maxTokens: p.max_tokens ?? 2048,
       repeatPenalty: {
-        penalty: params?.repeat_penalty ?? 1.1,
+        penalty: p.repeat_penalty ?? 1.1,
       },
       signal: abortController.signal,
       stopOnAbortSignal: true,
@@ -610,10 +686,12 @@ async function _handleChatCompletion(req, res) {
     const data = JSON.parse(body);
 
     const messages = data.messages || [];
-    const temperature = data.temperature ?? 0.3;
-    const topP = data.top_p ?? 1.0;
-    const maxTokens = data.max_tokens ?? 1024;
-    const repeatPenalty = data.repeat_penalty ?? 1.1;
+    // ★ 持久化参数为默认值, 请求体显式传参则覆盖
+    const temperature = data.temperature ?? _inferenceParams.temperature;
+    const topP = data.top_p ?? _inferenceParams.top_p;
+    const topK = data.top_k ?? _inferenceParams.top_k;
+    const maxTokens = data.max_tokens ?? _inferenceParams.max_tokens;
+    const repeatPenalty = data.repeat_penalty ?? _inferenceParams.repeat_penalty;
     const stream = data.stream ?? false;
 
     if (messages.length === 0) {
@@ -654,6 +732,7 @@ async function _handleChatCompletion(req, res) {
       await _httpSession.prompt(lastUserMsg.content, {
         temperature,
         topP,
+        topK: topK > 0 ? topK : undefined,
         maxTokens,
         repeatPenalty: { penalty: repeatPenalty },
         onTextChunk: (chunk) => {
@@ -688,6 +767,7 @@ async function _handleChatCompletion(req, res) {
       const responseText = await _httpSession.prompt(lastUserMsg.content, {
         temperature,
         topP,
+        topK: topK > 0 ? topK : undefined,
         maxTokens,
         repeatPenalty: { penalty: repeatPenalty },
       });
@@ -813,6 +893,19 @@ function registerIpc(ipcMain, dialog) {
   ipcMain.handle('local-llm:http-server-info', () => {
     return getHttpServerInfo();
   });
+
+  // ★ 推理参数 (LM Studio 风格可调面板)
+  ipcMain.handle('local-llm:get-infer-params', () => {
+    return getInferenceParams();
+  });
+
+  ipcMain.handle('local-llm:set-infer-params', (_e, { params }) => {
+    return setInferenceParams(params);
+  });
+
+  ipcMain.handle('local-llm:reset-infer-params', () => {
+    return resetInferenceParams();
+  });
 }
 
 // ── 清理 ────────────────────────────────────────────────────────
@@ -858,4 +951,8 @@ module.exports = {
   stopHttpServer,
   isHttpServerRunning,
   getHttpServerInfo,
+  // 推理参数
+  getInferenceParams,
+  setInferenceParams,
+  resetInferenceParams,
 };

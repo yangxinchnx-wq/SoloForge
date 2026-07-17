@@ -153,5 +153,10 @@ contextBridge.exposeInMainWorld('soloforge', {
     startHttpServer: (host, port) => ipcRenderer.invoke('local-llm:start-http-server', { host, port }),
     stopHttpServer:  () => ipcRenderer.invoke('local-llm:stop-http-server'),
     getHttpServerInfo: () => ipcRenderer.invoke('local-llm:http-server-info'),
+
+    // ★ 推理参数 (LM Studio 风格可调面板)
+    getInferParams: () => ipcRenderer.invoke('local-llm:get-infer-params'),
+    setInferParams: (params) => ipcRenderer.invoke('local-llm:set-infer-params', { params }),
+    resetInferParams: () => ipcRenderer.invoke('local-llm:reset-infer-params'),
   },
 });

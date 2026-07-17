@@ -366,16 +366,32 @@ function applyThemeToMeshes(scene: THREE.Object3D, modelUrl: string, theme: Them
         //   1. 移除暗色 baseColorTexture (m.map = null)
         //   2. 移除 metallicRoughnessTexture (metalnessMap/roughnessMap = null)
         //   3. 用 material.color.setHex() 设置纯主题色
-        //   4. 添加程序化磨砂纹理 (getMatteTitaniumTexture) 提供表面质感
-        //   最终颜色 = 磨砂纹理(浅灰噪点) × color(hex 主题色) = 干净的主题色
-        m.map = null;
+        //   4. 根据主题类型选择纹理: 磨砂/玻璃/皮革
+        //   最终颜色 = 纹理(浅灰噪点/皮革) × color(hex 主题色) = 干净的主题色
         m.metalnessMap = null;
         m.roughnessMap = null;
         m.color.setHex(themeTint.color);
         m.metalness = themeTint.metalness;
         m.roughness = themeTint.roughness;
-        m.map = getMatteTitaniumTexture();
         m.envMapIntensity = themeTint.envMapIntensity;
+
+        // ★ 根据主题的 backFinish 选择不同纹理 (与 iPhone 15 一致)
+        if (themeColors.backFinish === 'glass') {
+          // 玻璃后盖: 无贴图, 高光低粗糙度, 半透明
+          m.map = null;
+          m.transparent = true;
+          m.opacity = 0.85;
+        } else if (themeColors.backFinish === 'leather') {
+          // 皮革后盖: 皮革纹理贴图
+          m.map = getLeatherTexture();
+          m.transparent = false;
+          m.opacity = 1.0;
+        } else {
+          // 磨砂钛金属 (默认): 磨砂纹理贴图
+          m.map = getMatteTitaniumTexture();
+          m.transparent = false;
+          m.opacity = 1.0;
+        }
         m.needsUpdate = true;
       } else if (isIphone15) {
         // ★ iPhone 15 Pro Max 按部位指定真实颜色和贴图 + 主题颜色
@@ -390,17 +406,18 @@ function applyThemeToMeshes(scene: THREE.Object3D, modelUrl: string, theme: Them
 /**
  * 模块级贴图缓存 — 贴图只生成一次, 所有模型实例共享
  * (避免每次 clone scene 时重新生成 CanvasTexture)
+ * ★ 主题切换时不重新生成贴图, 只复用缓存, 避免 GPU 重传卡顿
  */
 let _matteTitaniumTexture: THREE.CanvasTexture | null = null;
 let _brushedTitaniumTexture: THREE.CanvasTexture | null = null;
+let _leatherTexture: THREE.CanvasTexture | null = null;
 
 /**
  * 生成磨砂钛金属贴图 (用于背板)
  *
- * iPhone 15 Pro Max 的背板是喷砂工艺的钛金属, 表面有细密的磨砂颗粒感。
- * 用 Canvas API 在 256×256 的画布上生成随机噪点纹理模拟这种效果。
- *
- * 贴图可平铺 (RepeatWrapping), 适用于任意大小的 UV 映射。
+ * ★★★ 2026-07-18 修复: 噪点强度从 20 降到 8, 避免过度噪点
+ *   之前强度 20 导致 iPhone 11 整个模型看起来全是噪点 (UV 重复平铺使噪点被放大)
+ *   现在强度 8, 贴图更平滑, 只提供细微的磨砂质感
  */
 function getMatteTitaniumTexture(): THREE.CanvasTexture {
   if (_matteTitaniumTexture) return _matteTitaniumTexture;
@@ -415,11 +432,11 @@ function getMatteTitaniumTexture(): THREE.CanvasTexture {
   ctx.fillRect(0, 0, 256, 256);
 
   // 噪点纹理: 模拟喷砂磨砂表面
-  //   每个像素随机加减灰度值, 产生细密的颗粒感
+  //   ★ 强度从 20 降到 8, 避免噪点过重
   const imageData = ctx.getImageData(0, 0, 256, 256);
   const data = imageData.data;
   for (let i = 0; i < data.length; i += 4) {
-    const noise = (Math.random() - 0.5) * 20;
+    const noise = (Math.random() - 0.5) * 8;
     data[i] = Math.max(0, Math.min(255, data[i] + noise));
     data[i + 1] = Math.max(0, Math.min(255, data[i + 1] + noise));
     data[i + 2] = Math.max(0, Math.min(255, data[i + 2] + noise));
@@ -432,6 +449,71 @@ function getMatteTitaniumTexture(): THREE.CanvasTexture {
   texture.wrapT = THREE.RepeatWrapping;
   texture.needsUpdate = true;
   _matteTitaniumTexture = texture;
+  return texture;
+}
+
+/**
+ * 生成皮革纹理贴图 (用于背板)
+ *
+ * 皮革表面有天然的纹理图案: 不规则的颗粒状纹路 + 细微的裂纹。
+ * 用 Canvas API 生成模拟皮革质感:
+ *   1. 底色填充
+ *   2. 多层随机的圆形颗粒模拟皮革毛孔
+ *   3. 细微的明暗变化模拟皮革自然变化
+ */
+function getLeatherTexture(): THREE.CanvasTexture {
+  if (_leatherTexture) return _leatherTexture;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d')!;
+
+  // 底色: 中灰色 (会被 material.color 乘法叠加为主题色)
+  ctx.fillStyle = '#C0C0C0';
+  ctx.fillRect(0, 0, 256, 256);
+
+  // 皮革颗粒纹理: 随机分布的深色小圆点模拟皮革毛孔
+  for (let i = 0; i < 800; i++) {
+    const x = Math.random() * 256;
+    const y = Math.random() * 256;
+    const radius = 1 + Math.random() * 2;
+    const darkness = Math.random() * 30;
+    ctx.fillStyle = `rgba(0, 0, 0, ${darkness / 100})`;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 皮革高光点: 随机分布的亮色小点模拟皮革反光
+  for (let i = 0; i < 400; i++) {
+    const x = Math.random() * 256;
+    const y = Math.random() * 256;
+    const radius = 0.5 + Math.random() * 1.5;
+    const lightness = Math.random() * 25;
+    ctx.fillStyle = `rgba(255, 255, 255, ${lightness / 100})`;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 整体明暗渐变: 模拟皮革表面的自然变化
+  const imageData = ctx.getImageData(0, 0, 256, 256);
+  const data = imageData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    const variation = (Math.random() - 0.5) * 12;
+    data[i] = Math.max(0, Math.min(255, data[i] + variation));
+    data[i + 1] = Math.max(0, Math.min(255, data[i + 1] + variation));
+    data[i + 2] = Math.max(0, Math.min(255, data[i + 2] + variation));
+  }
+  ctx.putImageData(imageData, 0, 0);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.needsUpdate = true;
+  _leatherTexture = texture;
   return texture;
 }
 
@@ -602,14 +684,37 @@ function applyIphone15Materials(
       m.envMapIntensity = 1.0;
     }
   } else if (nodeName.includes('back')) {
-    // 背板: 磨砂钛金属贴图 + 主题背板色
+    // 背板: 根据 backFinish 选择不同材质工艺
     //   注意: "back camera" 包含 "back" 和 "cam",
     //   但 "cam" 的分支在上面已经处理了, 不会到达这里
     m.color.setHex(tc.back);
-    m.metalness = 0.25;
-    m.roughness = 0.55;
-    if (!m.map) m.map = getMatteTitaniumTexture();
-    m.envMapIntensity = 1.0;
+    if (tc.backFinish === 'glass') {
+      // ★ 玻璃后盖: 高光、低粗糙度、无贴图、半透明
+      //   模拟 iPhone 玻璃背板的通透质感
+      m.metalness = 0.0;
+      m.roughness = 0.05;
+      m.map = null;
+      m.transparent = true;
+      m.opacity = 0.85;
+      m.envMapIntensity = 1.8;
+    } else if (tc.backFinish === 'leather') {
+      // ★ 皮革后盖: 高粗糙度、皮革纹理贴图
+      //   模拟 iPhone 皮革保护壳的质感
+      m.metalness = 0.0;
+      m.roughness = 0.75;
+      m.map = getLeatherTexture();
+      m.transparent = false;
+      m.opacity = 1.0;
+      m.envMapIntensity = 0.8;
+    } else {
+      // 磨砂钛金属背板 (默认): 磨砂纹理贴图
+      m.metalness = 0.25;
+      m.roughness = 0.55;
+      m.map = getMatteTitaniumTexture();
+      m.transparent = false;
+      m.opacity = 1.0;
+      m.envMapIntensity = 1.0;
+    }
   }
   // 其他未识别的部位保持原始材质
 }
