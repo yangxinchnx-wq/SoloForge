@@ -203,3 +203,13 @@ export const useAgentAvatar = (chatId: string | null | undefined, agentId: strin
     return s.agentsMap[chatId]?.find(a => a.id === agentId)?.avatar;
   });
 };
+
+// ── HMR 边界:改 store 代码时热替换 store 实例,不触发 full page reload ──
+// React 组件树保持挂载,streamTaskMeta/agentsMap 会重置为初始空值 (控制流元数据,重新流送即可恢复)。
+// 注意: promptCardPool 是另一个模块的单例,本 store 仅在 clearChat action 内调用其方法,
+//   不在模块顶层注册订阅,store 模块重新加载不会产生重复副作用,无需 dispose。
+if (import.meta.hot) {
+  import.meta.hot.accept((m) => {
+    if (m) useStreamingStore.setState(m.useStreamingStore.getState(), true);
+  });
+}

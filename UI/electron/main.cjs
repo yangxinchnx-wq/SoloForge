@@ -3,8 +3,8 @@
 // 入口：package.json "main" 指向本文件
 //
 // dev 模式: 开发者手动启动 `npm run dev` (Vite + Node.js 3000)
-//           Electron 从 http://localhost:3000 加载前端, HMR 已禁用 (DISABLE_HMR=true)
-//           用户通过 Ctrl+R / F5 / UI 按钮手动重载
+//           Electron 从 http://localhost:3000 加载前端, HMR 默认启用
+//           (设置 DISABLE_HMR=true 可禁用),用户通过 Ctrl+R / F5 / UI 按钮手动重载
 //
 // prod 模式: Electron 自动拉起所有后端服务 (UI Server 3000 + RACER 3001
 //            + Garnet 6379 + git-service 3002), 从 dist/index.html 加载

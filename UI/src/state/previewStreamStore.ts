@@ -299,3 +299,12 @@ export function restoreDslFromChatHistory(
 
   return null;
 }
+
+// ── HMR 边界:改 store 代码时热替换 store 实例,不触发 full page reload ──
+// React 组件树保持挂载,entries 会重置为初始空值 (Preview AST 流状态,重新流送即可恢复)。
+// 注意: subscribeWithSelector middleware 不注册模块级订阅,无需 dispose。
+if (import.meta.hot) {
+  import.meta.hot.accept((m) => {
+    if (m) usePreviewStreamStore.setState(m.usePreviewStreamStore.getState(), true);
+  });
+}

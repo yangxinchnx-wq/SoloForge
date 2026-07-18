@@ -16,9 +16,9 @@ import java.util.stream.Collectors;
 /**
  * Chat Controller — Agent 管理 + 健康检查
  *
- * 聊天/流式端点已移除 (原 /api/chat/send, /api/chat/stream)。
- * 聊天路径由 RACER (Node.js) 独占处理，不再有 Java fallback。
- * RACER 不可用时直接报错，不降级。
+ * 聊天/流式端点: POST /api/chat/stream (由 ChatStreamController 处理, SSE 直出)
+ * 聊天路径: 前端 → Node.js 代理 → Java SSE (SseEmitter)
+ * Node.js 不可用时前端直接报错，不降级。
  *
  * 保留的端点:
  *   GET    /api/agents          — 列出所有 Agent
@@ -67,7 +67,7 @@ public class ChatController {
         health.put("springAiVersion", "2.0.0");
         health.put("springBootVersion", "4.0.0");
         health.put("port", 8770);
-        health.put("role", "training-only");
+        health.put("role", "chat-sse-and-training");
         return ResponseEntity.ok(health);
     }
 

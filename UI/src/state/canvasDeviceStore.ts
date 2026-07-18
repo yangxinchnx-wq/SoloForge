@@ -15,7 +15,7 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { getDefaultTheme, type ThemeId } from '../services/canvas/modelThemes';
+import { getDefaultTheme, getDefaultFinish, type ThemeId, type MaterialFinish } from '../services/canvas/modelThemes';
 
 export interface CanvasDeviceInfo {
   /** 设备 key (如 'd2-iphone16', 'm-iphone14pro') */
@@ -47,8 +47,10 @@ interface CanvasDeviceStoreState {
   devices: Record<string, CanvasDeviceInfo | null>;
   /** 全局渲染模式 (2D/3D) */
   renderMode: '2D' | '3D';
-  /** 3D 模型主题 (银/金/蓝/黑/绿等, 仅 3D 模式生效) */
+  /** 3D 模型颜色主题 (银/金/蓝/黑/绿等, 仅 3D 模式生效) */
   modelTheme: ThemeId;
+  /** 3D 模型材质工艺 (原色/玻璃/皮革, 仅 3D 模式生效) */
+  modelFinish: MaterialFinish;
   /** canvasId → 实际渲染帧尺寸 (运行时, 不持久化) */
   frameSizes: Record<string, CanvasFrameSize>;
 
@@ -59,8 +61,10 @@ interface CanvasDeviceStoreState {
   getDevice: (canvasId: string) => CanvasDeviceInfo | null;
   /** 设置全局渲染模式 */
   setRenderMode: (mode: '2D' | '3D') => void;
-  /** 设置 3D 模型主题 */
+  /** 设置 3D 模型颜色主题 */
   setModelTheme: (theme: ThemeId) => void;
+  /** 设置 3D 模型材质工艺 */
+  setModelFinish: (finish: MaterialFinish) => void;
   /** 删除画布设备记录 */
   removeDevice: (canvasId: string) => void;
   /** 设置画布实际帧尺寸 (PreviewPanel 调用) */
@@ -75,6 +79,7 @@ export const useCanvasDeviceStore = create<CanvasDeviceStoreState>()(
       devices: {},
       renderMode: '2D',
       modelTheme: getDefaultTheme(),
+      modelFinish: getDefaultFinish(),
       frameSizes: {},
 
       setDevice: (canvasId, info) =>
@@ -92,6 +97,9 @@ export const useCanvasDeviceStore = create<CanvasDeviceStoreState>()(
 
       setModelTheme: (theme) =>
         set({ modelTheme: theme }),
+
+      setModelFinish: (finish) =>
+        set({ modelFinish: finish }),
 
       removeDevice: (canvasId) =>
         set((s) => {
@@ -112,11 +120,14 @@ export const useCanvasDeviceStore = create<CanvasDeviceStoreState>()(
     {
       name: 'solo-forge-canvas-devices',
       version: 3,
+      // ★ version 保持 3 不变: 新增 modelFinish 字段会由初始值 getDefaultFinish() 自动补全
+      //   不会丢失旧的 devices/renderMode/modelTheme 数据
       // ★ frameSizes 不持久化 (运行时窗口尺寸, 重启后需重新计算)
       partialize: (state) => ({
         devices: state.devices,
         renderMode: state.renderMode,
         modelTheme: state.modelTheme,
+        modelFinish: state.modelFinish,
       }),
     }
   )
@@ -204,4 +215,19 @@ export function getCanvasSize(canvasId?: string): CanvasFrameSize {
 
   // 3. 默认值 (iPhone 15 Pro Max: 430×932)
   return { width: 430, height: 932 };
+}
+
+// ── HMR 边界:改 store 代码时热替换 store 实例,不触发 full page reload ──
+// React 组件树保持挂载,设备选择/渲染模式/主题等持久化字段由 persist 自动从 localStorage 恢复。
+// ★ frameSizes 是运行时数据 (partialize 排除了它,不持久化),HMR 后新 store 实例为空。
+//   这里保留旧 frameSizes,避免 PreviewPanel 重新 computeFrame 前 LLM prompt 注入错误画布尺寸。
+if (import.meta.hot) {
+  import.meta.hot.accept((m) => {
+    if (!m) return;
+    const oldFrameSizes = useCanvasDeviceStore.getState().frameSizes;
+    useCanvasDeviceStore.setState({
+      ...m.useCanvasDeviceStore.getState(),
+      frameSizes: oldFrameSizes,
+    }, true);
+  });
 }

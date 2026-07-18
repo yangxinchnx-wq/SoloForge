@@ -10,6 +10,7 @@
 
 import React from 'react';
 import { CollapsibleCodeBlock } from './CollapsibleCodeBlock';
+import { ImageBlock } from './ImageBlock';
 
 export interface FormatChatMessageProps {
   content: string;
@@ -65,24 +66,46 @@ export const FormatChatMessage = React.memo(function FormatChatMessage({ content
                     }
                   }
 
-                  // Process bold **text** -> strong
-                  const boldParts = renderedLine.split(/(\*\*.*?\*\*)/g);
-                  const processedInline = boldParts.map((bp, bIdx) => {
-                    if (bp.startsWith('**') && bp.endsWith('**')) {
-                      return <strong key={bIdx} className="text-primary font-black">{bp.slice(2, -2)}</strong>;
-                    }
-
-                    // Process inline code `code`
-                    const codeParts = bp.split(/(`.*?`)/g);
-                    return codeParts.map((cp, cIdx) => {
-                      if (cp.startsWith('`') && cp.endsWith('`')) {
+                  // ★ 2026-07-19: 支持 markdown 图片语法 ![alt](url)
+                  //   先按图片语法 split, 图片部分渲染为 <img>, 其余部分继续处理 bold/inline code
+                  //   仅允许 http/https/data:image 协议, 防止恶意协议
+                  const imageParts = renderedLine.split(/(!\[[^\]]*\]\([^)]+\))/g);
+                  const processedInline = imageParts.map((ip, iIdx) => {
+                    const imgMatch = ip.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+                    if (imgMatch) {
+                      const url = imgMatch[2];
+                      // 安全: 仅允许 http/https/data:image
+                      if (/^https?:\/\//.test(url) || /^data:image\//.test(url)) {
                         return (
-                          <code key={cIdx} className="px-1 py-0.5 font-mono text-[11px] text-emerald-500 font-bold mx-0.5">
-                            {cp.slice(1, -1)}
-                          </code>
+                          <ImageBlock
+                            key={`img-${iIdx}`}
+                            src={url}
+                            alt={imgMatch[1]}
+                          />
                         );
                       }
-                      return cp;
+                      return <span key={`img-${iIdx}`}>{ip}</span>;
+                    }
+
+                    // Process bold **text** -> strong
+                    const boldParts = ip.split(/(\*\*.*?\*\*)/g);
+                    return boldParts.map((bp, bIdx) => {
+                      if (bp.startsWith('**') && bp.endsWith('**')) {
+                        return <strong key={`b-${iIdx}-${bIdx}`} className="text-primary font-black">{bp.slice(2, -2)}</strong>;
+                      }
+
+                      // Process inline code `code`
+                      const codeParts = bp.split(/(`.*?`)/g);
+                      return codeParts.map((cp, cIdx) => {
+                        if (cp.startsWith('`') && cp.endsWith('`')) {
+                          return (
+                            <code key={`c-${iIdx}-${bIdx}-${cIdx}`} className="px-1 py-0.5 font-mono text-[11px] text-emerald-500 font-bold mx-0.5">
+                              {cp.slice(1, -1)}
+                            </code>
+                          );
+                        }
+                        return cp;
+                      });
                     });
                   });
 

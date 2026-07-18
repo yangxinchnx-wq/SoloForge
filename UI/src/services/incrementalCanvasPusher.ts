@@ -443,27 +443,27 @@ function buildDisplayText(text: string, blocks: CodeBlockInfo[]): string {
 
   let result = '';
   let lastEnd = 0;
-  // ★ FIX: 多个已完成代码块只显示一次「已渲染到画布」, 不重复
-  let renderedLabelShown = false;
 
   for (const block of blocks) {
     result += text.slice(lastEnd, block.openFenceStart);
-    const langLabel = block.lang || 'code';
     if (block.complete) {
-      // ★ FIX 2026-07-14: 只对有 translatorLang 的代码块显示「已渲染到画布」
-      //   非 UI 代码块 (如 bash/sql/read_file JSON) 不显示渲染标签
-      if (block.translatorLang && !renderedLabelShown) {
-        result += `已渲染到画布 (${langLabel})`;
-        renderedLabelShown = true;
-      } else if (!block.translatorLang) {
+      if (block.translatorLang) {
+        // ★ 2026-07-19: UI 代码块已翻译推画布, 隐藏代码不显示
+        //   但从中提取图片 (JSON DSL image 节点 / HTML <img> 标签),
+        //   转为 markdown 图片语法让 FormatChatMessage 直接渲染显示
+        const imageMarkdown = extractImagesFromCode(block.code, block.translatorLang);
+        if (imageMarkdown) {
+          result += imageMarkdown;
+        }
+      } else {
         // 非 UI 代码块: 保留原始代码显示
         result += text.slice(block.openFenceStart, block.closeFenceEnd);
       }
       lastEnd = block.closeFenceEnd;
     } else {
-      // 未完成的代码块: 有 translatorLang 才显示「正在渲染」
       if (block.translatorLang) {
-        result += `正在渲染到画布...`;
+        // ★ 2026-07-19: UI 代码块正在翻译, 隐藏代码不显示
+        //   未完成的代码块不提取图片 (JSON 可能不完整, 解析会失败)
       } else {
         result += text.slice(block.openFenceStart);
       }
@@ -473,6 +473,95 @@ function buildDisplayText(text: string, blocks: CodeBlockInfo[]): string {
 
   result += text.slice(lastEnd);
   return result;
+}
+
+/**
+ * ★ 2026-07-19: 从 UI 代码块中提取图片, 转为 markdown 图片语法
+ *
+ * 场景: 大模型通过 JSON DSL 或 HTML 代码块返回图片, 代码块被隐藏后
+ *   图片也消失了。此函数从代码中提取图片 URL, 转为 ![alt](url) 格式,
+ *   让 FormatChatMessage 直接渲染为 <img> 显示。
+ *
+ * 支持的格式:
+ *   1. JSON DSL: {"type":"image","src":"...","alt":"..."} (递归查找 children)
+ *   2. JSON DSL (props 格式): {"type":"image","props":{"src":"..."}}
+ *   3. HTML/JSX/Vue: <img src="..." alt="...">
+ */
+function extractImagesFromCode(code: string, translatorLang: string): string {
+  const images: string[] = [];
+
+  if (translatorLang === '__json_dsl__') {
+    // JSON DSL: 解析 JSON, 递归查找 image 节点
+    try {
+      const parsed = JSON.parse(code);
+      findImageNodes(parsed, images);
+    } catch {
+      // JSON 解析失败 (可能被 repairJson 修复过, 这里原始解析失败属正常)
+      // 尝试从原始代码中用正则提取图片 URL
+      extractImageUrlsFromText(code, images);
+    }
+  } else {
+    // HTML/JSX/Vue 等代码块: 用正则提取 <img> 标签
+    extractImgTags(code, images);
+  }
+
+  return images.length > 0 ? images.join('\n') : '';
+}
+
+/** 递归查找 JSON DSL 中的 image 节点 */
+function findImageNodes(node: any, images: string[]): void {
+  if (!node || typeof node !== 'object') return;
+
+  // 直接是 image 节点
+  if (node.type === 'image') {
+    const src = node.src || node.props?.src || node.props?.url;
+    const alt = node.alt || node.props?.alt || '';
+    if (src && typeof src === 'string') {
+      images.push(`![${alt}](${src})`);
+    }
+  }
+
+  // 递归查找 children / props / ui
+  if (Array.isArray(node.children)) {
+    for (const child of node.children) {
+      findImageNodes(child, images);
+    }
+  }
+  if (node.props && typeof node.props === 'object') {
+    findImageNodes(node.props, images);
+  }
+  if (node.ui && typeof node.ui === 'object') {
+    findImageNodes(node.ui, images);
+  }
+}
+
+/** 从文本中提取图片 URL (正则匹配, 用于 JSON 解析失败的 fallback) */
+function extractImageUrlsFromText(text: string, images: string[]): void {
+  // 匹配 "src":"..." 或 "url":"..." 中的 URL
+  const urlRe = /"(?:src|url)"\s*:\s*"([^"]+)"/g;
+  let match: RegExpExecArray | null;
+  while ((match = urlRe.exec(text)) !== null) {
+    const url = match[1];
+    if (/^https?:\/\//.test(url) || /^data:image\//.test(url)) {
+      images.push(`![](${url})`);
+    }
+  }
+}
+
+/** 从 HTML/JSX/Vue 代码中提取 <img> 标签 */
+function extractImgTags(code: string, images: string[]): void {
+  // 匹配 <img src="..." alt="..."> 或 <img alt="..." src="...">
+  const imgRe = /<img\s+[^>]*>/gi;
+  let imgMatch: RegExpExecArray | null;
+  while ((imgMatch = imgRe.exec(code)) !== null) {
+    const tag = imgMatch[0];
+    const srcMatch = tag.match(/src\s*=\s*["']([^"']+)["']/i);
+    const altMatch = tag.match(/alt\s*=\s*["']([^"']*)["']/i);
+    if (srcMatch) {
+      const alt = altMatch ? altMatch[1] : '';
+      images.push(`![${alt}](${srcMatch[1]})`);
+    }
+  }
 }
 
 // ── 逐行代码追踪器 ──

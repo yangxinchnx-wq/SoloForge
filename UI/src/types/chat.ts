@@ -11,8 +11,8 @@ export interface ChatMessage {
   sender: 'user' | 'assistant';
   content: string;
   /** ★ 2026-07-12: LLM 原始输出 (含代码块), 用于构建 history 给 LLM
-   * content 字段已被 buildDisplayText 替换为 "已渲染到画布 (json)",
-   * rawContent 保留原始文本, 发送 history 时优先使用 rawContent */
+   * ★ 2026-07-19: content 字段中 UI 代码块已被 buildDisplayText 隐藏 (不再显示"已渲染到画布"),
+   *   非 UI 代码块保留原始代码; rawContent 保留完整原始文本, 发送 history 时优先使用 rawContent */
   rawContent?: string;
   time: string;
   avatar: string;

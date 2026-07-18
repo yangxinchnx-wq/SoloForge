@@ -433,3 +433,11 @@ export const useTerminalLogStore = create<TerminalLogState>((set, get) => ({
 if (typeof window !== 'undefined') {
   (window as any).__terminalLogStore = useTerminalLogStore;
 }
+
+// ── HMR 边界:改 store 代码时热替换 store 实例,不触发 full page reload ──
+// React 组件树保持挂载,终端日志实例 (chats) 会重置为初始空值 (SSE 重新推送即可恢复)。
+if (import.meta.hot) {
+  import.meta.hot.accept((m) => {
+    if (m) useTerminalLogStore.setState(m.useTerminalLogStore.getState(), true);
+  });
+}

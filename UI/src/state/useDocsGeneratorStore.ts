@@ -217,3 +217,11 @@ export const useDocsGeneratorStore = create<DocsGeneratorState>((set, get) => ({
     document.body.removeChild(link);
   },
 }));
+
+// ── HMR 边界:改 store 代码时热替换 store 实例,不触发 full page reload ──
+// React 组件树保持挂载,文档生成器 UI 状态 (modal 开关/已生成内容) 会重置为初始值。
+if (import.meta.hot) {
+  import.meta.hot.accept((m) => {
+    if (m) useDocsGeneratorStore.setState(m.useDocsGeneratorStore.getState(), true);
+  });
+}

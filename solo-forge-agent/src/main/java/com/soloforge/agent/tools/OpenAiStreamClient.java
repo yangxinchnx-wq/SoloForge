@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -52,12 +53,27 @@ public class OpenAiStreamClient {
     }
 
     /**
+     * A single tool call parsed from the streaming response.
+     *
+     * @param id       tool call ID (e.g. "call_abc123")
+     * @param name     function/tool name (e.g. "read_file")
+     * @param arguments JSON string of arguments
+     */
+    public record ToolCall(String id, String name, String arguments) {}
+
+    /**
      * Result of a streaming call.
      *
      * @param fullContent  accumulated assistant text (all deltas concatenated)
      * @param finishReason provider-reported finish reason ("stop", "length", "tool_calls", ...) or null
+     * @param toolCalls   aggregated tool calls (empty if no tool calls were made)
      */
-    public record StreamResult(String fullContent, String finishReason) {}
+    public record StreamResult(String fullContent, String finishReason, List<ToolCall> toolCalls) {
+        /** Convenience constructor for backward compatibility (no tool calls) */
+        public StreamResult(String fullContent, String finishReason) {
+            this(fullContent, finishReason, List.of());
+        }
+    }
 
     /**
      * Call an OpenAI-compatible chat completion endpoint in streaming mode.
@@ -156,6 +172,8 @@ public class OpenAiStreamClient {
             // Stream body — read SSE lines as they arrive
             StringBuilder full = new StringBuilder();
             String[] finishReasonHolder = new String[]{null};
+            // Tool call aggregation: index → {id, name, argumentsBuilder}
+            Map<Integer, ToolCallBuilder> toolCallBuilders = new LinkedHashMap<>();
             String line;
             while ((line = reader.readLine()) != null) {
                 if (Thread.currentThread().isInterrupted()) {
@@ -183,6 +201,18 @@ public class OpenAiStreamClient {
                             log.debug("onChunk callback threw (non-fatal): {}", cbEx.getMessage());
                         }
                     }
+                    // Parse tool_calls (streaming: deltas arrive incrementally)
+                    JsonNode toolCallsNode = delta.path("tool_calls");
+                    if (toolCallsNode.isArray()) {
+                        for (JsonNode tc : toolCallsNode) {
+                            int idx = tc.path("index").asInt(0);
+                            ToolCallBuilder builder = toolCallBuilders.computeIfAbsent(idx, k -> new ToolCallBuilder());
+                            if (tc.has("id")) builder.id = tc.path("id").asText();
+                            JsonNode fn = tc.path("function");
+                            if (fn.has("name")) builder.name = fn.path("name").asText();
+                            if (fn.has("arguments")) builder.arguments.append(fn.path("arguments").asText());
+                        }
+                    }
                     JsonNode fr = firstChoice.path("finish_reason");
                     if (!fr.isMissingNode() && !fr.isNull()) {
                         finishReasonHolder[0] = fr.asText();
@@ -192,9 +222,23 @@ public class OpenAiStreamClient {
                 }
             }
 
-            return new StreamResult(full.toString(), finishReasonHolder[0]);
+            // Build tool calls list
+            List<ToolCall> toolCalls = new ArrayList<>();
+            for (ToolCallBuilder builder : toolCallBuilders.values()) {
+                if (builder.name != null && !builder.name.isEmpty()) {
+                    toolCalls.add(new ToolCall(builder.id, builder.name, builder.arguments.toString()));
+                }
+            }
+            return new StreamResult(full.toString(), finishReasonHolder[0], toolCalls);
         } finally {
             try { socket.close(); } catch (Exception ignored) {}
         }
+    }
+
+    /** Helper class for aggregating streaming tool call deltas */
+    private static class ToolCallBuilder {
+        String id = "";
+        String name = "";
+        StringBuilder arguments = new StringBuilder();
     }
 }

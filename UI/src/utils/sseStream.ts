@@ -88,3 +88,6 @@ export async function parseSseFromStream(
   const reader = body.getReader();
   return parseSseStream(reader, onEvent, opts);
 }
+
+// ── HMR: 纯函数模块,自接受热更新,不触发 full page reload ──
+if (import.meta.hot) import.meta.hot.accept();

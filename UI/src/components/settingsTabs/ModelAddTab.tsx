@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Globe, Plus, Search, RefreshCw, Key, Eye, EyeOff, X, Layers, Check, AlertCircle, Radio, Trash2, ChevronDown, ChevronUp, Info, Zap, Clock } from '../../utils/icons';
+import { Globe, Plus, Search, RefreshCw, Key, Eye, EyeOff, X, Layers, Check, AlertCircle, Radio, Trash2, ChevronDown, ChevronUp, Info, Zap, Clock, Pencil } from '../../utils/icons';
 import * as DndKitCore from '@dnd-kit/core';
 import * as DndKitModifiers from '@dnd-kit/modifiers';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, arrayMove, useSortable } from '@dnd-kit/sortable';
@@ -337,7 +337,9 @@ const BASE_PROVIDERS: ModelProvider[] = [
 
 const KNOWN_PROVIDER_IDS = new Set(BASE_PROVIDERS.map(p => p.id));
 
-/** 合并已加载数据与 BASE_PROVIDERS：白名单过滤、补齐缺失、排序、清理脏数据 */
+/** 合并已加载数据与 BASE_PROVIDERS：白名单过滤、补齐缺失、清理脏数据。
+ *  不再强制排序 — 保留 loaded 数组的原始顺序 (即用户拖拽后保存的顺序),
+ *  缺失的内置服务商按 BASE_PROVIDERS 定义顺序 append 到末尾。 */
 function mergeProviders(loaded: any[]): ModelProvider[] {
   // 白名单过滤：只保留已知内置服务商 + 用户创建的 custom_*
   const filtered = loaded.filter((p: any) =>
@@ -345,16 +347,8 @@ function mergeProviders(loaded: any[]): ModelProvider[] {
   );
   const existingIds = new Set(filtered.map((p: any) => p.id));
   const missing = BASE_PROVIDERS.filter(bp => !existingIds.has(bp.id));
+  // 保留 filtered 的原始顺序 (用户拖拽后的顺序), 缺失的内置 append 到末尾
   const combined = [...filtered, ...missing];
-  const baseOrder = BASE_PROVIDERS.map(bp => bp.id);
-  combined.sort((a, b) => {
-    const idxA = baseOrder.indexOf(a.id);
-    const idxB = baseOrder.indexOf(b.id);
-    if (idxA === -1 && idxB === -1) return 0;
-    if (idxA === -1) return 1;
-    if (idxB === -1) return -1;
-    return idxA - idxB;
-  });
   return combined.map((p: any) => {
     // 只匹配精确的占位假密钥字符串, 不使用前缀匹配 (sk-ds- / AIzaSyA4_ 等前缀
     // 会误杀用户的真实 DeepSeek / Google API key, 导致密钥丢失)
@@ -546,6 +540,10 @@ export default function ModelAddTab() {
   const [showApiKey, setShowApiKey] = useState<Record<string, boolean>>({});
   const [customModelVal, setCustomModelVal] = useState('');
 
+  // 自定义服务商名称编辑状态
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+
   const [isScanning, setIsScanning] = useState(false);
   const [scanResult, setScanResult] = useState<CloudModelScanResult | null>(null);
   const [showModelPicker, setShowModelPicker] = useState(false);
@@ -651,23 +649,8 @@ export default function ModelAddTab() {
       const target = prev.find(p => p.id === id);
       if (!target) return prev;
       const newEnabled = !target.enabled;
-      const toggled = prev.map(p => p.id === id ? { ...p, enabled: newEnabled } : p);
-      if (newEnabled) {
-        // 新启用的 → 提到最前面，其余已启用的保持原顺序跟在后面
-        const targetItem = toggled.find(p => p.id === id)!;
-        const rest = toggled.filter(p => p.id !== id);
-        rest.sort((a, b) => {
-          if (a.enabled === b.enabled) return 0;
-          return a.enabled ? -1 : 1;
-        });
-        return [targetItem, ...rest];
-      } else {
-        // 禁用的 → 排序后自然沉到底部
-        return toggled.sort((a, b) => {
-          if (a.enabled === b.enabled) return 0;
-          return a.enabled ? -1 : 1;
-        });
-      }
+      // 只改 enabled 状态, 不动顺序 — 用户拖拽的顺序应该被尊重
+      return prev.map(p => p.id === id ? { ...p, enabled: newEnabled } : p);
     });
   };
 
@@ -681,6 +664,13 @@ export default function ModelAddTab() {
 
   const updateProviderIconType = (id: string, iconType: string | undefined) => {
     setProviders(prev => prev.map(p => p.id === id ? { ...p, iconType } : p));
+  };
+
+  // 自定义服务商改名 (仅 custom_ 允许)
+  const updateProviderName = (id: string, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setProviders(prev => prev.map(p => p.id === id ? { ...p, name: trimmed } : p));
   };
 
   const resetProviderBaseUrl = (id: string) => {
@@ -787,6 +777,7 @@ export default function ModelAddTab() {
   const handleProviderSelect = React.useCallback((id: string) => {
     setActiveProviderId(id);
     setCustomModelVal('');
+    setEditingName(false);
   }, []);
 
   const handleProviderDragStart = React.useCallback((event: DragStartEvent) => {
@@ -1105,7 +1096,47 @@ export default function ModelAddTab() {
                   ) : (
                     <ModelIcon modelName={activeProvider.id} size={28} className="shrink-0" iconType={activeProvider.iconType} />
                   )}
-                  <h4 className="text-xl font-black text-[var(--color-on-surface)]">{activeProvider.name}</h4>
+                  {/* ── 名称: custom_ 可编辑; 内置只读 ── */}
+                  {activeProvider.id.startsWith('custom_') && editingName ? (
+                    <input
+                      autoFocus
+                      value={nameDraft}
+                      onChange={(e) => setNameDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          updateProviderName(activeProvider.id, nameDraft);
+                          setEditingName(false);
+                        } else if (e.key === 'Escape') {
+                          e.preventDefault();
+                          setEditingName(false);
+                        }
+                      }}
+                      onBlur={() => {
+                        updateProviderName(activeProvider.id, nameDraft);
+                        setEditingName(false);
+                      }}
+                      className="text-xl font-black text-[var(--color-on-surface)] bg-[var(--color-surface-bright)] border-b-2 border-[var(--color-primary)] outline-none px-1 py-0.5 rounded-t-md min-w-[80px]"
+                      style={{ width: `${Math.max(nameDraft.length * 13 + 16, 80)}px` }}
+                    />
+                  ) : (
+                    <>
+                      <h4 className="text-xl font-black text-[var(--color-on-surface)]">{activeProvider.name}</h4>
+                      {activeProvider.id.startsWith('custom_') && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNameDraft(activeProvider.name);
+                            setEditingName(true);
+                          }}
+                          className="p-1 rounded-md text-on-surface/40 hover:text-[var(--color-primary)] transition-colors cursor-pointer"
+                          title="编辑名称"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                      )}
+                    </>
+                  )}
                 </div>
                 <p className="text-xs text-on-surface/50 leading-relaxed">{activeProvider.desc}</p>
               </div>

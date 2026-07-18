@@ -131,3 +131,12 @@ function emitBadge(): void {
     /* ignore */
   }
 }
+
+// ── HMR 边界:改 store 代码时热替换 store 实例,不触发 full page reload ──
+// React 组件树保持挂载,queue 会重置为空 (pending 命令较少,影响小)。
+// decisionLog 由 persist 自动从 localStorage 恢复 (allow-for-chat 决策不丢失)。
+if (import.meta.hot) {
+  import.meta.hot.accept((m) => {
+    if (m) useConfirmQueueStore.setState(m.useConfirmQueueStore.getState(), true);
+  });
+}

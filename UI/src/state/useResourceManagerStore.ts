@@ -406,3 +406,11 @@ function saveActiveResources(
     }),
   }).catch(() => {});
 }
+
+// ── HMR 边界:改 store 代码时热替换 store 实例,不触发 full page reload ──
+// React 组件树保持挂载,资源清单/选中状态会重置为初始值 (后端权威数据,loadResources 即可恢复)。
+if (import.meta.hot) {
+  import.meta.hot.accept((m) => {
+    if (m) useResourceManagerStore.setState(m.useResourceManagerStore.getState(), true);
+  });
+}

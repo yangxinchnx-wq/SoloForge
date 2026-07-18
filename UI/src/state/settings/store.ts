@@ -525,3 +525,12 @@ export function resetDefaultStore(): void {
     _defaultStore = null;
   }
 }
+
+// ── HMR: 此模块不适合热替换,显式 decline 强制 full page reload ──
+// 原因: 模块级单例 _defaultStore + 异步 sync 队列 + storage 事件监听 +
+//   requestIdleCallback 持久化 flush,这些副作用无法安全迁移。
+//   强行 accept 会导致新旧 store 实例并存 → sync 队列双触发 → 设置覆盖/丢失。
+//   此文件改动频率低 (设置架构稳定), full reload 成本可接受。
+if (import.meta.hot) {
+  import.meta.hot.decline();
+}

@@ -1,0 +1,21 @@
+{
+  "dispatchId": "test_full_check_001",
+  "chatId": "chat-test-full-check",
+  "prompt": "请简单解释什么是线程和进程的区别。",
+  "workers": [
+    {
+      "workerIdx": 0,
+      "agentId": "agent-0",
+      "maxRounds": 5,
+      "provider": {
+        "name": "xiaomi",
+        "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
+        "apiKey": "tp-c387doyj702b8xop903eltrskb8hk1mk0mvogo5nwf4hkozd",
+        "model": "mimo-v2.5"
+      }
+    }
+  ],
+  "settings": {},
+  "tools": [],
+  "permissionMode": "normal"
+}

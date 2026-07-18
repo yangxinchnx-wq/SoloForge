@@ -48,3 +48,6 @@ export function lruSet<T>(cache: Record<string, T>, key: string, value: T, maxSi
   }
   return Object.fromEntries(next);
 }
+
+// ── HMR: 纯函数模块,自接受热更新,不触发 full page reload ──
+if (import.meta.hot) import.meta.hot.accept();

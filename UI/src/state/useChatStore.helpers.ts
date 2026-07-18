@@ -28,7 +28,7 @@
  *   - Node.js LLM Proxy: "openaiStreamClient: HTTP 404 ..." (openaiStreamClient.ts)
  */
 export function classifyStreamError(rawErr: string): string {
-  if (!rawErr) return '未知错误。请检查后端 /api/agents/dispatch 是否在运行。';
+  if (!rawErr) return '未知错误。请检查 Java Agent 服务 (端口 8770) 是否在运行。';
 
   // ── Java Agent 服务不可达 (502/503) ──
   if (rawErr.includes('HTTP 502') || rawErr.includes('Java Agent service not started')
@@ -68,7 +68,7 @@ export function classifyStreamError(rawErr: string): string {
       const code = m ? m[1] : '';
       return `LLM 调用失败 (HTTP ${code})。服务商可能暂时不可用，请稍后重试。`;
     }
-    return '后端服务异常，请检查 /api/agents/dispatch 是否在运行。';
+    return '后端服务异常，请检查 Java Agent 服务 (端口 8770) 是否在运行。';
   }
 
   // ── 网络连接失败 ──
@@ -77,7 +77,7 @@ export function classifyStreamError(rawErr: string): string {
     return '网络连接失败：无法连接到后端服务。请确认后端服务已启动且端口未被占用。';
   }
 
-  return `${rawErr}\n\n如持续出现此错误，请检查后端 /api/agents/dispatch 是否在运行。`;
+  return `${rawErr}\n\n如持续出现此错误，请检查 Java Agent 服务 (端口 8770) 是否在运行。`;
 }
 
 /**
@@ -146,3 +146,7 @@ export function detectPreviewTrigger(
 
   return { shouldPreview: false, previewLang: '', cleanText: accumulatedText, localHandled: false };
 }
+
+// ── HMR: 纯函数模块,自接受热更新,不触发 full page reload ──
+// 引用此模块的组件自行决定是否刷新 (组件文件改动走 Fast Refresh)。
+if (import.meta.hot) import.meta.hot.accept();

@@ -118,6 +118,18 @@ const PHASE_MAPPERS: Record<string, (evt: any, ctx: PhaseMapperContext) => void>
     pushWorkerProgress(ctx, evt.workerIdx, 'EXECUTE', 0, 'error', evt.error || '调用失败');
   },
 
+  phase1_tool_start: (evt, ctx) => {
+    const toolName = evt.toolName ?? 'unknown';
+    pushWorkerProgress(ctx, evt.workerIdx, `工具调用: ${toolName}`, 30, 'running', `执行 ${toolName}`);
+  },
+
+  phase1_tool_done: (evt, ctx) => {
+    const toolName = evt.toolName ?? 'unknown';
+    const result = evt.result ?? '';
+    const preview = result.length > 100 ? result.slice(0, 100) + '...' : result;
+    pushWorkerProgress(ctx, evt.workerIdx, `工具完成: ${toolName}`, 50, 'running', preview);
+  },
+
   phase2_judge_start: (_, ctx) => {
     ctx.pushStreamEvent('phase_change', {
       content: 'REVIEWING',

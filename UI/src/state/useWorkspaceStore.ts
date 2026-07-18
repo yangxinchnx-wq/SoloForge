@@ -245,3 +245,13 @@ if (typeof window !== 'undefined') {
     } catch {}
   });
 }
+
+// ── HMR 边界:改 store 代码时热替换 store 实例,不触发 full page reload ──
+// React 组件树保持挂载,workspaces 会重置为初始值 (从 localStorage 重新 loadWorkspaces 恢复)。
+// 注意: 上方的模块级 subscribe 注册在旧 store 实例上,accept 后组件仍用旧实例,
+//   持久化订阅继续生效;新 store 实例上的 subscribe 多余但无害 (无人 set 触发)。
+if (import.meta.hot) {
+  import.meta.hot.accept((m) => {
+    if (m) useWorkspaceStore.setState(m.useWorkspaceStore.getState(), true);
+  });
+}

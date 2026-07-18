@@ -171,8 +171,8 @@ public class ExperienceCaseRepository {
     }
 
     /**
-     * 模糊查找相似案例 (按 user_message / summary / tags 关键词匹配)
-     * 简单实现: 把 query 拆成关键词, 在 user_message / summary / tags 上做 LIKE 查询。
+     * 模糊查找相似案例 (按 user_message / assistant_response 关键词匹配)
+     * 简单实现: 把 query 拆成关键词, 在 user_message / assistant_response 上做 LIKE 查询。
      * 用于 RAGAdvisor 注入历史经验。
      */
     public List<String> findSimilarCases(String query) {
@@ -186,28 +186,32 @@ public class ExperienceCaseRepository {
         }
         if (keywords.isEmpty()) return List.of();
 
+        // 查询存在的列: user_message + assistant_response (feedback 优先 positive)
         StringBuilder sql = new StringBuilder(
-            "SELECT DISTINCT tool_name, tool_args, tool_result, summary FROM experience_case WHERE ");
+            "SELECT user_message, assistant_response, feedback FROM experience_case WHERE included = 1 AND (");
         List<Object> params = new java.util.ArrayList<>();
         for (int i = 0; i < keywords.size(); i++) {
             if (i > 0) sql.append(" OR ");
             String like = "%" + keywords.get(i) + "%";
-            sql.append("(LOWER(COALESCE(user_message,'')) LIKE ? OR LOWER(COALESCE(summary,'')) LIKE ? OR LOWER(COALESCE(tags,'')) LIKE ?)");
-            params.add(like); params.add(like); params.add(like);
+            sql.append("(LOWER(COALESCE(user_message,'')) LIKE ? OR LOWER(COALESCE(assistant_response,'')) LIKE ?)");
+            params.add(like); params.add(like);
         }
-        sql.append(" ORDER BY usage_count DESC, created_at DESC LIMIT 5");
+        sql.append(") ORDER BY CASE feedback WHEN 'positive' THEN 0 WHEN 'negative' THEN 1 ELSE 2 END, created_at DESC LIMIT 5");
 
         try {
             return jdbcTemplate.query(sql.toString(), (rs, rowNum) -> {
                 StringBuilder sb = new StringBuilder();
-                String tool = rs.getString("tool_name");
-                String summary = rs.getString("summary");
-                if (summary != null && !summary.isBlank()) {
-                    sb.append(summary);
-                } else if (tool != null && !tool.isBlank()) {
-                    sb.append("tool=").append(tool);
-                    String args = rs.getString("tool_args");
-                    if (args != null && !args.isBlank()) sb.append(", args=").append(args);
+                String userMsg = rs.getString("user_message");
+                String assistantResp = rs.getString("assistant_response");
+                String feedback = rs.getString("feedback");
+                if (userMsg != null && !userMsg.isBlank()) {
+                    sb.append("Q: ").append(userMsg, 0, Math.min(userMsg.length(), 200)).append("\n");
+                }
+                if (assistantResp != null && !assistantResp.isBlank()) {
+                    sb.append("A: ").append(assistantResp, 0, Math.min(assistantResp.length(), 500)).append("\n");
+                }
+                if ("negative".equals(feedback)) {
+                    sb.append("(注意: 此案例为负反馈, 仅供参考避免)\n");
                 }
                 return sb.toString();
             }, params.toArray());

@@ -2,7 +2,7 @@
   {
     "id": "xiaomi",
     "name": "XIAOMIMIMO",
-    "enabled": true,
+    "enabled": false,
     "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
     "defaultUrl": "https://token-plan-cn.xiaomimimo.com/v1",
     "apiFormat": "openai",
@@ -10,7 +10,7 @@
       {
         "id": "mimo-v2.5",
         "name": "mimo-v2.5",
-        "enabled": true,
+        "enabled": false,
         "metadata": {
           "contextWindow": 32768,
           "maxOutput": 4096,
@@ -62,7 +62,7 @@
       {
         "id": "mimo-v2.5-pro",
         "name": "mimo-v2.5-pro",
-        "enabled": true,
+        "enabled": false,
         "metadata": {
           "contextWindow": 32768,
           "maxOutput": 4096,
@@ -169,6 +169,11 @@
     "status": "success",
     "__bootstrapped": false,
     "scanned": true,
+    "delay": 548,
+    "probeResults": {
+      "mimo-v2.5": true,
+      "mimo-v2.5-pro": true
+    },
     "apiKey": ""
   },
   {
@@ -492,6 +497,386 @@
     "status": "idle",
     "color": "#39594d",
     "scanned": false,
+    "apiKey": ""
+  },
+  {
+    "id": "custom_1784392103035",
+    "name": "自定义提供商 #2",
+    "desc": "自定义/中转等兼容 OpenAI 接口标准的第三方服务商",
+    "enabled": true,
+    "baseUrl": "https://token.sensenova.cn/v1",
+    "defaultUrl": "http://localhost:3001/v1",
+    "models": [
+      {
+        "id": "sensenova-6.7-flash-lite",
+        "name": "sensenova-6.7-flash-lite",
+        "enabled": true,
+        "metadata": {
+          "raw": {
+            "id": "sensenova-6.7-flash-lite",
+            "hugging_face_id": "",
+            "name": "sensenova-6.7-flash-lite",
+            "created": 1777392000,
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "output_modalities": [
+              "text"
+            ],
+            "quantization": "fp8",
+            "context_length": 262144,
+            "max_output_length": 65536,
+            "pricing": {
+              "prompt": "0",
+              "completion": "0",
+              "image": "0",
+              "request": "0",
+              "input_cache_read": "0"
+            },
+            "supported_sampling_parameters": [
+              "temperature",
+              "stop"
+            ],
+            "supported_features": [
+              "tools",
+              "json_mode",
+              "reasoning"
+            ],
+            "description": "SenseNova 6.7 Flash-Lite is a lightweight multimodal agent model designed for real-world workflows, supporting text conversation and image input understanding.",
+            "openrouter": {
+              "slug": "sensenova/sensenova-6.7-flash-lite"
+            },
+            "datacenters": [
+              {
+                "country_code": "CN"
+              }
+            ],
+            "businesses": [
+              "tokenplan",
+              "metered"
+            ]
+          }
+        }
+      },
+      {
+        "id": "deepseek-v4-flash",
+        "name": "deepseek-v4-flash",
+        "enabled": true,
+        "metadata": {
+          "contextWindow": 64000,
+          "maxOutput": 8192,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ],
+          "supportsTools": true,
+          "supportsJson": true,
+          "supportsStreaming": true,
+          "supportsVision": false,
+          "owner": "deepseek",
+          "description": "DeepSeek-V3 通用对话",
+          "pricingInput": 0.27,
+          "pricingOutput": 1.1,
+          "raw": {
+            "id": "deepseek-v4-flash",
+            "hugging_face_id": "",
+            "name": "deepseek-v4-flash",
+            "created": 1777392000,
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ],
+            "quantization": "fp8",
+            "context_length": 1048576,
+            "max_output_length": 65536,
+            "pricing": {
+              "prompt": "0",
+              "completion": "0",
+              "image": "0",
+              "request": "0",
+              "input_cache_read": "0"
+            },
+            "supported_sampling_parameters": [
+              "temperature",
+              "stop"
+            ],
+            "supported_features": [
+              "tools",
+              "json_mode",
+              "reasoning"
+            ],
+            "description": "DeepSeek V4 Flash is a high-performance conversational model by DeepSeek, supporting thinking/non-thinking modes, 1M context window, and tool calling.",
+            "openrouter": {
+              "slug": "sensenova/deepseek-v4-flash"
+            },
+            "datacenters": [
+              {
+                "country_code": "CN"
+              }
+            ],
+            "businesses": [
+              "tokenplan",
+              "metered"
+            ]
+          }
+        }
+      },
+      {
+        "id": "glm-5.2",
+        "name": "glm-5.2",
+        "enabled": false,
+        "metadata": {
+          "raw": {
+            "id": "glm-5.2",
+            "hugging_face_id": "",
+            "name": "glm-5.2",
+            "created": 1777392000,
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ],
+            "quantization": "fp8",
+            "context_length": 1048576,
+            "max_output_length": 131072,
+            "pricing": {
+              "prompt": "0",
+              "completion": "0",
+              "image": "0",
+              "request": "0",
+              "input_cache_read": "0"
+            },
+            "supported_sampling_parameters": [
+              "temperature",
+              "stop"
+            ],
+            "supported_features": [
+              "tools",
+              "json_mode",
+              "reasoning"
+            ],
+            "description": "GLM-5.2 is the flagship model for the era of long-horizon tasks. It supports a truly usable 1M context window, with practical tests showing it can handle project-level engineering contexts. Long-sequence task execution is more stable, adherence to engineering standards is more reliable, and success rates in development scenarios are further improved. A single task can complete the entire development pipeline—from requirements to deployable multi-platform deliverables.",
+            "openrouter": {
+              "slug": "sensenova/glm-5.2"
+            },
+            "datacenters": [
+              {
+                "country_code": "CN"
+              }
+            ],
+            "businesses": [
+              "tokenplan",
+              "metered"
+            ]
+          }
+        }
+      },
+      {
+        "id": "sensenova-u1-fast",
+        "name": "sensenova-u1-fast",
+        "enabled": false,
+        "metadata": {
+          "raw": {
+            "id": "sensenova-u1-fast",
+            "hugging_face_id": "",
+            "name": "sensenova-u1-fast",
+            "created": 1777392000,
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "image"
+            ],
+            "quantization": "fp8",
+            "context_length": 262144,
+            "max_output_length": 65536,
+            "pricing": {
+              "prompt": "0",
+              "completion": "0",
+              "image": "0",
+              "request": "0",
+              "input_cache_read": "0"
+            },
+            "supported_sampling_parameters": [
+              "temperature",
+              "stop"
+            ],
+            "supported_features": [
+              "tools",
+              "json_mode",
+              "reasoning"
+            ],
+            "description": "SenseNova U1 Fast is an accelerated version based on SenseNova U1, specialized for infographics generation.",
+            "openrouter": {
+              "slug": "sensenova/sensenova-u1-fast"
+            },
+            "datacenters": [
+              {
+                "country_code": "CN"
+              }
+            ],
+            "businesses": [
+              "tokenplan",
+              "metered"
+            ]
+          }
+        }
+      }
+    ],
+    "customModels": [],
+    "status": "success",
+    "color": "#64748b",
+    "iconType": "animal:cat",
+    "scanned": true,
+    "delay": 367,
+    "probeResults": {
+      "sensenova-6.7-flash-lite": true,
+      "deepseek-v4-flash": true,
+      "sensenova-u1-fast": false
+    },
+    "apiKey": ""
+  },
+  {
+    "id": "custom_1784391902594",
+    "name": "自定义提供商 #1",
+    "desc": "自定义/中转等兼容 OpenAI 接口标准的第三方服务商",
+    "enabled": true,
+    "baseUrl": "https://api.stepfun.com/step_plan/v1",
+    "defaultUrl": "http://localhost:3001/v1",
+    "models": [
+      {
+        "id": "step-3.7-flash",
+        "name": "step-3.7-flash",
+        "enabled": true,
+        "metadata": {
+          "raw": {
+            "id": "step-3.7-flash",
+            "object": "model",
+            "created": 1778485890,
+            "owned_by": "stepai"
+          }
+        }
+      },
+      {
+        "id": "step-router-v1",
+        "name": "step-router-v1",
+        "enabled": false,
+        "metadata": {
+          "raw": {
+            "id": "step-router-v1",
+            "object": "model",
+            "created": 1777277978,
+            "owned_by": "stepai"
+          }
+        }
+      },
+      {
+        "id": "stepaudio-2.5-chat",
+        "name": "stepaudio-2.5-chat",
+        "enabled": false,
+        "metadata": {
+          "raw": {
+            "id": "stepaudio-2.5-chat",
+            "object": "model",
+            "created": 1777357216,
+            "owned_by": "stepai"
+          }
+        }
+      },
+      {
+        "id": "stepaudio-2.5-tts",
+        "name": "stepaudio-2.5-tts",
+        "enabled": false,
+        "metadata": {
+          "raw": {
+            "id": "stepaudio-2.5-tts",
+            "object": "model",
+            "created": 1775707009,
+            "owned_by": "stepai"
+          }
+        }
+      },
+      {
+        "id": "stepaudio-2.5-asr",
+        "name": "stepaudio-2.5-asr",
+        "enabled": false,
+        "metadata": {
+          "raw": {
+            "id": "stepaudio-2.5-asr",
+            "object": "model",
+            "created": 1776062931,
+            "owned_by": "stepai"
+          }
+        }
+      },
+      {
+        "id": "stepaudio-2.5-realtime",
+        "name": "stepaudio-2.5-realtime",
+        "enabled": false,
+        "metadata": {
+          "raw": {
+            "id": "stepaudio-2.5-realtime",
+            "object": "model",
+            "created": 1777436067,
+            "owned_by": "stepai"
+          }
+        }
+      },
+      {
+        "id": "step-image-edit-2",
+        "name": "step-image-edit-2",
+        "enabled": false,
+        "metadata": {
+          "raw": {
+            "id": "step-image-edit-2",
+            "object": "model",
+            "created": 1777365249,
+            "owned_by": "stepai"
+          }
+        }
+      },
+      {
+        "id": "step-3.5-flash-2603",
+        "name": "step-3.5-flash-2603",
+        "enabled": false,
+        "metadata": {
+          "raw": {
+            "id": "step-3.5-flash-2603",
+            "object": "model",
+            "created": 1774708867,
+            "owned_by": "stepai"
+          }
+        }
+      },
+      {
+        "id": "step-3.5-flash",
+        "name": "step-3.5-flash",
+        "enabled": false,
+        "metadata": {
+          "raw": {
+            "id": "step-3.5-flash",
+            "object": "model",
+            "created": 1769580037,
+            "owned_by": "stepai"
+          }
+        }
+      }
+    ],
+    "customModels": [],
+    "status": "success",
+    "color": "#64748b",
+    "iconType": "animal:goose",
+    "scanned": true,
+    "delay": 525,
+    "probeResults": {
+      "step-3.7-flash": true
+    },
     "apiKey": ""
   }
 ]

@@ -1,7 +1,6 @@
 package com.soloforge.agent.advisor;
 
 import com.soloforge.agent.pool.PoolManager;
-import com.soloforge.agent.transport.RacerTcpClient;
 import org.slf4j.MDC;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,8 +15,13 @@ import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
-import java.util.Map;
-
+/**
+ * AuditAdvisor — tracks token usage and logs audit info.
+ *
+ * <p>Tracks token usage and logs audit info. The SSE stream controller
+ * (MultiWorkerExecutionService) reports aggregate usage via the SSE
+ * "usage" event.
+ */
 @Component
 @Order(7)
 public class AuditAdvisor implements CallAdvisor, Ordered {
@@ -25,11 +29,9 @@ public class AuditAdvisor implements CallAdvisor, Ordered {
     private static final String MDC_DISPATCH_ID = "dispatchId";
     private static final String MDC_WORKER_IDX = "workerIdx";
     private final PoolManager poolManager;
-    private final RacerTcpClient tcpClient;
 
-    public AuditAdvisor(PoolManager poolManager, RacerTcpClient tcpClient) {
+    public AuditAdvisor(PoolManager poolManager) {
         this.poolManager = poolManager;
-        this.tcpClient = tcpClient;
     }
 
     @Override
@@ -66,14 +68,8 @@ public class AuditAdvisor implements CallAdvisor, Ordered {
         long completionTokensNum = toLong(usage.getCompletionTokens());
         long totalTokensNum = toLong(usage.getTotalTokens());
 
-        log.info("Token usage - prompt={}, completion={}, total={}", promptTokensNum, completionTokensNum, totalTokensNum);
-
-        sendProgress(dispatchId, workerIdx, Map.of(
-                "type", "token_usage",
-                "promptTokens", promptTokensNum,
-                "completionTokens", completionTokensNum,
-                "totalTokens", totalTokensNum
-        ));
+        log.info("Token usage - dispatchId={}, workerIdx={}, prompt={}, completion={}, total={}",
+                dispatchId, workerIdx, promptTokensNum, completionTokensNum, totalTokensNum);
     }
 
     private long toLong(Object value) {
@@ -88,23 +84,6 @@ public class AuditAdvisor implements CallAdvisor, Ordered {
             }
         }
         return 0L;
-    }
-
-    private void sendProgress(String dispatchId, int workerIdx, Map<String, Object> payload) {
-        try {
-            String msg = String.format(
-                    "{\"type\":\"audit\",\"dispatchId\":\"%s\",\"workerIdx\":%d,\"payload\":%s}",
-                    escapeJson(dispatchId), workerIdx, new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(payload)
-            );
-            tcpClient.send(msg);
-        } catch (Exception e) {
-            log.warn("Failed to send audit progress", e);
-        }
-    }
-
-    private String escapeJson(String s) {
-        if (s == null) return "";
-        return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "");
     }
 
     @Override

@@ -1,0 +1,21 @@
+{
+  "dispatchId": "test_judge_004",
+  "chatId": "chat-test-judge-004",
+  "prompt": "请详细解释操作系统的进程调度算法,包括FCFS、SJF、优先级调度、轮转法、多级反馈队列等。每种算法请给出详细的原理说明、优缺点分析和适用场景。请写至少800字,内容越详细越好。",
+  "workers": [
+    {
+      "workerIdx": 0,
+      "agentId": "agent-0",
+      "maxRounds": 8,
+      "provider": {
+        "name": "xiaomi",
+        "baseUrl": "https://token-plan-cn.xiaomimimo.com/v1",
+        "apiKey": "tp-c387doyj702b8xop903eltrskb8hk1mk0mvogo5nwf4hkozd",
+        "model": "mimo-v2.5"
+      }
+    }
+  ],
+  "settings": {},
+  "tools": [],
+  "permissionMode": "normal"
+}

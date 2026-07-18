@@ -923,12 +923,12 @@ if (typeof window !== 'undefined' && import.meta.hot) {
 
   // 3. HMR accept:改 store 代码时热替换 store 实例,不触发 full page reload。
   //    React 组件树保持挂载,输入框内容 / 滚动位置 / 打开的 Modal 不丢失。
-  //    store state 会重置为初始值,但 inputValue/pendingAttachment 会被保留
-  //    (因为上面第 1 步的 sessionStorage 恢复逻辑 + accept 回调中的保留)。
+  //    方向: 新模块 store → 旧模块 store (组件订阅的是旧 store,必须写旧 store)。
+  //    保留旧 store 的 inputValue/pendingAttachment (用户正在输入的内容不丢失)。
   import.meta.hot.accept((m) => {
     if (!m) return;
     const cur = useChatStore.getState();
-    m.useChatStore.setState(
+    useChatStore.setState(
       { ...m.useChatStore.getState(), inputValue: cur.inputValue, pendingAttachment: cur.pendingAttachment },
       true,
     );

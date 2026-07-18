@@ -260,3 +260,13 @@ export function installWorkdirSyncChannel(): () => void {
     ch?.close();
   };
 }
+
+// ── HMR 边界:改 store 代码时热替换 store 实例,不触发 full page reload ──
+// React 组件树保持挂载,byChatId/pathIndex/workspaceRoot 由 persist 自动从 localStorage 恢复。
+// 注意: BroadcastChannel (installWorkdirSyncChannel) 在组件 mount 时注册,不在 store 模块顶层,
+//   store 模块重新加载不会创建重复监听,无需 dispose。
+if (import.meta.hot) {
+  import.meta.hot.accept((m) => {
+    if (m) useChatWorkdirStore.setState(m.useChatWorkdirStore.getState(), true);
+  });
+}

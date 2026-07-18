@@ -121,3 +121,6 @@ export function toLocalModelDisplayName(modelPathOrName: string): string {
 export function toLocalModelId(modelPathOrName: string): string {
   return toLocalModelDisplayName(modelPathOrName);
 }
+
+// ── HMR: 纯函数模块,自接受热更新,不触发 full page reload ──
+if (import.meta.hot) import.meta.hot.accept();

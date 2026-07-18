@@ -271,3 +271,13 @@ export const selectAgentById = (agentId: string) => (s: AgentState) => s.agents[
 export const selectSortedAgents = (s: AgentState) =>
   s.agentIds.map((id) => s.agents[id]).filter(Boolean).sort((a, b) => b.reputationScore - a.reputationScore);
 export const selectRecentEvents = (n: number) => (s: AgentState) => s.eventLog.slice(0, n);
+
+// ── HMR 边界:改 store 代码时热替换 store 实例,不触发 full page reload ──
+// React 组件树保持挂载,agent 池/eventLog 会重置为初始值 (实时 IPC 数据,重连即可恢复)。
+// 注意: IPC 订阅 (window.soloforge.agent.on) 在组件 useEffect 中注册,不在 store 模块顶层,
+//   store 模块重新加载不会创建重复订阅,无需 dispose。
+if (import.meta.hot) {
+  import.meta.hot.accept((m) => {
+    if (m) useAgentStore.setState(m.useAgentStore.getState(), true);
+  });
+}

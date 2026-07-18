@@ -88,7 +88,8 @@ export default defineConfig(() => {
       //   (DB/log/JSON/surql) 不触发 Vite 重新编译。只有 src/ 下代码改动
       //   才走 HMR 热替换,保留 React 状态不丢失。
       //   - React 组件: @vitejs/plugin-react 自动 Fast Refresh,改组件不刷新整页
-      //   - store/utils: 暂无 HMR 边界,改这些文件会 full reload (后续可补 import.meta.hot)
+      //   - store/utils: 已补全 HMR 边界 (zustand accept / 纯函数 self-accept),改 store 不刷新整页
+      //     唯一例外: settings/store.ts 用 decline 显式拒绝 (自定义 store + 单例,不适合热替换)
       hmr: process.env.DISABLE_HMR !== 'true',
       // ★ 2026-07-17 关键修复: 即使 HMR 禁用, 也必须保留文件监听!
       //   原配置 watch: null 导致 vite 不重新编译修改的文件,

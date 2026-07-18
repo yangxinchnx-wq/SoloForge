@@ -1,30 +1,24 @@
 # SoloForge Agent Service 配置
 #
-# *** TRAINING-ONLY STATUS (2026-07-15) ***
-# 本 Java Agent 仅保留离线训练功能。
-# 所有聊天/执行/fallback 路径已删除，RACER (Node.js) 是唯一执行路径。
-# RACER 不可用时直接报错，不降级到 Java Agent。
+# *** STREAMING SSE ARCHITECTURE (2026-07-18) ***
+# Java Agent 提供聊天流式端点 POST /api/chat/stream (SseEmitter)。
+# 聊天路径: 前端 → Node.js 代理 → Java SSE (SseEmitter)。
+# TCP 8771 传输已移除，改为 HTTP SSE 直出。
 #
-# 已删除的模块 (功能由 RACER 完全替代，无 fallback):
-#   controller/ChatController (chat/stream 端点)  → src/server/routes-agent.ts
-#   executor/* (SpringAiAgentExecutor 等)          → src/core/agent/tools/function-calling-client.ts
-#   advisor/* (SoloForgeAdvisors/SystemPromptBuilder) → RACER advisor 链
-#   orchestrator/* (5个文件)                       → src/core/agent/agent-decision-orchestrator.ts
-#   aisociety/* (10个文件)                         → RACER 社会子系统
-#   tools/* (SoloForgeTools/DelegationTools)       → src/core/agent/tools/ (MCP tools)
-#   llm/LlmGateway/LlmRateLimiter/LlmCommandCenter/RateLimitProfile → src/llm/ (llmProxyHandler + circuit-breaker)
-#
-# 保留的模块 (Java 独占，RACER 无对等实现):
-  #   config/LlmConfig                 → Spring AI 2.0.0 GA ChatModel Bean (训练用)
-#   config/DynamicChatModelResolver  → 运行时 provider 路由 (训练用)
+# 核心模块:
+#   controller/ChatStreamController  → POST /api/chat/stream (SSE 流式聊天)
+#   controller/ChatController        → Agent 管理 CRUD + 健康检查
+#   executor/MultiWorkerExecutionService → 多 Worker 并行执行 + SSE 事件输出
+#   config/LlmConfig                 → Spring AI 2.0.0 GA ChatModel Bean
+#   config/DynamicChatModelResolver  → 运行时 provider 路由
 #   config/SqliteConfig              → SQLite 连接配置
-#   controller/ChatController        → Agent 管理 CRUD + 健康检查 (无聊天端点)
+#   advisor/* (10个文件)             → Spring AI Advisor 链 (SystemPrompt/RAG/Pool/RateLimit/Audit 等)
 #   training/* (7个文件)             → 离线 Prompt 优化 + 反馈案例库
 #   persistence/* (6个文件)          → Agent 身份/训练历史/经验案例 持久化
-#   dto/* (2个文件)                  → ChatRequest/ChatSettings (训练用)
+#   tools/* (SoloForgeTools/RemoteToolExecutor/OpenAiStreamClient) → 工具执行 + LLM 流式客户端
 # ****************************************************
 server:
-  port: 8770   # Java Agent 端口，仅训练和管理 API 使用。聊天由 RACER (Node.js) 处理。
+  port: 8770   # Java Agent 端口 — 聊天 SSE + 管理 API + 训练
   servlet:
     context-path: /
 

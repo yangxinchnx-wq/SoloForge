@@ -311,3 +311,7 @@ export const Box = CubeIcon;                      // 3D 盒子 → 立方体
 export const Laptop = ComputerDesktopIcon;        // 笔记本 → 桌面电脑
 export const MousePointer = CursorArrowRaysIcon;  // 鼠标指针
 export const Workflow = QueueListIcon;            // 工作流 → 队列列表
+
+// ── HMR: 纯映射模块 (导出图标组件引用),自接受热更新 ──
+// 改动图标映射后不刷新整页,引用方组件下次渲染时自然用新映射。
+if (import.meta.hot) import.meta.hot.accept();

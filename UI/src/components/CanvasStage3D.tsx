@@ -34,9 +34,12 @@ import { OrbitControls, Environment, Lightformer, useGLTF } from '@react-three/d
 import type { UniversalNode } from '../services/canvas/UniversalAST';
 import {
   getDefaultTheme,
+  getDefaultFinish,
   getIphone15ThemeColors,
   getIphone11ThemeTint,
+  getFinishParams,
   type ThemeId,
+  type MaterialFinish,
   type Iphone15ThemeColors,
 } from '../services/canvas/modelThemes';
 
@@ -59,8 +62,10 @@ export interface CanvasStage3DProps {
   modelUrl: string;
   dsl: UniversalNode;
   bgColor?: string;
-  /** 3D 模型主题 (银/金/蓝/黑/绿等) */
+  /** 3D 模型颜色主题 (银/金/蓝/黑/绿等) */
   theme?: ThemeId;
+  /** 3D 模型材质工艺 (原色/玻璃/皮革) */
+  finish?: MaterialFinish;
 }
 
 interface ErrorBoundaryState {
@@ -74,6 +79,7 @@ export default function CanvasStage3D({
   dsl: _dsl,
   bgColor = '#1a1a1a',
   theme = getDefaultTheme(),
+  finish = getDefaultFinish(),
 }: CanvasStage3DProps): React.JSX.Element {
   return (
     <div style={{ width: '100%', height: '100%', background: bgColor }}>
@@ -141,7 +147,7 @@ export default function CanvasStage3D({
         <directionalLight position={[5, 10, 7]} intensity={0.5} />
         <directionalLight position={[-5, -3, -5]} intensity={0.3} />
 
-        <SuspenseWithFallback modelUrl={modelUrl} theme={theme} />
+        <SuspenseWithFallback modelUrl={modelUrl} theme={theme} finish={finish} />
 
         <OrbitControls makeDefault enableDamping enablePan={false} />
       </Canvas>
@@ -151,13 +157,13 @@ export default function CanvasStage3D({
 
 // ───────────────────────────── 自适应模型组件 ─────────────────────────────
 
-function AdaptiveModel({ modelUrl, theme }: { modelUrl: string; theme: ThemeId }): React.JSX.Element {
+function AdaptiveModel({ modelUrl, theme, finish }: { modelUrl: string; theme: ThemeId; finish: MaterialFinish }): React.JSX.Element {
   const gltf = useGLTF(modelUrl);
   const { camera, size, controls } = useThree();
 
   // clone scene + 深拷贝材质, 避免修改影响 useGLTF 缓存
-  // ★★★ 只依赖 [gltf, modelUrl], 不依赖 theme!
-  //   主题变化时不重新 clone scene, 只通过下面的 useEffect 更新材质
+  // ★★★ 只依赖 [gltf, modelUrl], 不依赖 theme/finish!
+  //   主题/材质变化时不重新 clone scene, 只通过下面的 useEffect 更新材质
   //   这样 OrbitControls 的相机位置/旋转不会被重置
   const scene = React.useMemo(() => {
     const cloned = gltf.scene.clone(true);
@@ -172,15 +178,15 @@ function AdaptiveModel({ modelUrl, theme }: { modelUrl: string; theme: ThemeId }
     });
     // 初始处理 (屏幕替换/Z-fighting 修复等) + 首次主题应用 (避免首帧闪烁)
     processMeshesInitial(cloned, modelUrl);
-    applyThemeToMeshes(cloned, modelUrl, theme);
+    applyThemeToMeshes(cloned, modelUrl, theme, finish);
     // eslint-disable-next-line react-hooks/exhaustive-deps
     return cloned;
   }, [gltf, modelUrl]);
 
-  // ★ 主题变化时只更新材质属性, 不重新 clone scene, 不重置相机位置
+  // ★ 主题/材质变化时只更新材质属性, 不重新 clone scene, 不重置相机位置
   React.useEffect(() => {
-    applyThemeToMeshes(scene, modelUrl, theme);
-  }, [scene, modelUrl, theme]);
+    applyThemeToMeshes(scene, modelUrl, theme, finish);
+  }, [scene, modelUrl, theme, finish]);
 
   const groupRef = React.useRef<THREE.Group>(null);
 
@@ -260,9 +266,12 @@ function AdaptiveModel({ modelUrl, theme }: { modelUrl: string; theme: ThemeId }
  * 初始 Mesh 处理 (不依赖 theme, 只在模型加载时执行一次):
  *   1. 按名字检测屏幕/灵动岛 mesh → 替换为深色玻璃材质
  *   2. 按名字检测 Apple logo → polygonOffset 修复 Z-fighting
- *   3. 对所有 mesh 调用 fixMaterial 兜底 (修复缺失的 roughness/metalness)
+ *   3. iPhone 11: 按 z 值拆分 mesh 为机身 + 摄像头两个 geometry group
+ *   4. 对所有 mesh 调用 fixMaterial 兜底 (修复缺失的 roughness/metalness)
  */
 function processMeshesInitial(scene: THREE.Object3D, modelUrl: string): void {
+  const isIphone11 = modelUrl.includes('iphone_11');
+
   scene.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
     if (!mesh.isMesh) return;
@@ -308,6 +317,13 @@ function processMeshesInitial(scene: THREE.Object3D, modelUrl: string): void {
       });
     }
 
+    // ★ iPhone 11: 按 z 值拆分 mesh 为机身 + 摄像头两个 group
+    //   GLB 只有 1 个 mesh + 1 个 material, 摄像头和机身共享同一张贴图。
+    //   拆分后可分别赋材质: 机身=主题色, 摄像头=深色玻璃
+    if (isIphone11 && mesh.geometry.index) {
+      splitIphone11MeshByZ(mesh);
+    }
+
     // 所有 mesh 兜底: 修复缺失的材质属性
     const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     materials.forEach((mat) => {
@@ -316,14 +332,107 @@ function processMeshesInitial(scene: THREE.Object3D, modelUrl: string): void {
   });
 }
 
+// ───────────────────────────── iPhone 11 Mesh 拆分 ─────────────────────────────
+
+/**
+ * iPhone 11 mesh 按 z 值拆分为机身 + 摄像头两个 geometry group
+ *
+ * 问题:
+ *   GLB 只有 1 个 mesh + 1 个 material, 摄像头和机身共享同一张贴图。
+ *   主题切换时移除贴图上纯色, 摄像头和机身混在一起 "全是一个色"。
+ *
+ * 方案:
+ *   按顶点局部 z 坐标拆分 geometry 的 index buffer:
+ *     - 三个顶点 z 都 > 阈值 → 摄像头 group (materialIndex=1)
+ *     - 其余 → 机身 group (materialIndex=0)
+ *   拆分后 mesh.material 变为数组 [机身材质, 摄像头材质]
+ *
+ * ★ 阈值 700 基于模型局部坐标 (z 范围 [-943, 933])
+ *   摄像头凸起模块三角形 z ∈ [744, 933], 机身 z ∈ [-943, 878]
+ *   两者在 z=700 附近有明显的空隙 (0~700 几乎无顶点)
+ *
+ * ★ 用 "三顶点都 > 阈值" 而非 "平均 z > 阈值", 避免跨越边界的
+ *   连接三角形被错误归入摄像头组
+ */
+const IPHONE11_CAMERA_Z_THRESHOLD = 700;
+
+function splitIphone11MeshByZ(mesh: THREE.Mesh): void {
+  const geometry = mesh.geometry as THREE.BufferGeometry;
+  const index = geometry.index;
+  const position = geometry.attributes.position;
+
+  if (!index || !position) return;
+
+  const indices = index.array as Uint16Array | Uint32Array;
+  const triCount = Math.floor(indices.length / 3);
+
+  const bodyIndices: number[] = [];
+  const camIndices: number[] = [];
+
+  for (let t = 0; t < triCount; t++) {
+    const i0 = indices[t * 3];
+    const i1 = indices[t * 3 + 1];
+    const i2 = indices[t * 3 + 2];
+
+    const z0 = position.getZ(i0);
+    const z1 = position.getZ(i1);
+    const z2 = position.getZ(i2);
+
+    // 三顶点 z 都 > 阈值 → 摄像头
+    if (z0 > IPHONE11_CAMERA_Z_THRESHOLD &&
+        z1 > IPHONE11_CAMERA_Z_THRESHOLD &&
+        z2 > IPHONE11_CAMERA_Z_THRESHOLD) {
+      camIndices.push(i0, i1, i2);
+    } else {
+      bodyIndices.push(i0, i1, i2);
+    }
+  }
+
+  // 没有摄像头三角形 → 不拆分
+  if (camIndices.length === 0) return;
+
+  // 合并 index: 机身在前, 摄像头在后
+  const IndexArrayCtor = (indices instanceof Uint32Array) ? Uint32Array : Uint16Array;
+  const newIndices = new IndexArrayCtor(bodyIndices.length + camIndices.length);
+  newIndices.set(bodyIndices, 0);
+  newIndices.set(camIndices, bodyIndices.length);
+
+  geometry.setIndex(new THREE.BufferAttribute(newIndices, 1));
+
+  // 设置 geometry groups: [机身, 摄像头]
+  geometry.clearGroups();
+  geometry.addGroup(0, bodyIndices.length, 0);
+  geometry.addGroup(bodyIndices.length, camIndices.length, 1);
+
+  // 创建两个材质
+  //   material[0] = 机身材质 (克隆原始材质, 后续 applyThemeToMeshes 会设置主题色)
+  //   material[1] = 摄像头材质 (深色玻璃, 用 userData 标记供 applyThemeToMeshes 识别)
+  const bodyMat = (mesh.material as THREE.Material).clone();
+  const camMat = new THREE.MeshStandardMaterial({
+    color: 0x1a1a1a,
+    metalness: 0.8,
+    roughness: 0.15,
+    envMapIntensity: 1.5,
+  });
+  camMat.userData.isCameraModule = true;
+
+  mesh.material = [bodyMat, camMat];
+
+  console.log('[splitIphone11MeshByZ] 拆分完成', {
+    bodyTris: bodyIndices.length / 3,
+    camTris: camIndices.length / 3,
+    totalTris: triCount,
+  });
+}
+
 /**
  * 主题材质应用 (依赖 theme, 主题切换时执行):
- *   - iPhone 11: 移除暗色贴图, 用纯主题色 + 程序化磨砂纹理
+ *   - iPhone 11: 机身=主题色+磨砂纹理, 摄像头=深色玻璃 (已拆分)
  *   - iPhone 15: 按部位指定真实颜色 + 程序化贴图 + 主题颜色
  *
  * ★ 跳过屏幕/灵动岛 mesh (已在 processMeshesInitial 中替换为固定材质)
  */
-function applyThemeToMeshes(scene: THREE.Object3D, modelUrl: string, theme: ThemeId): void {
+function applyThemeToMeshes(scene: THREE.Object3D, modelUrl: string, theme: ThemeId, finish: MaterialFinish): void {
   const isIphone11 = modelUrl.includes('iphone_11');
   const isIphone15 = modelUrl.includes('iphone_15');
   // 非目标模型不处理
@@ -331,6 +440,7 @@ function applyThemeToMeshes(scene: THREE.Object3D, modelUrl: string, theme: Them
 
   const themeColors = getIphone15ThemeColors(theme);
   const themeTint = getIphone11ThemeTint(theme);
+  const finishParams = getFinishParams(finish);
 
   scene.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
@@ -353,49 +463,68 @@ function applyThemeToMeshes(scene: THREE.Object3D, modelUrl: string, theme: Them
       if (!m || !(m as any).isMeshStandardMaterial) return;
 
       if (isIphone11) {
-        // ★★★ iPhone 11 Pro Max 主题颜色应用 (纯色替换模式)
+        // ★★★ iPhone 11 Pro Max 主题颜色应用
         //
         // GLB 结构: 1 个 mesh + 1 个 material + 1 张暗色 baseColorTexture + 1 张 metallicRoughnessTexture
         //
-        // 历史问题:
-        //   1. GLB 的 baseColorTexture 本身是暗色贴图 (sRGB ~0.1 → linear ~0.01)
-        //   2. material.color 是乘法叠加 (最终颜色 = 贴图 × color), color ≤ 1 只能更暗
-        //   3. 即使移除 metalnessMap + 设 metalness=0.25, 贴图本身还是黑的
+        // 在 processMeshesInitial 中已按 z 值拆分为两个 group:
+        //   material[0] = 机身材质 (无 userData.isCameraModule)
+        //   material[1] = 摄像头材质 (userData.isCameraModule = true)
         //
-        // 解决方案 (与 iPhone 15 背板一致):
-        //   1. 移除暗色 baseColorTexture (m.map = null)
-        //   2. 移除 metallicRoughnessTexture (metalnessMap/roughnessMap = null)
-        //   3. 用 material.color.setHex() 设置纯主题色
-        //   4. 根据主题类型选择纹理: 磨砂/玻璃/皮革
-        //   最终颜色 = 纹理(浅灰噪点/皮革) × color(hex 主题色) = 干净的主题色
-        m.metalnessMap = null;
-        m.roughnessMap = null;
-        m.color.setHex(themeTint.color);
-        m.metalness = themeTint.metalness;
-        m.roughness = themeTint.roughness;
-        m.envMapIntensity = themeTint.envMapIntensity;
+        // 机身材质: 移除暗色贴图 → 纯主题色 + 程序化纹理 (磨砂/玻璃/皮革)
+        // 摄像头材质: 深色玻璃质感 (不随主题变化, 保持镜头可辨识)
 
-        // ★ 根据主题的 backFinish 选择不同纹理 (与 iPhone 15 一致)
-        if (themeColors.backFinish === 'glass') {
-          // 玻璃后盖: 无贴图, 高光低粗糙度, 半透明
+        if ((m as any).userData?.isCameraModule) {
+          // ★ 摄像头材质: 深色玻璃, 高金属度, 低粗糙度, 强环境反射
           m.map = null;
-          m.transparent = true;
-          m.opacity = 0.85;
-        } else if (themeColors.backFinish === 'leather') {
-          // 皮革后盖: 皮革纹理贴图
-          m.map = getLeatherTexture();
+          m.metalnessMap = null;
+          m.roughnessMap = null;
+          m.color.setHex(0x1a1a1a);
+          m.metalness = 0.8;
+          m.roughness = 0.15;
+          m.envMapIntensity = 1.5;
           m.transparent = false;
           m.opacity = 1.0;
+          m.needsUpdate = true;
         } else {
-          // 磨砂钛金属 (默认): 磨砂纹理贴图
-          m.map = getMatteTitaniumTexture();
-          m.transparent = false;
-          m.opacity = 1.0;
+          // ★ 机身材质: 主题色 + 材质工艺纹理
+          //
+          // 历史问题:
+          //   1. GLB 的 baseColorTexture 本身是暗色贴图 (sRGB ~0.1 → linear ~0.01)
+          //   2. material.color 是乘法叠加 (最终颜色 = 贴图 × color), color ≤ 1 只能更暗
+          //   3. 即使移除 metalnessMap + 设 metalness=0.25, 贴图本身还是黑的
+          //
+          // 解决方案:
+          //   1. 移除暗色 baseColorTexture (m.map = null)
+          //   2. 移除 metallicRoughnessTexture (metalnessMap/roughnessMap = null)
+          //   3. 用 material.color.setHex() 设置纯主题色
+          //   4. 根据材质工艺 (finish) 选择纹理: 磨砂/玻璃/皮革
+          //   最终颜色 = 纹理(浅灰噪点/皮革) × color(hex 主题色) = 干净的主题色
+          m.metalnessMap = null;
+          m.roughnessMap = null;
+          m.color.setHex(themeTint.color);
+          m.metalness = finishParams.metalness;
+          m.roughness = finishParams.roughness;
+          m.envMapIntensity = finishParams.envMapIntensity;
+          m.transparent = finishParams.transparent;
+          m.opacity = finishParams.opacity;
+
+          // ★ 根据材质工艺选择不同纹理
+          if (finish === 'glass') {
+            // 玻璃后盖: 无贴图
+            m.map = null;
+          } else if (finish === 'leather') {
+            // 皮革后盖: 皮革纹理贴图
+            m.map = getLeatherTexture();
+          } else {
+            // 磨砂钛金属 (默认): 磨砂纹理贴图
+            m.map = getMatteTitaniumTexture();
+          }
+          m.needsUpdate = true;
         }
-        m.needsUpdate = true;
       } else if (isIphone15) {
-        // ★ iPhone 15 Pro Max 按部位指定真实颜色和贴图 + 主题颜色
-        applyIphone15Materials(m, nodeName, isAppleLogo, themeColors);
+        // ★ iPhone 15 Pro Max 按部位指定真实颜色和贴图 + 主题颜色 + 材质工艺
+        applyIphone15Materials(m, nodeName, isAppleLogo, themeColors, finish, finishParams);
       }
     });
   });
@@ -598,6 +727,8 @@ function applyIphone15Materials(
   nodeName: string,
   isAppleLogo: boolean,
   tc: Iphone15ThemeColors,
+  finish: MaterialFinish,
+  fp: ReturnType<typeof getFinishParams>,
 ): void {
   if (!m || !(m as any).isMeshStandardMaterial) return;
 
@@ -684,36 +815,25 @@ function applyIphone15Materials(
       m.envMapIntensity = 1.0;
     }
   } else if (nodeName.includes('back')) {
-    // 背板: 根据 backFinish 选择不同材质工艺
+    // 背板: 颜色由主题决定, 材质工艺由 finish 决定
     //   注意: "back camera" 包含 "back" 和 "cam",
     //   但 "cam" 的分支在上面已经处理了, 不会到达这里
     m.color.setHex(tc.back);
-    if (tc.backFinish === 'glass') {
-      // ★ 玻璃后盖: 高光、低粗糙度、无贴图、半透明
-      //   模拟 iPhone 玻璃背板的通透质感
-      m.metalness = 0.0;
-      m.roughness = 0.05;
+    m.metalness = fp.metalness;
+    m.roughness = fp.roughness;
+    m.envMapIntensity = fp.envMapIntensity;
+    m.transparent = fp.transparent;
+    m.opacity = fp.opacity;
+
+    if (finish === 'glass') {
+      // 玻璃后盖: 无贴图
       m.map = null;
-      m.transparent = true;
-      m.opacity = 0.85;
-      m.envMapIntensity = 1.8;
-    } else if (tc.backFinish === 'leather') {
-      // ★ 皮革后盖: 高粗糙度、皮革纹理贴图
-      //   模拟 iPhone 皮革保护壳的质感
-      m.metalness = 0.0;
-      m.roughness = 0.75;
+    } else if (finish === 'leather') {
+      // 皮革后盖: 皮革纹理贴图
       m.map = getLeatherTexture();
-      m.transparent = false;
-      m.opacity = 1.0;
-      m.envMapIntensity = 0.8;
     } else {
-      // 磨砂钛金属背板 (默认): 磨砂纹理贴图
-      m.metalness = 0.25;
-      m.roughness = 0.55;
+      // 磨砂钛金属 (默认): 磨砂纹理贴图
       m.map = getMatteTitaniumTexture();
-      m.transparent = false;
-      m.opacity = 1.0;
-      m.envMapIntensity = 1.0;
     }
   }
   // 其他未识别的部位保持原始材质
@@ -743,9 +863,11 @@ function fixMaterial(mat: THREE.MeshStandardMaterial): void {
 function SuspenseWithFallback({
   modelUrl,
   theme,
+  finish,
 }: {
   modelUrl: string;
   theme: ThemeId;
+  finish: MaterialFinish;
 }): React.JSX.Element {
   return (
     <ModelErrorBoundary
@@ -758,7 +880,7 @@ function SuspenseWithFallback({
       }
     >
       <React.Suspense fallback={null}>
-        <AdaptiveModel modelUrl={modelUrl} theme={theme} />
+        <AdaptiveModel modelUrl={modelUrl} theme={theme} finish={finish} />
       </React.Suspense>
     </ModelErrorBoundary>
   );

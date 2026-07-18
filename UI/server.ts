@@ -2448,13 +2448,36 @@ async function startServer() {
         // ★ 2026-07-18: HMR 重新启用 (之前因 agent 编辑干扰而禁用)。
         //   解法: vite.config.ts 中收紧 watch.ignored,让 agent 写的数据文件
         //   不触发 Vite 重新编译,只有 src/ 下代码改动才走 HMR 热替换。
-        //   React 组件走 Fast Refresh 不刷新整页;store/utils 暂无 HMR 边界。
+        //   React 组件走 Fast Refresh 不刷新整页;store/utils 已补全 HMR 边界 (accept/self-accept)。
         hmr: process.env.DISABLE_HMR !== 'true',
       },
       appType: "spa",
     });
     app.use(vite.middlewares);
     console.log("Vite development middleware mounted successfully.");
+
+    // ★ 2026-07-19: Safety-net catch-all — 防止 Vite SPA 中间件在边缘场景下
+    //   未处理 GET / 请求 (如 HMR 重连期间、Vite 内部依赖优化瞬间) 导致 404。
+    //   仅对浏览器导航请求 (Accept: text/html) 提供 index.html 回退,
+    //   API 请求 / 静态资源请求不受影响 (Vite 中间件已处理或 next() 透传)。
+    app.use(async (req, res, next) => {
+      if (req.method !== 'GET') return next();
+      const accept = req.headers.accept || '';
+      if (!accept.includes('text/html')) return next();
+      try {
+        const indexPath = path.join(__dirname_srv, 'index.html');
+        if (!fs.existsSync(indexPath)) {
+          console.error('[fallback] index.html not found at:', indexPath);
+          return next();
+        }
+        const template = fs.readFileSync(indexPath, 'utf-8');
+        const html = await vite.transformIndexHtml(req.url, template);
+        res.status(200).set('Content-Type', 'text/html').end(html);
+      } catch (e: any) {
+        console.error('[fallback] transformIndexHtml error:', e?.message);
+        next(e);
+      }
+    });
   } else {
     // Serve production static outputs
     const distPath = path.join(process.cwd(), 'dist');
@@ -2464,6 +2487,19 @@ async function startServer() {
     });
     console.log("Production static server route configured.");
   }
+
+  // ★ 2026-07-19: Express 全局错误处理中间件
+  //   捕获所有路由中未处理的异常,返回 500 JSON 而非默认的 HTML 错误页。
+  //   必须放在所有路由之后,且参数必须为 4 个 (err, req, res, next)。
+  app.use((err: any, _req: any, res: any, _next: any) => {
+    console.error('[server] Unhandled route error:', err?.message || err);
+    if (res && !res.headersSent) {
+      res.status(500).json({
+        success: false,
+        error: err?.message || 'Internal server error',
+      });
+    }
+  });
 
   // 优雅退出: flush 对话列表 + 消息 + 设置到磁盘
   process.on('SIGINT', () => {
@@ -2486,4 +2522,21 @@ async function startServer() {
   });
 }
 
-startServer();
+// ★ 2026-07-19: 捕获启动失败 (如 Garnet/SurrealDB 不可用导致 bootstrapCanvasSessionLayer 抛错),
+//   清晰打印错误堆栈并退出,而非静默崩溃导致 unhandledRejection。
+startServer().catch((err) => {
+  console.error('[server] ❌ 启动失败:', err?.message || err);
+  if (err?.stack) console.error(err.stack);
+  process.exit(1);
+});
+
+// ★ 2026-07-19: 全局未捕获异常兜底 — 防止异步回调中的异常导致进程静默崩溃
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[server] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[server] Uncaught Exception:', err?.message || err);
+  if (err?.stack) console.error(err.stack);
+  // uncaughtException 后进程状态不可预测, 优雅退出
+  process.exit(1);
+});

@@ -15,7 +15,7 @@ import { CanvasResourceBar } from './CanvasResourceBar';
 import CanvasStage from './CanvasStage';
 import { usePreviewStreamStore } from '../state/previewStreamStore';
 import { useCanvasDeviceStore, type CanvasDeviceInfo } from '../state/canvasDeviceStore';
-import { MODEL_THEMES, type ThemeId } from '../services/canvas/modelThemes';
+import { MODEL_THEMES, MATERIAL_FINISHES, type ThemeId, type MaterialFinish } from '../services/canvas/modelThemes';
 import type { UniversalNode } from '../services/canvas/UniversalAST';
 import type { CanvasResource } from '../services/canvas/sessionApi';
 import { ChevronDown, Check } from '../utils/icons';
@@ -217,23 +217,31 @@ function DeviceDropdown({
   );
 }
 
-// ── 3D 模型主题右键弹出框 ──
+// ── 3D 模型主题右键弹出框 (顶部材质切换 + 下方颜色列表) ──
 function ThemeContextMenu({
   themes,
-  current,
-  onSelect,
+  currentTheme,
+  onSelectTheme,
+  finishes,
+  currentFinish,
+  onSelectFinish,
   position,
   onClose,
 }: {
   themes: { id: ThemeId; label: string; swatch: string }[];
-  current: ThemeId;
-  onSelect: (id: ThemeId) => void;
+  currentTheme: ThemeId;
+  onSelectTheme: (id: ThemeId) => void;
+  finishes: { id: MaterialFinish; label: string }[];
+  currentFinish: MaterialFinish;
+  onSelectFinish: (id: MaterialFinish) => void;
   position: { x: number; y: number };
   onClose: () => void;
 }) {
   // 防止菜单溢出视口
-  const adjustedX = Math.min(position.x, window.innerWidth - 160);
-  const adjustedY = Math.min(position.y, window.innerHeight - 320);
+  const adjustedX = Math.min(position.x, window.innerWidth - 180);
+  const adjustedY = Math.min(position.y, window.innerHeight - 400);
+  // 当前颜色名
+  const currentThemeLabel = themes.find((t) => t.id === currentTheme)?.label ?? '';
 
   return (
     <>
@@ -252,7 +260,7 @@ function ThemeContextMenu({
           position: 'fixed',
           left: adjustedX,
           top: adjustedY,
-          minWidth: '140px',
+          minWidth: '160px',
           background: 'var(--color-surface, #fff)',
           border: '1px solid var(--color-outline, rgba(0,0,0,0.1))',
           borderRadius: '10px',
@@ -262,20 +270,67 @@ function ThemeContextMenu({
           overflow: 'hidden',
         }}
       >
+        {/* ★ 顶部: 当前颜色名 + 材质切换按钮组 */}
         <div style={{
-          fontSize: '10px',
-          fontWeight: 600,
-          color: 'var(--color-on-surface-variant, #999)',
-          padding: '4px 8px 6px',
-          textTransform: 'uppercase',
-          letterSpacing: '0.05em',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+          padding: '6px 8px 8px',
+          borderBottom: '1px solid var(--color-outline, rgba(0,0,0,0.08))',
+          marginBottom: '4px',
         }}>
-          模型主题
+          <span style={{
+            fontSize: '11px',
+            fontWeight: 600,
+            color: 'var(--color-on-surface)',
+            flexShrink: 0,
+          }}>
+            {currentThemeLabel}
+          </span>
+          {/* 材质切换按钮组 */}
+          <div style={{
+            display: 'flex',
+            gap: '2px',
+            marginLeft: 'auto',
+            background: 'var(--color-surface-variant, rgba(0,0,0,0.04))',
+            borderRadius: '6px',
+            padding: '2px',
+          }}>
+            {finishes.map((f) => (
+              <button
+                key={f.id}
+                onClick={() => onSelectFinish(f.id)}
+                style={{
+                  padding: '3px 8px',
+                  fontSize: '10px',
+                  fontWeight: 500,
+                  color: currentFinish === f.id
+                    ? 'var(--color-on-surface, #000)'
+                    : 'var(--color-on-surface-variant, #999)',
+                  background: currentFinish === f.id
+                    ? 'var(--color-surface, #fff)'
+                    : 'transparent',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  boxShadow: currentFinish === f.id
+                    ? '0 1px 2px rgba(0,0,0,0.1)'
+                    : 'none',
+                  transition: 'all 150ms ease',
+                }}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
         </div>
+
+        {/* 下方: 颜色主题列表 */}
         {themes.map((t) => (
           <button
             key={t.id}
-            onClick={() => { onSelect(t.id); onClose(); }}
+            onClick={() => { onSelectTheme(t.id); onClose(); }}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -284,7 +339,7 @@ function ThemeContextMenu({
               padding: '7px 8px',
               fontSize: '12px',
               color: 'var(--color-on-surface)',
-              background: current === t.id ? 'var(--color-surface-variant, rgba(0,0,0,0.04))' : 'transparent',
+              background: currentTheme === t.id ? 'var(--color-surface-variant, rgba(0,0,0,0.04))' : 'transparent',
               border: 'none',
               borderRadius: '6px',
               cursor: 'pointer',
@@ -292,7 +347,7 @@ function ThemeContextMenu({
               textAlign: 'left',
             }}
             onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-surface-variant, rgba(0,0,0,0.06))'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = current === t.id ? 'var(--color-surface-variant, rgba(0,0,0,0.04))' : 'transparent'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = currentTheme === t.id ? 'var(--color-surface-variant, rgba(0,0,0,0.04))' : 'transparent'; }}
           >
             <span
               style={{
@@ -305,7 +360,7 @@ function ThemeContextMenu({
               }}
             />
             <span style={{ flex: 1 }}>{t.label}</span>
-            {current === t.id && <Check className="w-3.5 h-3.5 opacity-100" />}
+            {currentTheme === t.id && <Check className="w-3.5 h-3.5 opacity-100" />}
           </button>
         ))}
       </motion.div>
@@ -348,9 +403,11 @@ export default function PreviewPanel({
   const device = useCanvasDeviceStore((s) => s.devices[deviceKey] ?? null);
   const renderMode = useCanvasDeviceStore((s) => s.renderMode);
   const modelTheme = useCanvasDeviceStore((s) => s.modelTheme);
+  const modelFinish = useCanvasDeviceStore((s) => s.modelFinish);
   const setDevice = useCanvasDeviceStore((s) => s.setDevice);
   const setRenderMode = useCanvasDeviceStore((s) => s.setRenderMode);
   const setModelTheme = useCanvasDeviceStore((s) => s.setModelTheme);
+  const setModelFinish = useCanvasDeviceStore((s) => s.setModelFinish);
 
   const [bgColor, setBgColor] = useState('#ffffff');
   // ★ 右键主题菜单状态 (仅 3D 模式)
@@ -507,7 +564,7 @@ export default function PreviewPanel({
         onContextMenu={handleContextMenu}
       >
         {hasDsl || (renderMode === '3D' && device) ? (
-          <CanvasStage dsl={dsl} device={device} canvasId={canvasId ?? undefined} bgColor={bgColor} theme={modelTheme} />
+          <CanvasStage dsl={dsl} device={device} canvasId={canvasId ?? undefined} bgColor={bgColor} theme={modelTheme} finish={modelFinish} />
         ) : (
           // 无 DSL 时的占位
           <div className="absolute inset-0 flex items-center justify-center">
@@ -533,13 +590,16 @@ export default function PreviewPanel({
           </div>
         )}
 
-        {/* 3D 模式右键主题菜单 */}
+        {/* 3D 模式右键主题菜单 (顶部材质切换 + 下方颜色列表) */}
         <AnimatePresence>
           {themeMenu && renderMode === '3D' && (
             <ThemeContextMenu
               themes={MODEL_THEMES}
-              current={modelTheme}
-              onSelect={setModelTheme}
+              currentTheme={modelTheme}
+              onSelectTheme={setModelTheme}
+              finishes={MATERIAL_FINISHES}
+              currentFinish={modelFinish}
+              onSelectFinish={setModelFinish}
               position={themeMenu}
               onClose={() => setThemeMenu(null)}
             />

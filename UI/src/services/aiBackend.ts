@@ -277,6 +277,7 @@ function buildJavaRequestBody(req: ChatRequest): any {
   return {
     message: buildPromptWithCanvasForce(req.prompt, req.canvasId),
     sessionId: req.chatId ?? null,
+    permissionMode: (req as any).mode || 'normal',
     provider: req.mainProvider
       ? {
           baseUrl: req.mainProvider.baseUrl,

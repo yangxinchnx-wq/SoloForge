@@ -139,3 +139,11 @@ if (typeof window !== 'undefined') {
     return useCanvasStore.getState().enableCanvas(chatId, hint);
   };
 }
+
+// ── HMR 边界:改 store 代码时热替换 store 实例,不触发 full page reload ──
+// React 组件树保持挂载,tabs/activeTabId 会重置为初始空值 (后端权威数据,重新 enableCanvas 即可恢复)。
+if (import.meta.hot) {
+  import.meta.hot.accept((m) => {
+    if (m) useCanvasStore.setState(m.useCanvasStore.getState(), true);
+  });
+}

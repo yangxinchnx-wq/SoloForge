@@ -15,8 +15,8 @@ import java.util.concurrent.Future;
  * <ul>
  *   <li>{@link #register} — called by {@code MultiWorkerExecutionService} right after
  *       submitting a worker task to the executor</li>
- *   <li>{@link #cancel} — called by {@code TcpMessageRouter.handleEvaluate} when
- *       RACER sends {@code action:"stop"}</li>
+ *   <li>{@link #cancel} — called when a stop/kill command is received
+ *       via HTTP endpoint</li>
  *   <li>{@link #cleanup} — called by {@code MultiWorkerExecutionService} after all
  *       workers complete (or the dispatch is torn down)</li>
  * </ul>

@@ -121,17 +121,20 @@ public class ToolCallingAdvisor implements CallAdvisor, Ordered {
 
     private boolean isToolAllowed(String toolName, ChatClientRequest request) {
         String permissionMode = request.context().getOrDefault("permissionMode", "normal").toString();
-        if ("ultimate".equals(permissionMode)) {
+        if ("ultimate".equals(permissionMode) || "expert".equals(permissionMode)) {
             return true;
         }
-        Set<String> blacklist = Set.of("execute_cmd", "write_file");
-        if (blacklist.contains(toolName)) {
+        // Canvas tool is only available in ultimate/expert mode
+        if ("canvas_push_ui".equals(toolName)) {
             return false;
         }
-        if ("normal".equals(permissionMode)) {
-            return Set.of("read_file", "list_files", "search_code").contains(toolName);
+        // normal / performance: allow all built-in tools
+        Set<String> builtInTools = Set.of("read_file", "write_file", "list_files", "search_code", "execute_cmd");
+        if (builtInTools.contains(toolName)) {
+            return true;
         }
-        return !blacklist.contains(toolName);
+        // Remote/MCP tools allowed in normal/performance
+        return "normal".equals(permissionMode) || "performance".equals(permissionMode);
     }
 
     private String executeBuiltInTool(String toolName, Map<String, Object> args) {

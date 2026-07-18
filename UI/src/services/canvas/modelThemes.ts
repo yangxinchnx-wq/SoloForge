@@ -1,22 +1,24 @@
 /**
  * modelThemes.ts — 3D 模型主题样式系统
  *
- * 为 3D 模型提供多套颜色主题 (银色/金色/蓝色/黑色/绿色钛金属等)。
+ * ★★★ 2026-07-19 重构: 颜色主题与材质工艺解耦
+ *
+ *   颜色主题 (ThemeId): 8 种颜色 — 原色钛/蓝色钛/黑色钛/白色钛/金色/暗夜绿/银色/深空灰
+ *   材质工艺 (MaterialFinish): 3 种材质 — 原色(磨砂)/玻璃/皮革
+ *
+ *   组合示例: 白色钛 + 玻璃 = 白色玻璃后盖, 白色钛 + 皮革 = 白色皮革后盖
+ *   切换材质时颜色不变, 切换颜色时材质不变
  *
  * 两种应用方式:
  *   1. iPhone 15 Pro Max (分部位 mesh):
- *      按主题调整 body/back/边框/Apple logo 等部位的颜色和金属度。
- *      程序化贴图保持不变 (磨砂/拉丝纹理), 只改 baseColor。
+ *      按主题调整 body/back/边框/Apple logo 等部位的颜色。
+ *      材质工艺只影响背板 (back mesh)。
  *
- *   2. iPhone 11 Pro Max (整体 mesh + 贴图):
- *      模型本身有 baseColorTexture (完整手机外观贴图),
- *      通过 color 属性叠加色调, 实现整体换色效果。
- *
- * 主题切换不重新加载 GLB, 只修改材质属性 (color/metalness/roughness),
- * 切换是即时的, 无闪烁。
+ *   2. iPhone 11 Pro Max (整体 mesh):
+ *      移除暗色贴图, 用纯主题色 + 材质工艺对应的程序化纹理。
  */
 
-// ───────────────────────────── 主题类型 ─────────────────────────────
+// ───────────────────────────── 颜色主题类型 ─────────────────────────────
 
 export type ThemeId =
   | 'natural-titanium'   // 原色钛金属 (银灰)
@@ -26,10 +28,7 @@ export type ThemeId =
   | 'gold'               // 金色
   | 'midnight-green'     // 暗夜绿
   | 'silver'             // 银色
-  | 'space-gray'         // 深空灰
-  | 'glass-clear'        // 玻璃后盖 (透明)
-  | 'leather-brown'      // 皮革棕
-  | 'leather-black';     // 皮革黑
+  | 'space-gray';        // 深空灰
 
 export interface ModelTheme {
   id: ThemeId;
@@ -38,7 +37,7 @@ export interface ModelTheme {
   swatch: string;
 }
 
-// ───────────────────────────── 主题预设列表 ─────────────────────────────
+// ───────────────────────────── 颜色主题预设列表 ─────────────────────────────
 
 export const MODEL_THEMES: ModelTheme[] = [
   { id: 'natural-titanium', label: '原色钛', swatch: '#E8E8E8' },
@@ -49,26 +48,80 @@ export const MODEL_THEMES: ModelTheme[] = [
   { id: 'midnight-green',   label: '暗夜绿', swatch: '#4E5A50' },
   { id: 'silver',           label: '银色',   swatch: '#C0C0C0' },
   { id: 'space-gray',       label: '深空灰', swatch: '#535150' },
-  { id: 'glass-clear',      label: '玻璃后盖', swatch: '#A8C8E0' },
-  { id: 'leather-brown',    label: '皮革棕', swatch: '#8B5A3C' },
-  { id: 'leather-black',    label: '皮革黑', swatch: '#2A2A2A' },
 ];
 
-// ───────────────────────────── 主题颜色配置 ─────────────────────────────
+// ───────────────────────────── 材质工艺类型 ─────────────────────────────
 
 /**
- * iPhone 15 Pro Max 分部位颜色配置
- *
- * 每个主题定义各部位的颜色 (hex number)。
- * applyThemeToMeshes 根据主题查表, 设置对应部位的 color。
- *
- * ★★★ 2026-07-18 新增 backFinish 字段: 背板材质工艺
- *   - 'matte':   磨砂钛金属 (程序化噪点贴图)
- *   - 'glass':   玻璃后盖 (高光低粗糙度, 无贴图)
- *   - 'leather': 皮革质感 (程序化皮革纹理贴图)
+ * 材质工艺 (与颜色主题独立组合)
+ *   - 'matte':   原色磨砂 (程序化噪点贴图, 钛金属质感)
+ *   - 'glass':   玻璃后盖 (高光低粗糙度, 无贴图, 半透明)
+ *   - 'leather': 皮革质感 (程序化皮革纹理贴图, 高粗糙度)
  */
-export type BackFinish = 'matte' | 'glass' | 'leather';
+export type MaterialFinish = 'matte' | 'glass' | 'leather';
 
+export interface MaterialFinishOption {
+  id: MaterialFinish;
+  label: string;
+}
+
+export const MATERIAL_FINISHES: MaterialFinishOption[] = [
+  { id: 'matte',   label: '原色' },
+  { id: 'glass',   label: '玻璃' },
+  { id: 'leather', label: '皮革' },
+];
+
+/**
+ * 材质工艺对应的渲染参数
+ *
+ * 颜色由 ThemeId 决定, 材质参数由 MaterialFinish 决定。
+ * 这样新增颜色主题时不需要重复定义 3 套材质参数。
+ */
+export interface FinishParams {
+  /** 金属度 (0~1) */
+  metalness: number;
+  /** 粗糙度 (0~1) */
+  roughness: number;
+  /** 环境反射强度 (0~2) */
+  envMapIntensity: number;
+  /** 是否半透明 */
+  transparent: boolean;
+  /** 不透明度 (0~1, transparent=true 时生效) */
+  opacity: number;
+}
+
+const FINISH_PARAMS: Record<MaterialFinish, FinishParams> = {
+  matte: {
+    metalness: 0.25, roughness: 0.55, envMapIntensity: 1.0,
+    transparent: false, opacity: 1.0,
+  },
+  glass: {
+    // ★★★ 不使用真正半透明 (transparent: true 会暴露 GLB 模型内部组件 → 杂乱白线)
+    //   GLB 模型不是为透明渲染设计的, 内部有电池/电路板/螺丝等结构
+    //   半透明后这些内部结构透过玻璃可见, 看起来就是杂乱的线条
+    //
+    //   改用不透明 + 高反射 + 低粗糙度模拟玻璃光泽感:
+    //   视觉上仍然是玻璃 (强反射环境、锐利高光), 但不暴露内部结构
+    metalness: 0.1, roughness: 0.08, envMapIntensity: 1.8,
+    transparent: false, opacity: 1.0,
+  },
+  leather: {
+    metalness: 0.0, roughness: 0.75, envMapIntensity: 0.8,
+    transparent: false, opacity: 1.0,
+  },
+};
+
+export function getFinishParams(finish: MaterialFinish): FinishParams {
+  return FINISH_PARAMS[finish] ?? FINISH_PARAMS.matte;
+}
+
+// ───────────────────────────── 颜色配置 ─────────────────────────────
+
+/**
+ * iPhone 15 Pro Max 分部位颜色配置 (纯颜色, 不含材质参数)
+ *
+ * 材质参数由 MaterialFinish 独立决定, 不再耦合在颜色主题中。
+ */
 export interface Iphone15ThemeColors {
   /** 背板颜色 */
   back: number;
@@ -80,131 +133,59 @@ export interface Iphone15ThemeColors {
   cameraRing: number;
   /** 闪光灯金属底座颜色 */
   flashMetal: number;
-  /** 背板材质工艺 */
-  backFinish: BackFinish;
 }
 
 const IPHONE15_THEME_COLORS: Record<ThemeId, Iphone15ThemeColors> = {
   'natural-titanium': {
     back: 0xE8E8E8, frame: 0xC8C8C8, logo: 0x606060, cameraRing: 0xC0C0C0, flashMetal: 0xE0E0E0,
-    backFinish: 'matte',
   },
   'blue-titanium': {
     back: 0x6B8AAB, frame: 0x5A7A9A, logo: 0x2A3A4A, cameraRing: 0xA0B8CC, flashMetal: 0xC0C8D0,
-    backFinish: 'matte',
   },
   'black-titanium': {
     back: 0x3A3A3C, frame: 0x2A2A2C, logo: 0x808080, cameraRing: 0x505052, flashMetal: 0x606062,
-    backFinish: 'matte',
   },
   'white-titanium': {
     back: 0xF2F2F2, frame: 0xE0E0E0, logo: 0x808080, cameraRing: 0xD0D0D0, flashMetal: 0xE8E8E8,
-    backFinish: 'matte',
   },
   'gold': {
     back: 0xD4AF6A, frame: 0xC9A55C, logo: 0x8A7440, cameraRing: 0xDCC080, flashMetal: 0xE0D0A0,
-    backFinish: 'matte',
   },
   'midnight-green': {
     back: 0x4E5A50, frame: 0x3E4A40, logo: 0x8A9A8A, cameraRing: 0x6A7A60, flashMetal: 0x7A8A70,
-    backFinish: 'matte',
   },
   'silver': {
     back: 0xE0E0E0, frame: 0xC8C8C8, logo: 0x606060, cameraRing: 0xC0C0C0, flashMetal: 0xE0E0E0,
-    backFinish: 'matte',
   },
   'space-gray': {
     back: 0x535150, frame: 0x434140, logo: 0x909088, cameraRing: 0x636260, flashMetal: 0x737270,
-    backFinish: 'matte',
-  },
-  'glass-clear': {
-    // 玻璃后盖: 透明青蓝色, 高透高光
-    back: 0xA8C8E0, frame: 0xC0C8D0, logo: 0x606060, cameraRing: 0xC0C0C0, flashMetal: 0xE0E0E0,
-    backFinish: 'glass',
-  },
-  'leather-brown': {
-    // 皮革棕: 背板皮革, 边框金色
-    back: 0x8B5A3C, frame: 0xC9A55C, logo: 0x8A7440, cameraRing: 0xDCC080, flashMetal: 0xE0D0A0,
-    backFinish: 'leather',
-  },
-  'leather-black': {
-    // 皮革黑: 背板皮革, 边框黑色钛
-    back: 0x2A2A2A, frame: 0x2A2A2C, logo: 0x808080, cameraRing: 0x505052, flashMetal: 0x606062,
-    backFinish: 'leather',
   },
 };
 
 /**
- * iPhone 11 Pro Max 主题颜色配置
+ * iPhone 11 Pro Max 主题颜色配置 (纯颜色)
  *
  * ★★★ 2026-07-18 重构: 从 RGB 乘数模式改为纯色替换模式
+ *   移除暗色贴图, 用 material.color 作为纯色 + 材质工艺对应的程序化纹理
+ *   最终颜色 = 纹理(浅灰噪点/皮革) × color(hex 主题色) = 干净的主题色
  *
- * 原方案 (RGB 乘数): material.color 作为贴图的 RGB multiplier
- *   最终颜色 = 贴图像素 × color
- *   问题: iPhone 11 GLB 的 baseColorTexture 本身是暗色贴图 (sRGB ~0.1 → linear ~0.01)
- *   color ≤ 1.0 只能让贴图更暗, 无法提亮 → 手机永远看起来是黑的
- *   color > 1.0 在 sRGB 空间被截断 → 也无法提亮
- *
- * 新方案 (纯色替换): 完全移除暗色贴图, 用 material.color 作为纯色 + 程序化磨砂纹理
- *   最终颜色 = 程序化磨砂纹理(浅灰噪点) × color(hex 主题色)
- *   和 iPhone 15 背板处理方式一致, 颜色干净、主题切换效果明显
+ * ★★★ 2026-07-19 重构: 材质参数(metalness/roughness/envMapIntensity) 移到 FinishParams
+ *   这里只保留颜色, 材质参数由 MaterialFinish 决定
  */
 export interface Iphone11ThemeTint {
   /** 主题颜色 (hex number, 替换原始暗色贴图) */
   color: number;
-  /** 金属度 (0~1) */
-  metalness: number;
-  /** 粗糙度 (0~1) */
-  roughness: number;
-  /** 环境反射强度 (0~2) */
-  envMapIntensity: number;
 }
 
 const IPHONE11_THEME_TINT: Record<ThemeId, Iphone11ThemeTint> = {
-  'natural-titanium': {
-    // 原色钛: 银灰 (与 iPhone 15 背板色一致)
-    color: 0xE8E8E8, metalness: 0.25, roughness: 0.55, envMapIntensity: 1.2,
-  },
-  'blue-titanium': {
-    // 蓝色钛: 冷蓝
-    color: 0x6B8AAB, metalness: 0.3, roughness: 0.55, envMapIntensity: 1.2,
-  },
-  'black-titanium': {
-    // 黑色钛: 深灰
-    color: 0x3A3A3C, metalness: 0.35, roughness: 0.5, envMapIntensity: 1.0,
-  },
-  'white-titanium': {
-    // 白色钛: 纯白
-    color: 0xF2F2F2, metalness: 0.2, roughness: 0.6, envMapIntensity: 1.4,
-  },
-  'gold': {
-    // 金色: 暖金
-    color: 0xD4AF6A, metalness: 0.35, roughness: 0.55, envMapIntensity: 1.3,
-  },
-  'midnight-green': {
-    // 暗夜绿
-    color: 0x4E5A50, metalness: 0.3, roughness: 0.55, envMapIntensity: 1.2,
-  },
-  'silver': {
-    // 银色: 纯银白
-    color: 0xE0E0E0, metalness: 0.2, roughness: 0.45, envMapIntensity: 1.4,
-  },
-  'space-gray': {
-    // 深空灰
-    color: 0x535150, metalness: 0.3, roughness: 0.55, envMapIntensity: 1.1,
-  },
-  'glass-clear': {
-    // 玻璃后盖: iPhone 11 用浅蓝灰模拟玻璃质感
-    color: 0xA8C8E0, metalness: 0.1, roughness: 0.15, envMapIntensity: 1.5,
-  },
-  'leather-brown': {
-    // 皮革棕
-    color: 0x8B5A3C, metalness: 0.1, roughness: 0.7, envMapIntensity: 1.0,
-  },
-  'leather-black': {
-    // 皮革黑
-    color: 0x2A2A2A, metalness: 0.1, roughness: 0.7, envMapIntensity: 1.0,
-  },
+  'natural-titanium': { color: 0xE8E8E8 },
+  'blue-titanium':    { color: 0x6B8AAB },
+  'black-titanium':   { color: 0x3A3A3C },
+  'white-titanium':   { color: 0xF2F2F2 },
+  'gold':             { color: 0xD4AF6A },
+  'midnight-green':   { color: 0x4E5A50 },
+  'silver':           { color: 0xE0E0E0 },
+  'space-gray':       { color: 0x535150 },
 };
 
 // ───────────────────────────── 查询函数 ─────────────────────────────
@@ -219,4 +200,8 @@ export function getIphone11ThemeTint(theme: ThemeId): Iphone11ThemeTint {
 
 export function getDefaultTheme(): ThemeId {
   return 'natural-titanium';
+}
+
+export function getDefaultFinish(): MaterialFinish {
+  return 'matte';
 }

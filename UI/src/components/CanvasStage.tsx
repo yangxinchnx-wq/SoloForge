@@ -26,7 +26,7 @@ import type { UniversalNode } from '../services/canvas/UniversalAST';
 import { useCanvasDeviceStore, type CanvasDeviceInfo } from '../state/canvasDeviceStore';
 import { play2DLayoutTransition } from '../services/canvas/canvasAnimations';
 import { animate } from 'animejs';
-import { getDefaultTheme, type ThemeId } from '../services/canvas/modelThemes';
+import { getDefaultTheme, getDefaultFinish, type ThemeId, type MaterialFinish } from '../services/canvas/modelThemes';
 import WebAstPreview from './WebAstPreview';
 
 // 3D 模式按需加载（bundle 拆分，避免首屏加载 three.js）
@@ -188,9 +188,10 @@ interface Stage3DProps {
   device: CanvasDeviceInfo;
   bgColor: string;
   theme: ThemeId;
+  finish: MaterialFinish;
 }
 
-function Stage3D({ dsl, device, bgColor, theme }: Stage3DProps) {
+function Stage3D({ dsl, device, bgColor, theme, finish }: Stage3DProps) {
   const modelUrl = useMemo(() => {
     if (device.glbFile) return `/canvas/models/3d/${device.glbFile}`;
     return null;
@@ -221,7 +222,7 @@ function Stage3D({ dsl, device, bgColor, theme }: Stage3DProps) {
           </div>
         }
       >
-        <CanvasStage3D modelUrl={modelUrl} dsl={dsl} bgColor={bgColor} theme={theme} />
+        <CanvasStage3D modelUrl={modelUrl} dsl={dsl} bgColor={bgColor} theme={theme} finish={finish} />
       </React.Suspense>
     </div>
   );
@@ -238,11 +239,13 @@ export interface CanvasStageProps {
   canvasId?: string;
   /** 背景色 (默认白色) */
   bgColor?: string;
-  /** 3D 模型主题 (仅 3D 模式生效) */
+  /** 3D 模型颜色主题 (仅 3D 模式生效) */
   theme?: ThemeId;
+  /** 3D 模型材质工艺 (仅 3D 模式生效) */
+  finish?: MaterialFinish;
 }
 
-export default function CanvasStage({ dsl, device, canvasId, bgColor = '#ffffff', theme }: CanvasStageProps) {
+export default function CanvasStage({ dsl, device, canvasId, bgColor = '#ffffff', theme, finish }: CanvasStageProps) {
   const renderMode = useCanvasDeviceStore((s) => s.renderMode);
 
   // ★ anime.js: 模式切换过渡
@@ -272,7 +275,7 @@ export default function CanvasStage({ dsl, device, canvasId, bgColor = '#ffffff'
   return (
     <div ref={stageRef} style={{ position: 'absolute', inset: 0 }}>
       {is3D ? (
-        <Stage3D dsl={dsl} device={device} bgColor={bgColor} theme={theme ?? getDefaultTheme()} />
+        <Stage3D dsl={dsl} device={device} bgColor={bgColor} theme={theme ?? getDefaultTheme()} finish={finish ?? getDefaultFinish()} />
       ) : (
         <Stage2D dsl={dsl} device={device} bgColor={bgColor} canvasId={canvasId} />
       )}
