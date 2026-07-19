@@ -18,10 +18,9 @@ import {
   AlertCircle,
   Info
 } from '../utils/icons';
+import { useAppStore } from '../state/appStore';
 
 interface SourceCodeEditorProps {
-  selectedFile: string;
-  editorContent: string;
   setEditorContent: (content: string) => void;
   isPopoutView?: boolean;
 }
@@ -126,11 +125,12 @@ const formatCode = (content: string, ext: string): string => {
 };
 
 export default function SourceCodeEditor({
-  selectedFile,
-  editorContent,
   setEditorContent,
   isPopoutView = false,
 }: SourceCodeEditorProps) {
+  // ★ 从 appStore 直接订阅, 切断 App→MainLayout props 透传链, 避免打字/切文件全局刷新
+  const selectedFile = useAppStore(s => s.selectedFile);
+  const editorContent = useAppStore(s => s.editorContent);
   const [copied, setCopied] = useState(false);
   const getFileExtension = () => {
     return selectedFile.split('.').pop() || '';

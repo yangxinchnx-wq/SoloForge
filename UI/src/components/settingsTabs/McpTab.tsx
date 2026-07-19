@@ -20,10 +20,6 @@ export default function McpTab() {
 
   return (
     <div className="space-y-6 animate-fadeIn">
-      <div className="border-b border-[var(--color-outline)]/20 pb-3 mb-2">
-        <h3 className="text-base font-bold text-[var(--color-on-surface)]">MCP 工具注册</h3>
-        <p className="text-xs text-on-surface/50 mt-1">注册并管辖 Model Context Protocol 扩展，协助模型操作外部工具</p>
-      </div>
 
       {/* Listing of MCP tools */}
       <div className="space-y-2">

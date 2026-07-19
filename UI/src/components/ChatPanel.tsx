@@ -1,5 +1,5 @@
-import React, { useRef, useEffect, useMemo, useState } from 'react';
-import { Send, ChevronDown, ChevronUp, FileCode, X, SlidersHorizontal, Check, ShieldAlert, ThumbsUp, ThumbsDown, Copy, Loader2, Pause, Play, RefreshCw } from '../utils/icons';
+import React, { useRef, useEffect, useMemo, useState, useCallback } from 'react';
+import { Send, ChevronDown, ChevronUp, FileCode, X, SlidersHorizontal, Check, ShieldAlert, ThumbsUp, ThumbsDown, Copy, Loader2, Pause, Play, RefreshCw, Lock, Unlock } from '../utils/icons';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MountTransition } from './MountTransition';
 import TerminalPanelWithWorkdir from './terminal/TerminalPanelWithWorkdir';
@@ -13,6 +13,8 @@ import { ToolCallCard } from './ToolCallCard';
 import StreamPanel from './StreamPanel';
 // ★ 2026-07-13: 多轮对话独立气泡 — 每轮 assistant 消息渲染自己的过程 parts
 import { UIMessagePartsRenderer } from './UIMessagePartsRenderer';
+// ★ 2026-07-19: assistant 消息气泡可拖拽调整高度
+import { ResizableBubble } from './ResizableBubble';
 import { useUIMessages } from '../services/uiMessageStore';
 import type { ChatPanelProps, ChatSettingsItem } from '../types/chat';
 import { getSettingsSummary } from '../types/chat';
@@ -25,7 +27,6 @@ import { SuggestEnableView } from './streamViews';
 // 2026-07-03 阶段3.1.E: 12 个 state + 9 个 handler 收敛到 useChatStore
 import { useChatStore, fallbackActiveSettings } from '../state/useChatStore';
 import { useAppStore } from '../state/appStore';
-import { NormalIcon, PerformanceIcon, ExpertIcon, UltimateIcon } from './permissionModeIcons';
 
 // 4 个权限模式图标 (NormalIcon/PerformanceIcon/ExpertIcon/UltimateIcon) 已外移到
 // permissionModeIcons.tsx (2026-07-03 阶段3.1.B)
@@ -108,18 +109,19 @@ const modeButtonVariants = {
 //   - props 依赖通过 syncRuntimeOptions 同步到 store.options,action 内部 get().options 读取
 
 export default function ChatPanel({
-  permissionMode = 'normal',
-  setPermissionMode,
-  // 2026-07-03 阶段3.1.D: primaryColorTargets 已不再使用
-  //   (原仅用于 skill-bar inline --color-primary, 已迁到 ResourceManagerBar 走 data-theme-region="skill-bar")
-  selectedChatId = '1',
-  mainModel = '',
-  secModels = [],
-  mixedTasks = false,
-  selectedFile = '',
-  editorContent = '',
   modelProviderMap = {}
 }: ChatPanelProps) {
+  // ★ 从 appStore 直接订阅, 切断 App→MainLayout props 透传链, 避免打字/切文件/切对话全局刷新
+  //   原 props (permissionMode/selectedChatId/mainModel/secModels/mixedTasks/selectedFile/editorContent)
+  //   全部改由 store 细粒度订阅, MainLayout 不再传这些 prop
+  const permissionMode = useAppStore(s => s.currentPermissionMode);
+  const setPermissionMode = useAppStore(s => s.setCurrentPermissionMode);
+  const selectedChatId = useAppStore(s => s.selectedChatId);
+  const mainModel = useAppStore(s => s.mainModel);
+  const secModels = useAppStore(s => s.secModels);
+  const mixedTasks = useAppStore(s => s.mixedTasks);
+  const selectedFile = useAppStore(s => s.selectedFile);
+  const editorContent = useAppStore(s => s.editorContent);
   // ==========================================
   // 【后端对接提示 - 获取特定会话下的历史消息记录】
   // 原先直接通过 localStorage 读取了所有对话列表记录。接入后端数据库后：
@@ -386,6 +388,16 @@ export default function ChatPanel({
     }
   }, [activeMessages, isScrollLocked]);
 
+  // ★ 流送区滚动位置检测: 用户向上滚离底部时自动锁定 (暂停自动滚动),
+  //   滚回底部附近 (80px 内) 时自动解锁 (恢复自动滚动)。
+  //   与锁按钮手动切换协同: 按钮解锁时会立即滚动到底部, 避免 onScroll 重新锁定。
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setIsScrollLocked(distanceFromBottom >= 80);
+  }, []);
+
   // 2026-07-03 阶段3.1.E: 发送时把 inputRef 传给 store action, 让 store 也能 focus 输入框
   const handleSend = () => handleSendFromStore(inputRef);
 
@@ -573,6 +585,7 @@ export default function ChatPanel({
       {/* Scrollable Conversation Stream */}
       <div
         ref={scrollRef}
+        onScroll={handleScroll}
         className="flex-1 overflow-y-auto p-4 select-text scrollbar-thin scrollbar-thumb-outline/50"
       >
         <div className="max-w-5xl lg:max-w-[94%] xl:max-w-[90%] mx-auto w-full flex flex-col space-y-5 py-2 px-4 md:px-6">
@@ -695,9 +708,10 @@ export default function ChatPanel({
                     ★ FIX 2026-07-14: 有流送数据时也显示内容块 (工具调用等), 即使文本为空 */}
                 {(!isEmptyGenerating || hasStreamData) && (
                 <div className={`flex flex-col gap-1 font-sans text-left ${isUser ? 'pr-3 pl-[58px] items-end max-w-[88%]' : 'pl-[58px] pr-3 items-start w-full'}`}>
+                  {isUser ? (
                   <div
-                    onContextMenu={isUser ? (e) => handleUserContextMenu(e, index) : undefined}
-                    className={`relative px-3.5 py-2.5 rounded-xl text-[12px] leading-relaxed select-text space-y-1.5 overflow-hidden border ${isUser ? 'w-fit max-w-full bg-transparent border-primary/30 text-on-surface' : 'w-full bg-surface/50 border-primary/40 text-on-surface'}`}
+                    onContextMenu={(e) => handleUserContextMenu(e, index)}
+                    className="relative px-3.5 py-2.5 rounded-xl text-[12px] leading-relaxed select-text space-y-1.5 overflow-hidden border w-fit max-w-full bg-transparent border-primary/30 text-on-surface"
                   >
                     <FormatChatMessage content={msg.content} />
                     {msg.attachment && (
@@ -717,6 +731,29 @@ export default function ChatPanel({
                       </div>
                     )}
                   </div>
+                  ) : (
+                  <ResizableBubble
+                    className="relative px-3.5 py-2.5 rounded-xl text-[12px] leading-relaxed select-text space-y-1.5 overflow-hidden border w-full bg-surface/50 border-primary/40 text-on-surface"
+                  >
+                    <FormatChatMessage content={msg.content} />
+                    {msg.attachment && (
+                      <CollapsibleCodeBlock
+                        fileName={msg.attachment.fileName}
+                        text={msg.attachment.text}
+                      />
+                    )}
+                    {msg.toolCalls && msg.toolCalls.length > 0 && (
+                      <div className="flex flex-col gap-1.5 pt-1 border-t border-outline/20 mt-1">
+                        <div className="text-[9px] uppercase tracking-wider text-on-surface/40 font-semibold">
+                          工具调用 · {msg.toolCalls.length}
+                        </div>
+                        {msg.toolCalls.map((tc) => (
+                          <ToolCallCard key={tc.id} call={tc} />
+                        ))}
+                      </div>
+                    )}
+                  </ResizableBubble>
+                  )}
 
                   {/* 用户消息: 复制 + 重新生成按钮 + 时间 */}
                   {isUser && (
@@ -921,10 +958,6 @@ export default function ChatPanel({
                 className="flex items-center gap-1.5 text-[10px] text-on-surface/85 bg-surface-bright hover:bg-bg border border-outline px-2.5 py-1 rounded cursor-pointer hover:text-on-surface transition-all font-sans font-bold shadow select-none"
                 style={{ backfaceVisibility: "hidden", WebkitFontSmoothing: "subpixel-antialiased" }}
               >
-                {permissionMode === 'normal' && <NormalIcon className="w-3.5 h-3.5" />}
-                {permissionMode === 'performance' && <PerformanceIcon className="w-3.5 h-3.5" />}
-                {permissionMode === 'expert' && <ExpertIcon className="w-3.5 h-3.5" />}
-                {permissionMode === 'ultimate' && <UltimateIcon className="w-3.5 h-3.5" />}
                 <span>
                   {permissionMode === 'normal' ? '普通模式 (安全)' :
                    permissionMode === 'performance' ? '性能模式 (半自动)' :
@@ -979,16 +1012,15 @@ export default function ChatPanel({
                           setShowModeDropdown(false);
                         }}
                         className={`flex flex-col gap-0.5 p-2 rounded text-left transition-colors cursor-pointer select-none group sf-lift ${
-                          permissionMode === 'normal' ? 'bg-emerald-500/10 border border-emerald-500/25 text-on-surface' : 'hover:bg-surface-bright text-on-surface/80 hover:text-on-surface'
+                          permissionMode === 'normal' ? 'bg-primary/10 border border-primary/25 text-on-surface' : 'hover:bg-surface-bright text-on-surface/80 hover:text-on-surface'
                         }`}
                         style={{ backfaceVisibility: "hidden", WebkitFontSmoothing: "subpixel-antialiased" }}
                       >
                         <div className="flex items-center justify-between text-[10.5px] font-bold">
-                          <div className="flex items-center gap-1.5 text-emerald-400 font-sans group-hover:text-emerald-300 transition-colors">
-                            <NormalIcon className="w-4 h-4" />
+                          <div className="flex items-center gap-1.5 font-sans">
                             <span>普通模式 (安全)</span>
                           </div>
-                          {permissionMode === 'normal' && <Check className="w-3 h-3 text-emerald-400" />}
+                          {permissionMode === 'normal' && <Check className="w-3 h-3 text-primary" />}
                         </div>
                         <p className="text-[9px] leading-relaxed text-on-surface/50 font-medium whitespace-normal font-sans group-hover:text-on-surface/70 transition-colors">
                           自动识别并绕过风险命令，守护代码与环境安全。
@@ -1003,43 +1035,18 @@ export default function ChatPanel({
                           setShowModeDropdown(false);
                         }}
                         className={`flex flex-col gap-0.5 p-2 rounded text-left transition-colors cursor-pointer select-none group sf-lift ${
-                          permissionMode === 'performance' ? 'bg-purple-500/10 border border-purple-500/25 text-on-surface' : 'hover:bg-surface-bright text-on-surface/80 hover:text-on-surface'
+                          permissionMode === 'performance' ? 'bg-primary/10 border border-primary/25 text-on-surface' : 'hover:bg-surface-bright text-on-surface/80 hover:text-on-surface'
                         }`}
                         style={{ backfaceVisibility: "hidden", WebkitFontSmoothing: "subpixel-antialiased" }}
                       >
                         <div className="flex items-center justify-between text-[10.5px] font-bold">
-                          <div className="flex items-center gap-1.5 text-purple-400 font-sans group-hover:text-purple-300 transition-colors">
-                            <PerformanceIcon className="w-4 h-4" />
+                          <div className="flex items-center gap-1.5 font-sans">
                             <span>性能模式 (半自动)</span>
                           </div>
-                          {permissionMode === 'performance' && <Check className="w-3 h-3 text-purple-400" />}
+                          {permissionMode === 'performance' && <Check className="w-3 h-3 text-primary" />}
                         </div>
                         <p className="text-[9px] leading-relaxed text-on-surface/50 font-medium whitespace-normal font-sans group-hover:text-on-surface/70 transition-colors">
                           自主加载各项基础工具逻辑，支持多模型智能混合。
-                        </p>
-                      </motion.button>
-
-                      {/* Expert Mode Option */}
-                      <motion.button
-                        variants={modeContentVariants}
-                        onClick={() => {
-                          setPermissionMode?.('expert');
-                          setShowModeDropdown(false);
-                        }}
-                        className={`flex flex-col gap-0.5 p-2 rounded text-left transition-colors cursor-pointer select-none group sf-lift ${
-                          permissionMode === 'expert' ? 'bg-amber-500/10 border border-amber-500/25 text-on-surface' : 'hover:bg-surface-bright text-on-surface/80 hover:text-on-surface'
-                        }`}
-                        style={{ backfaceVisibility: "hidden", WebkitFontSmoothing: "subpixel-antialiased" }}
-                      >
-                        <div className="flex items-center justify-between text-[10.5px] font-bold">
-                          <div className="flex items-center gap-1.5 text-amber-500 font-sans group-hover:text-amber-400 transition-colors">
-                            <ExpertIcon className="w-4 h-4" />
-                            <span>专家模式 (全自动)</span>
-                          </div>
-                          {permissionMode === 'expert' && <Check className="w-3 h-3 text-amber-500" />}
-                        </div>
-                        <p className="text-[9px] leading-relaxed text-on-surface/50 font-medium whitespace-normal font-sans group-hover:text-on-surface/70 transition-colors">
-                          深度专家级 resource 调度，多模型高频协同攻坚复杂任务。
                         </p>
                       </motion.button>
 
@@ -1051,16 +1058,15 @@ export default function ChatPanel({
                           setShowModeDropdown(false);
                         }}
                         className={`flex flex-col gap-0.5 p-2 rounded text-left transition-colors cursor-pointer select-none group sf-lift ${
-                          permissionMode === 'ultimate' ? 'bg-red-500/10 border border-red-500/25 text-on-surface' : 'hover:bg-surface-bright text-on-surface/80 hover:text-on-surface'
+                          permissionMode === 'ultimate' ? 'bg-primary/10 border border-primary/25 text-on-surface' : 'hover:bg-surface-bright text-on-surface/80 hover:text-on-surface'
                         }`}
                         style={{ backfaceVisibility: "hidden", WebkitFontSmoothing: "subpixel-antialiased" }}
                       >
                         <div className="flex items-center justify-between text-[10.5px] font-bold">
-                          <div className="flex items-center gap-1.5 text-red-500 font-sans group-hover:text-red-400 transition-colors">
-                            <UltimateIcon className="w-4 h-4" />
+                          <div className="flex items-center gap-1.5 font-sans">
                             <span>极致模式 (全自动)</span>
                           </div>
-                          {permissionMode === 'ultimate' && <Check className="w-3 h-3 text-red-500" />}
+                          {permissionMode === 'ultimate' && <Check className="w-3 h-3 text-primary" />}
                         </div>
                         <p className="text-[9px] leading-relaxed text-on-surface/50 font-medium whitespace-normal font-sans group-hover:text-on-surface/70 transition-colors">
                           最大化释放算力，无中断调度全部工具加速实现诉求。
@@ -1121,21 +1127,24 @@ export default function ChatPanel({
           {/* Lock Button — 流送区滚动锁定, 点击切换锁住/锁打开 */}
           <button
             type="button"
-            onClick={() => setIsScrollLocked(prev => !prev)}
+            onClick={() => {
+              const newLocked = !isScrollLocked;
+              setIsScrollLocked(newLocked);
+              // 解锁时立即滚动到底部, 避免 onScroll handler 检测到不在底部而重新锁定
+              if (!newLocked && scrollRef.current) {
+                scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+              }
+            }}
             aria-label={isScrollLocked ? '解锁滚动' : '锁定滚动'}
-            title={isScrollLocked ? '已锁定滚动 (点击解锁)' : '自动滚动中 (点击锁定)'}
+            title={isScrollLocked ? '已锁定 — 自动滚动暂停, 使用鼠标滚轮浏览 (点击解锁)' : '自动滚动中 — 新消息自动滚到底部 (点击锁定)'}
             className="flex items-center justify-center p-1.5 active:scale-95 transition-transform cursor-pointer shrink-0 mb-[10px] text-primary hover:opacity-70"
           >
             {isScrollLocked ? (
-              // 锁住 (滚动已暂停)
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-3.5 h-3.5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
-              </svg>
+              // 锁住 (滚动已暂停) — 关闭的锁
+              <Lock className="w-3.5 h-3.5" />
             ) : (
-              // 锁打开 (自动滚动中)
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-3.5 h-3.5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 0 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z" />
-              </svg>
+              // 锁打开 (自动滚动中) — 打开的锁
+              <Unlock className="w-3.5 h-3.5" />
             )}
           </button>
         </div>

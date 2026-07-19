@@ -34,7 +34,8 @@ import { usePreviewStreamStore } from './previewStreamStore';
 // P2-7: handleSend 拆分出的纯逻辑 (错误分类 / 越界检测 / 预览触发判定)
 import { classifyStreamError, mentionsOutsideWorkspace, detectPreviewTrigger } from './useChatStore.helpers';
 // 2026-07-11: 实时增量代码翻译 — LLM 每输出一行代码, 立即翻译推送到画布
-import { IncrementalCanvasPusher, getCanvasSessionId, ensureCanvasAndPush, ensureCanvasForChat, universalNodeToFlutterDSL, normalizeDsl } from '../services/incrementalCanvasPusher';
+import { IncrementalCanvasPusher, getCanvasSessionId, ensureCanvasForChat, universalNodeToFlutterDSL, normalizeDsl } from '../services/incrementalCanvasPusher';
+import { BUILTIN_TOOL_IDS, extractToolSchemas } from '../data/toolsManifest';
 
 // ★ 2026-07-14: 深度搜索 JSON 中的 DSL 节点 (与 incrementalCanvasPusher 中的一致)
 function deepFindDslInJson(obj: any, depth: number = 0): any | null {
@@ -125,39 +126,6 @@ async function runCanvasProbe(chatSessionId: string): Promise<void> {
   }
   console.log(`${tag} ✅ Stage 3 PASS: previewStreamStore payload confirmed, ast.type=${(entry.payload.preview?.root as any)?.type}`);
 
-  // ── Stage 4: Electron IPC / fetch relay ──
-  const dsl = { ...ast, platform: 'material' };
-  if (typeof window !== 'undefined' && (window as any).soloforge?.canvas) {
-    try {
-      const result = await ensureCanvasAndPush(canvasSessionId, dsl, chatSessionId);
-      if (result.ok) {
-        console.log(`${tag} ✅ Stage 4 PASS: ensureCanvasAndPush ok, sessionId=${canvasSessionId}`);
-      } else {
-        console.warn(`${tag} ⚠️ Stage 4 WARN: ensureCanvasAndPush failed:`, result.error, 'sessionId:', canvasSessionId);
-      }
-    } catch (err) {
-      console.warn(`${tag} ⚠️ Stage 4 WARN: ensureCanvasAndPush exception:`, err);
-    }
-  } else {
-    console.log(`${tag} ℹ️ Stage 4 SKIP: 非 Electron 环境, 跳过 IPC (WebAstPreview 降级渲染)`);
-    // 尝试 fetch relay
-    try {
-      const resp = await fetch('/api/canvas/relay/push-ui', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: chatSessionId, dsl: ast, language: 'html' }),
-      });
-      if (resp.ok) {
-        const data = await resp.json();
-        console.log(`${tag} ✅ Stage 4 PASS: fetch relay push-ui ok, success=${data.success}`);
-      } else {
-        console.warn(`${tag} ⚠️ Stage 4 WARN: fetch relay push-ui HTTP ${resp.status}`);
-      }
-    } catch (err) {
-      console.warn(`${tag} ⚠️ Stage 4 WARN: fetch relay push-ui 异常:`, err);
-    }
-  }
-
   // ── Stage 5: 验证 PreviewPanel 能读到数据 ──
   const finalEntry = usePreviewStreamStore.getState().getEntry(chatSessionId);
   const finalAst = finalEntry?.payload?.preview?.root || finalEntry?.ast;
@@ -238,7 +206,15 @@ function createStreamBridge(chatId: string, mainModel: string, userInput: string
         });
         ctx.pushStreamEvent('subtask_step', { subTaskId: singleModelSubId, content: 'EXECUTE', status: 'running' });
       }
-      if (!hasPhaseEvents && singleModelSubId) {
+      // ★ 2026-07-19: hasPhaseEvents=true 时也推送 text_chunk
+      //   之前只有 !hasPhaseEvents 才推, 导致 Java Agent 模式下过程区看不到 LLM 生成内容
+      //   现在: 如果有 phase events, 用 workerIdx=0 的 subTaskId (phase0_skip 创建的)
+      if (isFirstText && hasPhaseEvents) {
+        isFirstText = false;
+        // phase0_skip 已创建 subtask 并绑定 workerIdx=0, 取它的 subTaskId
+        singleModelSubId = ctx.getSubTaskId(chatId, 0);
+      }
+      if (singleModelSubId) {
         ctx.pushStreamEvent('text_chunk', { subTaskId: singleModelSubId, content: text, status: 'running' });
       }
     },
@@ -249,7 +225,9 @@ function createStreamBridge(chatId: string, mainModel: string, userInput: string
     onDone(_agentId?: string) {
       // ★ FIX: 如果已经发生了 error, 不要用 DONE 覆盖 ERROR 相位
       if (hasError) return;
-      if (!hasPhaseEvents && !isFirstText && singleModelSubId) {
+      // ★ 2026-07-19: hasPhaseEvents=true 时也推送 subtask_done
+      //   之前只有 !hasPhaseEvents 才推, 导致 Java Agent 模式下过程区不显示子任务完成
+      if (!isFirstText && singleModelSubId) {
         ctx.pushStreamEvent('subtask_done', { subTaskId: singleModelSubId, content: textAccumulated, progress: 100, status: 'success' });
       }
       if (textAccumulated) ctx.pushStreamEvent('delivery', { content: textAccumulated });
@@ -258,7 +236,8 @@ function createStreamBridge(chatId: string, mainModel: string, userInput: string
     onPause() {
       // ★ 暂停时推送 PAUSED 相位, 区别于 DONE (生成完成)
       if (hasError) return;
-      if (!hasPhaseEvents && !isFirstText && singleModelSubId) {
+      // ★ 2026-07-19: 同步 onDone 修复 — 移除 !hasPhaseEvents 条件
+      if (!isFirstText && singleModelSubId) {
         ctx.pushStreamEvent('subtask_done', { subTaskId: singleModelSubId, content: textAccumulated, progress: 100, status: 'success' });
       }
       if (textAccumulated) ctx.pushStreamEvent('delivery', { content: textAccumulated });
@@ -563,7 +542,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     // ★ 2026-07-14: 懒创建画布 — 恢复时也确保画布存在
     await ensureCanvasForChat(ctx.activeChatId);
 
-    const chatHandle = await startChat({ chatId: ctx.activeChatId, prompt: continuePrompt, mode: ctx.permissionMode, history: resumeHistory.map(m => ({ sender: m.sender, content: m.rawContent || m.content })), fileContext: ctx.selectedFile ? { name: ctx.selectedFile, content: ctx.editorContent } : undefined, mainProvider: { baseUrl: ctx.mainEntry.baseUrl, apiKey: ctx.mainEntry.apiKey, model: ctx.mainEntry.model, rateLimitProfile: (ctx.mainEntry as any).rateLimitProfile || null }, subProviders: ctx.reqBody.subProviders, candidateProviders: ctx.reqBody.candidateProviders, ...(ctx.hashlineAgentEnabled ? { toolCallMode: 'hashline' } : {}), workspaceFolder: useChatsStore.getState().getChat(ctx.activeChatId)?.workspaceFolder, activeTools: ctx.activeTools, activeSkills: ctx.activeSkills, activeKnowledge: ctx.activeKnowledge, activeSettings: ctx.activeSettings, canvasId: getCanvasSessionId(ctx.activeChatId) } as any, async (evt: ChatStreamEvent) => {
+    const chatHandle = await startChat({ chatId: ctx.activeChatId, prompt: continuePrompt, mode: ctx.permissionMode, history: resumeHistory.map(m => ({ sender: m.sender, content: m.rawContent || m.content })), fileContext: ctx.selectedFile ? { name: ctx.selectedFile, content: ctx.editorContent } : undefined, mainProvider: { baseUrl: ctx.mainEntry.baseUrl, apiKey: ctx.mainEntry.apiKey, model: ctx.mainEntry.model, rateLimitProfile: (ctx.mainEntry as any).rateLimitProfile || null }, subProviders: ctx.reqBody.subProviders, candidateProviders: ctx.reqBody.candidateProviders, ...(ctx.hashlineAgentEnabled ? { toolCallMode: 'hashline' } : {}), workspaceFolder: useChatsStore.getState().getChat(ctx.activeChatId)?.workspaceFolder, activeTools: ctx.activeTools, activeSkills: ctx.activeSkills, activeKnowledge: ctx.activeKnowledge, activeSettings: ctx.activeSettings, toolSchemas: ctx.toolSchemas, canvasId: getCanvasSessionId(ctx.activeChatId) } as any, async (evt: ChatStreamEvent) => {
       switch (evt.kind) {
         case 'text': {
           resumeAccumulated += evt.text;
@@ -736,9 +715,16 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     const subEntries = subModelIds.map((name: string) => modelProviderMap[name]).filter((e: any): e is NonNullable<typeof e> => !!e && e.enabledInSettings && (e.apiKey === 'local' || !!e.apiKey));
     const candidateEntries = Object.values(modelProviderMap).filter((e: any) => e.enabledInSettings && (e.apiKey === 'local' || !!e.apiKey) && !subModelIds.includes(e.model));
     const rmState = useResourceManagerStore.getState();
-    const activeTools = Array.from(rmState.activeTools); const activeSkills = Array.from(rmState.activeSkills); const activeKnowledge = Array.from(rmState.activeKnowledge);
+    // ★ 确保内置工具始终可用 (agent 基本能力: 文件读写/搜索/命令执行)
+    //   即使用户未在资源管理器中勾选任何工具, agent 也必须能调用 read_file/write_file 等
+    //   否则 Java 端 buildOpenAiToolSchemas 收到空列表, LLM 请求不带 tools, 无法调用任何工具
+    const activeTools = Array.from(new Set([...Array.from(rmState.activeTools), ...BUILTIN_TOOL_IDS])); const activeSkills = Array.from(rmState.activeSkills); const activeKnowledge = Array.from(rmState.activeKnowledge);
+    // ★ 从 toolsManifest 提取 MCP/远程工具的完整 schema (OpenAI Function Calling 格式)
+    //   传给 Java Agent, 让 LLM 看到远程工具的正确参数定义 (browser_devtools 的 url 等)
+    //   内置工具的 schema 由 Java 端 buildSingleToolSchema 构建, 优先级高于前端
+    const toolSchemas = extractToolSchemas(rmState.toolsManifest, activeTools);
 
-    const reqBody = { mode: permissionMode, query: finalContent, history: activeMessages.map(m => ({ sender: m.sender, content: m.rawContent || m.content })), fileContext: selectedFile ? { name: selectedFile, content: editorContent } : undefined, toolCallMode: hashlineAgentEnabled ? 'hashline' : undefined, mainProvider: { baseUrl: mainEntry.baseUrl, apiKey: mainEntry.apiKey, model: mainEntry.model, rateLimitProfile: (mainEntry as any).rateLimitProfile || null }, subProviders: subEntries.map(e => ({ baseUrl: e.baseUrl, apiKey: e.apiKey, model: e.model, rateLimitProfile: (e as any).rateLimitProfile || null })), candidateProviders: candidateEntries.map((e: any) => ({ displayName: e.model, providerName: e.providerName, modelName: e.model, baseUrl: e.baseUrl })), activeTools: activeTools.length > 0 ? activeTools : undefined, activeSkills: activeSkills.length > 0 ? activeSkills : undefined, activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined };
+    const reqBody = { mode: permissionMode, query: finalContent, history: activeMessages.map(m => ({ sender: m.sender, content: m.rawContent || m.content })), fileContext: selectedFile ? { name: selectedFile, content: editorContent } : undefined, toolCallMode: hashlineAgentEnabled ? 'hashline' : undefined, mainProvider: { baseUrl: mainEntry.baseUrl, apiKey: mainEntry.apiKey, model: mainEntry.model, rateLimitProfile: (mainEntry as any).rateLimitProfile || null }, subProviders: subEntries.map(e => ({ baseUrl: e.baseUrl, apiKey: e.apiKey, model: e.model, rateLimitProfile: (e as any).rateLimitProfile || null })), candidateProviders: candidateEntries.map((e: any) => ({ displayName: e.model, providerName: e.providerName, modelName: e.model, baseUrl: e.baseUrl })), activeTools: activeTools.length > 0 ? activeTools : undefined, activeSkills: activeSkills.length > 0 ? activeSkills : undefined, activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined, toolSchemas: toolSchemas.length > 0 ? toolSchemas : undefined };
     set({ lastReqBody: reqBody });
 
     const assistantMsg: ChatMessage = { sender: 'assistant', content: '', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }), avatar: '' };
@@ -760,9 +746,9 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     let streamFinalized = false;
 
     // ★ 保存流式上下文, 供 pauseChat/resumeChat 使用
-    activeStreamContext = { activeChatId, accumulatedText: '', mainEntry, mainModel, finalContent, permissionMode, currentChatMsgs, reqBody, hashlineAgentEnabled, selectedFile, editorContent, activeTools: activeTools.length > 0 ? activeTools : undefined, activeSkills: activeSkills.length > 0 ? activeSkills : undefined, activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined, activeSettings: configs[activeChatId] || fallbackActiveSettings };
+    activeStreamContext = { activeChatId, accumulatedText: '', mainEntry, mainModel, finalContent, permissionMode, currentChatMsgs, reqBody, hashlineAgentEnabled, selectedFile, editorContent, activeTools: activeTools.length > 0 ? activeTools : undefined, activeSkills: activeSkills.length > 0 ? activeSkills : undefined, activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined, toolSchemas: toolSchemas.length > 0 ? toolSchemas : undefined, activeSettings: configs[activeChatId] || fallbackActiveSettings };
 
-    const chatHandle = await startChat({ chatId: activeChatId, prompt: finalContent, mode: permissionMode, history: activeMessages.map(m => ({ sender: m.sender, content: m.rawContent || m.content })), fileContext: selectedFile ? { name: selectedFile, content: editorContent } : undefined, mainProvider: { baseUrl: mainEntry.baseUrl, apiKey: mainEntry.apiKey, model: mainEntry.model, rateLimitProfile: (mainEntry as any).rateLimitProfile || null }, subProviders: subEntries.map(e => ({ baseUrl: e.baseUrl, apiKey: e.apiKey, model: e.model, rateLimitProfile: (e as any).rateLimitProfile || null })), candidateProviders: candidateEntries.map((e: any) => ({ displayName: e.model, providerName: e.providerName, modelName: e.model, baseUrl: e.baseUrl })), ...(hashlineAgentEnabled ? { toolCallMode: 'hashline' } : {}), workspaceFolder: useChatsStore.getState().getChat(activeChatId)?.workspaceFolder, activeTools: activeTools.length > 0 ? activeTools : undefined, activeSkills: activeSkills.length > 0 ? activeSkills : undefined, activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined, activeSettings: configs[activeChatId] || fallbackActiveSettings, canvasId: getCanvasSessionId(activeChatId) } as any, async (evt: ChatStreamEvent) => {
+    const chatHandle = await startChat({ chatId: activeChatId, prompt: finalContent, mode: permissionMode, history: activeMessages.map(m => ({ sender: m.sender, content: m.rawContent || m.content })), fileContext: selectedFile ? { name: selectedFile, content: editorContent } : undefined, mainProvider: { baseUrl: mainEntry.baseUrl, apiKey: mainEntry.apiKey, model: mainEntry.model, rateLimitProfile: (mainEntry as any).rateLimitProfile || null }, subProviders: subEntries.map(e => ({ baseUrl: e.baseUrl, apiKey: e.apiKey, model: e.model, rateLimitProfile: (e as any).rateLimitProfile || null })), candidateProviders: candidateEntries.map((e: any) => ({ displayName: e.model, providerName: e.providerName, modelName: e.model, baseUrl: e.baseUrl })), ...(hashlineAgentEnabled ? { toolCallMode: 'hashline' } : {}), workspaceFolder: useChatsStore.getState().getChat(activeChatId)?.workspaceFolder, activeTools: activeTools.length > 0 ? activeTools : undefined, activeSkills: activeSkills.length > 0 ? activeSkills : undefined, activeKnowledge: activeKnowledge.length > 0 ? activeKnowledge : undefined, activeSettings: configs[activeChatId] || fallbackActiveSettings, toolSchemas: toolSchemas.length > 0 ? toolSchemas : undefined, canvasId: getCanvasSessionId(activeChatId) } as any, async (evt: ChatStreamEvent) => {
       switch (evt.kind) {
         case 'text': {
           accumulatedText += evt.text;

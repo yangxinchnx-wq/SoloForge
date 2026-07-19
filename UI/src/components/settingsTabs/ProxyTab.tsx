@@ -209,16 +209,6 @@ export default function ProxyTab() {
   // ── 渲染 ──
   return (
     <div className="flex flex-col h-full animate-fadeIn">
-      {/* 标题区 */}
-      <div className="border-b border-[var(--color-outline)]/15 pb-3 mb-4 shrink-0">
-        <h3 className="text-base font-bold text-[var(--color-on-surface)]" style={{ textWrap: 'balance' }}>网络与代理配置</h3>
-        <p className="text-xs text-on-surface/45 mt-1 leading-relaxed">
-          配置应用程序的网络代理设置。修改后需点击「应用配置」生效。
-          {mode === 'pac' && (
-            <span className="text-amber-500/80 ml-1">⚠️ PAC 模式仅对渲染进程（UI 内请求）生效，Node.js 后端请求将直连。</span>
-          )}
-        </p>
-      </div>
 
       {/* 左右分栏：左侧模式列表 + 右侧详情 */}
       <div className="flex-1 flex gap-4 min-h-0">

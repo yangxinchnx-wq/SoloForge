@@ -36,6 +36,22 @@ export function classifyStreamError(rawErr: string): string {
     return 'Java Agent 服务 (8770) 未启动。请在「设置」中确认 Java 后端已启动，或检查日志中的启动错误。';
   }
 
+  // ── Java Agent 端点 404 (服务在运行但端点不存在/旧版本) ──
+  // 匹配: "Java Agent 请求失败: HTTP 404"
+  // 这是 Java Agent 本身返回的 404，不是 LLM 服务商返回的 404
+  // 常见原因: jar 包是旧版本，不包含 ChatStreamController
+  if (rawErr.includes('Java Agent 请求失败') && rawErr.includes('404')) {
+    return `Java Agent 服务返回 **404 端点不存在**：服务在运行但 /api/chat/stream 端点未注册。\n\n常见原因:\n1. Java Agent jar 包是旧版本，需要重新打包 (mvn package)\n2. Java Agent 服务需要重启以加载新版 jar\n\n请重启 Java Agent 服务后再试。如果持续出现，请在 solo-forge-agent 目录执行 mvn package -DskipTests 重新打包。`;
+  }
+
+  // ── Java Agent 请求失败 (其他状态码) ──
+  // 匹配: "Java Agent 请求失败: HTTP {code}"
+  if (rawErr.includes('Java Agent 请求失败')) {
+    const codeMatch = rawErr.match(/HTTP (\d+)/);
+    const code = codeMatch ? codeMatch[1] : '';
+    return `Java Agent 服务请求失败 (HTTP ${code})。请检查 Java Agent 服务 (端口 8770) 是否在运行，以及日志中是否有错误。`;
+  }
+
   // ── 429 速率限制 ──
   // 匹配: "HTTP 429", "429 Too Many", "rate limit", "LLM HTTP 429"
   if (rawErr.includes('HTTP 429') || rawErr.includes('429 Too Many') || rawErr.includes('rate limit')) {
@@ -51,11 +67,44 @@ export function classifyStreamError(rawErr: string): string {
 
   // ── 404 未找到 ──
   // 匹配: "HTTP 404", "404 Not Found", "LLM HTTP 404"
+  // Java OpenAiStreamClient 格式: "HTTP 404 from {url} [model={model}]: {errBody}"
+  // Spring WebClient 格式: "404 Not Found from POST {url}"
+  // Node.js RACER 格式: "LLM HTTP 404: {errBody}"
   if (rawErr.includes('HTTP 404') || rawErr.includes('404 Not Found')) {
     // 提取错误详情中的 URL 信息，帮助用户诊断
-    const urlMatch = rawErr.match(/from POST\s+(\S+)/);
+    // 支持两种格式: "from POST {url}" (Spring WebClient) 和 "from {url}" (Java OpenAiStreamClient)
+    const urlMatch = rawErr.match(/from\s+(?:POST\s+)?(https?:\/\/\S+)/);
     const urlHint = urlMatch ? `\n\n请求的端点: ${urlMatch[1]}` : '';
-    return `LLM 服务商返回 **404 未找到**：请求的模型不存在或端点错误。请检查「设置 → 模型」中的模型 ID 和 Base URL。\n常见原因:\n1. 模型 ID 拼写错误 (如 gpt-4 应为 gpt-4o)\n2. Base URL 缺少 /v1 后缀 (如 https://api.openai.com 应为 https://api.openai.com/v1)\n3. 该服务商不支持 OpenAI 兼容的 /chat/completions 端点${urlHint}`;
+
+    // 提取 model 信息 (Java OpenAiStreamClient 新格式: [model=xxx])
+    const modelMatch = rawErr.match(/\[model=(\S+?)\]/);
+    const modelHint = modelMatch ? `\n使用的模型 ID: ${modelMatch[1]}` : '';
+
+    // 提取服务商返回的具体错误信息 (errBody)
+    // Java 格式: "HTTP 404 from {url} [model={model}]: {errBody}"
+    // 尝试从冒号后提取 errBody，并解析 JSON 中的 error.message
+    let bodyHint = '';
+    const bodyMatch = rawErr.match(/\]:\s*(.+)$/s) || rawErr.match(/(?:HTTP \d+|404 Not Found).*?:\s*(.+)$/s);
+    if (bodyMatch) {
+      const rawBody = bodyMatch[1].trim();
+      // 尝试解析 JSON 并提取 error.message
+      try {
+        const parsed = JSON.parse(rawBody);
+        const errMsg = parsed?.error?.message || parsed?.message || parsed?.error || null;
+        if (errMsg && typeof errMsg === 'string') {
+          bodyHint = `\n服务商返回: ${errMsg.slice(0, 300)}`;
+        } else {
+          bodyHint = `\n服务商响应: ${rawBody.slice(0, 300)}`;
+        }
+      } catch {
+        // 非 JSON, 直接显示原始文本 (可能是 HTML 页面)
+        if (rawBody.length > 0 && rawBody.length < 500) {
+          bodyHint = `\n服务商响应: ${rawBody.slice(0, 300)}`;
+        }
+      }
+    }
+
+    return `LLM 服务商返回 **404 未找到**：请求的模型不存在或端点错误。请检查「设置 → 模型」中的模型 ID 和 Base URL。\n常见原因:\n1. 模型 ID 拼写错误 (如 gpt-4 应为 gpt-4o)\n2. Base URL 缺少 /v1 后缀 (如 https://api.openai.com 应为 https://api.openai.com/v1)\n3. 该服务商不支持 OpenAI 兼容的 /chat/completions 端点${modelHint}${urlHint}${bodyHint}`;
   }
 
   // ── 500 后端服务异常 ──

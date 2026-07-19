@@ -7,33 +7,25 @@ import {
   UserBadgeSelector,
 } from './header-bar';
 import { useThemedSurface } from './header-bar/themeColors';
-import { SecondaryModel } from '../types';
+import { useAppStore } from '../state/appStore';
 
 interface HeaderProps {
-  mainModel: string;
-  setMainModel: (m: string) => void;
-  secModels: SecondaryModel[];
-  setSecModels: (models: SecondaryModel[]) => void;
-  mixedTasks: boolean;
-  setMixedTasks: (val: boolean) => void;
-  permissionMode: 'normal' | 'performance' | 'ultimate' | 'expert';
   sidebarWidth?: number;
   isResizingSidebar?: boolean;
-  selectedFile: string;
-  setSelectedFile: (file: string) => void;
 }
 
 export default function Header({
-  mainModel,
-  setMainModel,
-  secModels,
-  setSecModels,
-  mixedTasks,
-  setMixedTasks,
-  permissionMode,
   sidebarWidth = 298,
   isResizingSidebar = false,
 }: HeaderProps) {
+  // ★ 从 appStore 直接订阅, 切断 MainLayout props 透传链
+  const mainModel = useAppStore(s => s.mainModel);
+  const setMainModel = useAppStore(s => s.setMainModel);
+  const secModels = useAppStore(s => s.secModels);
+  const setSecModels = useAppStore(s => s.setSecModels);
+  const mixedTasks = useAppStore(s => s.mixedTasks);
+  const setMixedTasks = useAppStore(s => s.setMixedTasks);
+  const permissionMode = useAppStore(s => s.currentPermissionMode);
   const themed = useThemedSurface();
   const { glass, isDark, rgba, headerSurface } = themed;
   const [isSecModelSelectorOpen, setIsSecModelSelectorOpen] = useState(false);

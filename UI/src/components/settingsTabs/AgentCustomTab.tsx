@@ -196,13 +196,9 @@ export default function AgentCustomTab() {
   }, [detail, fetchDetail]);
 
   return (
-    <div className="space-y-4 animate-fadeIn">
-      {/* Header */}
-      <div className="border-b border-[var(--color-outline)]/20 pb-3 mb-2">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-bold text-[var(--color-on-surface)]">助理池管理</h3>
-          </div>
+      <div className="space-y-4 animate-fadeIn">
+        {/* Header */}
+        <div className="flex items-center justify-end">
           <div className="flex items-center gap-2">
             <ServiceStatusBadge alive={serviceAlive} loading={loading} />
             <button
@@ -222,7 +218,6 @@ export default function AgentCustomTab() {
             </button>
           </div>
         </div>
-      </div>
 
       {error && (
         <div className="p-3 rounded-lg border border-rose-500/30 bg-rose-500/10 text-rose-400 text-xs">

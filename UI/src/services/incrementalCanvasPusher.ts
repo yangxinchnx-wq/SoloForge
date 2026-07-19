@@ -9,7 +9,7 @@
  *
  *  2. DSL 格式转换
  *     - 翻译器输出 UniversalNode {type, style, content, children}
- *     - Flutter 画布期望 {type, props, children}
+ *     - 画布期望 {type, props, children}
  *     - pushToCanvas 做格式转换
  *
  *  3. 多线程加速
@@ -161,7 +161,7 @@ export function clearByCanvasSessionId(canvasSessionId: string): void {
 }
 
 // ★ 2026-07-16: 画布重构 — ensureCanvasAndPush 改为 no-op
-//   旧版通过 IPC 推送 DSL 到 Flutter 进程, 重构后直接写 previewStreamStore
+//   旧版通过 IPC 推送 DSL 到渲染进程, 重构后直接写 previewStreamStore
 //   恢复方法: git checkout HEAD -- incrementalCanvasPusher.ts
 export async function ensureCanvasAndPush(
   _sessionId: string,
@@ -803,20 +803,6 @@ class LineTracker {
     }
     const dsl = wrappedDsl;
 
-    if (typeof window !== 'undefined' && window.soloforge?.canvas) {
-      ensureCanvasAndPush(canvasSessionId, dsl, this.chatSessionId).then((r) => {
-        if (!r.ok) {
-          console.warn('[LineTracker] ensureCanvasAndPush (wrapped) failed:', r.error, 'sessionId:', canvasSessionId);
-          usePreviewStreamStore.getState().recordPushError(this.chatSessionId,
-            `canvas.push: ${r.error || 'failed'}`);
-        }
-      }).catch((err: any) => {
-        console.warn('[LineTracker] ensureCanvasAndPush (wrapped) exception:', err?.message || err, 'sessionId:', canvasSessionId);
-        usePreviewStreamStore.getState().recordPushError(this.chatSessionId,
-          `canvas.push: ${err?.message || 'exception'}`);
-      });
-    }
-
     const previewStore = usePreviewStreamStore.getState();
     if (!previewStore.getEntry(this.chatSessionId)) {
       previewStore.initEntry(this.chatSessionId, { language: 'json', sessionId: canvasSessionId });
@@ -839,28 +825,14 @@ class LineTracker {
 
   /**
    * ★ 2026-07-11: 直接推送 raw DSL (json 代码块场景)
-   * LLM 返回的 JSON 已经是 Flutter DSL 格式 {type, props, children}
+   * LLM 返回的 JSON 已经是 DSL 格式 {type, props, children}
    * 不需要 universalNodeToFlutterDSL 转换
    */
   private pushRawDsl(dsl: any, code: string, isFinal: boolean): void {
     const canvasSessionId = getCanvasSessionId(this.chatSessionId);
-    // ★ FIX 2026-07-14: 归一化 LLM 的 JSON DSL → Flutter UiParser 期望的 {type, props, children} 格式
+    // ★ FIX 2026-07-14: 归一化 LLM 的 JSON DSL → UiParser 期望的 {type, props, children} 格式
     const normalized = normalizeDsl(dsl);
     const flutterDsl = { ui: normalized, platform: 'material' };
-
-    if (typeof window !== 'undefined' && window.soloforge?.canvas) {
-      ensureCanvasAndPush(canvasSessionId, flutterDsl, this.chatSessionId).then((r) => {
-        if (!r.ok) {
-          console.warn('[LineTracker] ensureCanvasAndPush (raw) failed:', r.error, 'sessionId:', canvasSessionId);
-          usePreviewStreamStore.getState().recordPushError(this.chatSessionId,
-            `canvas.push: ${r.error || 'failed'}`);
-        }
-      }).catch((err: any) => {
-        console.warn('[LineTracker] ensureCanvasAndPush (raw) exception:', err?.message || err, 'sessionId:', canvasSessionId);
-        usePreviewStreamStore.getState().recordPushError(this.chatSessionId,
-          `canvas.push: ${err?.message || 'exception'}`);
-      });
-    }
 
     const previewStore = usePreviewStreamStore.getState();
     // ★ 2026-07-14: 仅在 entry 不存在时 initEntry, 避免重置已有数据
@@ -907,24 +879,9 @@ class LineTracker {
   private pushToCanvas(ast: UniversalNode, code: string, isFinal: boolean): void {
     const canvasSessionId = getCanvasSessionId(this.chatSessionId);
 
-    // ★ 格式转换: UniversalNode → Flutter DSL {type, props, children}
+    // ★ 格式转换: UniversalNode → DSL {type, props, children}
     const flutterRoot = universalNodeToFlutterDSL(ast);
     const dsl = { ui: flutterRoot, platform: 'material' };
-
-    // ★ Electron IPC 推画布 — 使用 ensureCanvasAndPush 自动启动+重试
-    if (typeof window !== 'undefined' && window.soloforge?.canvas) {
-      ensureCanvasAndPush(canvasSessionId, dsl, this.chatSessionId).then((r) => {
-        if (!r.ok) {
-          console.warn('[LineTracker] ensureCanvasAndPush failed:', r.error, 'sessionId:', canvasSessionId);
-          usePreviewStreamStore.getState().recordPushError(this.chatSessionId,
-            `canvas.push: ${r.error || 'failed'}`);
-        }
-      }).catch((err: any) => {
-        console.warn('[LineTracker] ensureCanvasAndPush exception:', err?.message || err, 'sessionId:', canvasSessionId);
-        usePreviewStreamStore.getState().recordPushError(this.chatSessionId,
-          `canvas.push: ${err?.message || 'exception'}`);
-      });
-    }
 
     // 同步 previewStreamStore — ★ 2026-07-14: 仅在 entry 不存在时 initEntry, 避免重置已有数据
     const previewStore = usePreviewStreamStore.getState();

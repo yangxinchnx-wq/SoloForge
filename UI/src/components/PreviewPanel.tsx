@@ -9,7 +9,7 @@
  * 旧版 Flutter IPC 代码已废弃，如需恢复查看 git 历史
  */
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CanvasResourceBar } from './CanvasResourceBar';
 import CanvasStage from './CanvasStage';
@@ -17,8 +17,10 @@ import { usePreviewStreamStore } from '../state/previewStreamStore';
 import { useCanvasDeviceStore, type CanvasDeviceInfo } from '../state/canvasDeviceStore';
 import { MODEL_THEMES, MATERIAL_FINISHES, type ThemeId, type MaterialFinish } from '../services/canvas/modelThemes';
 import type { UniversalNode } from '../services/canvas/UniversalAST';
-import type { CanvasResource } from '../services/canvas/sessionApi';
 import { ChevronDown, Check } from '../utils/icons';
+import { useAppStore } from '../state/appStore';
+import { useChatClickCanvasBridge } from '../hooks/useChatClickCanvasBridge';
+import { useLayoutState, useLayoutStatus } from '../context/LayoutContext';
 
 // ── 设备预设 ──
 
@@ -34,6 +36,7 @@ interface DevicePreset {
 
 // 2D 设备（带 PNG 边框）—— ★ 2026-07-16: 文件名与 resources/canvas/models/2d/ 实际文件对齐
 const DEVICES_2D: DevicePreset[] = [
+  { sizeKey: 'default', label: '默认尺寸', width: 0, height: 0, group: 'desktop' },
   { sizeKey: 'iphone-16-pro-max', label: 'iPhone 16 Pro Max', width: 430, height: 932, group: 'mobile', pngFile: 'mobile/iphone_16_pro_max.png' },
   { sizeKey: 'iphone-16-pro', label: 'iPhone 16 Pro', width: 402, height: 874, group: 'mobile', pngFile: 'mobile/iphone_16_pro.png' },
   { sizeKey: 'iphone-16', label: 'iPhone 16', width: 390, height: 844, group: 'mobile', pngFile: 'mobile/iphone_16.png' },
@@ -44,8 +47,8 @@ const DEVICES_2D: DevicePreset[] = [
 
 // 3D 设备（带 GLB 模型，仅 iphone_15_pro_max 有 screen 命名可直接 RTT）
 const DEVICES_3D: DevicePreset[] = [
+  { sizeKey: 'default', label: '默认尺寸', width: 0, height: 0, group: 'desktop' },
   { sizeKey: 'iphone-15-pro-max', label: 'iPhone 15 Pro Max', width: 430, height: 932, group: 'mobile', glbFile: 'mobile/iphone_15_pro_max.glb' },
-  { sizeKey: 'iphone-11-pro-max', label: 'iPhone 11 Pro Max', width: 414, height: 896, group: 'mobile', glbFile: 'mobile/iphone_11_pro_max.glb' },
 ];
 
 // ── 底色预设 ──
@@ -370,31 +373,27 @@ function ThemeContextMenu({
 
 // ── 主组件 ──
 
-interface PreviewPanelProps {
-  width?: number;
-  isResizing?: boolean;
-  dragStartWidth?: number;
-  selectedChatId?: string;
-  canvasId?: string | null;
-  canvasReady?: boolean;
-  canvases?: CanvasResource[];
-  maxCanvases?: number;
-  onSelectCanvas?: (canvasId: string) => void;
-  onCreateCanvas?: () => Promise<string | null>;
-  onRenameCanvas?: (canvasId: string, description: string) => Promise<boolean>;
-  onDeleteCanvas?: (canvasId: string) => Promise<boolean>;
-}
+export default function PreviewPanel() {
+  // ★ 自包含化: 从 store/LayoutContext/hook 直接读取, 切断 MainLayout props 透传链
+  //   原 11 个 props (width/isResizing/dragStartWidth/selectedChatId/canvasId/canvasReady/
+  //   canvases/maxCanvases/onSelectCanvas/onCreateCanvas/onRenameCanvas) 全部改由内部订阅
+  const selectedChatId = useAppStore(s => s.selectedChatId);
+  const { previewWidth } = useLayoutState();
+  const { isResizingPreview } = useLayoutStatus();
+  const width = previewWidth ?? 472;
+  const isResizing = !!isResizingPreview;
 
-export default function PreviewPanel({
-  width = 472,
-  isResizing = false,
-  selectedChatId,
-  canvasId,
-  canvases = [],
-  maxCanvases = 10,
-  onSelectCanvas,
-  onRenameCanvas,
-}: PreviewPanelProps) {
+  const bridge = useChatClickCanvasBridge({
+    chatId: selectedChatId,
+    allowCreate: false,
+    defaultDescription: '默认画布',
+  });
+  const canvasId = bridge.canvasId;
+  const canvases = bridge.canvases;
+  const maxCanvases = bridge.maxCanvases;
+  const onSelectCanvas = bridge.selectCanvas;
+  const onRenameCanvas = bridge.renameCanvas;
+
   // ── 从 store 读取 DSL 和设备状态 ──
   const entry = usePreviewStreamStore((s) => (selectedChatId ? s.entries[selectedChatId] : undefined));
   // ★ 修复 2026-07-17: canvasId 为 null 时用虚拟 key '__ephemeral__' 存 device,
@@ -413,8 +412,41 @@ export default function PreviewPanel({
   // ★ 右键主题菜单状态 (仅 3D 模式)
   const [themeMenu, setThemeMenu] = useState<{ x: number; y: number } | null>(null);
 
-  // ★ 诊断: 确认新代码已加载 (2026-07-17)
-  console.log('[PreviewPanel] render, deviceKey=', deviceKey, 'renderMode=', renderMode, 'device=', device?.label ?? 'null');
+  // ★ 修复 2026-07-19: 新对话切换时清除 '__ephemeral__' 残留设备
+  //   __ephemeral__ 是 canvasId 为 null 时的临时 key (如新建对话的过渡期)。
+  //   如果不清除, 上一次对话在过渡期选的设备会被新对话继承 → “随机设备” bug。
+  useEffect(() => {
+    useCanvasDeviceStore.getState().setDevice('__ephemeral__', null);
+  }, [selectedChatId]);
+
+  // ★ 修复 2026-07-19: 验证持久化的设备是否仍然有效
+  //   场景: 用户之前选过 iphone-11-pro-max, 该设备被删除后 localStorage 中仍保存旧选择
+  //   恢复时 device.glbFile 指向已删除的文件 → useGLTF 加载失败报错
+  //   解决: 检查 device.sizeKey 是否在当前设备列表中, 无效则自动回退
+  useEffect(() => {
+    if (!device) return;
+    const list = renderMode === '3D' ? DEVICES_3D : DEVICES_2D;
+    const isValid = list.some((d) => d.sizeKey === device.sizeKey);
+    if (!isValid) {
+      // ★ fallback 到第一个真实设备 (跳过 'default'); 如果没有真实设备则清空
+      const firstReal = list.find((d) => d.sizeKey !== 'default');
+      if (firstReal) {
+        console.log('[PreviewPanel] device invalid (removed?), auto-fallback:', device.sizeKey, '→', firstReal.sizeKey);
+        setDevice(deviceKey, {
+          sizeKey: firstReal.sizeKey,
+          label: firstReal.label,
+          width: firstReal.width,
+          height: firstReal.height,
+          group: firstReal.group,
+          renderMode,
+          pngFile: firstReal.pngFile,
+          glbFile: firstReal.glbFile,
+        });
+      } else {
+        setDevice(deviceKey, null);
+      }
+    }
+  }, [device, renderMode, deviceKey, setDevice]);
 
   // DSL 来源：previewStreamStore → 兜底空节点
   const dsl: UniversalNode = useMemo(() => {
@@ -423,6 +455,11 @@ export default function PreviewPanel({
 
   // ── 设备选择处理 ──
   const handleSelectDevice = useCallback((preset: DevicePreset) => {
+    // ★ “默认尺寸” = 清除设备约束，使用当前画布区域
+    if (preset.sizeKey === 'default') {
+      setDevice(deviceKey, null);
+      return;
+    }
     const info: CanvasDeviceInfo = {
       sizeKey: preset.sizeKey,
       label: preset.label,
@@ -436,9 +473,9 @@ export default function PreviewPanel({
     setDevice(deviceKey, info);
   }, [deviceKey, renderMode, setDevice]);
 
-  // 当前设备预设（从 store 的 device 反查）
+  // 当前设备预设（从 store 的 device 反查；device 为 null 时返回“默认尺寸”）
   const currentPreset = useMemo(() => {
-    if (!device) return null;
+    if (!device) return DEVICES_2D[0]; // 'default'
     const list = renderMode === '3D' ? DEVICES_3D : DEVICES_2D;
     return list.find((d) => d.sizeKey === device.sizeKey) ?? null;
   }, [device, renderMode]);
@@ -456,18 +493,19 @@ export default function PreviewPanel({
     console.log('[handleToggleMode] matching=', matching ?? 'NONE', 'list.length=', list.length);
     if (!matching) {
       // ★ 修复 3: 当前设备在新模式下不存在，自动选第一个兼容设备（而非清除）
-      const firstDevice = list[0];
-      if (firstDevice) {
-        console.log('[handleToggleMode] setting device=', firstDevice.label, 'mode=', mode);
+      // ★ fallback 到第一个真实设备 (跳过 'default')
+      const firstReal = list.find((d) => d.sizeKey !== 'default');
+      if (firstReal) {
+        console.log('[handleToggleMode] setting device=', firstReal.label, 'mode=', mode);
         setDevice(deviceKey, {
-          sizeKey: firstDevice.sizeKey,
-          label: firstDevice.label,
-          width: firstDevice.width,
-          height: firstDevice.height,
-          group: firstDevice.group,
+          sizeKey: firstReal.sizeKey,
+          label: firstReal.label,
+          width: firstReal.width,
+          height: firstReal.height,
+          group: firstReal.group,
           renderMode: mode,
-          pngFile: firstDevice.pngFile,
-          glbFile: firstDevice.glbFile,
+          pngFile: firstReal.pngFile,
+          glbFile: firstReal.glbFile,
         });
       } else {
         setDevice(deviceKey, null);
@@ -563,10 +601,10 @@ export default function PreviewPanel({
         className="flex-1 relative overflow-hidden"
         onContextMenu={handleContextMenu}
       >
-        {hasDsl || (renderMode === '3D' && device) ? (
+        {hasDsl || device ? (
           <CanvasStage dsl={dsl} device={device} canvasId={canvasId ?? undefined} bgColor={bgColor} theme={modelTheme} finish={modelFinish} />
         ) : (
-          // 无 DSL 时的占位
+          // 无 DSL 且无设备时的占位
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="flex flex-col items-center justify-center select-none">
               <div
@@ -584,7 +622,7 @@ export default function PreviewPanel({
                 }}
               />
               <div className="text-[11px] font-mono text-on-surface/40">
-                {renderMode === '3D' ? '右键画布选择主题...' : '等待生成预览...'}
+                等待生成预览...
               </div>
             </div>
           </div>

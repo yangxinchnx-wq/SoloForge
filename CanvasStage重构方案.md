@@ -324,7 +324,6 @@ function DeviceModel({ url, dsl }: { url: string; dsl: UniversalNode }) {
 | 模型 | 路径 | 大小 | screen mesh 命名 | RTT 可用 |
 |---|---|---|---|---|
 | iPhone 15 Pro Max | `models/3d/mobile/iphone_15_pro_max.glb` | 3.3MB | ✅ `screen` | 直接可用 |
-| iPhone 11 Pro Max | `models/3d/mobile/iphone_11_pro_max.glb` | 836KB | ❌ 未命名 | 需 Blender 修模 |
 | iPhone 14 Pro | `models/3d/mobile/iphone_14_pro.glb` | 120KB | ❌ 未命名（体积异常小，疑似简化模型） | 需 Blender 修模 + 验证完整性 |
 
 **GLB 预处理步骤**（实施前必须完成）：
@@ -531,9 +530,9 @@ npm install three@^0.172 @react-three/fiber@^9 @react-three/drei@^10
 
 ### 第 2 步：GLB 模型预处理（RTT 必需）
 
-3 个 GLB 中只有 `iphone_15_pro_max.glb` 有命名规范的 `screen` mesh，其余 2 个需修模：
+2 个 GLB 中只有 `iphone_15_pro_max.glb` 有命名规范的 `screen` mesh，其余 1 个需修模：
 
-1. 用 Blender 打开 `iphone_11_pro_max.glb` 和 `iphone_14_pro.glb`
+1. 用 Blender 打开 `iphone_14_pro.glb`
 2. 找到屏幕区域 mesh，命名为 `screen`
 3. 重新导出 GLB（保留原文件备份）
 4. 验证 `iphone_14_pro.glb`（120KB 异常小，确认是否简化模型）
@@ -650,7 +649,6 @@ CanvasStage.tsx
 | 文件 | 路径 | screen mesh 命名 | RTT 可用 |
 |---|---|---|---|
 | iPhone 15 Pro Max | `models/3d/mobile/iphone_15_pro_max.glb` | ✅ `screen` | 直接可用 |
-| iPhone 11 Pro Max | `models/3d/mobile/iphone_11_pro_max.glb` | ❌ 未命名 | 需 Blender 修模 |
 | iPhone 14 Pro | `models/3d/mobile/iphone_14_pro.glb` | ❌ 未命名（120KB 异常小） | 需修模 + 验证完整性 |
 | 2D PNG 边框 (17 种) | `models/2d/**/*.png` | — | 2D 模式保留 |
 | model-viewer.min.js | `canvas_preview/assets/` | — | 可删除（R3F 替代） |

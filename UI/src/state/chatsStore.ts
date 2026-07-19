@@ -267,6 +267,11 @@ export const useChatsStore = create<ChatsState>()(subscribeWithSelector((set, ge
     //   后端 deleteCanvasesByOwner 会清 Garnet+SurrealDB, 但不清前端
     //   Electron 子进程和 canvasDeviceStore。之前只依赖 peekCanvasSessionId,
     //   但该映射可能尚未建立, 导致子进程没停、设备缓存没清。
+    // ★ FIX 2026-07-19: 显式逐个 DELETE 后端画布, 不只依赖后端级联删除。
+    //   原代码只清前端缓存, 后端画布删除完全依赖 DELETE /api/chats/:id
+    //   触发的 deleteCanvasesByOwner。如果级联删除有任何问题 (SurrealDB
+    //   未连接、内存中找不到等), 画布就不会被删。
+    //   修复: 像 handleClearSession 一样, 显式逐个 DELETE /api/canvas/sessions/:cid。
     try {
       const { clearByCanvasSessionId } = await import('../services/incrementalCanvasPusher');
 
@@ -286,10 +291,16 @@ export const useChatsStore = create<ChatsState>()(subscribeWithSelector((set, ge
 
       const { useCanvasDeviceStore } = await import('../state/canvasDeviceStore');
       for (const cid of ownedCanvasIds) {
-        // ★ 2026-07-16: 画布重构 — canvas.stop 注释掉
-        // if (typeof window !== 'undefined' && window.soloforge?.canvas) {
-        //   window.soloforge.canvas.stop(cid).catch(() => {});
-        // }
+        // ★ 显式 DELETE 后端画布 — 清内存 + Garnet(state+dsl) + SurrealDB
+        //   不依赖后端 deleteCanvasesByOwner 级联删除 (可能因 SurrealDB 未连接等失败)
+        try {
+          await fetch(`/api/canvas/sessions/${encodeURIComponent(cid)}`, {
+            method: 'DELETE',
+            headers: { 'X-Requester-Chat-Session-Id': id },
+          });
+        } catch (e) {
+          console.warn('[chatsStore] canvas delete failed:', (e as Error).message);
+        }
         // 清 _startedSessions + 所有映射
         clearByCanvasSessionId(cid);
         // 清 canvasDeviceStore

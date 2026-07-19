@@ -89,32 +89,32 @@ export default function SettingsModal({
         className="settings-modal-card sf-anim sf-anim-fade-scale relative z-10 bg-[var(--color-surface)] border border-[var(--color-outline)]/20 rounded-2xl w-full max-w-5xl shadow-[0_12px_45px_rgba(0,0,0,0.4)] overflow-hidden flex flex-col text-[var(--color-on-surface)] select-none"
         style={{ height: '85vh', flexShrink: 0 }}
       >
-        {/* Modal Header */}
-        <div className="flex items-center justify-between p-4 px-6 border-b border-[var(--color-outline)]/20 bg-[var(--color-bg)] text-[var(--color-on-surface)] shrink-0">
-          <div className="flex items-center gap-3">
-            <Settings className="text-[var(--color-primary)] w-5 h-5" />
-            <div>
-              <h2 className="text-lg font-bold text-[var(--color-on-surface)] tracking-wide">设置</h2>
-            </div>
-          </div>
-          {/* X 关闭按钮：select-text 覆盖父级 select-none，确保 click 事件正常触发 */}
-          <button
-            type="button"
-            onClick={handleClose}
-            onMouseDown={(e) => e.stopPropagation()}
-            className="select-text p-1.5 hover:bg-[var(--color-surface-bright)]/40 rounded-lg transition-colors text-on-surface/50 hover:text-[var(--color-on-surface)]"
-            style={{ cursor: 'pointer' }}
-            aria-label="关闭设置"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
+        {/* X 关闭按钮：绝对定位在 Modal 右上角 */}
+        <button
+          type="button"
+          onClick={handleClose}
+          onMouseDown={(e) => e.stopPropagation()}
+          className="select-text absolute top-3 right-3 z-50 p-1.5 hover:bg-[var(--color-surface-bright)]/40 rounded-lg transition-colors text-on-surface/50 hover:text-[var(--color-on-surface)]"
+          style={{ cursor: 'pointer' }}
+          aria-label="关闭设置"
+        >
+          <X className="w-4 h-4" />
+        </button>
 
         {/* Modal Main Split View */}
         <div className="flex-1 flex overflow-hidden min-h-0">
 
-          {/* Left Column: Tab 列表 */}
-          <div className="w-[260px] bg-[var(--color-bg)] border-r border-[var(--color-outline)]/20 flex flex-col overflow-y-auto p-2 gap-0.5 shrink-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {/* Left Column: 标题区 + Tab 列表 */}
+          <div className="w-[260px] bg-[var(--color-bg)] border-r border-[var(--color-outline)]/20 flex flex-col shrink-0">
+            {/* 标题区：设置图标 + 标题，pt-4 与右栏内容顶部对齐 */}
+            <div className="flex items-center px-4 pt-4 pb-3 border-b border-[var(--color-outline)]/20 shrink-0">
+              <div className="flex items-center gap-3 min-w-0">
+                <Settings className="text-[var(--color-primary)] w-5 h-5 shrink-0" />
+                <h2 className="text-lg font-bold text-[var(--color-on-surface)] tracking-wide">设置</h2>
+              </div>
+            </div>
+            {/* Tab 列表 */}
+            <div className="flex-1 overflow-y-auto p-2 gap-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {TABS.map((tab) => {
               const TabIcon = tab.icon;
               const isActive = activeTabId === tab.id;
@@ -144,10 +144,11 @@ export default function SettingsModal({
                 </div>
               );
             })}
+            </div>
           </div>
 
-          {/* Right Column: 内容区 */}
-          <div className="flex-1 bg-[var(--color-surface)] p-6 overflow-y-auto text-left min-w-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {/* Right Column: 内容区，pt-4 与左栏标题区垂直对齐 */}
+          <div className="flex-1 bg-[var(--color-surface)] px-6 pt-4 pb-6 overflow-y-auto text-left min-w-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {/* 不用 key={activeTabId} 强制重挂，避免动画导致的视觉尺寸变化 */}
             <div className="w-full min-h-full flex flex-col">
               {activeTabId === 'language' && <LanguageTab onClose={handleClose} />}

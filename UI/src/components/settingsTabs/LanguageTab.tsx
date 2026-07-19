@@ -26,11 +26,6 @@ export default function LanguageTab({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="space-y-6 animate-fadeIn text-left pb-6">
-      <div className="border-b border-[var(--color-outline)]/20 pb-3 mb-2">
-        <h3 className="text-base font-bold text-[var(--color-on-surface)]">界面语言与全局字体</h3>
-        <p className="text-xs text-on-surface/50 mt-1">定制界面首选语言以及全局显示字体。支持一键导入并应用本地个性化字体。</p>
-      </div>
-
       <div className="bg-[var(--color-surface)] border border-[var(--color-outline)]/20 rounded-xl p-5 space-y-4">
         <span className="text-xs text-[var(--color-primary)] font-mono tracking-wider font-semibold uppercase block">语言偏好设置</span>
         <div className="flex items-center justify-between">

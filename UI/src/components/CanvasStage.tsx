@@ -4,25 +4,23 @@
  * 整合 2D (WebAstPreview + PNG 边框) 和 3D (CanvasStage3D + GLB 模型) 两种渲染模式。
  * 根据 canvasDeviceStore 中的 renderMode 和设备信息自动切换。
  *
- * ★ 2026-07-16: 画布重构核心组件，替代旧版 Flutter IPC 渲染层
- * ★ 2026-07-16 修复:
- *   - 2D 模式添加 CSS transform: scale 自适应容器（原版会溢出）
- *   - 3D 模式 bgColor 尊重用户选择（原版强制覆盖白色为深色）
- *   - 3D 降级逻辑：renderMode='3D' 但无设备时降级为 2D（原版会卡在 3D toggle 但渲染 2D）
- *
- * ★ 2026-07-16 anime.js: 模式切换 + 设备切换过渡动画
- *   - 2D→3D / 3D→2D 切换时添加淡入淡出过渡
- *   - 设备切换时添加缩放过渡
- *   - 使用 anime.js animate() 直接操作 DOM 元素 opacity/scale
+ * ★ 2026-07-20 丝滑切换重构:
+ *   - 2D↔3D 模式切换: framer-motion AnimatePresence mode="wait" 交叉淡入淡出
+ *   - 2D PNG 边框切换: AnimatePresence crossfade (旧边框淡出 + 新边框淡入)
+ *   - 设备尺寸变化: CSS transition 让 width/height/borderRadius 平滑变化
+ *   - DSL 层切换: framer-motion 淡入 (替代旧 anime.js opacity [0.3→1] 跳变)
+ *   - 3D 模型加载: anime.js 容器淡入 (加载完成后 opacity 0→1)
  *
  * 工作模式：
  *   - 2D 模式：WebAstPreview 直接渲染 DOM，可选 PNG 设备边框 overlay
- *   - 3D 模式：CanvasStage3D 用 R3F 渲染 GLB 模型 + RTT 贴图
+ *   - 3D 模式：CanvasStage3D 用 R3F 渲染 GLB 模型 + Html transform
  *   - 无设备：纯 WebAstPreview 渲染（开发模式默认）
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import type { UniversalNode } from '../services/canvas/UniversalAST';
+import { isContainerLike } from '../services/canvas/UniversalAST';
 import { useCanvasDeviceStore, type CanvasDeviceInfo } from '../state/canvasDeviceStore';
 import { play2DLayoutTransition } from '../services/canvas/canvasAnimations';
 import { animate } from 'animejs';
@@ -41,6 +39,31 @@ function inferPngPath(device: CanvasDeviceInfo): string | null {
   return null;
 }
 
+// ── 过渡动画参数 ──
+
+/** 模式切换 (2D↔3D) 过渡参数 */
+const MODE_TRANSITION = {
+  initial: { opacity: 0 },
+  animate: { opacity: 1 },
+  exit: { opacity: 0 },
+  transition: { duration: 0.3, ease: [0.4, 0, 0.2, 1] as const },
+};
+
+/** PNG 边框 crossfade 参数 */
+const PNG_TRANSITION = {
+  initial: { opacity: 0 },
+  animate: { opacity: 1 },
+  exit: { opacity: 0 },
+  transition: { duration: 0.25, ease: [0.4, 0, 0.2, 1] as const },
+};
+
+/** DSL 层淡入参数 */
+const DSL_TRANSITION = {
+  initial: { opacity: 0, scale: 0.95 },
+  animate: { opacity: 1, scale: 1 },
+  transition: { duration: 0.3, ease: [0.16, 1, 0.3, 1] as const },
+};
+
 // ── 2D 渲染：WebAstPreview + 可选 PNG 边框 ──
 
 interface Stage2DProps {
@@ -53,24 +76,18 @@ interface Stage2DProps {
 function Stage2D({ dsl, device, bgColor, canvasId }: Stage2DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const dslLayerRef = useRef<HTMLDivElement>(null);
-  const [scale, setScale] = useState(1);
+  // ★ autoScale: 自动适配容器的缩放比例 (有设备时计算, 无设备时=1)
+  // ★ userZoom: 用户滚轮手动缩放倍数 (相对于 autoScale, 默认1=不额外缩放)
+  const [autoScale, setAutoScale] = useState(1);
+  const [userZoom, setUserZoom] = useState(1);
   const setFrameSize = useCanvasDeviceStore((s) => s.setFrameSize);
-  const prevDeviceKey = useRef<string | null>(null);
 
-  // ★ anime.js: 设备切换时缩放过渡
-  useEffect(() => {
-    const currentKey = device?.sizeKey ?? 'none';
-    if (prevDeviceKey.current !== null && prevDeviceKey.current !== currentKey && dslLayerRef.current) {
-      // 设备变化 — anime.js 缩放弹跳过渡
-      animate(dslLayerRef.current, {
-        scale: [0.85, 1],
-        opacity: [0.3, 1],
-        duration: 400,
-        ease: 'easeOutBack',
-      });
-    }
-    prevDeviceKey.current = currentKey;
-  }, [device?.sizeKey]);
+  // ★ 检测 DSL 是否为空容器（容器类型且无子节点）
+  //   非容器类型（text/button/image 等）自身就是内容，不算空
+  const isEmptyDsl = isContainerLike(dsl) ? (!dsl.children || dsl.children.length === 0) : false;
+
+  // ★ 最终缩放 = 自动适配 × 用户手动缩放
+  const effectiveScale = autoScale * userZoom;
 
   // ★ anime.js: DSL 更新时 FLIP 布局过渡
   const prevDslRef = useRef<UniversalNode>(dsl);
@@ -100,8 +117,8 @@ function Stage2D({ dsl, device, bgColor, canvasId }: Stage2DProps) {
       const availableH = rect.height - 8;
       const scaleX = availableW / device.width;
       const scaleY = availableH / device.height;
-      const s = Math.min(scaleX, scaleY, 1); // 不放大，只缩小
-      setScale(s);
+      const s = Math.min(scaleX, scaleY, 1); // 自动适配不放大，只缩小
+      setAutoScale(s);
       // ★ 修复 5: 记录实际渲染帧尺寸（供 LLM prompt 注入）
       if (canvasId) {
         setFrameSize(canvasId, { width: device.width, height: device.height });
@@ -115,24 +132,50 @@ function Stage2D({ dsl, device, bgColor, canvasId }: Stage2DProps) {
     return () => resizeObserver.disconnect();
   }, [device, canvasId, setFrameSize]);
 
+  // ★ 滚轮缩放: 上滚放大, 下滚缩小, 范围 0.3~3
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault(); // 阻止页面滚动
+      const delta = -e.deltaY;
+      const step = 0.1;
+      setUserZoom((prev) => {
+        const next = prev + (delta > 0 ? step : -step);
+        return Math.min(3, Math.max(0.3, Math.round(next * 100) / 100));
+      });
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
+
+  // ★ 双击重置缩放到 100%
+  const handleDoubleClick = useCallback(() => {
+    setUserZoom(1);
+  }, []);
+
+  // ★ 设备尺寸 + 缩放 — 加 CSS transition 让尺寸变化平滑
   const stageStyle: React.CSSProperties = useMemo(() => {
-    if (!device) {
-      return { width: '100%', height: '100%', position: 'relative' as const };
-    }
-    return {
-      width: `${device.width}px`,
-      height: `${device.height}px`,
+    const base: React.CSSProperties = {
       position: 'relative' as const,
       transformOrigin: 'center center',
-      transform: `scale(${scale})`,
+      transform: `scale(${effectiveScale})`,
+      transition: 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1), height 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-radius 0.3s ease',
     };
-  }, [device, scale]);
+    if (!device) {
+      return { ...base, width: '100%', height: '100%' };
+    }
+    return { ...base, width: `${device.width}px`, height: `${device.height}px` };
+  }, [device, effectiveScale]);
 
   const pngPath = device ? inferPngPath(device) : null;
+  // ★ 用 sizeKey 作为 AnimatePresence 的 key，设备切换时触发 crossfade
+  const pngKey = device?.sizeKey ?? 'none';
 
   return (
     <div
       ref={containerRef}
+      onDoubleClick={handleDoubleClick}
       style={{
         position: 'absolute',
         inset: 0,
@@ -144,38 +187,108 @@ function Stage2D({ dsl, device, bgColor, canvasId }: Stage2DProps) {
       }}
     >
       <div style={stageStyle}>
-        {/* DSL 渲染层 */}
-        <div
+        {/* DSL 渲染层 — 用 framer-motion 淡入 */}
+        <motion.div
           ref={dslLayerRef}
+          key={dsl === prevDslRef.current ? undefined : 'stable'}
           style={{
             position: 'absolute',
             inset: 0,
             overflow: 'hidden',
             borderRadius: device ? '32px' : 0,
           }}
+          initial={DSL_TRANSITION.initial}
+          animate={DSL_TRANSITION.animate}
+          transition={DSL_TRANSITION.transition}
         >
-          <WebAstPreview root={dsl} bgColor={bgColor} />
-        </div>
-
-        {/* PNG 设备边框层（仅 2D 模式 + 有设备时） */}
-        {pngPath && (
-          <img
-            src={pngPath}
-            alt={device?.label || 'device frame'}
-            style={{
-              position: 'absolute',
-              inset: 0,
+          {isEmptyDsl ? (
+            // ★ 空 DSL 占位：在设备屏幕内显示提示文字
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
               width: '100%',
               height: '100%',
+              background: bgColor,
+              gap: '12px',
+            }}>
+              <div
+                style={{
+                  width: '48px',
+                  height: '48px',
+                  opacity: 0.5,
+                  backgroundColor: 'var(--color-primary, #6366f1)',
+                  maskImage: 'url(/lightning_logo.png)',
+                  maskSize: 'contain',
+                  maskPosition: 'center',
+                  maskRepeat: 'no-repeat',
+                  WebkitMaskImage: 'url(/lightning_logo.png)',
+                  WebkitMaskSize: 'contain',
+                  WebkitMaskPosition: 'center',
+                  WebkitMaskRepeat: 'no-repeat',
+                }}
+              />
+              <div style={{
+                fontSize: '11px',
+                fontFamily: 'monospace',
+                color: 'rgba(128,128,128,0.5)',
+              }}>
+                等待生成预览...
+              </div>
+            </div>
+          ) : (
+            <WebAstPreview root={dsl} bgColor={bgColor} />
+          )}
+        </motion.div>
+
+        {/* ★ 缩放比例指示器 (用户缩放后显示) */}
+        {userZoom !== 1 && (
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 8,
+              right: 8,
+              padding: '2px 8px',
+              background: 'rgba(0,0,0,0.6)',
+              color: 'rgba(255,255,255,0.9)',
+              fontSize: '11px',
+              fontFamily: 'monospace',
+              borderRadius: '4px',
               pointerEvents: 'none',
-              objectFit: 'contain',
-              zIndex: 10,
+              zIndex: 20,
             }}
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).style.display = 'none';
-            }}
-          />
+          >
+            {Math.round(effectiveScale * 100)}% · 双击重置
+          </div>
         )}
+
+        {/* ★ PNG 设备边框层 — AnimatePresence crossfade */}
+        <AnimatePresence mode="sync">
+          {pngPath && (
+            <motion.img
+              key={pngKey}
+              src={pngPath}
+              alt={device?.label || 'device frame'}
+              initial={PNG_TRANSITION.initial}
+              animate={PNG_TRANSITION.animate}
+              exit={PNG_TRANSITION.exit}
+              transition={PNG_TRANSITION.transition}
+              style={{
+                position: 'absolute',
+                inset: 0,
+                width: '100%',
+                height: '100%',
+                pointerEvents: 'none',
+                objectFit: 'contain',
+                zIndex: 10,
+              }}
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = 'none';
+              }}
+            />
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
@@ -197,13 +310,30 @@ function Stage3D({ dsl, device, bgColor, theme, finish }: Stage3DProps) {
     return null;
   }, [device]);
 
+  // ★ 3D 容器淡入: 模型加载完成后 anime.js opacity 0→1
+  const containerRef = useRef<HTMLDivElement>(null);
+  const prevUrl = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!containerRef.current || !modelUrl) return;
+    // 首次加载或模型切换时淡入
+    if (prevUrl.current !== modelUrl) {
+      prevUrl.current = modelUrl;
+      animate(containerRef.current, {
+        opacity: [0, 1],
+        duration: 500,
+        ease: 'outCubic',
+      });
+    }
+  }, [modelUrl]);
+
   if (!modelUrl) {
     // glbFile 缺失，降级为 2D
     return <Stage2D dsl={dsl} device={null} bgColor={bgColor} />;
   }
 
   return (
-    <div style={{ position: 'absolute', inset: 0, background: bgColor }}>
+    <div ref={containerRef} style={{ position: 'absolute', inset: 0, background: bgColor, opacity: 0 }}>
       <React.Suspense
         fallback={
           <div
@@ -248,37 +378,30 @@ export interface CanvasStageProps {
 export default function CanvasStage({ dsl, device, canvasId, bgColor = '#ffffff', theme, finish }: CanvasStageProps) {
   const renderMode = useCanvasDeviceStore((s) => s.renderMode);
 
-  // ★ anime.js: 模式切换过渡
-  const stageRef = useRef<HTMLDivElement>(null);
-  const prevMode = useRef<string | null>(null);
-
-  useEffect(() => {
-    const currentMode = renderMode === '3D' && device?.glbFile ? '3D' : '2D';
-    if (prevMode.current !== null && prevMode.current !== currentMode && stageRef.current) {
-      // 模式切换 — anime.js 淡入过渡
-      animate(stageRef.current, {
-        opacity: [0, 1],
-        scale: [0.92, 1],
-        duration: 500,
-        ease: 'easeOutCubic',
-      });
-    }
-    prevMode.current = currentMode;
-  }, [renderMode, device?.glbFile]);
-
   // ★ 修复 3: 3D 模式需要 device 且 device.glbFile 存在，否则降级为 2D
-  // 不再强制覆盖 bgColor（修复 5：尊重用户选择）
   const is3D = renderMode === '3D' && device && device.glbFile;
 
-  console.log('[CanvasStage] renderMode=', renderMode, 'device=', device?.label ?? 'null', 'glbFile=', device?.glbFile ?? 'none', '→ is3D=', is3D);
+  // ★ 模式 key — AnimatePresence 用此 key 判断是否切换
+  const modeKey = is3D ? '3d' : '2d';
 
   return (
-    <div ref={stageRef} style={{ position: 'absolute', inset: 0 }}>
-      {is3D ? (
-        <Stage3D dsl={dsl} device={device} bgColor={bgColor} theme={theme ?? getDefaultTheme()} finish={finish ?? getDefaultFinish()} />
-      ) : (
-        <Stage2D dsl={dsl} device={device} bgColor={bgColor} canvasId={canvasId} />
-      )}
+    <div style={{ position: 'absolute', inset: 0 }}>
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={modeKey}
+          initial={MODE_TRANSITION.initial}
+          animate={MODE_TRANSITION.animate}
+          exit={MODE_TRANSITION.exit}
+          transition={MODE_TRANSITION.transition}
+          style={{ position: 'absolute', inset: 0 }}
+        >
+          {is3D ? (
+            <Stage3D dsl={dsl} device={device!} bgColor={bgColor} theme={theme ?? getDefaultTheme()} finish={finish ?? getDefaultFinish()} />
+          ) : (
+            <Stage2D dsl={dsl} device={device} bgColor={bgColor} canvasId={canvasId} />
+          )}
+        </motion.div>
+      </AnimatePresence>
     </div>
   );
 }

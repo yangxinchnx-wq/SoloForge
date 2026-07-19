@@ -1,8 +1,6 @@
 import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
-import { useHotTheme } from './context/ThemeContext';
 import { LayoutProvider } from './context/LayoutContext';
-import { useChatClickCanvasBridge } from './hooks/useChatClickCanvasBridge';
 import { usePreviewBridge } from './hooks/usePreviewBridge';
 import { useBroadcastSync } from './hooks/useBroadcastSync';
 import { useFileOperations } from './hooks/useFileOperations';
@@ -39,21 +37,18 @@ export default function App() {
     console.log('[App] mount diagnostic:', diag);
   }, []);
 
-  const {
-    mainModel, setMainModel,
-    secModels, setSecModels,
-    mixedTasks, setMixedTasks,
-    currentPermissionMode, setCurrentPermissionMode,
-    selectedFile,
-    selectedChatId, setSelectedChatId,
-    activeTab, setActiveTab,
-    setShowHistory,
-    showCodeEditor, setShowCodeEditor,
-    showHistory,
-    setShowThemeCustomizer,
-    setShowSettingsModal,
-    setShowStatsModal,
-  } = useAppStore();
+  // ★ 细粒度 selector: 只订阅 App 自身 effect 需要的字段
+  //   mainModel/secModels/mixedTasks/selectedFile/activeTab/showHistory/showCodeEditor/
+  //   editorContent 等不再订阅 — 各叶子组件自己用 useAppStore(selector) 订阅
+  //   这样打字/切文件/切 tab 等高频操作不再触发 App 根组件重渲染
+  const selectedChatId = useAppStore(s => s.selectedChatId);
+  const setSelectedChatId = useAppStore(s => s.setSelectedChatId);
+  const currentPermissionMode = useAppStore(s => s.currentPermissionMode);
+  const setMixedTasks = useAppStore(s => s.setMixedTasks);
+  const setActiveTab = useAppStore(s => s.setActiveTab);
+  const setShowThemeCustomizer = useAppStore(s => s.setShowThemeCustomizer);
+  const setShowSettingsModal = useAppStore(s => s.setShowSettingsModal);
+  const setShowStatsModal = useAppStore(s => s.setShowStatsModal);
 
   // ── chatsStore → appStore 单向同步 ──────────────────────────
   const chatsStoreSelectedId = useChatsStore((s) => s.selectedChatId);
@@ -245,15 +240,9 @@ export default function App() {
     }
   }, [currentPermissionMode, setMixedTasks]);
 
-  // 画布 → chat 自动桥接
-  // ★ 2026-07-14: allowCreate=false — 选中对话时不自动创建画布
-  //   画布只在用户发送消息 (handleSend) 生成 UI 代码时懒创建
-  //   避免对话还没使用就产生一堆空画布
-  const bridge = useChatClickCanvasBridge({
-    chatId: selectedChatId,
-    allowCreate: false,
-    defaultDescription: '默认画布',
-  });
+  // ★ bridge (useChatClickCanvasBridge) 已下沉到 PreviewPanel 内部调用
+  //   原在此调用 + 传给 MainLayout → PreviewPanel, bridge 对象每次渲染都是新引用,
+  //   会导致 MainLayout 的 React.memo 失效。现改由 PreviewPanel 自包含调用。
 
   // AST 预览流桥接
   usePreviewBridge();
@@ -275,8 +264,8 @@ export default function App() {
   const initialPath = typeof window !== 'undefined' && window.location.search.includes('popout=editor')
     ? '/popout' : '/';
 
-  const { currentThemeId, setCurrentThemeId } = useHotTheme();
-  const editorContent = useAppStore((s) => s.editorContent);
+  // ★ currentThemeId/setCurrentThemeId 已下沉到 StatusBar (从 ThemeContext 直接读)
+  // ★ editorContent 已下沉到 SourceCodeEditor/HistoryAndEditorPanel/ChatPanel/PopoutLayout
 
   return (
     <LayoutProvider>
@@ -286,44 +275,20 @@ export default function App() {
             {/* 主工作区 — IDE 布局 (Header + ActivityBar + ChatPanel + 面板) */}
             <Route path="/" element={
               <MainLayout
-                mainModel={mainModel}
-                setMainModel={setMainModel}
-                secModels={secModels}
-                setSecModels={setSecModels}
-                mixedTasks={mixedTasks}
-                setMixedTasks={setMixedTasks}
-                currentPermissionMode={currentPermissionMode}
-                setCurrentPermissionMode={setCurrentPermissionMode}
-                selectedFile={selectedFile}
-                selectedChatId={selectedChatId}
-                setSelectedChatId={setSelectedChatId}
-                activeTab={activeTab}
-                setActiveTab={setActiveTab}
-                setShowHistory={setShowHistory}
-                setShowCodeEditor={setShowCodeEditor}
-                showHistory={showHistory}
-                showCodeEditor={showCodeEditor}
                 handleFileChange={handleFileChange}
                 handleEditorChange={handleEditorChange}
                 handleNewFile={handleNewFile}
-                bridge={bridge}
                 onOpenThemeCustomizer={onOpenThemeCustomizer}
                 onOpenSettingsModal={onOpenSettingsModal}
                 onOpenStatsModal={onOpenStatsModal}
                 modelProviderMap={modelProviderMap}
-                onEditorChange={handleEditorChange}
-                currentThemeId={currentThemeId}
-                setCurrentThemeId={setCurrentThemeId}
-                editorContent={editorContent}
               />
             } />
             {/* 弹出编辑器窗口 — 独立 chunk,主窗口不加载 */}
             <Route path="/popout" element={
               <PopoutLayout
-                selectedFile={selectedFile}
                 handleFileChange={handleFileChange}
                 handleNewFile={handleNewFile}
-                editorContent={editorContent}
                 handleEditorChange={handleEditorChange}
               />
             } />

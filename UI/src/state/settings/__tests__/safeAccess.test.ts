@@ -308,7 +308,7 @@ describe('Canvas3DClient — class 实例化防御', () => {
   });
 
   it('named import class 实例方法 → undefined(触发 Vite 模块加载失败)', () => {
-    // 模拟:import { pushRttInput } from '.../Canvas3DClient'
+    // 模拟:import { someMethod } from '.../SomeModule'
     // 实际模块里 pushRttInput 不是 export,只有 class 导出
     // named import 拿到 undefined
     const fakeModule: { pushRttInput?: unknown; Canvas3DClient?: unknown } = {

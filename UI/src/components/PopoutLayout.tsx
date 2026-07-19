@@ -9,12 +9,11 @@ import FileExplorer from './FileExplorer';
 import SourceCodeEditor from './SourceCodeEditor';
 import { SidebarResizeHandle } from './ResizeHandles';
 import { useLayoutState, useLayoutStatus } from '../context/LayoutContext';
+import { useAppStore } from '../state/appStore';
 
 interface PopoutLayoutProps {
-  selectedFile: string;
   handleFileChange: (file: string) => void;
   handleNewFile: () => void;
-  editorContent: string;
   handleEditorChange: (content: string) => void;
 }
 
@@ -23,9 +22,11 @@ interface PopoutLayoutProps {
  * 独立 Editor 窗口，走 LayoutProvider 共享拖动 state
  */
 export const PopoutLayout: React.FC<PopoutLayoutProps> = ({
-  selectedFile, handleFileChange, handleNewFile,
-  editorContent, handleEditorChange,
+  handleFileChange, handleNewFile,
+  handleEditorChange,
 }) => {
+  const selectedFile = useAppStore(s => s.selectedFile);
+  const editorContent = useAppStore(s => s.editorContent);
   const layoutState = useLayoutState();
   const layoutStatus = useLayoutStatus();
   const { sidebarWidth } = layoutState;
@@ -64,7 +65,6 @@ export const PopoutLayout: React.FC<PopoutLayoutProps> = ({
             className="flex-grow h-full w-full overflow-hidden"
           >
             <FileExplorer
-              selectedFile={selectedFile}
               setSelectedFile={handleFileChange}
               onNewFile={handleNewFile}
             />
@@ -80,8 +80,6 @@ export const PopoutLayout: React.FC<PopoutLayoutProps> = ({
           className="flex-1 h-full overflow-hidden bg-surface flex flex-col"
         >
           <SourceCodeEditor
-            selectedFile={selectedFile}
-            editorContent={editorContent}
             setEditorContent={handleEditorChange}
             isPopoutView={true}
           />

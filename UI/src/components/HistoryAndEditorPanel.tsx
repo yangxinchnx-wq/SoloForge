@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef, useLayoutEffect } from 'react';
-import { Search, X, Plus, Trash2, FolderPlus, Eraser } from '../utils/icons';
+import { Search, X, Plus, FolderPlus, Eraser } from '../utils/icons';
 import {
   DndContext,
   closestCenter,
@@ -26,6 +26,7 @@ import { AndroidIcon, WindowsIcon, HarmonyOSIcon } from './brandIcons';
 import { useChatsStore, type ChatItem, type ChatTag } from '../state/chatsStore';
 import { useChatStore, emptyStreamState } from '../state/useChatStore';
 import { useWorkspaceStore } from '../state/useWorkspaceStore';
+import { useAppStore } from '../state/appStore';
 import type { FileNode } from '../shared/types/file';
 
 // ── ChatItem → DraggableChatHistoryItem 映射 ──────────────────
@@ -59,32 +60,26 @@ function chatItemToDraggable(chat: ChatItem): DraggableChatHistoryItem {
 }
 
 interface HistoryAndEditorPanelProps {
-  selectedFile: string;
-  selectedChatId: string;
-  setSelectedChatId: (id: string) => void;
-  editorContent: string;
   setEditorContent: (content: string) => void;
   onClose?: () => void;
   width?: number;
   isResizing?: boolean;
-  parentPermissionMode?: 'normal' | 'performance' | 'ultimate' | 'expert';
-  onPermissionChange?: (mode: 'normal' | 'performance' | 'ultimate' | 'expert') => void;
-  isFloatingEditorOpen?: boolean;
 }
 
 export default function HistoryAndEditorPanel({
-  selectedFile,
-  selectedChatId,
-  setSelectedChatId,
-  editorContent,
   setEditorContent,
   onClose,
   width = 245,
   isResizing = false,
-  parentPermissionMode,
-  onPermissionChange,
-  isFloatingEditorOpen,
 }: HistoryAndEditorPanelProps) {
+  // ★ 从 appStore 直接订阅, 切断 App→MainLayout props 透传链, 避免打字/切文件/切对话全局刷新
+  const selectedFile = useAppStore(s => s.selectedFile);
+  const selectedChatId = useAppStore(s => s.selectedChatId);
+  const setSelectedChatId = useAppStore(s => s.setSelectedChatId);
+  const editorContent = useAppStore(s => s.editorContent);
+  const parentPermissionMode = useAppStore(s => s.currentPermissionMode);
+  const onPermissionChange = useAppStore(s => s.setCurrentPermissionMode);
+  const isFloatingEditorOpen = useAppStore(s => s.showFloatingEditor);
   const [searchQuery, setSearchQuery] = useState('');
 
   // ── 手动输入文件夹路径 (fallback) ─────────────────────────
@@ -99,8 +94,40 @@ export default function HistoryAndEditorPanel({
 
   // ── 从 useChatsStore 读取对话列表 ──────────────────────────
   const rawChats = useChatsStore((s) => s.chats);
+  // ★ 性能优化: 基于 id 缓存映射结果, 只对新增/修改的对话创建新对象
+  //   原实现 rawChats.map(chatItemToDraggable) 每次都为所有对话创建全新对象,
+  //   导致 SortableHistoryItem 的 React.memo 因 chat prop 引用变化而全部失效。
+  //   新建对话时 temp 插入 + real 替换触发 2 轮全量 re-render, 对话越多越卡。
+  //   修复: 浅比较关键字段, 未变的对话复用缓存的映射对象, 保持引用稳定。
+  const chatMapCacheRef = useRef<Map<string, { raw: ChatItem; mapped: DraggableChatHistoryItem }>>(new Map());
   const chats: DraggableChatHistoryItem[] = useMemo(
-    () => rawChats.map(chatItemToDraggable),
+    () => {
+      const cache = chatMapCacheRef.current;
+      const nextCache = new Map<string, { raw: ChatItem; mapped: DraggableChatHistoryItem }>();
+      const result: DraggableChatHistoryItem[] = [];
+      for (const raw of rawChats) {
+        const cached = cache.get(raw.id);
+        // 浅比较关键字段: 如果原始对话没变, 复用缓存的映射对象 (保持引用稳定)
+        if (cached &&
+            cached.raw.title === raw.title &&
+            cached.raw.tag === raw.tag &&
+            cached.raw.tagBg === raw.tagBg &&
+            cached.raw.tagText === raw.tagText &&
+            cached.raw.permission === raw.permission &&
+            cached.raw.workspaceFolder === raw.workspaceFolder &&
+            cached.raw.time === raw.time &&
+            cached.raw.updatedAt === raw.updatedAt) {
+          nextCache.set(raw.id, cached);
+          result.push(cached.mapped);
+        } else {
+          const mapped = chatItemToDraggable(raw);
+          nextCache.set(raw.id, { raw, mapped });
+          result.push(mapped);
+        }
+      }
+      chatMapCacheRef.current = nextCache;
+      return result;
+    },
     [rawChats]
   );
 
@@ -109,18 +136,30 @@ export default function HistoryAndEditorPanel({
   // 在此处检测新 ID 并 setState, React 会同步重渲染, 动画类在首次
   // 绘制时就存在, 不会出现全不透明→透明→不透明的闪烁。
   // 必须放在 chats 定义之后, 否则 TDZ (暂时性死区) 会报 ReferenceError。
+  //
+  // ★ 性能优化: 跳过 temp-Id 的动画
+  //   chatsStore.createChat 先用 temp-xxx 乐观更新, 后端返回 real-Id 后替换。
+  //   temp-Id 存在时间很短 (一个网络往返), 给它播放动画是浪费 —
+  //   会触发一次额外的 setAnimatingIds 同步 re-render, 然后马上被 real-Id 替换。
+  //   修复: temp-Id 不加入 seenChatIdsRef, 不播放动画;
+  //   real-Id 到来时会被检测为"新项"并正常播放动画。
   useLayoutEffect(() => {
     const currentIds = new Set(chats.map((c) => c.id));
 
-    // 首次渲染: 记录所有现有 ID, 不播放动画
+    // 首次渲染: 记录所有非 temp ID, 不播放动画
     if (seenChatIdsRef.current === null) {
-      seenChatIdsRef.current = currentIds;
+      const initial = new Set<string>();
+      for (const id of currentIds) {
+        if (!id.startsWith('temp-')) initial.add(id);
+      }
+      seenChatIdsRef.current = initial;
       return;
     }
 
-    // 检测新出现的 ID
+    // 检测新出现的 ID (排除 temp-Id — 它很快会被 real-Id 替换, 播动画是浪费)
     const newOnes: string[] = [];
     for (const id of currentIds) {
+      if (id.startsWith('temp-')) continue;
       if (!seenChatIdsRef.current.has(id)) {
         newOnes.push(id);
       }
@@ -137,7 +176,13 @@ export default function HistoryAndEditorPanel({
       }
     }
 
-    seenChatIdsRef.current = currentIds;
+    // 更新 seenChatIdsRef: 只保留非 temp ID
+    // (temp-Id 不记录, 这样 real-Id 到来时会被检测为"新项")
+    const nextSeen = new Set<string>();
+    for (const id of currentIds) {
+      if (!id.startsWith('temp-')) nextSeen.add(id);
+    }
+    seenChatIdsRef.current = nextSeen;
 
     if (newOnes.length === 0) return;
 
@@ -208,8 +253,14 @@ export default function HistoryAndEditorPanel({
     useChatsStore.getState().selectChat(id);
   }, [setSelectedChatId]);
 
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
-  const handleDelete = useCallback((id: string, title: string) => setDeleteTarget({ id, title }), []);
+  // ★ inline 确认: HistoryItemCard 内部确认后直接调 handleDelete 执行删除, 不再弹全屏 Modal
+  const handleDelete = useCallback(async (id: string, _title: string) => {
+    await useChatsStore.getState().deleteChat(id);
+    // 同步选中态到 appStore (修复: 原来只在 nextSelected 非空时同步,
+    //   删除最后一个对话后 appStore.selectedChatId 仍指向已删除的对话)
+    const nextSelected = useChatsStore.getState().selectedChatId;
+    setSelectedChatId(nextSelected || '');
+  }, [setSelectedChatId]);
 
   const handleRename = useCallback((id: string, newTitle: string) => {
     useChatsStore.getState().updateChat(id, { title: newTitle });
@@ -460,10 +511,6 @@ export default function HistoryAndEditorPanel({
 
       // 2. 逐个删除画布 — 停子进程 + DELETE 后端(含 Garnet state+DSL + SurrealDB) + 清前端缓存
       for (const canvasId of ownedCanvasIds) {
-// ★ 2026-07-16: 画布重构 — canvas.stop 注释掉
-// if (typeof window !== 'undefined' && window.soloforge?.canvas) {
-//   window.soloforge.canvas.stop(canvasId).catch(() => {});
-// }
         // DELETE 后端 — 清内存 + Garnet(state+dsl) + SurrealDB
         try {
           await fetch(`/api/canvas/sessions/${encodeURIComponent(canvasId)}`, {
@@ -497,15 +544,7 @@ export default function HistoryAndEditorPanel({
     console.log('[HistoryAndEditorPanel] 已清除会话', id, '的上下文/流送/画布/终端/对话消息');
   }, []);
 
-  // ── 删除对话 ────────────────────────────────────────────────
-  const executeDelete = useCallback(async (id: string) => {
-    await useChatsStore.getState().deleteChat(id);
-    // 同步选中态到 appStore
-    const nextSelected = useChatsStore.getState().selectedChatId;
-    if (nextSelected) {
-      setSelectedChatId(nextSelected);
-    }
-  }, [setSelectedChatId]);
+  // ── 删除对话的逻辑已合并到 handleDelete (inline 确认模式) ───
 
   const filteredChats = useMemo(() =>
     chats.filter((c) =>
@@ -634,40 +673,6 @@ export default function HistoryAndEditorPanel({
           </div>
         </div>
       </div>
-
-      {/* Delete Confirmation Dialog */}
-      <MountTransition show={!!deleteTarget} variant="fade">
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-[9999]">
-          <div className="bg-surface border border-outline/35 rounded-2xl p-5 max-w-xs w-full shadow-2xl flex flex-col gap-4 font-sans text-on-surface">
-            <div className="flex flex-col gap-2">
-              <h3 className="text-[13px] font-bold text-red-400 flex items-center gap-2">
-                <Trash2 className="w-4 h-4" />
-                确认删除对话吗？
-              </h3>
-              <p className="text-[11px] text-on-surface/65 leading-relaxed">
-                您确定要彻底删除 <span className="font-bold text-on-surface text-primary">"{deleteTarget?.title}"</span> 会话吗？删除后此会话的数据将不可恢复。
-              </p>
-            </div>
-            <div className="flex items-center justify-end gap-2 text-[11px]">
-              <button
-                onClick={() => setDeleteTarget(null)}
-                className="px-3 py-1.5 rounded-lg border border-outline/20 hover:bg-surface-bright text-on-surface/75 hover:text-on-surface transition-colors cursor-pointer"
-              >
-                取消
-              </button>
-              <button
-                onClick={() => {
-                  if (deleteTarget) executeDelete(deleteTarget.id);
-                  setDeleteTarget(null);
-                }}
-                className="px-3 py-1.5 rounded-lg bg-red-500/20 border border-red-500/35 text-red-400 hover:bg-red-500/40 hover:text-white transition-colors cursor-pointer font-bold"
-              >
-                彻底删除
-              </button>
-            </div>
-          </div>
-        </div>
-      </MountTransition>
 
       {/* 手动输入文件夹路径 (fallback) */}
       <MountTransition show={showManualFolderInput} variant="fade-scale">

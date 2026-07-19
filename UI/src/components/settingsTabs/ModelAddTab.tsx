@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Globe, Plus, Search, RefreshCw, Key, Eye, EyeOff, X, Layers, Check, AlertCircle, Radio, Trash2, ChevronDown, ChevronUp, Info, Zap, Clock, Pencil } from '../../utils/icons';
 import * as DndKitCore from '@dnd-kit/core';
@@ -409,6 +409,15 @@ export default function ModelAddTab() {
     }
   });
 
+  // 启用的服务商排前面，组内保持原顺序（稳定排序）
+  const sortedProviders = useMemo(
+    () => [...providers].sort((a, b) => {
+      if (a.enabled === b.enabled) return 0;
+      return a.enabled ? -1 : 1;
+    }),
+    [providers]
+  );
+
   // 挂载时从服务端加载 providers_db.json（权威元信息）+ 从 OS 钥匙串 reveal 明文密钥
   // providers_db.json 不存 apiKey (永远为空), 密钥明文只在:
   //   - localStorage (本机快速加载)
@@ -538,7 +547,6 @@ export default function ModelAddTab() {
 
   const [activeProviderId, setActiveProviderId] = useState<string>('xiaomi');
   const [showApiKey, setShowApiKey] = useState<Record<string, boolean>>({});
-  const [customModelVal, setCustomModelVal] = useState('');
 
   // 自定义服务商名称编辑状态
   const [editingName, setEditingName] = useState(false);
@@ -776,7 +784,6 @@ export default function ModelAddTab() {
   // useCallback — 稳定引用，配合 React.memo 防止拖拽时全量重渲染
   const handleProviderSelect = React.useCallback((id: string) => {
     setActiveProviderId(id);
-    setCustomModelVal('');
     setEditingName(false);
   }, []);
 
@@ -798,22 +805,6 @@ export default function ModelAddTab() {
   const handleProviderDragCancel = React.useCallback(() => {
     setActiveDragProviderId(null);
   }, []);
-
-  const addCustomModel = (providerId: string) => {
-    if (!customModelVal.trim()) return;
-    setProviders(prev => prev.map(p => {
-      if (p.id === providerId) {
-        if (!p.customModels.includes(customModelVal.trim())) {
-          return {
-            ...p,
-            customModels: [...p.customModels, customModelVal.trim()]
-          };
-        }
-      }
-      return p;
-    }));
-    setCustomModelVal('');
-  };
 
   const removeCustomModel = (providerId: string, customModelName: string) => {
     setProviders(prev => prev.map(p => {
@@ -856,7 +847,6 @@ export default function ModelAddTab() {
     };
     setProviders(prev => [...prev, newProvider]);
     setActiveProviderId(newId);
-    setCustomModelVal('');
   };
 
   // 使用 ref 保持稳定引用，配合 React.memo
@@ -1002,16 +992,8 @@ export default function ModelAddTab() {
   return (
     <div
       ref={cloudModelPageRef}
-      className="space-y-5 flex flex-col text-left"
+      className="flex-1 flex flex-col text-left"
     >
-      {/* Tab Title Area */}
-      <div className="border-b border-[var(--color-outline)]/20 pb-4 shrink-0 flex items-center justify-between">
-        <div>
-          <h3 className="text-lg font-extrabold text-[var(--color-on-surface)] tracking-wide">云端大模型服务商配置</h3>
-          <p className="text-xs text-on-surface/55 mt-1">配置第三方各大语言模型接口，添加特定鉴权并建立安全的 API 路由连接。</p>
-        </div>
-      </div>
-
       {/* Main Twin Panel Construction */}
       <DndContext
         sensors={providerSensors}
@@ -1023,13 +1005,13 @@ export default function ModelAddTab() {
       >
       <div
         className="flex min-h-0 bg-[var(--color-bg)]/60 border border-[var(--color-outline)]/20 rounded-2xl overflow-visible"
-        style={{ height: 'calc(85vh - 220px)', flexShrink: 0 }}
+        style={{ height: 'calc(85vh - 40px)', flexShrink: 0 }}
       >
 
         {/* Left Sidebar: Provider Cards Selection */}
         <div className="w-[200px] border-r border-[var(--color-outline)]/15 bg-[var(--color-bg)]/80 flex flex-col shrink-0">
           {/* Fixed: Title */}
-          <div className="px-5 py-3 text-[10px] text-on-surface/40 font-bold tracking-wider border-b border-[var(--color-outline)]/10 shrink-0">
+          <div className="px-5 py-3 text-sm text-on-surface/60 font-bold tracking-wider border-b border-[var(--color-outline)]/10 shrink-0">
             模型服务商列表
           </div>
 
@@ -1043,12 +1025,12 @@ export default function ModelAddTab() {
               msOverflowStyle: 'none',
             }}
           >
-            <SortableContext items={providers.map((p) => p.id)} strategy={verticalListSortingStrategy}>
+            <SortableContext items={sortedProviders.map((p) => p.id)} strategy={verticalListSortingStrategy}>
               {/* is-dimming 放在 SortableContext 内部，不放在滚动容器上。
                   DragOverlay 用 position:fixed 跟随鼠标，如果 filter/opacity
                   在祖先元素上，fixed 会退化成 absolute，导致 overlay 不跟鼠标。 */}
               <div className={`sf-drag-context space-y-1 ${activeDragProviderId ? 'is-dimming' : ''}`}>
-                {providers.map((p) => (
+                {sortedProviders.map((p) => (
                   <SortableProviderCard
                     key={p.id}
                     provider={p}
@@ -1328,85 +1310,6 @@ export default function ModelAddTab() {
                     </div>
                   )}
                 </div>
-
-                {/* Manual Custom Model Registration */}
-                <div className="flex items-center gap-2 pt-1">
-                  <input
-                    type="text"
-                    value={customModelVal}
-                    onChange={(e) => setCustomModelVal(e.target.value)}
-                    placeholder="自定义模型代码，如 deepseek-ai/DeepSeek-V3"
-                    disabled={!activeProvider.enabled}
-                    className="flex-1 text-xs px-3 py-2 bg-[var(--color-surface-bright)] border border-[var(--color-outline)]/20 focus:border-[var(--color-primary)] rounded-xl text-[var(--color-on-surface)] font-mono outline-none disabled:opacity-50"
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        addCustomModel(activeProvider.id);
-                      }
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => addCustomModel(activeProvider.id)}
-                    disabled={!activeProvider.enabled || !customModelVal.trim()}
-                    className="px-3.5 py-2 bg-[var(--color-primary)]/15 hover:bg-[var(--color-primary)]/25 border border-[var(--color-primary)]/20 text-[var(--color-primary)] hover:text-white rounded-xl text-xs font-bold transition-all shrink-0 disabled:opacity-20 cursor-pointer"
-                  >
-                    登记模型
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Connection Diagnostic Testing Probe Footbar */}
-            <div className="mt-4 p-4 bg-[var(--color-bg)]/60 border border-[var(--color-outline)]/15 rounded-2xl flex items-center justify-between shrink-0 shadow-inner">
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    testProviderConnection(activeProvider.id);
-                  }}
-                  disabled={!activeProvider.enabled || activeProvider.status === 'loading'}
-                  className="px-4 py-2 bg-[var(--color-primary)] hover:opacity-95 text-[var(--color-bg)] font-extrabold text-xs rounded-xl transition-all flex items-center gap-2 active:scale-95 disabled:opacity-40 cursor-pointer shadow-md"
-                >
-                  {activeProvider.status === 'loading' ? (
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Radio className="w-4 h-4 animate-pulse" />
-                  )}
-                  <span>测试连通性</span>
-                </button>
-                <span className="text-[10px] text-on-surface/40 font-medium">
-                  测试网络连通性并探测所有已选模型的真实能力
-                </span>
-              </div>
-
-              {/* Testing Status Message */}
-              <div className="flex items-center shrink-0">
-                {activeProvider.status === 'loading' && (
-                  <div className="sf-anim sf-anim-fade text-yellow-400 font-bold text-[11px] flex items-center gap-1.5">
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>线路握手中...</span>
-                  </div>
-                )}
-                {activeProvider.status === 'success' && activeProvider.enabled && (
-                  <div className="sf-anim sf-anim-fade text-emerald-400 font-extrabold text-[11px] flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg">
-                    <Check className="w-4 h-4" />
-                    <span>测试成功 ({activeProvider.delay}毫秒)</span>
-                  </div>
-                )}
-                {activeProvider.status === 'failed' && activeProvider.enabled && (
-                  <div className="sf-anim sf-anim-fade text-red-400 font-extrabold text-[11px] flex items-center gap-1.5 bg-red-400/10 border border-red-500/20 px-3 py-1.5 rounded-lg cursor-help shrink-0"
-                    title={activeProvider.errorMessage}
-                  >
-                    <AlertCircle className="w-4 h-4 shrink-0" />
-                    <span>握手失败</span>
-                  </div>
-                )}
-                {!activeProvider.enabled && (
-                  <div className="text-on-surface/30 text-[11px]">
-                    服务商未启用
-                  </div>
-                )}
               </div>
             </div>
             </div>

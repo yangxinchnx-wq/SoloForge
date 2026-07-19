@@ -2,20 +2,19 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Pin, X, Code, Maximize2, Minimize2 } from '../utils/icons';
 import { useHotTheme } from '../context/ThemeContext';
 import SourceCodeEditor from './SourceCodeEditor';
+import { useAppStore } from '../state/appStore';
 
 interface FloatingEditorWindowProps {
-  selectedFile: string;
-  editorContent: string;
   setEditorContent: (content: string) => void;
   onClose: () => void;
 }
 
 export default function FloatingEditorWindow({
-  selectedFile,
-  editorContent,
   setEditorContent,
   onClose,
 }: FloatingEditorWindowProps) {
+  const selectedFile = useAppStore(s => s.selectedFile);
+  const editorContent = useAppStore(s => s.editorContent);
   const { activeTheme } = useHotTheme();
 
   // Settings: Pinned (always on top) and isMaximized
@@ -250,8 +249,6 @@ export default function FloatingEditorWindow({
         {/* Floating Editor Container Body */}
         <div className="flex-1 w-full overflow-hidden bg-bg/50 relative">
           <SourceCodeEditor
-            selectedFile={selectedFile}
-            editorContent={editorContent}
             setEditorContent={setEditorContent}
             isPopoutView={true}
           />

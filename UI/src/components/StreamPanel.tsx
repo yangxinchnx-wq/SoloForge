@@ -68,7 +68,7 @@ export default function StreamPanel({ chatId, mainModel, modelCount, permissionM
   if (!hasTask && blockingCards.length === 0 && nonBlockingCards.length === 0) return null;
 
   return (
-    <div className="flex flex-col gap-2 mt-4 text-left">
+    <div className="flex flex-col gap-2 -mt-1.5 text-left">
       {/* 阻塞型 PromptCard（追问）— 独立于 task, 不受 task 更新影响 */}
       {blockingCards.map(card => (
         <PromptCard
@@ -137,6 +137,12 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
   const isActive = summary.isActive;
   const subCount = summary.subtaskCount;
   const doneCount = summary.doneCount;
+
+  // ★ 2026-07-19: streaming 时不显示总结 — 即使 phase=DONE, 只要消息还在 streaming
+  //   (SSE 流未关闭), 就不显示总结。等 SSE 流关闭 (completeMessage 调用后) 才显示。
+  //   修复: 用户发消息后 Java Agent 发送 phase_change DONE, 但 SSE 流还在传输,
+  //   此时总结轮廓直接出现, 而过程 (UIMessagePartsRenderer) 还没展示完。
+  const isStreaming = lastMsg?.status === 'streaming';
 
   // ★ FIX 2026-07-14: 进行中也显示丰富信息, 不再只显示 spinner
   //   过程块由 UIMessagePartsRenderer 渲染, 这里显示:
@@ -226,7 +232,14 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
   }
 
   // 完成/错误: 显示总结块 + Token 统计
+  // ★ 2026-07-19: streaming 时不显示总结 (即使 isDone=true), 等 SSE 流关闭后才显示
+  if (isStreaming) return null;
   if (!isDone && !isError) return null;
+
+  // ★ 2026-07-19: 空总结 (无子任务+非错误+无 Token) 不渲染空轮廓
+  const hasSubTasks = subCount > 0 || (task?.subTasks && task.subTasks.length > 0);
+  const hasSummaryContent = hasSubTasks || isError;
+  if (!hasSummaryContent && usageParts.length === 0) return null;
 
   const formatToken = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
   // 聚合多个 usage part (多模型场景各自一个 usage part)
@@ -238,20 +251,14 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
 
   return (
     <div className="w-full pl-[58px] pr-3">
-      {/* 总结气泡 */}
-      <div className="border border-outline/30 rounded-lg bg-bg/50 p-3 space-y-1">
-        <div className="flex items-center gap-1.5 text-on-surface/80 mb-1.5">
-          {isError
-            ? <AlertCircle className="w-3.5 h-3.5 text-red-400" />
-            : <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />
-          }
-          <span className="font-semibold text-[11px]">总结</span>
-          {subCount > 0 && (
-            <span className="text-[10px] text-on-surface/40 ml-auto font-mono">
-              {doneCount}/{subCount} 完成
-            </span>
-          )}
-        </div>
+      {/* 总结内容 — 无气泡, 紧贴流程下方 (4px 间距由根 div -mt-1.5 实现) */}
+      {hasSummaryContent && (
+      <div className="space-y-0.5">
+        {subCount > 0 && (
+          <div className="text-[10px] text-on-surface/40 font-mono">
+            {doneCount}/{subCount} 完成
+          </div>
+        )}
         {task?.subTasks.length > 0 && task.subTasks.map(st => (
           <div key={st.id} className="flex items-start gap-2 text-[11px] py-0.5">
             {st.status === 'done'
@@ -271,8 +278,9 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
           </div>
         )}
       </div>
+      )}
 
-      {/* Token 统计 — 总结气泡下方 */}
+      {/* Token 统计 — 总结内容下方 */}
       {usageParts.length > 0 && (
         <div className="flex items-center gap-2 px-1 py-1 text-[10px] font-mono text-on-surface/40">
           <Gauge className="w-3 h-3 text-on-surface/40 shrink-0" />

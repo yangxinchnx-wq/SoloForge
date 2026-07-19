@@ -95,7 +95,7 @@ const mergeToolManifests = (serverItems: any[], defaultItems: ToolManifestItem[]
 
 // ── 内部工具: 确保浏览器/Windows 分组始终存在 ────
 const ensureDefaultToolGroups = (groups: string[]): string[] => {
-  const required = ['浏览器', 'Windows'];
+  const required = ['核心', '浏览器', 'Windows'];
   const result = [...groups];
   for (const g of required) {
     if (!result.includes(g)) result.push(g);

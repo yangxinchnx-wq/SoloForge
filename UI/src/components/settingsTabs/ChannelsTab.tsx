@@ -104,10 +104,6 @@ export default function ChannelsTab() {
 
   return (
     <div className="space-y-4 animate-fadeIn flex flex-col h-full max-h-[580px] overflow-hidden">
-      <div className="border-b border-[var(--color-outline)]/20 pb-3 shrink-0">
-        <h3 className="text-base font-bold text-[var(--color-on-surface)]">消息连接注入</h3>
-        <p className="text-xs text-on-surface/50 mt-1">关联飞书、企业微信机器人或自定义 QQ Webhook，提供一击即合的主信道报警与事件归档</p>
-      </div>
 
       {/* 3 columns Channels configuration row */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 shrink-0">

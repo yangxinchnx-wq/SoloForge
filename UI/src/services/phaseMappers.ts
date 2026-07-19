@@ -99,6 +99,22 @@ const PHASE_MAPPERS: Record<string, (evt: any, ctx: PhaseMapperContext) => void>
       detail: '单模型模式: 直接推理',
       status: 'running',
     });
+    // ★ 2026-07-19: 单模型模式也创建 subtask + step, 让过程有内容
+    //   之前只有 phase_change, 过程太稀疏 (用户无法看到 LLM 在执行什么)
+    const subId = ctx.newSubTaskId();
+    ctx.pushStreamEvent('subtask_created', {
+      agentId: 'main-model',
+      content: '主模型',
+      detail: '直接推理',
+      status: 'pending',
+      subTaskId: subId,
+    });
+    ctx.bindSubTask(ctx.activeChatId, 0, subId);
+    ctx.pushStreamEvent('subtask_step', {
+      subTaskId: subId,
+      content: 'EXECUTE',
+      status: 'running',
+    });
   },
 
   phase0_subtask: (evt, ctx) => {

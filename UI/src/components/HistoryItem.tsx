@@ -56,6 +56,8 @@ const HistoryItemCard = React.memo(function HistoryItemCard({
   const [isEditingTitle, setIsEditingTitle] = React.useState(false);
   const [editTitle, setEditTitle] = React.useState(chat.title);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
+  // ★ inline 删除确认: 点击删除按钮后在卡片内部展开确认栏, 不弹全屏 Modal
+  const [confirmingDelete, setConfirmingDelete] = React.useState(false);
 
   React.useEffect(() => {
     setEditTitle(chat.title);
@@ -150,7 +152,7 @@ const HistoryItemCard = React.memo(function HistoryItemCard({
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              onDelete(chat.id, chat.title);
+              setConfirmingDelete(true);
             }}
             className="p-1 rounded hover:bg-red-500/25 text-on-surface/40 hover:text-red-400 transition-all duration-150 cursor-pointer shrink-0"
             title="删除会话"
@@ -176,6 +178,34 @@ const HistoryItemCard = React.memo(function HistoryItemCard({
             </button>
           )}
         </div>
+
+        {/* ★ Inline 删除确认栏: 点击删除按钮后在卡片内部展开, 不影响其它 UI */}
+        {confirmingDelete && !isOverlayClone && (
+          <div className="flex items-center gap-2 mt-1 pt-2 border-t border-red-500/20">
+            <span className="text-[10px] text-red-400/80 font-bold flex-1 truncate">确认删除？</span>
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setConfirmingDelete(false);
+              }}
+              className="px-2 py-0.5 rounded text-[10px] border border-outline/20 hover:bg-surface-bright text-on-surface/70 hover:text-on-surface transition-colors cursor-pointer shrink-0"
+            >
+              取消
+            </button>
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onDelete(chat.id, chat.title);
+                setConfirmingDelete(false);
+              }}
+              className="px-2 py-0.5 rounded text-[10px] bg-red-500/20 border border-red-500/35 text-red-400 hover:bg-red-500/40 hover:text-white transition-colors cursor-pointer font-bold shrink-0"
+            >
+              删除
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

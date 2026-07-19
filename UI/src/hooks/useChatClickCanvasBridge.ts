@@ -189,10 +189,11 @@ export function useChatClickCanvasBridge(
           setReady(true);
           return null;
         }
-      } else if (allCanvases.length > 0) {
-        // allowCreate=false 且无自己的画布: 复用序号最小的 (read-only 场景)
-        targetId = allCanvases[0].sessionId;
       }
+      // ★ FIX 2026-07-19: allowCreate=false 且无 owned canvas 时不再复用别人的画布
+      //   原逻辑: else if (allCanvases.length > 0) { targetId = allCanvases[0].sessionId; }
+      //   问题: 新建对话时, bridge 会复用上一个对话的画布 → 设备/DSL 串台
+      //   修复: targetId 保持 null, PreviewPanel 用 __ephemeral__ key 显示默认画布
     }
     lastResolvedFor.current = id;
     setCanvasId(targetId);

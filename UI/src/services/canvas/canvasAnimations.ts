@@ -25,7 +25,7 @@ import type * as THREE from 'three';
 export interface EntranceAnimationOptions {
   /** 入场动画持续时间（ms），默认 800 */
   duration?: number;
-  /** 缓动函数名，默认 'easeOutCubic' */
+  /** 缓动函数名，默认 'outCubic'（anime.js v4 去掉了 'ease' 前缀） */
   ease?: string;
   /** 延迟（ms），默认 0 */
   delay?: number;
@@ -42,7 +42,7 @@ export interface StaggerEntranceOptions {
   staggerDelay?: number;
   /** stagger 起始位置，默认 'center' */
   from?: number | 'first' | 'center' | 'last' | 'random';
-  /** 缓动函数名，默认 'easeOutBack' */
+  /** 缓动函数名，默认 'outBack'（anime.js v4 去掉了 'ease' 前缀） */
   ease?: string;
   /** 网格维度（用于 3D Stagger），默认 [3, 3, 1] */
   grid?: number[] | boolean;
@@ -102,7 +102,7 @@ export function playDeviceEntrance(
 ): Timeline {
   const {
     duration = 800,
-    ease = 'easeOutCubic',
+    ease = 'outCubic',
     delay = 0,
     rotate = true,
     scale = true,
@@ -157,7 +157,7 @@ export function playDeviceEntrance(
  * 让 R3F 场景中的 DSL 子节点从 scale=0 + opacity=0 逐个浮现，
  * 配合 3D Stagger 网格 + jitter 实现自然交错效果。
  *
- * @param meshes     需要入场的 mesh/group 数组（DslToR3f 渲染的子节点）
+ * @param meshes     需要入场的 mesh/group 数组（3D 场景渲染的子节点）
  * @param materials  对应的材质数组（用于 opacity 动画）
  * @param options    Stagger 选项
  */
@@ -172,7 +172,7 @@ export function playStaggerEntrance(
     duration = 500,
     staggerDelay = 60,
     from = 'center',
-    ease = 'easeOutBack',
+    ease = 'outBack',
     grid = [3, 3, 1],
     jitter,
     seed,
@@ -211,7 +211,7 @@ export function playStaggerEntrance(
       opacity: [0, 1],
       duration: duration * 0.7,
       delay: stagger(staggerDelay, staggerParams),
-      ease: 'easeOutQuad',
+      ease: 'outQuad',
     });
   }
 
@@ -314,7 +314,7 @@ export function play2DLayoutTransition(rootEl: HTMLElement): void {
     requestAnimationFrame(() => {
       layout.reposition({
         duration: 400,
-        ease: 'easeOutElastic(1, 0.6)',
+        ease: 'outElastic(1, 0.6)',
       });
     });
   } catch {
@@ -323,7 +323,7 @@ export function play2DLayoutTransition(rootEl: HTMLElement): void {
     animate(rootEl, {
       opacity: [0, 1],
       duration: 300,
-      ease: 'easeOutQuad',
+      ease: 'outQuad',
     });
   }
 }

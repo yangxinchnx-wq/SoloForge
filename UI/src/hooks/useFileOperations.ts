@@ -18,24 +18,18 @@ import { useStaticTheme } from '../context/ThemeContext';
  * @returns handleEditorChange / handleFileChange / handleNewFile
  */
 export function useFileOperations() {
-  const {
-    selectedFile, setSelectedFile,
-    fileCache, setFileCache,
-    editorContent, setEditorContent,
-    setActiveTab, setShowHistory,
-    setShowFloatingEditor,
-    setActiveSettingsChat,
-    setToastMsg,
-  } = useAppStore();
+  // ★ 只订阅 setter (引用稳定, 不触发 App 重渲染); 值字段在回调里用 getState() 读取
+  //   原 useAppStore() 不带 selector 订阅整个 store, 导致任一字段变化都触发 App 重渲染
+  const setSelectedFile = useAppStore(s => s.setSelectedFile);
+  const setFileCache = useAppStore(s => s.setFileCache);
+  const setEditorContent = useAppStore(s => s.setEditorContent);
+  const setActiveTab = useAppStore(s => s.setActiveTab);
+  const setShowHistory = useAppStore(s => s.setShowHistory);
+  const setShowFloatingEditor = useAppStore(s => s.setShowFloatingEditor);
+  const setActiveSettingsChat = useAppStore(s => s.setActiveSettingsChat);
+  const setToastMsg = useAppStore(s => s.setToastMsg);
 
   const { addCustomFont, setSelectedFont } = useStaticTheme();
-
-  // 稳定 ref — 避免闭包过期
-  const selectedFileRef = useRef(selectedFile);
-  const fileCacheRef = useRef(fileCache);
-
-  selectedFileRef.current = selectedFile;
-  fileCacheRef.current = fileCache;
 
   // 防抖自动保存定时器
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -62,8 +56,8 @@ export function useFileOperations() {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
         // 同步 flush: 将待保存内容写入 localStorage + 广播
-        const latestCache = fileCacheRef.current;
-        const latestFile = selectedFileRef.current;
+        const latestCache = useAppStore.getState().fileCache;
+        const latestFile = useAppStore.getState().selectedFile;
         const latestContent = latestCache[latestFile] || '';
         if (typeof window !== 'undefined') {
           localStorage.setItem('soloforge_fileCache', JSON.stringify(latestCache));
@@ -80,22 +74,24 @@ export function useFileOperations() {
     };
   }, []);
 
-  // selectedFile 切换时同步 editorContent
-  const prevSelectedFileRef = useRef(selectedFile);
-  if (selectedFile !== prevSelectedFileRef.current) {
-    prevSelectedFileRef.current = selectedFile;
-    const content = useAppStore.getState().fileCache[selectedFile] !== undefined
-      ? useAppStore.getState().fileCache[selectedFile]
-      : '';
-    setEditorContent(content);
-  }
-
-  // 持久化 selectedFile
+  // ★ selectedFile 变化时: 同步 editorContent + 持久化 (用 subscribe, 不触发 App 重渲染)
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('soloforge_selectedFile', selectedFile);
-    }
-  }, [selectedFile]);
+    const persist = (file: string) => {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('soloforge_selectedFile', file);
+      }
+    };
+    persist(useAppStore.getState().selectedFile);
+    return useAppStore.subscribe(
+      (s) => s.selectedFile,
+      (file) => {
+        persist(file);
+        const cache = useAppStore.getState().fileCache;
+        const content = cache[file] !== undefined ? cache[file] : '';
+        useAppStore.getState().setEditorContent(content);
+      }
+    );
+  }, []);
 
   /**
    * 编辑器内容变更处理
@@ -103,9 +99,10 @@ export function useFileOperations() {
    */
   const handleEditorChange = useCallback((newContent: string) => {
     setEditorContent(newContent);
+    const curFile = useAppStore.getState().selectedFile;
     const updatedCache = {
-      ...fileCacheRef.current,
-      [selectedFileRef.current]: newContent
+      ...useAppStore.getState().fileCache,
+      [curFile]: newContent
     };
     setFileCache(updatedCache);
 
@@ -115,8 +112,8 @@ export function useFileOperations() {
 
     saveTimeoutRef.current = setTimeout(() => {
       if (typeof window !== 'undefined') {
-        const latestCache = fileCacheRef.current;
-        const latestFile = selectedFileRef.current;
+        const latestCache = useAppStore.getState().fileCache;
+        const latestFile = useAppStore.getState().selectedFile;
         const latestContent = latestCache[latestFile] || '';
 
         localStorage.setItem('soloforge_fileCache', JSON.stringify(latestCache));
@@ -151,7 +148,7 @@ export function useFileOperations() {
     if (isFont) {
       const filename = file.substring(file.lastIndexOf('/') + 1);
       const fontNameDisplay = filename.replace(/\.[^/.]+$/, "") + " (Local)";
-      const rawContent = fileCacheRef.current[file] || '';
+      const rawContent = useAppStore.getState().fileCache[file] || '';
 
       // ★ FIX #11: btoa() 对非 Latin-1 字符会抛 InvalidCharacterError
       //   fileCache 存的是编辑器文本, 不是二进制字体数据, btoa 编码后也不是有效字体
@@ -177,7 +174,7 @@ export function useFileOperations() {
       }
     }
 
-    const content = fileCacheRef.current[file] !== undefined ? fileCacheRef.current[file] : '';
+    const content = useAppStore.getState().fileCache[file] !== undefined ? useAppStore.getState().fileCache[file] : '';
     if (typeof window !== 'undefined') {
       // ★ FIX #18: 使用单例 channel
       try {

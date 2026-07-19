@@ -27,10 +27,6 @@ const ModalFallback = () => (
 interface ModalRendererProps {
   /** 编辑器内容变更回调（FloatingEditorWindow 需要） */
   onEditorChange: (content: string) => void;
-  /** 当前选中的文件路径（FloatingEditorWindow 需要） */
-  selectedFile: string;
-  /** 当前编辑器内容（FloatingEditorWindow 需要） */
-  editorContent: string;
 }
 
 /**
@@ -40,19 +36,23 @@ interface ModalRendererProps {
  */
 export const ModalRenderer: React.FC<ModalRendererProps> = ({
   onEditorChange,
-  selectedFile,
-  editorContent,
 }) => {
-  const {
-    showThemeCustomizer, setShowThemeCustomizer,
-    showSettingsModal, setShowSettingsModal,
-    showStatsModal, setShowStatsModal,
-    showLocalLLMPage, setShowLocalLLMPage,
-    showFloatingEditor, setShowFloatingEditor,
-    activeSettingsChat, setActiveSettingsChat,
-    toastMsg, setToastMsg,
-    currentPermissionMode,
-  } = useAppStore();
+  // ★ 细粒度 selector: 每个字段独立订阅, 避免任一 modal/toast 状态变化触发全树重渲染
+  const showThemeCustomizer = useAppStore(s => s.showThemeCustomizer);
+  const setShowThemeCustomizer = useAppStore(s => s.setShowThemeCustomizer);
+  const showSettingsModal = useAppStore(s => s.showSettingsModal);
+  const setShowSettingsModal = useAppStore(s => s.setShowSettingsModal);
+  const showStatsModal = useAppStore(s => s.showStatsModal);
+  const setShowStatsModal = useAppStore(s => s.setShowStatsModal);
+  const showLocalLLMPage = useAppStore(s => s.showLocalLLMPage);
+  const setShowLocalLLMPage = useAppStore(s => s.setShowLocalLLMPage);
+  const showFloatingEditor = useAppStore(s => s.showFloatingEditor);
+  const setShowFloatingEditor = useAppStore(s => s.setShowFloatingEditor);
+  const activeSettingsChat = useAppStore(s => s.activeSettingsChat);
+  const setActiveSettingsChat = useAppStore(s => s.setActiveSettingsChat);
+  const toastMsg = useAppStore(s => s.toastMsg);
+  const setToastMsg = useAppStore(s => s.setToastMsg);
+  const currentPermissionMode = useAppStore(s => s.currentPermissionMode);
 
   const {
     primaryColor, setPrimaryColor,
@@ -112,8 +112,6 @@ export const ModalRenderer: React.FC<ModalRendererProps> = ({
         <Suspense fallback={<ModalFallback />}>
           {showFloatingEditor && (
             <FloatingEditorWindow
-              selectedFile={selectedFile}
-              editorContent={editorContent}
               setEditorContent={onEditorChange}
               onClose={() => setShowFloatingEditor(false)}
             />

@@ -86,7 +86,7 @@ public class MultiWorkerExecutionService {
     public void executeDispatch(String dispatchId, String chatId, List<WorkerConfig> workers,
                                 String prompt, List<Map<String, Object>> history,
                                 Map<String, Object> settings, List<String> tools,
-                                String permissionMode, SseEmitter emitter) {
+                                String permissionMode, List<Map<String, Object>> toolSchemas, SseEmitter emitter) {
         log.info("Starting dispatch: dispatchId={}, chatId={}, workers={}", dispatchId, chatId, workers.size());
 
         // ── Phase 0: Task decomposition ──
@@ -123,19 +123,39 @@ public class MultiWorkerExecutionService {
         try {
             for (WorkerConfig worker : workers) {
                 Future<?> future = executor.submit(() ->
-                        executeWorker(dispatchId, chatId, worker, prompt, history, settings, tools, permissionMode, emitter, totalUsage)
+                        executeWorker(dispatchId, chatId, worker, prompt, history, settings, tools, permissionMode, toolSchemas, emitter, totalUsage)
                 );
                 futures.add(future);
                 workerStopRegistry.register(dispatchId, worker.workerIdx(), future);
             }
 
             // Wait for all workers to complete
+            // ★ Track whether any worker produced output — if all failed, we must
+            //   emit an error event (not just phase events) so the frontend can
+            //   surface it in the chat panel (not just the stream panel).
+            boolean anyWorkerSucceeded = false;
             for (int i = 0; i < futures.size(); i++) {
                 WorkerConfig worker = workers.get(i);
                 int workerIdx = worker.workerIdx();
                 Future<?> future = futures.get(i);
                 try {
                     future.get(LLM_TIMEOUT_SECONDS + 10, TimeUnit.SECONDS);
+                    // If we reach here without exception, the worker completed.
+                    // Check if it actually produced output (executeWorker catch block
+                    // swallows exceptions, so future.get() may return normally even
+                    // when the worker internally failed).
+                    try {
+                        String lastOutput = poolManager.get(chatId)
+                                .getWorkerState(workerIdx).getLastOutput();
+                        // ★ Skip error outputs (stored with "ERROR:" prefix by executeWorker catch block)
+                        //   Only count as success if there's actual LLM output content
+                        if (lastOutput != null && !lastOutput.isEmpty()
+                                && !lastOutput.startsWith("ERROR:")) {
+                            anyWorkerSucceeded = true;
+                        }
+                    } catch (Exception checkEx) {
+                        log.debug("Failed to check worker {} output: {}", workerIdx, checkEx.getMessage());
+                    }
                 } catch (TimeoutException e) {
                     log.error("Worker {} (idx={}) timed out, cancelling", i, workerIdx, e);
                     future.cancel(true);
@@ -147,17 +167,50 @@ public class MultiWorkerExecutionService {
                     sendSsePhase(emitter, "phase1_worker_error", chatId, Map.of(
                             "workerIdx", workerIdx, "error", "TIMEOUT"));
                 } catch (Exception e) {
+                    // ★ FIX: Previously the condition `!(e.getCause() instanceof Exception)`
+                    //   was inverted — it suppressed phase1_worker_error when there WAS a cause
+                    //   (the common case: ExecutionException wrapping a worker exception).
+                    //   Now we ALWAYS send phase1_worker_error so the user sees the real error.
                     log.error("Worker {} (idx={}) failed", i, workerIdx, e);
                     try {
                         poolManager.get(chatId).getWorkerState(workerIdx).setStatus("FAILED");
                     } catch (Exception inner) {
                         log.warn("Failed to mark worker {} as FAILED: {}", workerIdx, inner.getMessage());
                     }
-                    if (!(e.getCause() instanceof Exception)) {
-                        sendSsePhase(emitter, "phase1_worker_error", chatId, Map.of(
-                                "workerIdx", workerIdx, "error", e.getMessage()));
-                    }
+                    // Prefer the cause's message (the actual worker exception),
+                    // fall back to the wrapper's message.
+                    String errMsg = e.getCause() != null && e.getCause().getMessage() != null
+                            ? e.getCause().getMessage()
+                            : (e.getMessage() != null ? e.getMessage() : "Unknown error");
+                    sendSsePhase(emitter, "phase1_worker_error", chatId, Map.of(
+                            "workerIdx", workerIdx, "error", errMsg));
                 }
+            }
+
+            // ★ If ALL workers failed (none produced output), emit an error event
+            //   so the frontend displays "AI 调用失败" in the chat panel.
+            //   Without this, the user only sees an empty assistant bubble + a
+            //   small error in the stream panel, which is very confusing.
+            if (!anyWorkerSucceeded && !workers.isEmpty()) {
+                // Collect the first worker's error message for the error event
+                String firstError = "All workers failed (no output produced)";
+                try {
+                    var pool = poolManager.get(chatId);
+                    for (WorkerConfig w : workers) {
+                        String lastOutput = pool.getWorkerState(w.workerIdx()).getLastOutput();
+                        if (lastOutput != null && lastOutput.startsWith("ERROR:")) {
+                            // Strip "ERROR: " prefix to get the raw error message
+                            firstError = lastOutput.substring(7).trim();
+                            break;
+                        }
+                    }
+                } catch (Exception ignored) {}
+                log.error("All {} workers failed, emitting error event: {}", workers.size(), firstError);
+                sendSseEvent(emitter, "error", Map.of("error", firstError));
+                // Still send done so the frontend finalizes the stream
+                String primaryAgentId = workers.get(0).agentId();
+                sendSseEvent(emitter, "done", Map.of("agentId", primaryAgentId));
+                return;
             }
 
             // ── Phase 3: Delivery ──
@@ -169,7 +222,8 @@ public class MultiWorkerExecutionService {
                 var pool = poolManager.get(chatId);
                 for (WorkerConfig w : workers) {
                     String output = pool.getWorkerState(w.workerIdx()).getLastOutput();
-                    if (output != null && !output.isEmpty()) {
+                    // ★ Skip error outputs (stored with "ERROR:" prefix by executeWorker catch block)
+                    if (output != null && !output.isEmpty() && !output.startsWith("ERROR:")) {
                         bestOutput = output;
                         break;
                     }
@@ -222,7 +276,7 @@ public class MultiWorkerExecutionService {
     private void executeWorker(String dispatchId, String chatId, WorkerConfig worker,
                                String prompt, List<Map<String, Object>> history,
                                Map<String, Object> settings, List<String> tools,
-                               String permissionMode, SseEmitter emitter, AtomicTotalUsage totalUsage) {
+                               String permissionMode, List<Map<String, Object>> toolSchemas, SseEmitter emitter, AtomicTotalUsage totalUsage) {
         int workerIdx = worker.workerIdx();
         String agentId = worker.agentId();
         log.info("Starting worker: dispatchId={}, workerIdx={}, agentId={}", dispatchId, workerIdx, agentId);
@@ -346,10 +400,11 @@ public class MultiWorkerExecutionService {
                 }
 
                 // Build OpenAI tool schemas for allowed tools
-                List<Map<String, Object>> toolSchemas = buildOpenAiToolSchemas(tools, permissionMode);
+                // ★ 内置工具用 Java 端 buildSingleToolSchema; MCP/远程工具优先用前端传来的 schema
+                List<Map<String, Object>> effectiveToolSchemas = buildOpenAiToolSchemas(tools, permissionMode, toolSchemas);
 
                 log.info("Worker {} using OpenAiStreamClient: provider={} model={} tools={}",
-                        workerIdx, providerName, providerModel, toolSchemas.size());
+                        workerIdx, providerName, providerModel, effectiveToolSchemas.size());
 
                 // Tool-calling loop: up to MAX_TOOL_ROUNDS iterations
                 output = "";
@@ -357,7 +412,7 @@ public class MultiWorkerExecutionService {
                 while (true) {
                     com.soloforge.agent.tools.OpenAiStreamClient.StreamResult sr = openAiStreamClient.streamChat(
                             providerBaseUrl, providerApiKey, providerModel,
-                            openaiMessages, toolSchemas, 0.3, null,
+                            openaiMessages, effectiveToolSchemas, 0.3, null,
                             delta -> sendSseText(emitter, delta)
                     );
                     output += sr.fullContent();
@@ -466,13 +521,18 @@ public class MultiWorkerExecutionService {
             if (Thread.currentThread().isInterrupted()) {
                 log.info("Worker {} stopped by judge command: dispatchId={}", workerIdx, dispatchId);
                 pool.getWorkerState(workerIdx).setStatus("STOPPED");
+                pool.getWorkerState(workerIdx).setLastOutput("ERROR: STOPPED");
                 sendSsePhase(emitter, "phase1_worker_error", chatId, Map.of(
                         "workerIdx", workerIdx, "error", "STOPPED"));
             } else {
                 log.error("Worker {} error", workerIdx, e);
                 pool.getWorkerState(workerIdx).setStatus("FAILED");
+                // ★ Store error message in lastOutput with "ERROR:" prefix
+                //   so executeDispatch can detect all-workers-failed and extract the message
+                String errMsg = e.getMessage() != null ? e.getMessage() : "Unknown error";
+                pool.getWorkerState(workerIdx).setLastOutput("ERROR: " + errMsg);
                 sendSsePhase(emitter, "phase1_worker_error", chatId, Map.of(
-                        "workerIdx", workerIdx, "error", e.getMessage() != null ? e.getMessage() : "Unknown error"));
+                        "workerIdx", workerIdx, "error", errMsg));
             }
         }
     }
@@ -524,9 +584,32 @@ public class MultiWorkerExecutionService {
      * Build OpenAI-compatible tool schemas from the enabled tools list.
      * Only includes tools that are allowed by the permission mode.
      */
-    private List<Map<String, Object>> buildOpenAiToolSchemas(List<String> tools, String permissionMode) {
+    private List<Map<String, Object>> buildOpenAiToolSchemas(List<String> tools, String permissionMode,
+                                                              List<Map<String, Object>> frontendToolSchemas) {
         if (tools == null || tools.isEmpty()) {
             return List.of();
+        }
+
+        // Java 内置工具 ID — schema 由 Java 端 buildSingleToolSchema 构建
+        // (确保 executeToolCall 参数解析与 schema 一致)
+        Set<String> builtInToolIds = Set.of(
+                "read_file", "write_file", "list_files", "search_code", "execute_cmd", "canvas_push_ui"
+        );
+
+        // 前端传来的 schema 按 function.name 索引 (MCP/远程工具)
+        Map<String, Map<String, Object>> frontendSchemaByName = new LinkedHashMap<>();
+        if (frontendToolSchemas != null) {
+            for (Map<String, Object> ts : frontendToolSchemas) {
+                Object fnObj = ts.get("function");
+                if (fnObj instanceof Map) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> fn = (Map<String, Object>) fnObj;
+                    Object nameObj = fn.get("name");
+                    if (nameObj instanceof String name) {
+                        frontendSchemaByName.put(name, ts);
+                    }
+                }
+            }
         }
 
         List<Map<String, Object>> schemas = new ArrayList<>();
@@ -534,9 +617,24 @@ public class MultiWorkerExecutionService {
             if (!isToolAllowed(toolId, permissionMode)) {
                 continue;
             }
-            Map<String, Object> schema = buildSingleToolSchema(toolId);
-            if (schema != null) {
-                schemas.add(schema);
+            if (builtInToolIds.contains(toolId)) {
+                // 内置工具: 用 Java 端 schema
+                Map<String, Object> schema = buildSingleToolSchema(toolId);
+                if (schema != null) {
+                    schemas.add(schema);
+                }
+            } else {
+                // MCP/远程工具: 优先用前端传来的完整 schema (有参数定义)
+                Map<String, Object> frontendSchema = frontendSchemaByName.get(toolId);
+                if (frontendSchema != null) {
+                    schemas.add(frontendSchema);
+                } else {
+                    // 前端没传 schema, 用 default generic schema
+                    Map<String, Object> schema = buildSingleToolSchema(toolId);
+                    if (schema != null) {
+                        schemas.add(schema);
+                    }
+                }
             }
         }
         return schemas;

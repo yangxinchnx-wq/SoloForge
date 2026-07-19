@@ -20,7 +20,7 @@
  * 自适应算法:
  *   1. GLB 加载后 clone scene (深拷贝材质, 避免污染 useGLTF 缓存)
  *   2. 调用 processMeshesInitial 处理屏幕 mesh + Z-fighting + 缺失材质兜底
- *      + applyThemeToMeshes 应用主题颜色 (iPhone 11 纯色替换 / iPhone 15 按部位着色)
+ *      + applyThemeToMeshes 应用主题颜色 (iPhone 15 按部位着色)
  *   3. 用 Box3.setFromObject 计算 boundingBox
  *   4. 归一化缩放到 TARGET_SIZE, 居中到原点
  *   5. 根据 viewport aspect ratio + fov 计算合适的相机 z 距离
@@ -30,13 +30,14 @@
 import * as React from 'react';
 import * as THREE from 'three';
 import { Canvas, useThree } from '@react-three/fiber';
-import { OrbitControls, Environment, Lightformer, useGLTF } from '@react-three/drei';
+import { OrbitControls, Environment, Lightformer, useGLTF, Html } from '@react-three/drei';
 import type { UniversalNode } from '../services/canvas/UniversalAST';
+import { findScreenMesh, computeMeshInfo, computeAutoScreenPosition, type ScreenInfo } from './ScreenMesh';
+import WebAstPreview from './WebAstPreview';
 import {
   getDefaultTheme,
   getDefaultFinish,
   getIphone15ThemeColors,
-  getIphone11ThemeTint,
   getFinishParams,
   type ThemeId,
   type MaterialFinish,
@@ -52,7 +53,6 @@ const CAMERA_Z_BASE = 5;
 // 预加载所有 3D 模型
 const ALL_3D_MODEL_URLS = [
   '/canvas/models/3d/mobile/iphone_15_pro_max.glb',
-  '/canvas/models/3d/mobile/iphone_11_pro_max.glb',
 ];
 ALL_3D_MODEL_URLS.forEach((url) => useGLTF.preload(url));
 
@@ -76,7 +76,7 @@ interface ErrorBoundaryState {
 
 export default function CanvasStage3D({
   modelUrl,
-  dsl: _dsl,
+  dsl,
   bgColor = '#1a1a1a',
   theme = getDefaultTheme(),
   finish = getDefaultFinish(),
@@ -147,7 +147,7 @@ export default function CanvasStage3D({
         <directionalLight position={[5, 10, 7]} intensity={0.5} />
         <directionalLight position={[-5, -3, -5]} intensity={0.3} />
 
-        <SuspenseWithFallback modelUrl={modelUrl} theme={theme} finish={finish} />
+        <SuspenseWithFallback modelUrl={modelUrl} dsl={dsl} theme={theme} finish={finish} />
 
         <OrbitControls makeDefault enableDamping enablePan={false} />
       </Canvas>
@@ -157,7 +157,7 @@ export default function CanvasStage3D({
 
 // ───────────────────────────── 自适应模型组件 ─────────────────────────────
 
-function AdaptiveModel({ modelUrl, theme, finish }: { modelUrl: string; theme: ThemeId; finish: MaterialFinish }): React.JSX.Element {
+function AdaptiveModel({ modelUrl, dsl, theme, finish }: { modelUrl: string; dsl: UniversalNode; theme: ThemeId; finish: MaterialFinish }): React.JSX.Element {
   const gltf = useGLTF(modelUrl);
   const { camera, size, controls } = useThree();
 
@@ -256,7 +256,68 @@ function AdaptiveModel({ modelUrl, theme, finish }: { modelUrl: string; theme: T
   return (
     <group ref={groupRef}>
       <primitive object={scene} />
+      <ScreenOverlay scene={scene} dsl={dsl} />
     </group>
+  );
+}
+
+// ───────────────────────── Html 屏幕内容覆盖层 ─────────────────────────
+
+/**
+ * ★ 2026-07-19: 用 drei <Html transform> 替换旧 RTT 方案
+ *
+ * 工作原理:
+ *   1. 在已处理的 scene 中查找屏幕位置 (优先找 'screen' mesh, 找不到用自动定位)
+ *   2. 用 <Html transform> 把 WebAstPreview (DOM) 嵌入 3D 场景
+ *   3. CSS3DRenderer 自动同步 DOM 变换矩阵, 随模型一起旋转/缩放
+ *   4. occlude="raycast" 在模型背面时自动隐藏 DOM
+ *
+ * 优势 (相比旧 RTT 方案):
+ *   - 完全复用 WebAstPreview, 支持所有 16 种节点类型 (旧 DslToR3f 只支持 10 种)
+ *   - 文字清晰 (浏览器原生 vs SDF 字体)
+ *   - 布局强大 (CSS flexbox/grid vs 自实现简单 flex)
+ *   - 删除 DslToR3f.tsx 600+ 行重复代码
+ */
+function ScreenOverlay({ scene, dsl }: { scene: THREE.Object3D; dsl: UniversalNode }): React.JSX.Element | null {
+  // 计算屏幕位置: 优先找 'screen' mesh, 找不到用自动定位算法
+  const screenInfo = React.useMemo<ScreenInfo | null>(() => {
+    const mesh = findScreenMesh(scene);
+    if (mesh) {
+      const info = computeMeshInfo(mesh);
+      if (info) return info;
+    }
+    return computeAutoScreenPosition(scene);
+  }, [scene]);
+
+  if (!screenInfo) return null;
+
+  // DOM 像素尺寸 → 3D 单位的等比缩放
+  //   DOM 宽高比匹配屏幕区域宽高比, 避免内容变形
+  const PX_W = 393;
+  const aspect = screenInfo.size[1] / screenInfo.size[0];
+  const PX_H = Math.round(PX_W * aspect);
+  const scale = screenInfo.size[0] / PX_W;
+
+  return (
+    <Html
+      transform
+      position={screenInfo.position}
+      quaternion={screenInfo.quaternion}
+      scale={scale}
+      occlude="raycast"
+      zIndexRange={[10, 0]}
+      style={{
+        width: `${PX_W}px`,
+        height: `${PX_H}px`,
+        margin: 0,
+        padding: 0,
+        pointerEvents: 'none',
+      }}
+    >
+      <div style={{ width: '100%', height: '100%', overflow: 'hidden', borderRadius: '14px' }}>
+        <WebAstPreview root={dsl} bgColor="#ffffff" />
+      </div>
+    </Html>
   );
 }
 
@@ -266,12 +327,9 @@ function AdaptiveModel({ modelUrl, theme, finish }: { modelUrl: string; theme: T
  * 初始 Mesh 处理 (不依赖 theme, 只在模型加载时执行一次):
  *   1. 按名字检测屏幕/灵动岛 mesh → 替换为深色玻璃材质
  *   2. 按名字检测 Apple logo → polygonOffset 修复 Z-fighting
- *   3. iPhone 11: 按 z 值拆分 mesh 为机身 + 摄像头两个 geometry group
- *   4. 对所有 mesh 调用 fixMaterial 兜底 (修复缺失的 roughness/metalness)
+ *   3. 对所有 mesh 调用 fixMaterial 兜底 (修复缺失的 roughness/metalness)
  */
 function processMeshesInitial(scene: THREE.Object3D, modelUrl: string): void {
-  const isIphone11 = modelUrl.includes('iphone_11');
-
   scene.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
     if (!mesh.isMesh) return;
@@ -317,13 +375,6 @@ function processMeshesInitial(scene: THREE.Object3D, modelUrl: string): void {
       });
     }
 
-    // ★ iPhone 11: 按 z 值拆分 mesh 为机身 + 摄像头两个 group
-    //   GLB 只有 1 个 mesh + 1 个 material, 摄像头和机身共享同一张贴图。
-    //   拆分后可分别赋材质: 机身=主题色, 摄像头=深色玻璃
-    if (isIphone11 && mesh.geometry.index) {
-      splitIphone11MeshByZ(mesh);
-    }
-
     // 所有 mesh 兜底: 修复缺失的材质属性
     const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     materials.forEach((mat) => {
@@ -332,114 +383,18 @@ function processMeshesInitial(scene: THREE.Object3D, modelUrl: string): void {
   });
 }
 
-// ───────────────────────────── iPhone 11 Mesh 拆分 ─────────────────────────────
-
-/**
- * iPhone 11 mesh 按 z 值拆分为机身 + 摄像头两个 geometry group
- *
- * 问题:
- *   GLB 只有 1 个 mesh + 1 个 material, 摄像头和机身共享同一张贴图。
- *   主题切换时移除贴图上纯色, 摄像头和机身混在一起 "全是一个色"。
- *
- * 方案:
- *   按顶点局部 z 坐标拆分 geometry 的 index buffer:
- *     - 三个顶点 z 都 > 阈值 → 摄像头 group (materialIndex=1)
- *     - 其余 → 机身 group (materialIndex=0)
- *   拆分后 mesh.material 变为数组 [机身材质, 摄像头材质]
- *
- * ★ 阈值 700 基于模型局部坐标 (z 范围 [-943, 933])
- *   摄像头凸起模块三角形 z ∈ [744, 933], 机身 z ∈ [-943, 878]
- *   两者在 z=700 附近有明显的空隙 (0~700 几乎无顶点)
- *
- * ★ 用 "三顶点都 > 阈值" 而非 "平均 z > 阈值", 避免跨越边界的
- *   连接三角形被错误归入摄像头组
- */
-const IPHONE11_CAMERA_Z_THRESHOLD = 700;
-
-function splitIphone11MeshByZ(mesh: THREE.Mesh): void {
-  const geometry = mesh.geometry as THREE.BufferGeometry;
-  const index = geometry.index;
-  const position = geometry.attributes.position;
-
-  if (!index || !position) return;
-
-  const indices = index.array as Uint16Array | Uint32Array;
-  const triCount = Math.floor(indices.length / 3);
-
-  const bodyIndices: number[] = [];
-  const camIndices: number[] = [];
-
-  for (let t = 0; t < triCount; t++) {
-    const i0 = indices[t * 3];
-    const i1 = indices[t * 3 + 1];
-    const i2 = indices[t * 3 + 2];
-
-    const z0 = position.getZ(i0);
-    const z1 = position.getZ(i1);
-    const z2 = position.getZ(i2);
-
-    // 三顶点 z 都 > 阈值 → 摄像头
-    if (z0 > IPHONE11_CAMERA_Z_THRESHOLD &&
-        z1 > IPHONE11_CAMERA_Z_THRESHOLD &&
-        z2 > IPHONE11_CAMERA_Z_THRESHOLD) {
-      camIndices.push(i0, i1, i2);
-    } else {
-      bodyIndices.push(i0, i1, i2);
-    }
-  }
-
-  // 没有摄像头三角形 → 不拆分
-  if (camIndices.length === 0) return;
-
-  // 合并 index: 机身在前, 摄像头在后
-  const IndexArrayCtor = (indices instanceof Uint32Array) ? Uint32Array : Uint16Array;
-  const newIndices = new IndexArrayCtor(bodyIndices.length + camIndices.length);
-  newIndices.set(bodyIndices, 0);
-  newIndices.set(camIndices, bodyIndices.length);
-
-  geometry.setIndex(new THREE.BufferAttribute(newIndices, 1));
-
-  // 设置 geometry groups: [机身, 摄像头]
-  geometry.clearGroups();
-  geometry.addGroup(0, bodyIndices.length, 0);
-  geometry.addGroup(bodyIndices.length, camIndices.length, 1);
-
-  // 创建两个材质
-  //   material[0] = 机身材质 (克隆原始材质, 后续 applyThemeToMeshes 会设置主题色)
-  //   material[1] = 摄像头材质 (深色玻璃, 用 userData 标记供 applyThemeToMeshes 识别)
-  const bodyMat = (mesh.material as THREE.Material).clone();
-  const camMat = new THREE.MeshStandardMaterial({
-    color: 0x1a1a1a,
-    metalness: 0.8,
-    roughness: 0.15,
-    envMapIntensity: 1.5,
-  });
-  camMat.userData.isCameraModule = true;
-
-  mesh.material = [bodyMat, camMat];
-
-  console.log('[splitIphone11MeshByZ] 拆分完成', {
-    bodyTris: bodyIndices.length / 3,
-    camTris: camIndices.length / 3,
-    totalTris: triCount,
-  });
-}
-
 /**
  * 主题材质应用 (依赖 theme, 主题切换时执行):
- *   - iPhone 11: 机身=主题色+磨砂纹理, 摄像头=深色玻璃 (已拆分)
  *   - iPhone 15: 按部位指定真实颜色 + 程序化贴图 + 主题颜色
  *
  * ★ 跳过屏幕/灵动岛 mesh (已在 processMeshesInitial 中替换为固定材质)
  */
 function applyThemeToMeshes(scene: THREE.Object3D, modelUrl: string, theme: ThemeId, finish: MaterialFinish): void {
-  const isIphone11 = modelUrl.includes('iphone_11');
   const isIphone15 = modelUrl.includes('iphone_15');
   // 非目标模型不处理
-  if (!isIphone11 && !isIphone15) return;
+  if (!isIphone15) return;
 
   const themeColors = getIphone15ThemeColors(theme);
-  const themeTint = getIphone11ThemeTint(theme);
   const finishParams = getFinishParams(finish);
 
   scene.traverse((obj) => {
@@ -462,70 +417,8 @@ function applyThemeToMeshes(scene: THREE.Object3D, modelUrl: string, theme: Them
       const m = mat as THREE.MeshStandardMaterial;
       if (!m || !(m as any).isMeshStandardMaterial) return;
 
-      if (isIphone11) {
-        // ★★★ iPhone 11 Pro Max 主题颜色应用
-        //
-        // GLB 结构: 1 个 mesh + 1 个 material + 1 张暗色 baseColorTexture + 1 张 metallicRoughnessTexture
-        //
-        // 在 processMeshesInitial 中已按 z 值拆分为两个 group:
-        //   material[0] = 机身材质 (无 userData.isCameraModule)
-        //   material[1] = 摄像头材质 (userData.isCameraModule = true)
-        //
-        // 机身材质: 移除暗色贴图 → 纯主题色 + 程序化纹理 (磨砂/玻璃/皮革)
-        // 摄像头材质: 深色玻璃质感 (不随主题变化, 保持镜头可辨识)
-
-        if ((m as any).userData?.isCameraModule) {
-          // ★ 摄像头材质: 深色玻璃, 高金属度, 低粗糙度, 强环境反射
-          m.map = null;
-          m.metalnessMap = null;
-          m.roughnessMap = null;
-          m.color.setHex(0x1a1a1a);
-          m.metalness = 0.8;
-          m.roughness = 0.15;
-          m.envMapIntensity = 1.5;
-          m.transparent = false;
-          m.opacity = 1.0;
-          m.needsUpdate = true;
-        } else {
-          // ★ 机身材质: 主题色 + 材质工艺纹理
-          //
-          // 历史问题:
-          //   1. GLB 的 baseColorTexture 本身是暗色贴图 (sRGB ~0.1 → linear ~0.01)
-          //   2. material.color 是乘法叠加 (最终颜色 = 贴图 × color), color ≤ 1 只能更暗
-          //   3. 即使移除 metalnessMap + 设 metalness=0.25, 贴图本身还是黑的
-          //
-          // 解决方案:
-          //   1. 移除暗色 baseColorTexture (m.map = null)
-          //   2. 移除 metallicRoughnessTexture (metalnessMap/roughnessMap = null)
-          //   3. 用 material.color.setHex() 设置纯主题色
-          //   4. 根据材质工艺 (finish) 选择纹理: 磨砂/玻璃/皮革
-          //   最终颜色 = 纹理(浅灰噪点/皮革) × color(hex 主题色) = 干净的主题色
-          m.metalnessMap = null;
-          m.roughnessMap = null;
-          m.color.setHex(themeTint.color);
-          m.metalness = finishParams.metalness;
-          m.roughness = finishParams.roughness;
-          m.envMapIntensity = finishParams.envMapIntensity;
-          m.transparent = finishParams.transparent;
-          m.opacity = finishParams.opacity;
-
-          // ★ 根据材质工艺选择不同纹理
-          if (finish === 'glass') {
-            // 玻璃后盖: 无贴图
-            m.map = null;
-          } else if (finish === 'leather') {
-            // 皮革后盖: 皮革纹理贴图
-            m.map = getLeatherTexture();
-          } else {
-            // 磨砂钛金属 (默认): 磨砂纹理贴图
-            m.map = getMatteTitaniumTexture();
-          }
-          m.needsUpdate = true;
-        }
-      } else if (isIphone15) {
-        // ★ iPhone 15 Pro Max 按部位指定真实颜色和贴图 + 主题颜色 + 材质工艺
-        applyIphone15Materials(m, nodeName, isAppleLogo, themeColors, finish, finishParams);
-      }
+      // ★ iPhone 15 Pro Max 按部位指定真实颜色和贴图 + 主题颜色 + 材质工艺
+      applyIphone15Materials(m, nodeName, isAppleLogo, themeColors, finish, finishParams);
     });
   });
 }
@@ -545,8 +438,7 @@ let _leatherTexture: THREE.CanvasTexture | null = null;
  * 生成磨砂钛金属贴图 (用于背板)
  *
  * ★★★ 2026-07-18 修复: 噪点强度从 20 降到 8, 避免过度噪点
- *   之前强度 20 导致 iPhone 11 整个模型看起来全是噪点 (UV 重复平铺使噪点被放大)
- *   现在强度 8, 贴图更平滑, 只提供细微的磨砂质感
+ *   (UV 重复平铺会使噪点被放大, 强度 8 贴图更平滑, 只提供细微的磨砂质感)
  */
 function getMatteTitaniumTexture(): THREE.CanvasTexture {
   if (_matteTitaniumTexture) return _matteTitaniumTexture;
@@ -862,10 +754,12 @@ function fixMaterial(mat: THREE.MeshStandardMaterial): void {
 
 function SuspenseWithFallback({
   modelUrl,
+  dsl,
   theme,
   finish,
 }: {
   modelUrl: string;
+  dsl: UniversalNode;
   theme: ThemeId;
   finish: MaterialFinish;
 }): React.JSX.Element {
@@ -880,7 +774,7 @@ function SuspenseWithFallback({
       }
     >
       <React.Suspense fallback={null}>
-        <AdaptiveModel modelUrl={modelUrl} theme={theme} finish={finish} />
+        <AdaptiveModel modelUrl={modelUrl} dsl={dsl} theme={theme} finish={finish} />
       </React.Suspense>
     </ModelErrorBoundary>
   );
@@ -902,6 +796,16 @@ class ModelErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBounda
 
   static getDerivedStateFromError(): ErrorBoundaryState {
     return { hasError: true };
+  }
+
+  // ★ 修复 2026-07-19: modelUrl 变化时重置错误状态
+  //   场景: 持久化的设备被删除 (如 iphone_11_pro_max), 加载失败后
+  //   PreviewPanel 的 useEffect 自动回退到有效设备, modelUrl 变化
+  //   此时 ErrorBoundary 需要重置, 让 AdaptiveModel 重新加载新模型
+  componentDidUpdate(prevProps: ErrorBoundaryProps): void {
+    if (prevProps.modelUrl !== this.props.modelUrl && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
   }
 
   componentDidCatch(error: unknown): void {

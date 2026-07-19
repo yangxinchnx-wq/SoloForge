@@ -26,9 +26,9 @@ import { MountTransition } from './MountTransition';
 import type { FileNode } from '../shared/types/file';
 import { useChatsStore } from '../state/chatsStore';
 import { useWorkspaceStore } from '../state/useWorkspaceStore';
+import { useAppStore } from '../state/appStore';
 
 interface FileExplorerProps {
-  selectedFile: string;
   setSelectedFile: (path: string) => void;
   onNewFile: () => void;
   onClose?: () => void;
@@ -178,7 +178,9 @@ const getFileSize = (path: string): string => {
   return `${sizeKb}KB`;
 };
 
-export default function FileExplorer({ selectedFile, setSelectedFile, onNewFile, onClose, isFloatingEditorOpen }: FileExplorerProps) {
+export default function FileExplorer({ setSelectedFile, onNewFile, onClose, isFloatingEditorOpen }: FileExplorerProps) {
+  // ★ 从 appStore 直接订阅, 切断 props 透传链
+  const selectedFile = useAppStore(s => s.selectedFile);
   // ── Chat-aligned workspaces (全局 store, 组件卸载不丢失) ───
   const selectedChatId = useChatsStore(s => s.selectedChatId);
   const updateChat = useChatsStore(s => s.updateChat);

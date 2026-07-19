@@ -93,11 +93,29 @@ public class OpenAiStreamClient {
                                    List<Map<String, Object>> tools,
                                    Double temperature, Integer maxTokens,
                                    Consumer<String> onChunk) throws Exception {
+        // ── Normalize baseUrl: trim whitespace, strip trailing slashes ──
+        //   User may accidentally save "https://api.openai.com/v1/  " or "https://api.openai.com/v1//"
+        //   Both should produce the same URL as "https://api.openai.com/v1"
+        String normalizedBaseUrl = baseUrl == null ? "" : baseUrl.trim();
+        while (normalizedBaseUrl.endsWith("/")) {
+            normalizedBaseUrl = normalizedBaseUrl.substring(0, normalizedBaseUrl.length() - 1);
+        }
+        if (normalizedBaseUrl.isEmpty()) {
+            throw new IllegalArgumentException("baseUrl is empty after trimming");
+        }
+
         // Parse URL
-        URI uri = URI.create(baseUrl.endsWith("/") ? baseUrl + "chat/completions" : baseUrl + "/chat/completions");
+        URI uri = URI.create(normalizedBaseUrl + "/chat/completions");
+        String scheme = uri.getScheme() == null ? "https" : uri.getScheme().toLowerCase();
+        if (!scheme.equals("https") && !scheme.equals("http")) {
+            throw new IllegalArgumentException("Unsupported URL scheme: " + scheme + " (only http/https supported). baseUrl=" + baseUrl);
+        }
         String host = uri.getHost();
-        int port = uri.getPort() != -1 ? uri.getPort() : (uri.getScheme().equals("https") ? 443 : 80);
-        String path = uri.getRawPath().isEmpty() ? "/" : uri.getRawPath();
+        if (host == null || host.isEmpty()) {
+            throw new IllegalArgumentException("Cannot parse host from baseUrl: " + baseUrl);
+        }
+        int port = uri.getPort() != -1 ? uri.getPort() : (scheme.equals("https") ? 443 : 80);
+        String path = uri.getRawPath() == null || uri.getRawPath().isEmpty() ? "/" : uri.getRawPath();
 
         // Build request body
         var bodyMap = new java.util.LinkedHashMap<String, Object>();
@@ -112,14 +130,26 @@ public class OpenAiStreamClient {
         String bodyJson = objectMapper.writeValueAsString(bodyMap);
         byte[] bodyBytes = bodyJson.getBytes(java.nio.charset.StandardCharsets.UTF_8);
 
-        // Use raw Socket + SSLSocket for TRUE streaming.
+        // Use raw Socket (+ SSLSocket for https) for TRUE streaming.
         // Java HttpClient.send() with ofInputStream/ofLines buffers the full body before
         // returning, which defeats streaming and causes the 40s timeout for reasoning models.
         // A raw socket lets us read each SSE line the moment it arrives.
-        log.info("OpenAiStreamClient: sending stream request to {} model={}", uri, model);
+        log.info("OpenAiStreamClient: sending stream request to {} model={} tools={} stream=true",
+                uri, model, tools != null ? tools.size() : 0);
         long t0 = System.currentTimeMillis();
 
-        javax.net.ssl.SSLSocket socket = (javax.net.ssl.SSLSocket) javax.net.ssl.SSLSocketFactory.getDefault().createSocket(host, port);
+        // ★ Select plain Socket or SSLSocket based on URL scheme.
+        //   Previously this was hardcoded to SSLSocket, which broke HTTP providers
+        //   (e.g. local ollama http://localhost:11434/v1).
+        java.net.Socket socket;
+        if (scheme.equals("https")) {
+            socket = javax.net.ssl.SSLSocketFactory.getDefault().createSocket(host, port);
+            // Set SNI server name for HTTPS — some CDNs/waf require it
+            ((javax.net.ssl.SSLSocket) socket).setSSLParameters(
+                    ((javax.net.ssl.SSLSocket) socket).getSSLParameters());
+        } else {
+            socket = new java.net.Socket(host, port);
+        }
         socket.setSoTimeout(60_000); // read timeout per chunk
         try {
             // Send HTTP request
@@ -166,7 +196,17 @@ public class OpenAiStreamClient {
                 StringBuilder errBody = new StringBuilder();
                 String l;
                 while ((l = reader.readLine()) != null) errBody.append(l);
-                throw new RuntimeException("HTTP " + statusCode + " from " + uri + ": " + errBody);
+                // ★ Truncate errBody to 800 chars to avoid excessively long error messages
+                //   (some providers return full HTML pages for 404/500)
+                String errStr = errBody.toString();
+                if (errStr.length() > 800) {
+                    errStr = errStr.substring(0, 800) + "...(truncated)";
+                }
+                // ★ Rich error message: include status code, full request URL, model, and response body
+                //   so the frontend classifyStreamError() can extract URL + body for user diagnosis.
+                throw new RuntimeException(
+                        String.format("HTTP %d from %s [model=%s]: %s",
+                                statusCode, uri.toString(), model, errStr));
             }
 
             // Stream body — read SSE lines as they arrive

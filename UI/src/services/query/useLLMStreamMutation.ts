@@ -1,7 +1,7 @@
 /**
  * useLLMStreamMutation.ts — TanStack Query 风格的 LLM 流式 mutation
  *
- * 整合 LLMClient + StreamingASTParser + Cache + Canvas3DClient，
+ * 整合 LLMClient + StreamingASTParser + Cache，
  * 用 useMutation 模式暴露：
  *   - mutate({ language, userGoal }) 触发流
  *   - onChunk 回调每次 chunk 到达时调用

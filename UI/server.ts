@@ -1,4 +1,5 @@
 import express from "express";
+import http from "http";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createServer as createViteServer } from "vite";
@@ -395,6 +396,11 @@ async function invokeWindowsMcpDynamic(
 
 async function startServer() {
   const app = express();
+  // ★ 2026-07-20: 提前创建 HTTP 服务器实例,供整个函数使用
+  //   - dev 模式: Vite HMR WebSocket 需要附加到这个服务器 (hmr.server)
+  //   - production 模式: 直接用这个服务器 listen()
+  //   原来用 app.listen() 创建的 HTTP 服务器实例未被保存, Vite 无法附加 WebSocket
+  const httpServer = http.createServer(app);
   const PORT = 3000;
 
   // Add JSON parsing middleware
@@ -2442,19 +2448,93 @@ async function startServer() {
 
   // Serve static assets / handle Vite development server middleware
   if (process.env.NODE_ENV !== "production") {
+    // ★ 2026-07-20: 修复 HMR 全局热重载问题
+    //   根因: middlewareMode:true 下 Vite 不创建自己的 HTTP 服务器,
+    //   hmr:true 只启用 HMR 但没告诉 Vite 把 WebSocket 附加到哪个 HTTP 服务器。
+    //   Vite 的 HMR WebSocket 无宿主服务器可附加 → 连接失败 →
+    //   Vite 客户端降级为 full page reload (每次改代码都整页刷新)。
+    //
+    //   修复: 通过 hmr.server 将 httpServer 传递给 Vite,
+    //   Vite 的 WebSocket 服务器的 upgrade 事件会附加到这个 HTTP 服务器上,
+    //   复用同一个端口 (3000), HMR 正常工作。
+    //   React 组件走 Fast Refresh 不刷新整页; store/utils 已有 HMR 边界。
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        // ★ 2026-07-18: HMR 重新启用 (之前因 agent 编辑干扰而禁用)。
-        //   解法: vite.config.ts 中收紧 watch.ignored,让 agent 写的数据文件
-        //   不触发 Vite 重新编译,只有 src/ 下代码改动才走 HMR 热替换。
-        //   React 组件走 Fast Refresh 不刷新整页;store/utils 已补全 HMR 边界 (accept/self-accept)。
-        hmr: process.env.DISABLE_HMR !== 'true',
+        // ★ HMR WebSocket 附加到 httpServer, 复用端口 3000
+        //   hmr.server 让 Vite 把 WebSocket upgrade 事件注册到 httpServer 上,
+        //   不需要额外端口, 浏览器连接 ws://localhost:3000 即可 HMR。
+        hmr: process.env.DISABLE_HMR !== 'true'
+          ? { server: httpServer }
+          : false,
       },
       appType: "spa",
     });
     app.use(vite.middlewares);
     console.log("Vite development middleware mounted successfully.");
+
+    // ★ 2026-07-19: Safety-net for Vite transform failures —
+    //   Vite 8 (Rolldown/oxc) 在转换失败时 (如 JSX 语法错误、模块图故障) 会
+    //   静默调用 next(),请求穿过所有中间件最终被 Express 默认 404 拦截
+    //   ("Cannot GET /src/..."). 浏览器只看到 404,看不到具体错误信息,
+    //   开发者难以诊断。此中间件在 Vite 未处理请求时:
+    //   1. 检查文件是否实际存在
+    //   2. 如存在,用 vite.transformRequest 尝试手动恢复 (处理模块图故障)
+    //   3. 如 transformRequest 抛异常 (如语法错误),返回 500 + 错误信息,
+    //      让浏览器控制台显示具体错误而非无信息的 404
+    //   不影响 Vite 正常处理 (只在 Vite next() 后才执行).
+    app.use(async (req, res, next) => {
+      if (req.method !== 'GET') return next();
+      const rawUrl = req.url || '';
+      // 去除 HMR 时间戳等 query 参数 (?t=123 & import)
+      const cleanUrl = rawUrl.split('?')[0];
+      // 只处理 /src/ 下的 JS/TS 模块请求
+      if (!cleanUrl.startsWith('/src/')) return next();
+      if (!/\.(t|j)sx?$/.test(cleanUrl)) return next();
+
+      // 解析文件路径 (Vite root = UI/ = __dirname_srv)
+      const filePath = path.join(__dirname_srv, cleanUrl);
+      try {
+        await fs.promises.access(filePath);
+      } catch {
+        return next(); // 文件确实不存在,让后续中间件/404 处理
+      }
+
+      // 文件存在但 Vite 未处理 (请求穿到此处说明 Vite 已 next())
+      // 用 vite.transformRequest 手动转换 (会正确处理 import 重写 + HMR)
+      try {
+        const result = await vite.transformRequest(cleanUrl);
+        if (result != null) {
+          const code = typeof result === 'string'
+            ? result
+            : (result as any).code || String(result);
+          res.status(200)
+            .set('Content-Type', 'application/javascript; charset=utf-8')
+            .set('Cache-Control', 'no-store, no-cache, must-revalidate')
+            .end(code);
+          console.warn(`[vite-fallback] Recovered 404 for: ${cleanUrl} (Vite module graph miss)`);
+          return;
+        }
+        // transformRequest 返回 null — 罕见,让后续中间件处理
+        return next();
+      } catch (e: any) {
+        // 转换失败 (如 JSX 语法错误) — 返回 500 + 错误信息
+        // 避免 Vite 静默 next() 导致 Express 返回无信息的 404,
+        // 开发者能在浏览器控制台看到具体错误而非 "Cannot GET"
+        const errMsg = (e?.message || String(e)).replace(/\n/g, '\\n').slice(0, 500);
+        console.error(`[vite-fallback] Transform failed for ${cleanUrl}:`, e?.message || e);
+        res.status(500)
+          .set('Content-Type', 'application/javascript; charset=utf-8')
+          .set('Cache-Control', 'no-store, no-cache, must-revalidate')
+          .end(
+            `/* [vite-fallback] Transform error in ${cleanUrl}:\n` +
+            `   ${errMsg}\n*/\n` +
+            `throw new Error("Module transform failed: ${cleanUrl}. ` +
+            `Check dev server console for details.");`
+          );
+        return;
+      }
+    });
 
     // ★ 2026-07-19: Safety-net catch-all — 防止 Vite SPA 中间件在边缘场景下
     //   未处理 GET / 请求 (如 HMR 重连期间、Vite 内部依赖优化瞬间) 导致 404。
@@ -2517,7 +2597,10 @@ async function startServer() {
     process.exit(0);
   });
 
-  app.listen(PORT, "0.0.0.0", () => {
+  // ★ 2026-07-20: 用 httpServer.listen 替代 app.listen
+  //   httpServer 在 createViteServer 之前已创建 (用于 HMR WebSocket 附加),
+  //   这里才真正开始监听端口。Express 中间件已全部挂载完毕。
+  httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`Development custom full-stack server active on port ${PORT}`);
   });
 }

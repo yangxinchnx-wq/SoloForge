@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { Compass, FileText } from '../../utils/icons';
-import { NormalIcon, PerformanceIcon, ExpertIcon, UltimateIcon } from '../ChatPanel';
 
 // 06. 预置智能规则
 export default function SkillsRulesTab({ onClose, permissionMode = 'normal' }: { onClose: () => void; permissionMode?: 'normal' | 'performance' | 'ultimate' | 'expert' }) {
@@ -14,14 +13,11 @@ export default function SkillsRulesTab({ onClose, permissionMode = 'normal' }: {
   const getRuleTabIcon = () => {
     switch (permissionMode) {
       case 'performance':
-        return PerformanceIcon;
       case 'expert':
-        return ExpertIcon;
       case 'ultimate':
-        return UltimateIcon;
       case 'normal':
       default:
-        return NormalIcon;
+        return null;
     }
   };
 
@@ -36,16 +32,12 @@ export default function SkillsRulesTab({ onClose, permissionMode = 'normal' }: {
 
   return (
     <div className="space-y-6 animate-fadeIn">
-      <div className="border-b border-[var(--color-outline)]/20 pb-3 mb-2">
-        <h3 className="text-base font-bold text-[var(--color-on-surface)]">预置智能规则</h3>
-        <p className="text-xs text-on-surface/50 mt-1">定制注入到系统主会话上下文的模式级规则文件与行为约束 (Rules & System Prompts)</p>
-      </div>
 
       <div className="p-4 bg-[var(--color-surface)] border border-[var(--color-outline)]/20 rounded-xl flex items-center justify-between">
         <div className="flex items-center gap-3">
           {(() => {
             const ComplianceIcon = getRuleTabIcon();
-            return <ComplianceIcon className={`w-5 h-5 ${complianceChecked ? 'text-[var(--color-primary)]' : 'text-red-400 animate-spin'}`} />;
+            return ComplianceIcon ? <ComplianceIcon className={`w-5 h-5 ${complianceChecked ? 'text-[var(--color-primary)]' : 'text-red-400 animate-spin'}`} /> : null;
           })()}
           <div>
             <span className="text-sm font-bold text-[var(--color-on-surface)]">本地内容风控合规校验</span>
@@ -70,12 +62,9 @@ export default function SkillsRulesTab({ onClose, permissionMode = 'normal' }: {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
           {/* Mode 1 - Normal Mode */}
-          <div className="p-4 rounded-xl border border-emerald-500/10 bg-emerald-500/[0.02] flex flex-col justify-between hover:border-emerald-500/25 transition-all gap-3.5 group">
+          <div className="p-4 rounded-xl border border-outline/10 bg-surface/[0.02] flex flex-col justify-between hover:border-outline/25 transition-all gap-3.5 group">
             <div className="space-y-1.5">
               <div className="flex items-center gap-2">
-                <span className="p-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 shrink-0">
-                  <NormalIcon className="w-4 h-4" />
-                </span>
                 <span className="text-xs font-bold text-[var(--color-on-surface)]">普通模式 (安全常态)</span>
               </div>
               <p className="text-[11px] text-on-surface/50 leading-relaxed">
@@ -101,7 +90,7 @@ export default function SkillsRulesTab({ onClose, permissionMode = 'normal' }: {
                   console.warn(e);
                 }
               }}
-              className="w-full py-2 flex items-center justify-center gap-1.5 rounded-lg text-[10.5px] font-bold border border-emerald-500/20 text-emerald-400 bg-emerald-500/5 hover:bg-emerald-500/10 transition-colors cursor-pointer shrink-0"
+              className="w-full py-2 flex items-center justify-center gap-1.5 rounded-lg text-[10.5px] font-bold border border-outline/20 text-on-surface bg-surface/5 hover:bg-surface/10 transition-colors cursor-pointer shrink-0"
             >
               <Compass className="w-3.5 h-3.5 transition-transform group-hover:rotate-45" />
               创建并快速打开规则文件
@@ -109,12 +98,9 @@ export default function SkillsRulesTab({ onClose, permissionMode = 'normal' }: {
           </div>
 
           {/* Mode 2 - Performance Mode */}
-          <div className="p-4 rounded-xl border border-purple-500/10 bg-purple-500/[0.02] flex flex-col justify-between hover:border-purple-500/25 transition-all gap-3.5 group">
+          <div className="p-4 rounded-xl border border-outline/10 bg-surface/[0.02] flex flex-col justify-between hover:border-outline/25 transition-all gap-3.5 group">
             <div className="space-y-1.5">
               <div className="flex items-center gap-2">
-                <span className="p-1 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-400 shrink-0">
-                  <PerformanceIcon className="w-4 h-4" />
-                </span>
                 <span className="text-xs font-bold text-[var(--color-on-surface)]">性能模式 (半自动)</span>
               </div>
               <p className="text-[11px] text-on-surface/50 leading-relaxed">
@@ -140,59 +126,17 @@ export default function SkillsRulesTab({ onClose, permissionMode = 'normal' }: {
                   console.warn(e);
                 }
               }}
-              className="w-full py-2 flex items-center justify-center gap-1.5 rounded-lg text-[10.5px] font-bold border border-purple-500/20 text-purple-400 bg-purple-500/5 hover:bg-purple-500/10 transition-colors cursor-pointer shrink-0"
+              className="w-full py-2 flex items-center justify-center gap-1.5 rounded-lg text-[10.5px] font-bold border border-outline/20 text-on-surface bg-surface/5 hover:bg-surface/10 transition-colors cursor-pointer shrink-0"
             >
               <Compass className="w-3.5 h-3.5 transition-transform group-hover:rotate-45" />
               创建并快速打开规则文件
             </button>
           </div>
 
-          {/* Mode 3 - Expert Mode */}
-          <div className="p-4 rounded-xl border border-amber-500/10 bg-amber-500/[0.02] flex flex-col justify-between hover:border-amber-500/25 transition-all gap-3.5 group">
+          {/* Mode 3 - Ultimate Mode */}
+          <div className="p-4 rounded-xl border border-outline/10 bg-surface/[0.02] flex flex-col justify-between hover:border-outline/25 transition-all gap-3.5 group">
             <div className="space-y-1.5">
               <div className="flex items-center gap-2">
-                <span className="p-1 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 shrink-0">
-                  <ExpertIcon className="w-4 h-4" />
-                </span>
-                <span className="text-xs font-bold text-[var(--color-on-surface)]">专家模式 (自动感知)</span>
-              </div>
-              <p className="text-[11px] text-on-surface/50 leading-relaxed">
-                自适应中度编译流。IDE 后台自动开展 AST 抽象树静态扫描、逻辑异常检验以及依赖未定义自动修复。
-              </p>
-            </div>
-            <button
-              onClick={() => {
-                onClose();
-                try {
-                  const channel = new BroadcastChannel('soloforge-editor-sync-channel');
-                  channel.postMessage({
-                    type: 'FILE_SELECT',
-                    file: 'BlogSystem/rules/expert_rules.md',
-                    content: `# 专家模式控制规则 (Expert Mode Rules)\n\n## 📌 基础定义与自动化赋能\n专家模式下，IDE 具备中等强度的全自动处理指令权限，专门用于深度代码解构、重构。\n\n## 🧠 核心控制限制\n1. **自动前置验证**：编辑代码后，后台静默执行 AST 树检验、接口对齐以及未引用变量扫描。\n2. **智能合并与拆分**：主动重构组件结构，对高耦合的 Vue/React 模块推荐或自动应用微服务化重塑。\n3. **静默依赖修补**：当遇到依赖缺失时，IDE 可静默调用本地加速源包补全，避免构建阻断。`
-                  });
-                  channel.postMessage({
-                    type: 'JUMP_TO_EXPLORER',
-                    toast: '📂 已为您快速打开专家模式规则文件: BlogSystem/rules/expert_rules.md'
-                  });
-                  channel.close();
-                } catch (e) {
-                  console.warn(e);
-                }
-              }}
-              className="w-full py-2 flex items-center justify-center gap-1.5 rounded-lg text-[10.5px] font-bold border border-amber-500/20 text-amber-400 bg-amber-500/5 hover:bg-amber-500/10 transition-colors cursor-pointer shrink-0"
-            >
-              <Compass className="w-3.5 h-3.5 transition-transform group-hover:rotate-45" />
-              创建并快速打开规则文件
-            </button>
-          </div>
-
-          {/* Mode 4 - Ultimate Mode */}
-          <div className="p-4 rounded-xl border border-red-500/10 bg-red-500/[0.02] flex flex-col justify-between hover:border-red-500/25 transition-all gap-3.5 group">
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-2">
-                <span className="p-1 rounded-lg bg-red-500/10 border border-red-500/20 text-red-500 shrink-0">
-                  <UltimateIcon className="w-4 h-4" />
-                </span>
                 <span className="text-xs font-bold text-[var(--color-on-surface)]">极致模式 (全域自动)</span>
               </div>
               <p className="text-[11px] text-on-surface/50 leading-relaxed">

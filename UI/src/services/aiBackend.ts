@@ -1,4 +1,4 @@
-﻿/**
+﻿﻿/**
  * aiBackend — 统一 AI 流式后端接口
  *   dev (浏览器 / Vite dev server) → /api/java-agent/api/chat/stream (Java SSE)
  *                                  → Node.js(3000) 直连透传到 Java Spring AI Agent(8770)
@@ -53,6 +53,8 @@ export interface ChatRequest {
   workspaceFolder?: string;
   /** 前端资源管理器选中的工具 ID 列表 (如 browser_devtools, bu_run_task, win_powershell) */
   activeTools?: string[];
+  /** 前端从 toolsManifest 提取的完整工具 schema (OpenAI Function Calling 格式), 供 Java 端直接使用 */
+  toolSchemas?: any[];
   /** 前端资源管理器选中的技能 ID 列表 */
   activeSkills?: string[];
   /** 前端资源管理器选中的知识库 ID 列表 */
@@ -303,6 +305,7 @@ function buildJavaRequestBody(req: ChatRequest): any {
       emojiEnabled: settings.emojiEnabled ?? false,
       emojiType: settings.emojiType || 'standard',
       enabledTools: req.activeTools || [],
+      toolSchemas: req.toolSchemas || [],
       enabledSkills: req.activeSkills || settings.enabledSkills || [],
       enabledKnowledge: req.activeKnowledge || [],
       workspaceFolder: req.workspaceFolder || null,

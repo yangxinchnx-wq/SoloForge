@@ -5,9 +5,7 @@
 | 依赖 | 版本 | 说明 |
 |------|------|------|
 | Node.js | >= 18 | 主运行时 |
-| Flutter | >= 3.22 | Canvas 端 |
 | Garnet | 预编译 | `bin/garnet/portable/net10.0/GarnetServer.exe` |
-| Visual Studio | 2022 | Canvas C++ 编译 |
 | PowerShell | 5.1+ | Win32 API 调用 |
 
 ---
@@ -45,16 +43,6 @@ npm install
 npm run dev
 ```
 
-### 4. 启动 Canvas (Flutter)
-
-```bash
-# 第一次需要构建
-cd UI/scripts
-./build_canvas.ps1
-
-# 之后 PreviewPanel 点击 "启动画布" 即可
-```
-
 ---
 
 ## 📦 生产模式构建
@@ -70,19 +58,11 @@ npm run package
 1. `vite build` → 打包 React 前端
 2. `esbuild` → 编译 server.ts
 3. `electron-builder` → 打包 Electron
-4. 拷贝 `resources/canvas/canvas-dist/` → `release/win-unpacked/canvas/`
-5. 拷贝 `resources/canvas/models/` → `release/win-unpacked/canvas/models/`
+4. 拷贝 `resources/canvas/models/` → `release/win-unpacked/canvas/models/`
 
 ---
 
 ## 🧪 测试
-
-### 单元测试 (Flutter)
-
-```bash
-cd UI/resources/canvas/canvas_preview
-flutter test
-```
 
 ### 端到端测试
 
@@ -94,23 +74,22 @@ node test_canvas_e2e.cjs
 ### 手动测试流程
 
 1. 启动 Garnet + SoloForge 后端 + UI
-2. 在 PreviewPanel 点击 "启动画布"
-3. 画布上拉起 9090 端口的 Flutter 进程
-4. 点击 "尺寸" 下拉
-5. 选择 "iPhone 14 Pro" (前提: 模型文件存在)
-6. 画布上应出现 3D iPhone 模型占位 (BoxGeometry)
-7. 用滚轮按下拖动模型
-8. 用右键长按拖动旋转模型
-9. 点击模型 → 看到渐变流动描边
-10. 点击删除按钮 → 弹出确认弹窗
-11. 确认 → 模型从画布消失
+2. 在 PreviewPanel 中切换 2D/3D 模式
+3. 选择设备（如 iPhone 16 Pro Max）
+4. 2D 模式：画布显示 DSL 渲染结果 + PNG 设备边框
+5. 3D 模式：画布显示 3D 设备模型 + RTT 贴图（需要 GLB 文件存在）
+6. 3D 模式右键画布 → 弹出主题/材质选择菜单
+7. 切换底色 → 画布背景色实时更新
 
 ---
 
 ## 🐛 常见问题
 
-### Q: 启动画布失败 `canvas_preview.exe not found`
-**A**: 运行 `UI/scripts/build_canvas.ps1` 构建
+### Q: 3D 模式不显示模型
+**A**: 检查 `resources/canvas/models/3d/{group}/` 下是否有对应 `.glb` 文件。无 GLB 文件时自动降级为 2D 模式。
+
+### Q: 2D 设备边框不显示
+**A**: 检查 `resources/canvas/models/2d/{group}/` 下是否有对应 `.png` 文件。PNG 加载失败时边框层自动隐藏，DSL 渲染层仍正常显示。
 
 ### Q: Garnet 端口被占用
 **A**: 
@@ -119,28 +98,25 @@ netstat -ano | findstr ":6379"
 taskkill /PID <pid> /F
 ```
 
-### Q: 3D 模型显示为 BoxGeometry
-**A**: 模型文件不存在，按 `resources/canvas/models/README.md` 下载
+### Q: 静态资源 404
+**A**: `server.ts` 中通过 `express.static` 挂载 `/canvas/models/*` → `resources/canvas/models/*`。确认目录存在且 server.ts 启动时控制台输出 `[canvas-models] 静态资源服务已挂载`。
 
-### Q: 渐变描边不显示
-**A**: 检查浏览器是否支持 `conic-gradient` (Chrome 69+)
-
-### Q: 旋转/移动不响应
-**A**: 确认 `contextmenu` 事件被阻止（已在代码中处理）
+### Q: 3D 模型加载报错（useGLTF 解析失败）
+**A**: 确认 server.ts 对 `.glb` 文件设置了 `Content-Type: model/gltf-binary`。如仍失败，检查 GLB 文件是否损坏。
 
 ---
 
 ## 📐 性能调优
 
-### Flutter 端
-- 减小 RTT 纹理尺寸（默认 512x512）
-- 限制同时渲染的 3D 设备数（建议 ≤ 5）
-- 使用 `RepaintBoundary` 隔离重绘
+### 前端渲染
+- 3D 组件 `CanvasStage3D` 通过 `React.lazy` 按需加载，避免首屏加载 three.js
+- 2D 模式用 `ResizeObserver` 动态缩放，避免重排
+- DSL 更新使用 FLIP 布局过渡，避免视觉跳跃
+- anime.js 动画通过 `cancelAllCanvasAnimations` 统一清理
 
 ### Electron 端
 - SessionStore Map 清理（LRU 上限 50 个会话）
 - 30s flush 一次（不要实时写 SurrealDB）
-- WebSocket 复用（单连接多路复用）
 
 ### Garnet 配置
 - `--memory` 模式: 纯内存, 速度最快

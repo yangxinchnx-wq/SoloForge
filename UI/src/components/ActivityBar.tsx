@@ -1,13 +1,8 @@
 import React from 'react';
 import { FolderOpen, GitBranch, MessageSquare, FileCode, Search, Puzzle, Settings, HelpCircle, Palette, BarChart3 } from '../utils/icons';
+import { useAppStore } from '../state/appStore';
 
 interface ActivityBarProps {
-  activeTab: string;
-  setActiveTab: (tab: string) => void;
-  showHistory: boolean;
-  setShowHistory: (val: boolean) => void;
-  showCodeEditor: boolean;
-  setShowCodeEditor: (val: boolean) => void;
   onOpenThemeCustomizer: () => void;
   onOpenSettingsModal: () => void;
   onOpenStatsModal: () => void;
@@ -16,16 +11,17 @@ interface ActivityBarProps {
 // 默认每个 activity bar tab 状态 memo,避免父组件任何 state 变更导致整列重建
 // 父组件应传稳定的 setter (useCallback)
 const ActivityBar = React.memo(function ActivityBar({
-  activeTab,
-  setActiveTab,
-  showHistory,
-  setShowHistory,
-  showCodeEditor,
-  setShowCodeEditor,
   onOpenThemeCustomizer,
   onOpenSettingsModal,
   onOpenStatsModal
 }: ActivityBarProps) {
+  // ★ 从 appStore 直接订阅, 切断 MainLayout props 透传链
+  const activeTab = useAppStore(s => s.activeTab);
+  const setActiveTab = useAppStore(s => s.setActiveTab);
+  const showHistory = useAppStore(s => s.showHistory);
+  const setShowHistory = useAppStore(s => s.setShowHistory);
+  const showCodeEditor = useAppStore(s => s.showCodeEditor);
+  const setShowCodeEditor = useAppStore(s => s.setShowCodeEditor);
   const topTabs = [
     { id: 'explorer', icon: FolderOpen, label: '资源管理器' },
     { id: 'git', icon: GitBranch, label: '源代码管理' },

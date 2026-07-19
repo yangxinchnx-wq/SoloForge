@@ -123,12 +123,16 @@ export const useCanvasDeviceStore = create<CanvasDeviceStoreState>()(
       // ★ version 保持 3 不变: 新增 modelFinish 字段会由初始值 getDefaultFinish() 自动补全
       //   不会丢失旧的 devices/renderMode/modelTheme 数据
       // ★ frameSizes 不持久化 (运行时窗口尺寸, 重启后需重新计算)
-      partialize: (state) => ({
-        devices: state.devices,
-        renderMode: state.renderMode,
-        modelTheme: state.modelTheme,
-        modelFinish: state.modelFinish,
-      }),
+      // ★ '__ephemeral__' key 不持久化 (临时过渡 key, 不应跨对话保留设备选择)
+      partialize: (state) => {
+        const { __ephemeral__: _drop, ...persistDevices } = state.devices;
+        return {
+          devices: persistDevices,
+          renderMode: state.renderMode,
+          modelTheme: state.modelTheme,
+          modelFinish: state.modelFinish,
+        };
+      },
     }
   )
 );

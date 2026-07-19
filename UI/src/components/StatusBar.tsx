@@ -3,13 +3,9 @@ import { GitBranch, Terminal, HardDrive, Sun, Moon, Zap, ShieldAlert } from '../
 import { useHotTheme } from '../context/ThemeContext';
 import { usePendingConfirmBadge } from './terminal/hooks/usePendingConfirmBadge';
 
-interface StatusBarProps {
-  currentThemeId?: string;
-  setCurrentThemeId?: (id: string) => void;
-}
-
-export default function StatusBar({ currentThemeId = 'light', setCurrentThemeId }: StatusBarProps) {
-  const { primaryColorTargets } = useHotTheme();
+export default function StatusBar() {
+  // ★ 从 ThemeContext 直接订阅, 切断 MainLayout props 透传链
+  const { primaryColorTargets, currentThemeId = 'light', setCurrentThemeId } = useHotTheme();
   const applyThemeColor = !!primaryColorTargets?.statusBar;
   const [isTerminalCollapsed, setIsTerminalCollapsed] = useState(false);
   const [isDriveMenuOpen, setIsDriveMenuOpen] = useState(false);

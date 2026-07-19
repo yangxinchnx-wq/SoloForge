@@ -18,27 +18,21 @@ import { useHotTheme } from '../context/ThemeContext';
  * - 跳转到资源管理器 (JUMP_TO_EXPLORER)
  */
 export function useBroadcastSync(): void {
-  const {
-    selectedFile, setSelectedFile,
-    editorContent, setEditorContent,
-    fileCache, setFileCache,
-    activeTab, setActiveTab,
-    toastMsg, setToastMsg,
-  } = useAppStore();
+  // ★ 只订阅 setter (引用稳定, 不触发 App 重渲染); appStore 值字段在回调里用 getState() 读取
+  const setSelectedFile = useAppStore(s => s.setSelectedFile);
+  const setEditorContent = useAppStore(s => s.setEditorContent);
+  const setFileCache = useAppStore(s => s.setFileCache);
+  const setActiveTab = useAppStore(s => s.setActiveTab);
+  const setToastMsg = useAppStore(s => s.setToastMsg);
 
   const { syncTheme, currentThemeId, primaryColor, primaryColorTargets } = useHotTheme();
 
-  // 稳定的 ref 引用 — 避免闭包过期
-  const selectedFileRef = useRef(selectedFile);
-  const editorContentRef = useRef(editorContent);
-  const fileCacheRef = useRef(fileCache);
+  // 稳定的 ref 引用 — 仅 ThemeContext 字段需要 ref (App 因 ThemeContext 变化重渲染时更新)
+  // appStore 字段 (selectedFile/editorContent/fileCache) 改用 getState() 在回调里实时读取
   const currentThemeIdRef = useRef(currentThemeId);
   const primaryColorRef = useRef(primaryColor);
   const primaryColorTargetsRef = useRef(primaryColorTargets);
 
-  selectedFileRef.current = selectedFile;
-  editorContentRef.current = editorContent;
-  fileCacheRef.current = fileCache;
   currentThemeIdRef.current = currentThemeId;
   primaryColorRef.current = primaryColor;
   primaryColorTargetsRef.current = primaryColorTargets;
@@ -53,20 +47,22 @@ export function useBroadcastSync(): void {
         if (!msg) return;
 
         if (msg.type === 'REQUEST_SYNC') {
+          const st = useAppStore.getState();
           channel.postMessage({
             type: 'RESPONSE_SYNC',
-            file: selectedFileRef.current,
-            content: editorContentRef.current,
-            cache: fileCacheRef.current,
+            file: st.selectedFile,
+            content: st.editorContent,
+            cache: st.fileCache,
             color: primaryColorRef.current,
             themeId: currentThemeIdRef.current,
             targets: primaryColorTargetsRef.current
           });
         } else if (msg.type === 'RESPONSE_SYNC') {
-          if (msg.file && msg.file !== selectedFileRef.current) {
+          const st = useAppStore.getState();
+          if (msg.file && msg.file !== st.selectedFile) {
             setSelectedFile(msg.file);
           }
-          if (msg.content !== undefined && msg.content !== editorContentRef.current) {
+          if (msg.content !== undefined && msg.content !== st.editorContent) {
             setEditorContent(msg.content);
           }
           if (msg.themeId || msg.color || msg.targets) {
@@ -77,7 +73,7 @@ export function useBroadcastSync(): void {
             );
           }
           if (msg.cache) {
-            const sPrev = JSON.stringify(fileCacheRef.current);
+            const sPrev = JSON.stringify(useAppStore.getState().fileCache);
             const sNext = JSON.stringify(msg.cache);
             if (sPrev !== sNext) {
               setFileCache(msg.cache);
@@ -85,10 +81,11 @@ export function useBroadcastSync(): void {
             }
           }
         } else if (msg.type === 'FILE_SELECT') {
-          if (msg.file && msg.file !== selectedFileRef.current) {
+          const st = useAppStore.getState();
+          if (msg.file && msg.file !== st.selectedFile) {
             setSelectedFile(msg.file);
           }
-          if (msg.content !== undefined && msg.content !== editorContentRef.current) {
+          if (msg.content !== undefined && msg.content !== st.editorContent) {
             setEditorContent(msg.content);
           }
         } else if (msg.type === 'EDIT') {
@@ -99,7 +96,8 @@ export function useBroadcastSync(): void {
             localStorage.setItem('soloforge_fileCache', JSON.stringify(updated));
             return updated;
           });
-          if (msg.file === selectedFileRef.current && msg.content !== editorContentRef.current) {
+          const st = useAppStore.getState();
+          if (msg.file === st.selectedFile && msg.content !== st.editorContent) {
             setEditorContent(msg.content);
           }
         } else if (msg.type === 'THEME_SELECT' || msg.type === 'THEME_SYNC') {

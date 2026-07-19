@@ -3,6 +3,14 @@
 // Path: UI/src/layouts/MainLayout.tsx
 // 消费 LayoutProvider state,负责列宽 / 拖动状态
 // Modal 渲染委托给 ModalRenderer（从 appStore 直接读取状态）
+//
+// ★ 2026-07-19 重构: 切断 App→MainLayout props 透传链, 消灭"一个部分修改全局刷新"
+//   - 所有 store-derived 字段 (mainModel/secModels/mixedTasks/permissionMode/
+//     selectedFile/selectedChatId/activeTab/showHistory/showCodeEditor/editorContent/
+//     currentThemeId) 改由各叶子组件自己用 useAppStore(selector) 细粒度订阅
+//   - bridge (useChatClickCanvasBridge) 下沉到 PreviewPanel 内部调用
+//   - MainLayout 只接收非 store 数据 (稳定回调 + modelProviderMap) + 自己读布局字段
+//   - 加 React.memo: App 重渲染时若 props 引用稳定则 MainLayout 不重渲染
 // ─────────────────────────────────────────────────────────────────
 
 import React, { lazy, Suspense } from 'react';
@@ -12,19 +20,12 @@ import ChatPanel from '../components/ChatPanel';
 import StatusBar from '../components/StatusBar';
 import { ModalRenderer } from '../components/ModalRenderer';
 import { SidebarResizeHandle, HistoryResizeHandle, PreviewResizeHandle } from '../components/ResizeHandles';
-import { useHotTheme } from '../context/ThemeContext';
 import { useLayoutState, useLayoutStatus } from '../context/LayoutContext';
-import { useChatClickCanvasBridge } from '../hooks/useChatClickCanvasBridge';
 import { useAppStore } from '../state/appStore';
-import type { SecondaryModel } from '../types';
 
 // ── 面板 lazy 化 (2026-07-18) ──────────────────────────────
 // 每个 IDE 面板拆成独立 chunk,首屏只加载核心 (Header/ActivityBar/ChatPanel/StatusBar),
 // 其余面板首次渲染时才请求对应 chunk。
-// 收益:
-//   - 主 bundle 体积大幅减小 (PreviewPanel 依赖链含 three.js ~600KB+)
-//   - React 先渲染应用骨架,面板 chunk 并行加载,感知性能更好
-//   - 修改单个面板只影响该 chunk,浏览器缓存命中率更高
 const FileExplorer = lazy(() => import('../components/FileExplorer'));
 const GitPanel = lazy(() => import('../components/GitPanel'));
 const HistoryAndEditorPanel = lazy(() => import('../components/HistoryAndEditorPanel'));
@@ -39,27 +40,9 @@ const PanelFallback = () => (
 );
 
 export interface MainLayoutProps {
-  mainModel: string;
-  setMainModel: (v: string) => void;
-  secModels: SecondaryModel[];
-  setSecModels: (v: SecondaryModel[]) => void;
-  mixedTasks: boolean;
-  setMixedTasks: (v: boolean) => void;
-  currentPermissionMode: 'normal' | 'performance' | 'ultimate' | 'expert';
-  setCurrentPermissionMode: (v: 'normal' | 'performance' | 'ultimate' | 'expert') => void;
-  selectedFile: string;
-  selectedChatId: string;
-  setSelectedChatId: (v: string) => void;
-  activeTab: string;
-  setActiveTab: (v: string) => void;
-  setShowHistory: (v: boolean) => void;
-  setShowCodeEditor: (v: boolean) => void;
-  showHistory: boolean;
-  showCodeEditor: boolean;
   handleFileChange: (file: string) => void;
   handleEditorChange: (content: string) => void;
   handleNewFile: () => void;
-  bridge: ReturnType<typeof useChatClickCanvasBridge>;
   onOpenThemeCustomizer: () => void;
   onOpenSettingsModal: () => void;
   onOpenStatsModal: () => void;
@@ -67,27 +50,25 @@ export interface MainLayoutProps {
     baseUrl: string; apiKey: string; model: string;
     providerName: string; enabledInSettings: boolean;
   }>;
-  onEditorChange: (content: string) => void;
-  currentThemeId: string;
-  setCurrentThemeId: (v: string) => void;
-  editorContent: string;
 }
 
-export const MainLayout: React.FC<MainLayoutProps> = ({
-  mainModel, setMainModel, secModels, setSecModels, mixedTasks, setMixedTasks,
-  currentPermissionMode, setCurrentPermissionMode,
-  selectedFile, selectedChatId, setSelectedChatId,
-  activeTab, setActiveTab, setShowHistory, setShowCodeEditor, showHistory, showCodeEditor,
+export const MainLayout = React.memo(function MainLayout({
   handleFileChange, handleEditorChange, handleNewFile,
-  bridge, onOpenThemeCustomizer, onOpenSettingsModal, onOpenStatsModal,
-  modelProviderMap, onEditorChange, currentThemeId, setCurrentThemeId, editorContent,
-}) => {
+  onOpenThemeCustomizer, onOpenSettingsModal, onOpenStatsModal,
+  modelProviderMap,
+}: MainLayoutProps) {
   const layoutState = useLayoutState();
   const layoutStatus = useLayoutStatus();
-  const { sidebarWidth, previewWidth } = layoutState;
-  const { isResizingSidebar, isResizingPreview, dragStartPreviewWidth } = layoutStatus;
+  const { sidebarWidth } = layoutState;
+  const { isResizingSidebar } = layoutStatus;
+  // ★ 从 appStore 直接订阅布局所需字段 (低频变化, 不随打字/切文件刷新)
+  const activeTab = useAppStore((s) => s.activeTab);
+  const showHistory = useAppStore((s) => s.showHistory);
+  const showCodeEditor = useAppStore((s) => s.showCodeEditor);
   const showFloatingEditor = useAppStore((s) => s.showFloatingEditor);
-  const { primaryColorTargets } = useHotTheme();
+  // setter 引用稳定, 订阅不触发重渲染
+  const setActiveTab = useAppStore((s) => s.setActiveTab);
+  const setShowHistory = useAppStore((s) => s.setShowHistory);
 
   const sidebarVisible = activeTab === 'explorer' || activeTab === 'git' || showCodeEditor;
 
@@ -95,17 +76,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
     <div className="flex flex-col h-screen w-screen bg-bg text-on-surface overflow-hidden select-none">
       <div className="relative z-[60]" data-theme-region="header">
         <Header
-          mainModel={mainModel}
-          setMainModel={setMainModel}
-          secModels={secModels}
-          setSecModels={setSecModels}
-          mixedTasks={mixedTasks}
-          setMixedTasks={setMixedTasks}
-          permissionMode={currentPermissionMode}
           sidebarWidth={sidebarVisible || showHistory ? sidebarWidth + 48 : 48}
           isResizingSidebar={isResizingSidebar}
-          selectedFile={selectedFile}
-          setSelectedFile={handleFileChange}
         />
       </div>
 
@@ -113,12 +85,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         {/* Column 1: Activity Bar */}
         <div data-theme-region="activity-bar" className="h-full flex shrink-0">
           <ActivityBar
-            activeTab={activeTab}
-            setActiveTab={setActiveTab}
-            showHistory={showHistory}
-            setShowHistory={setShowHistory}
-            showCodeEditor={showCodeEditor}
-            setShowCodeEditor={setShowCodeEditor}
             onOpenThemeCustomizer={onOpenThemeCustomizer}
             onOpenSettingsModal={onOpenSettingsModal}
             onOpenStatsModal={onOpenStatsModal}
@@ -141,7 +107,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               <div className="flex-1 flex flex-col overflow-hidden">
                 <Suspense fallback={<PanelFallback />}>
                   <FileExplorer
-                    selectedFile={selectedFile}
                     setSelectedFile={handleFileChange}
                     onNewFile={handleNewFile}
                     onClose={() => setActiveTab('')}
@@ -161,8 +126,6 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               <div className={`${activeTab === 'explorer' ? 'h-[340px] border-t border-[var(--color-primary)]/50' : 'flex-1'} flex flex-col overflow-hidden bg-surface`}>
                 <Suspense fallback={<PanelFallback />}>
                   <SourceCodeEditor
-                    selectedFile={selectedFile}
-                    editorContent={editorContent}
                     setEditorContent={handleEditorChange}
                   />
                 </Suspense>
@@ -188,16 +151,9 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             <Suspense fallback={<PanelFallback />}>
               <HistoryAndEditorPanel
                 isResizing={isResizingSidebar}
-                selectedFile={selectedFile}
-                selectedChatId={selectedChatId}
-                setSelectedChatId={setSelectedChatId}
-                editorContent={editorContent}
                 setEditorContent={handleEditorChange}
                 onClose={() => setShowHistory(false)}
                 width={sidebarWidth}
-                parentPermissionMode={currentPermissionMode}
-                onPermissionChange={setCurrentPermissionMode}
-                isFloatingEditorOpen={showFloatingEditor}
               />
             </Suspense>
           </div>
@@ -208,53 +164,27 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         {/* Column 4: Main Chat Workspace */}
         <div data-theme-region="chat-panel" className="flex-1 h-full min-w-0">
           <ChatPanel
-            permissionMode={currentPermissionMode}
-            setPermissionMode={setCurrentPermissionMode}
-            primaryColorTargets={primaryColorTargets}
-            selectedChatId={selectedChatId}
-            mainModel={mainModel}
-            secModels={secModels}
-            mixedTasks={mixedTasks}
-            selectedFile={selectedFile}
-            editorContent={editorContent}
             modelProviderMap={modelProviderMap}
           />
         </div>
 
         <PreviewResizeHandle />
 
-        {/* Column 5: Preview Panel (lazy — 依赖链含 three.js ~600KB+,首屏延迟加载) */}
+        {/* Column 5: Preview Panel (lazy — 自包含, 自己调 bridge hook + 读 store + LayoutContext) */}
         <Suspense fallback={<PanelFallback />}>
-          <PreviewPanel
-            width={previewWidth}
-            isResizing={isResizingPreview}
-            dragStartWidth={dragStartPreviewWidth}
-            selectedChatId={selectedChatId}
-            canvasId={bridge.canvasId}
-            canvasReady={bridge.ready}
-            canvases={bridge.canvases}
-            maxCanvases={bridge.maxCanvases}
-            onSelectCanvas={bridge.selectCanvas}
-            onCreateCanvas={bridge.createCanvasForChat}
-            onRenameCanvas={bridge.renameCanvas}
-          />
+          <PreviewPanel />
         </Suspense>
       </div>
 
       {/* Status Bar */}
       <div data-theme-region="status-bar" className="relative z-50">
-        <StatusBar
-          currentThemeId={currentThemeId}
-          setCurrentThemeId={setCurrentThemeId}
-        />
+        <StatusBar />
       </div>
 
       {/* Modal 渲染器 — 从 appStore 直接读取状态 */}
       <ModalRenderer
-        onEditorChange={onEditorChange}
-        selectedFile={selectedFile}
-        editorContent={editorContent}
+        onEditorChange={handleEditorChange}
       />
     </div>
   );
-};
+});

@@ -150,21 +150,6 @@
       "nativeSize": { "w": 430, "h": 932 },
       "note": "iPhone 15 Pro Max GLB model"
     },
-    "m-iphone11promax": {
-      "key": "m-iphone11promax",
-      "label": "iPhone 11 Pro Max",
-      "group": "mobile",
-      "type": "3d",
-      "file": "mobile/iphone_11_pro_max.glb",
-      "screenUV": {
-        "bl": [0.07, 0.05],
-        "br": [0.93, 0.05],
-        "tr": [0.93, 0.95],
-        "tl": [0.07, 0.95]
-      },
-      "nativeSize": { "w": 414, "h": 896 },
-      "note": "iPhone 11 Pro Max GLB model"
-    },
     "m-iphonese": {
       "key": "m-iphonese",
       "label": "iPhone SE",

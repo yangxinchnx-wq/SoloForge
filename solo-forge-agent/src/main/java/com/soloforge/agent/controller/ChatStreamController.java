@@ -100,12 +100,18 @@ public class ChatStreamController {
                 // 工具 ID 列表从 settings.enabledTools 读取 (前端 buildJavaRequestBody 发送)
                 @SuppressWarnings("unchecked")
                 List<String> tools = (List<String>) settings.getOrDefault("enabledTools", List.of());
+                // 前端从 toolsManifest 提取的完整工具 schema (OpenAI Function Calling 格式)
+                // 用于 MCP/远程工具 — Java 端 buildOpenAiToolSchemas 优先用这些 schema
+                // 内置工具的 schema 由 Java 端 buildSingleToolSchema 构建, 优先级高于前端
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> toolSchemas =
+                        (List<Map<String, Object>>) settings.getOrDefault("toolSchemas", List.of());
                 String permissionMode = getString(body, "permissionMode");
                 if (permissionMode == null) permissionMode = "normal";
 
                 executionService.executeDispatch(
                         dispatchId, finalChatId, workers, finalPrompt,
-                        history, settings, tools, permissionMode, emitter
+                        history, settings, tools, permissionMode, toolSchemas, emitter
                 );
             } catch (Exception e) {
                 log.error("Stream dispatch failed: dispatchId={}", dispatchId, e);

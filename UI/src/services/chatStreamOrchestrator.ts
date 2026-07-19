@@ -1,5 +1,5 @@
 /**
- * chatStreamOrchestrator.ts — 把 LLM + Parser + Store + IPC 拼成一个完整链路
+ * chatStreamOrchestrator.ts — 把 LLM + Parser + Store 拼成一个完整链路
  *
  * 入口：streamPreviewForChat({ chatId, language, userGoal, deviceId })
  *
@@ -10,10 +10,8 @@
  *   4. StreamingASTParser.feedChunk(state, chunk) → StreamState
  *      ↓ 每个 chunk
  *      previewStreamStore.updateStream(chatId, state)
- *      Canvas3DClient.feedASTChunk(sessionId, partialRoot)  ← 节流 50ms
  *   5. 流结束：
  *      previewStreamStore.confirmPayload(chatId, payload)
- *      Canvas3DClient.flushAST(sessionId)
  *      astCache.setByPrompt(lang, prompt, payload)
  *      chatsStore.setLiveState(chatId, { isStreaming: false })
  *
@@ -34,10 +32,8 @@
 
 import { LLMClient } from './llm/LLMClient';
 import { ASTParser } from './canvas/ASTParser';
-import { Canvas3DClient } from './canvas/Canvas3DClient';
 import { astCache, astKeyFor } from './canvas/astCache';
 import { getAdapter, isSupported } from './canvas/LanguageAdapters';
-import { bestEffortRoot } from './canvas/StreamingASTParser';
 import { usePreviewStreamStore } from '../state/previewStreamStore';
 import { useChatsStore } from '../state/chatsStore';
 import type { PreviewPayload, StreamState } from './canvas/UniversalAST';
@@ -51,10 +47,6 @@ export interface StreamPreviewOptions {
   deviceId?: string;
   /** 自定义客户端（测试注入） */
   llmClient?: LLMClient;
-  /** 自定义 IPC 客户端（测试注入） */
-  canvasClient?: Canvas3DClient;
-  /** 推送节流间隔（默认 50ms） */
-  pushIntervalMs?: number;
   /** LLM 额外参数 */
   llmOptions?: {
     model?: string;
@@ -66,11 +58,9 @@ export interface StreamPreviewOptions {
 export interface StreamPreviewHandle {
   cancel: () => void;
   done: Promise<PreviewPayload | null>;
-  /** 当前 sessionId（推送给 Flutter 用） */
+  /** 当前 sessionId */
   sessionId: string;
 }
-
-const DEFAULT_PUSH_INTERVAL_MS = 50;
 
 export function streamPreviewForChat(opts: StreamPreviewOptions): StreamPreviewHandle {
   const {
@@ -79,8 +69,6 @@ export function streamPreviewForChat(opts: StreamPreviewOptions): StreamPreviewH
     userGoal,
     deviceId,
     llmClient = LLMClient.fromEnv(),
-    canvasClient,
-    pushIntervalMs = DEFAULT_PUSH_INTERVAL_MS,
     llmOptions,
   } = opts;
 
@@ -94,7 +82,7 @@ export function streamPreviewForChat(opts: StreamPreviewOptions): StreamPreviewH
   const cacheKey = astKeyFor(safeLang, userGoal);
   const cached = astCache.get(cacheKey);
   if (cached) {
-    // 命中缓存：直接写 store + 推 IPC + 结束
+    // 命中缓存：直接写 store + 结束
     previewStore.initEntry(chatId, { language: safeLang, sessionId, deviceId });
     previewStore.updateStream(chatId, {
       raw: JSON.stringify(cached),
@@ -108,10 +96,6 @@ export function streamPreviewForChat(opts: StreamPreviewOptions): StreamPreviewH
       isStreaming: false,
       lastActivityAt: Date.now(),
     });
-    if (canvasClient) {
-      canvasClient.pushUniversalPreview(sessionId, cached, deviceId).catch(() => {});
-      canvasClient.flushAST(sessionId, deviceId).catch(() => {});
-    }
     return {
       cancel: () => {},
       done: Promise.resolve(cached),
@@ -129,8 +113,6 @@ export function streamPreviewForChat(opts: StreamPreviewOptions): StreamPreviewH
   });
 
   let cancelled = false;
-  let lastPushTs = 0;
-  let lastPartialRootKey = '';
 
   const donePromise = (async (): Promise<PreviewPayload | null> => {
     try {
@@ -160,43 +142,12 @@ export function streamPreviewForChat(opts: StreamPreviewOptions): StreamPreviewH
         state = parser.feedChunk(state, chunk);
         // 更新 store
         usePreviewStreamStore.getState().updateStream(chatId, state);
-
-        // 节流推 IPC
-        const now = Date.now();
-        if (canvasClient && now - lastPushTs >= pushIntervalMs) {
-          lastPushTs = now;
-          const partialRoot = bestEffortRoot(state.payload);
-          if (partialRoot) {
-            const key = JSON.stringify(partialRoot).slice(0, 200);
-            // 跳过重复推送（半成品 root 字符串前缀相同）
-            if (key !== lastPartialRootKey) {
-              lastPartialRootKey = key;
-              canvasClient
-                .feedASTChunk(sessionId, partialRoot, {
-                  deviceId,
-                  isPartial: true,
-                  language: (state.payload as any)?.language,
-                })
-                .catch((err) => {
-                  usePreviewStreamStore
-                    .getState()
-                    .recordPushError(chatId, String(err?.message ?? err));
-                });
-            }
-          }
-        }
       }
 
       // 流结束
       state = parser.endStream(state);
       const payload = state.payload as PreviewPayload | null;
       usePreviewStreamStore.getState().confirmPayload(chatId, payload);
-
-      // 推最终态 + flush
-      if (canvasClient && payload) {
-        await canvasClient.pushUniversalPreview(sessionId, payload, deviceId);
-        await canvasClient.flushAST(sessionId, deviceId);
-      }
 
       // 写缓存
       if (payload) {
@@ -271,8 +222,6 @@ export function useChatPreviewStream() {
 // 调用方 (usePreviewPipeline.ts) 直接 import { preview } from './chatStreamOrchestrator'
 // ==========================================
 
-import { pipelineConfig } from './canvas/pipelineConfig';
-
 export interface PreviewOptions {
   sessionId: string;
   deviceId?: string;
@@ -280,8 +229,7 @@ export interface PreviewOptions {
   /** LLM pipeline 语言 */
   language: string;
   userGoal: string;
-  /** 客户端注入（测试用） */
-  canvasClient?: Canvas3DClient;
+  /** 自定义 LLM 客户端（测试用） */
   llmClient?: LLMClient;
 }
 
@@ -289,7 +237,7 @@ export type PreviewHandle = StreamPreviewHandle;
 
 /**
  * 预览入口 (原 IPCAdapter.preview)
- * LLM streaming → parser → IPC → canvas
+ * LLM streaming → parser → store
  */
 export function preview(opts: PreviewOptions): PreviewHandle {
   if (!opts.language || !opts.userGoal) {
@@ -304,7 +252,5 @@ export function preview(opts: PreviewOptions): PreviewHandle {
     userGoal: opts.userGoal,
     deviceId: opts.deviceId,
     llmClient: opts.llmClient,
-    canvasClient: opts.canvasClient,
-    pushIntervalMs: pipelineConfig.pushIntervalMs,
   });
 }

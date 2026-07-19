@@ -15,7 +15,7 @@
  *   - hr → divider
  *   - ul/ol → column (children 是 li)
  *   - li → container
- *   - svg → 透传 (Flutter 端 flutter_svg 已支持)
+ *   - svg → 透传 (前端 svg 渲染已支持)
  *
  * Style 解析 (inline style 属性):
  *   padding:16px → padding: 16
@@ -340,7 +340,7 @@ function parseNode($: CheerioAPI, el: AnyNode): UniversalNode | null {
     return { type: 'spacer', style: { height: 8 } };
   }
 
-  // ── svg → 透传 (Flutter flutter_svg 已支持)
+  // ── svg → 透传 (前端 svg 渲染已支持)
   //    把整个 SVG 元素的 outerHTML 作为 content 传给 svg 节点
   if (tag === 'svg') {
     const svgHtml = $.html(el);

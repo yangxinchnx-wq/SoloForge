@@ -9,13 +9,10 @@
  *   组合示例: 白色钛 + 玻璃 = 白色玻璃后盖, 白色钛 + 皮革 = 白色皮革后盖
  *   切换材质时颜色不变, 切换颜色时材质不变
  *
- * 两种应用方式:
- *   1. iPhone 15 Pro Max (分部位 mesh):
+ * 应用方式:
+ *   iPhone 15 Pro Max (分部位 mesh):
  *      按主题调整 body/back/边框/Apple logo 等部位的颜色。
  *      材质工艺只影响背板 (back mesh)。
- *
- *   2. iPhone 11 Pro Max (整体 mesh):
- *      移除暗色贴图, 用纯主题色 + 材质工艺对应的程序化纹理。
  */
 
 // ───────────────────────────── 颜色主题类型 ─────────────────────────────
@@ -162,40 +159,10 @@ const IPHONE15_THEME_COLORS: Record<ThemeId, Iphone15ThemeColors> = {
   },
 };
 
-/**
- * iPhone 11 Pro Max 主题颜色配置 (纯颜色)
- *
- * ★★★ 2026-07-18 重构: 从 RGB 乘数模式改为纯色替换模式
- *   移除暗色贴图, 用 material.color 作为纯色 + 材质工艺对应的程序化纹理
- *   最终颜色 = 纹理(浅灰噪点/皮革) × color(hex 主题色) = 干净的主题色
- *
- * ★★★ 2026-07-19 重构: 材质参数(metalness/roughness/envMapIntensity) 移到 FinishParams
- *   这里只保留颜色, 材质参数由 MaterialFinish 决定
- */
-export interface Iphone11ThemeTint {
-  /** 主题颜色 (hex number, 替换原始暗色贴图) */
-  color: number;
-}
-
-const IPHONE11_THEME_TINT: Record<ThemeId, Iphone11ThemeTint> = {
-  'natural-titanium': { color: 0xE8E8E8 },
-  'blue-titanium':    { color: 0x6B8AAB },
-  'black-titanium':   { color: 0x3A3A3C },
-  'white-titanium':   { color: 0xF2F2F2 },
-  'gold':             { color: 0xD4AF6A },
-  'midnight-green':   { color: 0x4E5A50 },
-  'silver':           { color: 0xE0E0E0 },
-  'space-gray':       { color: 0x535150 },
-};
-
 // ───────────────────────────── 查询函数 ─────────────────────────────
 
 export function getIphone15ThemeColors(theme: ThemeId): Iphone15ThemeColors {
   return IPHONE15_THEME_COLORS[theme] ?? IPHONE15_THEME_COLORS['natural-titanium'];
-}
-
-export function getIphone11ThemeTint(theme: ThemeId): Iphone11ThemeTint {
-  return IPHONE11_THEME_TINT[theme] ?? IPHONE11_THEME_TINT['natural-titanium'];
 }
 
 export function getDefaultTheme(): ThemeId {

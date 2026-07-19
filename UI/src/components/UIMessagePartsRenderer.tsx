@@ -42,6 +42,8 @@ import {
 } from '../utils/icons';
 import { useLastAssistantMessage, useUIMessages } from '../services/uiMessageStore';
 import { useAgentName, useAgentAvatar } from '../state/streamingStore';
+import { useStreamAppearanceStore } from '../state/streamAppearanceStore';
+import { StreamContextMenu } from './StreamContextMenu';
 import type {
   UIPart,
   UITextPart,
@@ -96,6 +98,7 @@ export const UIMessagePartsRenderer = memo(function UIMessagePartsRenderer({
   const isStreaming = message?.status === 'streaming';
 
   // ★ 2026-07-14 v2: 过滤 text (主气泡已显示) + usage (移至总结下方显示)
+  // ★ 2026-07-19: subtask-progress 不再过滤 — 改为文本信息行渲染 (工具调用/worker状态)
   const processParts = deferredParts.filter(
     p => p.type !== 'text' && p.type !== 'usage'
   );
@@ -129,8 +132,22 @@ interface CollapsibleProcessProps {
 }
 
 const CollapsibleProcess = memo(function CollapsibleProcess({ parts, isStreaming, chatId }: CollapsibleProcessProps) {
-  const [isOpen, setIsOpen] = useState(true);
+  // ★ 2026-07-19: 默认折叠 (用户需求) — streaming 时 useEffect 自动展开
+  const [isOpen, setIsOpen] = useState(false);
   const [userToggled, setUserToggled] = useState(false);
+
+  // ★ 2026-07-19: 右键菜单 + 外观设置 (字体颜色/大小)
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const fontColor = useStreamAppearanceStore(s => s.fontColor);
+  const fontSize = useStreamAppearanceStore(s => s.fontSize);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setCtxMenu({ x: e.clientX, y: e.clientY });
+  }, []);
+
+  const handleCloseContextMenu = useCallback(() => setCtxMenu(null), []);
 
   // ★ 2026-07-14 v2: streaming 时展开; 完成后自动折叠 (用户可手动展开)
   // ★ FIX #13: isStreaming 分支也需检查 userToggled
@@ -156,7 +173,16 @@ const CollapsibleProcess = memo(function CollapsibleProcess({ parts, isStreaming
   }, []);
 
   return (
-    <div>
+    <div
+      className="stream-process-root"
+      onContextMenu={handleContextMenu}
+      style={{
+        // ★ 2026-07-19: CSS 变量驱动流送区字体颜色/大小
+        '--stream-font-size': `${fontSize}px`,
+        '--stream-font-color': fontColor || undefined,
+      } as React.CSSProperties}
+      data-stream-color={fontColor ? '1' : undefined}
+    >
       {/* 折叠头 — 内联, 无容器样式 */}
       <button
         onClick={handleToggle}
@@ -165,9 +191,9 @@ const CollapsibleProcess = memo(function CollapsibleProcess({ parts, isStreaming
         {isStreaming ? (
           <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
         ) : isOpen ? (
-          <ChevronDown className="w-3 h-3 shrink-0" />
+          <ChevronDown className="w-3 h-3 text-primary shrink-0" />
         ) : (
-          <ChevronRight className="w-3 h-3 shrink-0" />
+          <ChevronRight className="w-3 h-3 text-primary shrink-0" />
         )}
         <span className="font-medium">流程</span>
         <span className="text-[10px] text-on-surface/30 font-mono ml-0.5">{parts.length}</span>
@@ -206,6 +232,15 @@ const CollapsibleProcess = memo(function CollapsibleProcess({ parts, isStreaming
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* ★ 2026-07-19: 右键菜单 — 字体颜色/大小调节 */}
+      {ctxMenu && (
+        <StreamContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          onClose={handleCloseContextMenu}
+        />
+      )}
     </div>
   );
 });
@@ -349,22 +384,26 @@ const SubTaskCreatedPartView = memo(function SubTaskCreatedPartView({ part }: { 
 // ── SubTask Progress: spring-animated width + glow ──
 
 const SubTaskProgressPartView = memo(function SubTaskProgressPartView({ part }: { part: UISubTaskProgressPart }) {
+  // ★ 2026-07-19: 进度条已移除, 改为文本信息行渲染
+  //   显示工具调用/worker 状态信息 (如 "工具调用: read_file"、"工具完成: read_file")
+  //   不再渲染视觉进度条, 只保留有价值的文本内容
+  if (!part.content && !part.detail) return null;
+  const isError = part.status === 'error';
   return (
-    <div className="flex items-center gap-2 px-2.5 py-1">
-      <div className="flex-1 h-1 rounded-full bg-on-surface/10 overflow-hidden">
-        <motion.div
-          className="h-full rounded-full bg-blue-500"
-          initial={{ width: 0 }}
-          animate={{ width: `${part.progress}%` }}
-          transition={SPRING}
-          style={{
-            boxShadow: part.progress > 0 ? '0 0 4px rgba(59, 130, 246, 0.4)' : undefined,
-          }}
-        />
-      </div>
-      <span className="text-[10px] font-mono font-bold text-on-surface/50 tabular-nums w-8 text-right">
-        {part.progress}%
+    <div className="flex items-start gap-1.5 px-1 py-0.5 text-[10px] font-mono">
+      <span className={`shrink-0 ${isError ? 'text-red-400' : 'text-on-surface/40'}`}>
+        {isError ? '✗' : '›'}
       </span>
+      {part.content && (
+        <span className={`shrink-0 ${isError ? 'text-red-400' : 'text-on-surface/60'}`}>
+          {part.content}
+        </span>
+      )}
+      {part.detail && (
+        <span className="text-on-surface/40 break-words [text-wrap:pretty]">
+          {part.detail}
+        </span>
+      )}
     </div>
   );
 });

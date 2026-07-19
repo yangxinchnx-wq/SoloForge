@@ -319,6 +319,69 @@ button:focus-visible {
   display: none;
 }
 
+/* ==========================================================================
+   ★ 2026-07-19 流送区外观调节 (字体颜色 + 字体大小)
+   - .stream-process-root 上设置 CSS 变量, 由 streamAppearanceStore 驱动
+   - --stream-font-color: 非空时覆盖 --color-on-surface, 影响 text-on-surface/xx
+     (text-green-400 / text-red-400 / text-primary 等状态色不受影响)
+   - --stream-font-size: 覆盖子元素 font-size (SVG 图标尺寸由 w/h 控制, 不受影响)
+   - 选择器优先级 (0,1,1) > Tailwind .text-[10px] (0,1,0), 无需 !important
+   ========================================================================== */
+.stream-process-root {
+  --stream-font-size: 10px;
+}
+
+/* 用户设置了自定义字体颜色时, 覆盖 --color-on-surface */
+.stream-process-root[data-stream-color="1"] {
+  --color-on-surface: var(--stream-font-color);
+}
+
+/* 覆盖子元素 font-size — 优先级高于 Tailwind text-[Npx] */
+.stream-process-root *,
+.stream-process-root *::before,
+.stream-process-root *::after {
+  font-size: var(--stream-font-size, 10px);
+}
+
+/* ==========================================================================
+   ★ 2026-07-19 消息气泡拖拽 resize
+   - .resizable-bubble: 可拖拽改变高度的消息气泡
+   - .resize-handle: 右下角拖拽手柄
+   - 拖拽时设置 maxHeight, 内容超出则滚动
+   - 双击手柄恢复自适应 (清除 maxHeight)
+   ========================================================================== */
+.resizable-bubble {
+  resize: none;
+}
+.resizable-bubble .resize-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  opacity: 0;
+  transition: opacity 150ms ease;
+  z-index: 5;
+}
+.resizable-bubble:hover .resize-handle {
+  opacity: 0.4;
+}
+.resizable-bubble .resize-handle:hover {
+  opacity: 1 !important;
+}
+.resizable-bubble .resize-handle::before {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid var(--color-primary);
+  border-bottom: 2px solid var(--color-primary);
+  border-bottom-right-radius: 2px;
+}
+
 
 
 

@@ -493,13 +493,6 @@ export default function LocalModelTab() {
 
   return (
     <div className="space-y-5 animate-fadeIn">
-      {/* 标题 */}
-      <div className="border-b border-[var(--color-outline)]/20 pb-3 mb-2">
-        <h3 className="text-base font-bold text-[var(--color-on-surface)]">本地模型管理</h3>
-        <p className="text-xs text-on-surface/50 mt-1">
-          管理 GGUF 模型文件，点击模型右侧开关启停推理
-        </p>
-      </div>
 
       {/* 错误 / 信息提示 */}
       {error && (
