@@ -132,8 +132,9 @@ interface CollapsibleProcessProps {
 }
 
 const CollapsibleProcess = memo(function CollapsibleProcess({ parts, isStreaming, chatId }: CollapsibleProcessProps) {
-  // ★ 2026-07-19: 默认折叠 (用户需求) — streaming 时 useEffect 自动展开
-  const [isOpen, setIsOpen] = useState(false);
+  // ★ 2026-07-20: 默认展开 — 不管什么模式 (agent/llm/单模型/多模型), 过程始终可见
+  //   用户可手动点击折叠, 但默认和 streaming 结束后都保持展开
+  const [isOpen, setIsOpen] = useState(true);
   const [userToggled, setUserToggled] = useState(false);
 
   // ★ 2026-07-19: 右键菜单 + 外观设置 (字体颜色/大小)
@@ -149,23 +150,16 @@ const CollapsibleProcess = memo(function CollapsibleProcess({ parts, isStreaming
 
   const handleCloseContextMenu = useCallback(() => setCtxMenu(null), []);
 
-  // ★ 2026-07-14 v2: streaming 时展开; 完成后自动折叠 (用户可手动展开)
-  // ★ FIX #13: isStreaming 分支也需检查 userToggled
-  //   原代码: 用户手动关闭后 (userToggled=true), 新一轮流式开始时 isStreaming→true
-  //   会强制 setIsOpen(true), 覆盖用户的关闭操作
-  //   修复: 如果用户已手动操作过, 不再自动展开
+  // ★ 2026-07-20: 过程始终展开 — 不再自动折叠
+  //   不管 streaming 中还是结束后, 过程都保持可见
+  //   用户手动折叠后 (userToggled=true), 新一轮 streaming 时重置为展开
   useEffect(() => {
-    if (isStreaming) {
-      // 用户手动关闭过 → 尊重用户选择, 不自动展开
-      if (!userToggled && !isOpen) setIsOpen(true);
-      return;
+    if (isStreaming && userToggled) {
+      // 新一轮 streaming 开始, 重置用户操作标记, 恢复展开
+      setUserToggled(false);
+      setIsOpen(true);
     }
-    // streaming 结束后自动折叠 (仅在用户未手动操作过时)
-    if (!userToggled) {
-      const timer = setTimeout(() => setIsOpen(false), 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [isStreaming, userToggled, isOpen]);
+  }, [isStreaming, userToggled]);
 
   const handleToggle = useCallback(() => {
     setUserToggled(true);

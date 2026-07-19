@@ -1,8 +1,15 @@
 node_modules/
 dist/
-data/
+/data/
 rust_core/target/
 solo-forge-agent/target/
+
+# Runtime data directories (not source code)
+UI/data/
+UI/C/
+python/data/
+python/python/
+solo-forge-agent/python/
 
 # Python
 .venv/
