@@ -401,6 +401,9 @@ async function startServer() {
   //   - production 模式: 直接用这个服务器 listen()
   //   原来用 app.listen() 创建的 HTTP 服务器实例未被保存, Vite 无法附加 WebSocket
   const httpServer = http.createServer(app);
+  // Vite HMR + Express + proxy 中间件等都会给 httpServer 添加 close/upgrade 事件监听器,
+  // 默认限制 10 个不够用, 提高到 20 避免 MaxListenersExceededWarning
+  httpServer.setMaxListeners(20);
   const PORT = 3000;
 
   // Add JSON parsing middleware
