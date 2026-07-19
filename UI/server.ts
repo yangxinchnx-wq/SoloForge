@@ -2461,10 +2461,16 @@ async function startServer() {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        // ★ HMR WebSocket 附加到 httpServer, 复用端口 3000
-        //   hmr.server 让 Vite 把 WebSocket upgrade 事件注册到 httpServer 上,
-        //   不需要额外端口, 浏览器连接 ws://localhost:3000 即可 HMR。
-        hmr: process.env.DISABLE_HMR !== 'true'
+        // ★ 2026-07-20: Vite 8 正确的 HMR WebSocket 配置
+        //   - server.hmr: 只控制 HMR 开关 + overlay (boolean | { overlay? })
+        //   - server.ws: 控制 WebSocket 连接细节 (host/port/path/server 等)
+        //   旧写法 hmr: { server: httpServer } 已弃用 (Vite 8 自动同步但仍警告)。
+        //   新写法: hmr 开关 + ws.server 指定宿主 HTTP 服务器。
+        //   ws.server 让 Vite 把 WebSocket upgrade 事件注册到 httpServer 上,
+        //   复用端口 3000, 浏览器连接 ws://localhost:3000 即可 HMR。
+        //   React 组件走 Fast Refresh 不刷新整页; store/utils 已有 HMR 边界。
+        hmr: process.env.DISABLE_HMR !== 'true',
+        ws: process.env.DISABLE_HMR !== 'true'
           ? { server: httpServer }
           : false,
       },

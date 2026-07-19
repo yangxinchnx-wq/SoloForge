@@ -75,7 +75,7 @@ function decomposeAndDispatch(subtasks: any[], ctx: PhaseMapperContext, detailSu
       agentId: agentId ?? `agent-${workerIdx}`,
       content: modelName,
       detail: taskDesc,
-      status: 'pending',
+      status: 'running',
       subTaskId: subId,
     });
     ctx.bindSubTask(ctx.activeChatId, workerIdx, subId);
@@ -106,7 +106,7 @@ const PHASE_MAPPERS: Record<string, (evt: any, ctx: PhaseMapperContext) => void>
       agentId: 'main-model',
       content: '主模型',
       detail: '直接推理',
-      status: 'pending',
+      status: 'running',
       subTaskId: subId,
     });
     ctx.bindSubTask(ctx.activeChatId, 0, subId);

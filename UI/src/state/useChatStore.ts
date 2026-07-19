@@ -202,7 +202,7 @@ function createStreamBridge(chatId: string, mainModel: string, userInput: string
         const taskDesc = userInput.length > 60 ? userInput.slice(0, 60) + '...' : userInput;
         ctx.pushStreamEvent('subtask_created', {
           agentId: javaAgentId ?? 'main-model', avatar: javaAgentAvatar,
-          content: effectiveSubModel, detail: taskDesc, status: 'pending', subTaskId: singleModelSubId,
+          content: effectiveSubModel, detail: taskDesc, status: 'running', subTaskId: singleModelSubId,
         });
         ctx.pushStreamEvent('subtask_step', { subTaskId: singleModelSubId, content: 'EXECUTE', status: 'running' });
       }
@@ -807,7 +807,7 @@ const pr = detectPreviewTrigger(accumulatedText, localPushed, detectPreviewFromR
     let accText2 = '';
     // ★ 2026-07-14: 懒创建画布 — handleAcceptEnable 也需要确保画布存在
     await ensureCanvasForChat(activeChatId);
-    startChat({ chatId: activeChatId, prompt: '', mode: lastReqBody.mode, history: [], mainProvider: (lastReqBody.mainProvider as any), subProviders: newSub ? [...(lastReqBody.subProviders as any[]), newSub] : (lastReqBody.subProviders as any[]), candidateProviders: (lastReqBody.candidateProviders as any[]).filter((c: any) => c.modelName !== candidateName), activeTools: lastReqBody.activeTools, activeSkills: lastReqBody.activeSkills, activeKnowledge: lastReqBody.activeKnowledge, activeSettings: configs[activeChatId] || fallbackActiveSettings } as any, (evt: ChatStreamEvent) => {
+    startChat({ chatId: activeChatId, prompt: '', mode: lastReqBody.mode, history: [], mainProvider: (lastReqBody.mainProvider as any), subProviders: newSub ? [...(lastReqBody.subProviders as any[]), newSub] : (lastReqBody.subProviders as any[]), candidateProviders: (lastReqBody.candidateProviders as any[]).filter((c: any) => c.modelName !== candidateName), activeTools: lastReqBody.activeTools, activeSkills: lastReqBody.activeSkills, activeKnowledge: lastReqBody.activeKnowledge, toolSchemas: lastReqBody.toolSchemas, activeSettings: configs[activeChatId] || fallbackActiveSettings } as any, (evt: ChatStreamEvent) => {
       switch (evt.kind) {
         case 'phase': { streamBridge.onPhase(evt); get().handlePhase(evt, get().conversations[activeChatId] || []); break; }
         case 'error': streamBridge.onError(evt.error); break;

@@ -57,12 +57,17 @@ describe('phaseMappers — 边界', () => {
 });
 
 describe('phaseMappers — Ensemble s3.3 phase', () => {
-  it('phase0_skip → SINGLE_MODEL', () => {
+  it('phase0_skip → SINGLE_MODEL + subtask_created + subtask_step', () => {
     const ctx = makeCtx('c1');
     mapPhaseToStreamEvents({ phase: 'phase0_skip' }, ctx);
+    // ★ 2026-07-19: phase0_skip 现在也创建 subtask + step, 让单模型模式过程有内容
     expect(pushed).toEqual([
       { kind: 'phase_change', extra: { content: 'SINGLE_MODEL', detail: '单模型模式: 直接推理', status: 'running' } },
+      { kind: 'subtask_created', extra: { agentId: 'main-model', content: '主模型', detail: '直接推理', status: 'running', subTaskId: 'sub-1' } },
+      { kind: 'subtask_step', extra: { subTaskId: 'sub-1', content: 'EXECUTE', status: 'running' } },
     ]);
+    // 验证 workerIdx=0 绑定
+    expect(subTaskBindings).toEqual([{ chatId: 'c1', workerIdx: 0, subTaskId: 'sub-1' }]);
   });
 
   it('phase0_subtask → DECOMPOSING + N 个 subtask_created + 绑定 + DISPATCHING', () => {

@@ -386,17 +386,19 @@ const SubTaskCreatedPartView = memo(function SubTaskCreatedPartView({ part }: { 
 const SubTaskProgressPartView = memo(function SubTaskProgressPartView({ part }: { part: UISubTaskProgressPart }) {
   // ★ 2026-07-19: 进度条已移除, 改为文本信息行渲染
   //   显示工具调用/worker 状态信息 (如 "工具调用: read_file"、"工具完成: read_file")
-  //   不再渲染视觉进度条, 只保留有价值的文本内容
-  if (!part.content && !part.detail) return null;
-  const isError = part.status === 'error';
+  //   part.step 含主要文本 (phaseMappers pushWorkerProgress 的 content 参数)
+  //   part.detail 含额外信息 (如 "执行 read_file" 或错误消息)
+  //   part.progress === 0 表示错误 (phase1_worker_error 发送 progress=0)
+  if (!part.step && !part.detail) return null;
+  const isError = part.progress === 0;
   return (
     <div className="flex items-start gap-1.5 px-1 py-0.5 text-[10px] font-mono">
       <span className={`shrink-0 ${isError ? 'text-red-400' : 'text-on-surface/40'}`}>
         {isError ? '✗' : '›'}
       </span>
-      {part.content && (
+      {part.step && (
         <span className={`shrink-0 ${isError ? 'text-red-400' : 'text-on-surface/60'}`}>
-          {part.content}
+          {String(part.step)}
         </span>
       )}
       {part.detail && (

@@ -162,7 +162,7 @@ export default function SkillsRulesTab({ onClose, permissionMode = 'normal' }: {
                   console.warn(e);
                 }
               }}
-              className="w-full py-2 flex items-center justify-center gap-1.5 rounded-lg text-[10.5px] font-bold border border-red-500/20 text-red-500 bg-red-500/5 hover:bg-red-500/10 transition-colors cursor-pointer shrink-0"
+              className="w-full py-2 flex items-center justify-center gap-1.5 rounded-lg text-[10.5px] font-bold border border-outline/20 text-on-surface bg-surface/5 hover:bg-surface/10 transition-colors cursor-pointer shrink-0"
             >
               <Compass className="w-3.5 h-3.5 transition-transform group-hover:rotate-45" />
               创建并快速打开规则文件
