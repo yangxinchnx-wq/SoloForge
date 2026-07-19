@@ -247,19 +247,24 @@ function buildCanvasSizeHint(canvasId?: string): string {
 - 如果内容超出画布高度, 使用 scroll 类型节点包裹`;
 }
 
-/** 构建最终 prompt — 始终注入画布尺寸约束 + (若检测到关键词) 强制画布指令 */
+/**
+ * 构建最终 prompt — 仅在检测到画布关键词时注入画布指令 + 尺寸约束
+ *
+ * ★ FIX 2026-07-20: 之前对每条消息都注入画布尺寸约束 (即使没有画布关键词),
+ *   导致普通对话被画布指令污染, LLM 返回一堆不相干的画布/UI 内容。
+ *   现在只在 detectForceCanvas 返回非 null (用户明确要求画布操作) 时才注入。
+ */
 function buildPromptWithCanvasForce(prompt: string, canvasId?: string): string {
   const instruction = detectForceCanvas(prompt);
-  const sizeHint = buildCanvasSizeHint(canvasId);
 
   if (instruction) {
     // 强制画布模式: 注入完整指令 + 尺寸约束
+    const sizeHint = buildCanvasSizeHint(canvasId);
     return `${instruction}\n${sizeHint}\n\n用户原始请求: ${prompt}`;
   }
 
-  // ★ 2026-07-14: 即使没有强制画布关键词, 也注入尺寸约束
-  //   这样 LLM 生成任何 UI 代码时都知道画布有多大
-  return `${sizeHint}\n\n用户原始请求: ${prompt}`;
+  // 普通对话: 不注入任何画布相关指令, 直接返回原始 prompt
+  return prompt;
 }
 
 /**

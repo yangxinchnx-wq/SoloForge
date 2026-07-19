@@ -30,10 +30,10 @@
 import * as React from 'react';
 import * as THREE from 'three';
 import { Canvas, useThree } from '@react-three/fiber';
-import { OrbitControls, Environment, Lightformer, useGLTF, Html } from '@react-three/drei';
-import type { UniversalNode } from '../services/canvas/UniversalAST';
+import { OrbitControls, Environment, Lightformer, useGLTF } from '@react-three/drei';
+import { isContainerLike, type UniversalNode } from '../services/canvas/UniversalAST';
 import { findScreenMesh, computeMeshInfo, computeAutoScreenPosition, type ScreenInfo } from './ScreenMesh';
-import WebAstPreview from './WebAstPreview';
+import { createDslTexture, updateDslTexture } from './DslCanvasRenderer';
 import {
   getDefaultTheme,
   getDefaultFinish,
@@ -261,63 +261,97 @@ function AdaptiveModel({ modelUrl, dsl, theme, finish }: { modelUrl: string; dsl
   );
 }
 
-// ───────────────────────── Html 屏幕内容覆盖层 ─────────────────────────
+// ───────────────────────── 屏幕贴图组件 ─────────────────────────
 
 /**
- * ★ 2026-07-19: 用 drei <Html transform> 替换旧 RTT 方案
+ * ★ 2026-07-20: 用 CanvasTexture + mesh 替换 Html transform
  *
  * 工作原理:
  *   1. 在已处理的 scene 中查找屏幕位置 (优先找 'screen' mesh, 找不到用自动定位)
- *   2. 用 <Html transform> 把 WebAstPreview (DOM) 嵌入 3D 场景
- *   3. CSS3DRenderer 自动同步 DOM 变换矩阵, 随模型一起旋转/缩放
- *   4. occlude="raycast" 在模型背面时自动隐藏 DOM
+ *   2. 用 Canvas 2D API 把 DSL 渲染到 canvas → CanvasTexture
+ *   3. 创建 planeGeometry mesh, 把纹理贴在 material.map 上
+ *   4. mesh 作为 group 的子元素, 随模型一起旋转/缩放
  *
- * 优势 (相比旧 RTT 方案):
- *   - 完全复用 WebAstPreview, 支持所有 16 种节点类型 (旧 DslToR3f 只支持 10 种)
- *   - 文字清晰 (浏览器原生 vs SDF 字体)
- *   - 布局强大 (CSS flexbox/grid vs 自实现简单 flex)
- *   - 删除 DslToR3f.tsx 600+ 行重复代码
+ * ★ 完美贴合的关键:
+ *   - 纹理和模型在同一个 WebGL 渲染管线中
+ *   - z-buffer 正确处理遮挡: 旋转到侧面/背面时纹理会被模型几何体自然遮挡
+ *   - 不会出现 Html transform 的“穿透”问题
  */
+const TEX_WIDTH = 393;
+const TEX_HEIGHT = 852;
+
+/**
+ * ★ 检查 DSL 是否为空 (没有有效内容节点)
+ *
+ * 空容器 { type: 'container', children: [] } 只会画白色背景
+ * 这种情况下不渲染 ScreenOverlay, 让模型屏幕 mesh 的深色玻璃材质 (0x0a0a0a) 显示出来
+ */
+function isEmptyDsl(node: UniversalNode | null | undefined): boolean {
+  if (!node) return true;
+  // 非容器节点 (text/button/image 等) 视为有内容
+  if (!isContainerLike(node)) return false;
+  const children = (node as any).children as UniversalNode[] | undefined;
+  if (!children || children.length === 0) return true;
+  // 递归检查: 所有子节点都为空才算空
+  return children.every(isEmptyDsl);
+}
+
 function ScreenOverlay({ scene, dsl }: { scene: THREE.Object3D; dsl: UniversalNode }): React.JSX.Element | null {
+  // ★ 测试: 空 DSL 时用红色正方形替代, 验证贴图位置
+  const TEST_RED_SQUARE: UniversalNode = {
+    type: 'container',
+    style: { background: '#ff0000' },
+    children: [],
+  } as UniversalNode;
+
+  const effectiveDsl = isEmptyDsl(dsl) ? TEST_RED_SQUARE : dsl;
+
   // 计算屏幕位置: 优先找 'screen' mesh, 找不到用自动定位算法
   const screenInfo = React.useMemo<ScreenInfo | null>(() => {
     const mesh = findScreenMesh(scene);
     if (mesh) {
-      const info = computeMeshInfo(mesh);
+      const info = computeMeshInfo(mesh, scene);
       if (info) return info;
     }
     return computeAutoScreenPosition(scene);
   }, [scene]);
 
+  // ★ 创建/更新 CanvasTexture
+  //   useMemo 创建初始纹理, useEffect 在 DSL 变化时更新纹理 (避免重复创建 CanvasTexture)
+  const textureRef = React.useRef<THREE.CanvasTexture | null>(null);
+
+  if (!textureRef.current) {
+    textureRef.current = createDslTexture(effectiveDsl, TEX_WIDTH, TEX_HEIGHT);
+  }
+
+  React.useEffect(() => {
+    if (!textureRef.current) return;
+    updateDslTexture(textureRef.current, effectiveDsl, TEX_WIDTH, TEX_HEIGHT);
+  }, [effectiveDsl]);
+
+  // ★ 组件卸载时释放纹理
+  React.useEffect(() => {
+    return () => {
+      textureRef.current?.dispose();
+      textureRef.current = null;
+    };
+  }, []);
+
   if (!screenInfo) return null;
 
-  // DOM 像素尺寸 → 3D 单位的等比缩放
-  //   DOM 宽高比匹配屏幕区域宽高比, 避免内容变形
-  const PX_W = 393;
-  const aspect = screenInfo.size[1] / screenInfo.size[0];
-  const PX_H = Math.round(PX_W * aspect);
-  const scale = screenInfo.size[0] / PX_W;
-
   return (
-    <Html
-      transform
-      position={screenInfo.position}
-      quaternion={screenInfo.quaternion}
-      scale={scale}
-      occlude="raycast"
-      zIndexRange={[10, 0]}
-      style={{
-        width: `${PX_W}px`,
-        height: `${PX_H}px`,
-        margin: 0,
-        padding: 0,
-        pointerEvents: 'none',
-      }}
-    >
-      <div style={{ width: '100%', height: '100%', overflow: 'hidden', borderRadius: '14px' }}>
-        <WebAstPreview root={dsl} bgColor="#ffffff" />
-      </div>
-    </Html>
+    <mesh position={screenInfo.position} quaternion={screenInfo.quaternion}>
+      <planeGeometry args={[screenInfo.size[0], screenInfo.size[1]]} />
+      <meshBasicMaterial
+        map={textureRef.current}
+        toneMapped={false}
+        transparent={false}
+        side={THREE.FrontSide}
+        polygonOffset
+        polygonOffsetFactor={-1}
+        polygonOffsetUnits={-1}
+      />
+    </mesh>
   );
 }
 
@@ -334,13 +368,18 @@ function processMeshesInitial(scene: THREE.Object3D, modelUrl: string): void {
     const mesh = obj as THREE.Mesh;
     if (!mesh.isMesh) return;
 
+    // ★ 多 primitive 时 GLTFLoader 创建 Group (node name) + 子 Mesh (mesh name)
+    //   所以需要同时检查 mesh.name 和 mesh.parent?.name
     const nodeName = (mesh.name || '').toLowerCase();
-    const isAppleLogo = nodeName.includes('apple') || nodeName.includes('logo');
-    const isScreen = nodeName.includes('screen') ||
-                     nodeName.includes('display') ||
-                     nodeName.includes('面板') ||
-                     nodeName.includes('glass_front');
-    const isIsland = nodeName.includes('island');
+    const parentName = (mesh.parent?.name || '').toLowerCase();
+    const combinedName = nodeName + ' ' + parentName;
+
+    const isAppleLogo = combinedName.includes('apple') || combinedName.includes('logo');
+    const isScreen = combinedName.includes('screen') ||
+                     combinedName.includes('display') ||
+                     combinedName.includes('面板') ||
+                     combinedName.includes('glass_front');
+    const isIsland = combinedName.includes('island');
 
     // 屏幕 mesh → 深色亮面玻璃材质 (模拟息屏状态)
     if (isScreen) {
@@ -401,13 +440,17 @@ function applyThemeToMeshes(scene: THREE.Object3D, modelUrl: string, theme: Them
     const mesh = obj as THREE.Mesh;
     if (!mesh.isMesh) return;
 
+    // ★ 多 primitive 时检查 mesh.name + parent.name
     const nodeName = (mesh.name || '').toLowerCase();
-    const isAppleLogo = nodeName.includes('apple') || nodeName.includes('logo');
-    const isScreen = nodeName.includes('screen') ||
-                     nodeName.includes('display') ||
-                     nodeName.includes('面板') ||
-                     nodeName.includes('glass_front');
-    const isIsland = nodeName.includes('island');
+    const parentName = (mesh.parent?.name || '').toLowerCase();
+    const combinedName = nodeName + ' ' + parentName;
+
+    const isAppleLogo = combinedName.includes('apple') || combinedName.includes('logo');
+    const isScreen = combinedName.includes('screen') ||
+                     combinedName.includes('display') ||
+                     combinedName.includes('面板') ||
+                     combinedName.includes('glass_front');
+    const isIsland = combinedName.includes('island');
 
     // ★ 跳过屏幕和灵动岛 mesh (已在 processMeshesInitial 中替换为固定深色材质)
     if (isScreen || isIsland) return;
@@ -418,7 +461,7 @@ function applyThemeToMeshes(scene: THREE.Object3D, modelUrl: string, theme: Them
       if (!m || !(m as any).isMeshStandardMaterial) return;
 
       // ★ iPhone 15 Pro Max 按部位指定真实颜色和贴图 + 主题颜色 + 材质工艺
-      applyIphone15Materials(m, nodeName, isAppleLogo, themeColors, finish, finishParams);
+      applyIphone15Materials(m, combinedName, isAppleLogo, themeColors, finish, finishParams);
     });
   });
 }

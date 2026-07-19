@@ -99,8 +99,10 @@ export const UIMessagePartsRenderer = memo(function UIMessagePartsRenderer({
 
   // ★ 2026-07-14 v2: 过滤 text (主气泡已显示) + usage (移至总结下方显示)
   // ★ 2026-07-19: subtask-progress 不再过滤 — 改为文本信息行渲染 (工具调用/worker状态)
+  // ★ 2026-07-20: streaming 时保留 text parts — 因为主气泡在流送中被隐藏 (isAssistantStreaming),
+  //   text parts 需要由 TextPartView 渲染。streaming 结束后主气泡显示文本, text parts 被过滤。
   const processParts = deferredParts.filter(
-    p => p.type !== 'text' && p.type !== 'usage'
+    p => isStreaming ? p.type !== 'usage' : p.type !== 'text' && p.type !== 'usage'
   );
 
   if (!message) return null;

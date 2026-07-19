@@ -192,7 +192,264 @@
     "apiKey": ""
   },
   {
-    "id": "custom_1784463394646",
+    "id": "deepseek",
+    "name": "DeepSeek",
+    "desc": "深度求索：超高性价比与硬核推理模型商",
+    "enabled": false,
+    "baseUrl": "https://api.deepseek.com/v1",
+    "defaultUrl": "https://api.deepseek.com/v1",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#0d6efd",
+    "scanned": false,
+    "apiKey": ""
+  },
+  {
+    "id": "custom_1784392103035",
+    "name": "自定义提供商 #2",
+    "desc": "自定义/中转等兼容 OpenAI 接口标准的第三方服务商",
+    "enabled": true,
+    "baseUrl": "https://token.sensenova.cn/v1",
+    "defaultUrl": "http://localhost:3001/v1",
+    "models": [
+      {
+        "id": "sensenova-6.7-flash-lite",
+        "name": "sensenova-6.7-flash-lite",
+        "enabled": true,
+        "metadata": {
+          "raw": {
+            "id": "sensenova-6.7-flash-lite",
+            "hugging_face_id": "",
+            "name": "sensenova-6.7-flash-lite",
+            "created": 1777392000,
+            "input_modalities": [
+              "text",
+              "image"
+            ],
+            "output_modalities": [
+              "text"
+            ],
+            "quantization": "fp8",
+            "context_length": 262144,
+            "max_output_length": 65536,
+            "pricing": {
+              "prompt": "0",
+              "completion": "0",
+              "image": "0",
+              "request": "0",
+              "input_cache_read": "0"
+            },
+            "supported_sampling_parameters": [
+              "temperature",
+              "stop"
+            ],
+            "supported_features": [
+              "tools",
+              "json_mode",
+              "reasoning"
+            ],
+            "description": "SenseNova 6.7 Flash-Lite is a lightweight multimodal agent model designed for real-world workflows, supporting text conversation and image input understanding.",
+            "openrouter": {
+              "slug": "sensenova/sensenova-6.7-flash-lite"
+            },
+            "datacenters": [
+              {
+                "country_code": "CN"
+              }
+            ],
+            "businesses": [
+              "tokenplan",
+              "metered"
+            ]
+          }
+        }
+      },
+      {
+        "id": "deepseek-v4-flash",
+        "name": "deepseek-v4-flash",
+        "enabled": true,
+        "metadata": {
+          "contextWindow": 64000,
+          "maxOutput": 8192,
+          "inputModalities": [
+            "text"
+          ],
+          "outputModalities": [
+            "text"
+          ],
+          "supportsTools": true,
+          "supportsJson": true,
+          "supportsStreaming": true,
+          "supportsVision": false,
+          "owner": "deepseek",
+          "description": "DeepSeek-V3 通用对话",
+          "pricingInput": 0.27,
+          "pricingOutput": 1.1,
+          "raw": {
+            "id": "deepseek-v4-flash",
+            "hugging_face_id": "",
+            "name": "deepseek-v4-flash",
+            "created": 1777392000,
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ],
+            "quantization": "fp8",
+            "context_length": 1048576,
+            "max_output_length": 65536,
+            "pricing": {
+              "prompt": "0",
+              "completion": "0",
+              "image": "0",
+              "request": "0",
+              "input_cache_read": "0"
+            },
+            "supported_sampling_parameters": [
+              "temperature",
+              "stop"
+            ],
+            "supported_features": [
+              "tools",
+              "json_mode",
+              "reasoning"
+            ],
+            "description": "DeepSeek V4 Flash is a high-performance conversational model by DeepSeek, supporting thinking/non-thinking modes, 1M context window, and tool calling.",
+            "openrouter": {
+              "slug": "sensenova/deepseek-v4-flash"
+            },
+            "datacenters": [
+              {
+                "country_code": "CN"
+              }
+            ],
+            "businesses": [
+              "tokenplan",
+              "metered"
+            ]
+          }
+        }
+      },
+      {
+        "id": "glm-5.2",
+        "name": "glm-5.2",
+        "enabled": false,
+        "metadata": {
+          "raw": {
+            "id": "glm-5.2",
+            "hugging_face_id": "",
+            "name": "glm-5.2",
+            "created": 1777392000,
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ],
+            "quantization": "fp8",
+            "context_length": 1048576,
+            "max_output_length": 131072,
+            "pricing": {
+              "prompt": "0",
+              "completion": "0",
+              "image": "0",
+              "request": "0",
+              "input_cache_read": "0"
+            },
+            "supported_sampling_parameters": [
+              "temperature",
+              "stop"
+            ],
+            "supported_features": [
+              "tools",
+              "json_mode",
+              "reasoning"
+            ],
+            "description": "GLM-5.2 is the flagship model for the era of long-horizon tasks. It supports a truly usable 1M context window, with practical tests showing it can handle project-level engineering contexts. Long-sequence task execution is more stable, adherence to engineering standards is more reliable, and success rates in development scenarios are further improved. A single task can complete the entire development pipeline—from requirements to deployable multi-platform deliverables.",
+            "openrouter": {
+              "slug": "sensenova/glm-5.2"
+            },
+            "datacenters": [
+              {
+                "country_code": "CN"
+              }
+            ],
+            "businesses": [
+              "tokenplan",
+              "metered"
+            ]
+          }
+        }
+      },
+      {
+        "id": "sensenova-u1-fast",
+        "name": "sensenova-u1-fast",
+        "enabled": false,
+        "metadata": {
+          "raw": {
+            "id": "sensenova-u1-fast",
+            "hugging_face_id": "",
+            "name": "sensenova-u1-fast",
+            "created": 1777392000,
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "image"
+            ],
+            "quantization": "fp8",
+            "context_length": 262144,
+            "max_output_length": 65536,
+            "pricing": {
+              "prompt": "0",
+              "completion": "0",
+              "image": "0",
+              "request": "0",
+              "input_cache_read": "0"
+            },
+            "supported_sampling_parameters": [
+              "temperature",
+              "stop"
+            ],
+            "supported_features": [
+              "tools",
+              "json_mode",
+              "reasoning"
+            ],
+            "description": "SenseNova U1 Fast is an accelerated version based on SenseNova U1, specialized for infographics generation.",
+            "openrouter": {
+              "slug": "sensenova/sensenova-u1-fast"
+            },
+            "datacenters": [
+              {
+                "country_code": "CN"
+              }
+            ],
+            "businesses": [
+              "tokenplan",
+              "metered"
+            ]
+          }
+        }
+      }
+    ],
+    "customModels": [],
+    "status": "success",
+    "color": "#64748b",
+    "iconType": "animal:cat",
+    "scanned": true,
+    "delay": 367,
+    "probeResults": {
+      "sensenova-6.7-flash-lite": true,
+      "deepseek-v4-flash": true,
+      "sensenova-u1-fast": false
+    },
+    "apiKey": ""
+  },
+  {
+    "id": "custom_1784391902594",
     "name": "自定义提供商 #1",
     "desc": "自定义/中转等兼容 OpenAI 接口标准的第三方服务商",
     "enabled": true,
@@ -320,26 +577,12 @@
     "customModels": [],
     "status": "success",
     "color": "#64748b",
-    "iconType": "animal:cat",
+    "iconType": "animal:goose",
     "scanned": true,
-    "delay": 520,
+    "delay": 525,
     "probeResults": {
       "step-3.7-flash": true
     },
-    "apiKey": ""
-  },
-  {
-    "id": "deepseek",
-    "name": "DeepSeek",
-    "desc": "深度求索：超高性价比与硬核推理模型商",
-    "enabled": false,
-    "baseUrl": "https://api.deepseek.com/v1",
-    "defaultUrl": "https://api.deepseek.com/v1",
-    "models": [],
-    "customModels": [],
-    "status": "idle",
-    "color": "#0d6efd",
-    "scanned": false,
     "apiKey": ""
   },
   {
@@ -455,6 +698,20 @@
     "apiKey": ""
   },
   {
+    "id": "hunyuan",
+    "name": "腾讯混元",
+    "desc": "腾讯云 · 混元大模型系列",
+    "enabled": false,
+    "baseUrl": "https://api.hunyuan.cloud.tencent.com/v1",
+    "defaultUrl": "https://api.hunyuan.cloud.tencent.com/v1",
+    "models": [],
+    "customModels": [],
+    "status": "idle",
+    "color": "#0053e0",
+    "scanned": false,
+    "apiKey": ""
+  },
+  {
     "id": "spark",
     "name": "讯飞星火",
     "desc": "科大讯飞 · Spark 系列模型",
@@ -563,20 +820,6 @@
     "customModels": [],
     "status": "idle",
     "color": "#6469f1",
-    "scanned": false,
-    "apiKey": ""
-  },
-  {
-    "id": "hunyuan",
-    "name": "腾讯混元",
-    "desc": "腾讯云 · 混元大模型系列",
-    "enabled": false,
-    "baseUrl": "https://api.hunyuan.cloud.tencent.com/v1",
-    "defaultUrl": "https://api.hunyuan.cloud.tencent.com/v1",
-    "models": [],
-    "customModels": [],
-    "status": "idle",
-    "color": "#0053e0",
     "scanned": false,
     "apiKey": ""
   },

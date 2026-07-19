@@ -17,7 +17,7 @@ export interface FormatChatMessageProps {
 }
 
 export const FormatChatMessage = React.memo(function FormatChatMessage({ content }: FormatChatMessageProps) {
-  if (!content) return null;
+  if (!content || !content.trim()) return null;
 
   // Split by ``` to extract code blocks
   const parts = content.split(/(```[\s\S]*?```)/g);
@@ -91,7 +91,7 @@ export const FormatChatMessage = React.memo(function FormatChatMessage({ content
                     const boldParts = ip.split(/(\*\*.*?\*\*)/g);
                     return boldParts.map((bp, bIdx) => {
                       if (bp.startsWith('**') && bp.endsWith('**')) {
-                        return <strong key={`b-${iIdx}-${bIdx}`} className="text-primary font-black">{bp.slice(2, -2)}</strong>;
+                        return <strong key={`b-${iIdx}-${bIdx}`} className="font-bold text-on-surface">{bp.slice(2, -2)}</strong>;
                       }
 
                       // Process inline code `code`
@@ -99,7 +99,7 @@ export const FormatChatMessage = React.memo(function FormatChatMessage({ content
                       return codeParts.map((cp, cIdx) => {
                         if (cp.startsWith('`') && cp.endsWith('`')) {
                           return (
-                            <code key={`c-${iIdx}-${bIdx}-${cIdx}`} className="px-1 py-0.5 font-mono text-[11px] text-emerald-500 font-bold mx-0.5">
+                            <code key={`c-${iIdx}-${bIdx}-${cIdx}`} className="px-1 py-0.5 font-mono text-[11px] text-on-surface font-bold mx-0.5">
                               {cp.slice(1, -1)}
                             </code>
                           );
@@ -112,7 +112,7 @@ export const FormatChatMessage = React.memo(function FormatChatMessage({ content
                   if (isBullet) {
                     return (
                       <div key={lIdx} className="flex gap-2 pl-2 text-on-surface/90 text-[12px] leading-relaxed select-text mt-1">
-                        <span className="text-primary font-bold shrink-0 select-none">•</span>
+                        <span className="text-on-surface font-bold shrink-0 select-none">•</span>
                         <span>{processedInline}</span>
                       </div>
                     );
@@ -122,7 +122,7 @@ export const FormatChatMessage = React.memo(function FormatChatMessage({ content
                     const numString = line.trim().match(/^(\d+)/)?.[1] || '';
                     return (
                       <div key={lIdx} className="flex gap-2 pl-2 text-on-surface/90 text-[12px] leading-relaxed select-text mt-1">
-                        <span className="text-primary font-bold shrink-0 font-mono text-[11px] select-none">{numString}.</span>
+                        <span className="text-on-surface font-bold shrink-0 font-mono text-[11px] select-none">{numString}.</span>
                         <span>{processedInline}</span>
                       </div>
                     );

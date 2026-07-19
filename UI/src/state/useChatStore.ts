@@ -263,22 +263,51 @@ function createStreamBridge(chatId: string, mainModel: string, userInput: string
   };
 }
 
+/**
+ * ★ FIX 2026-07-20: detectPreviewFromResponse 只对 UI 相关语言触发预览
+ *
+ * 之前对所有代码块 (包括 Python/C/Go/Rust/Java 等通用编程语言) 都触发预览,
+ * 导致普通对话中的代码示例也被当作 UI 代码处理, 产生不必要的预览触发。
+ *
+ * 现在: 只对 UI 相关语言 (html, jsx, tsx, vue, dart, swift, kotlin, xml, json, css) 触发预览。
+ * 通用编程语言 (python, c, go, rust, java 等) 不触发预览, 代码块保留在聊天中正常显示。
+ */
 function detectPreviewFromResponse(text: string): string | null {
   if (!text || text.length < 10) return null;
 
+  // ★ FIX 2026-07-20: 只对 UI 相关语言触发预览, 不包括 python/c/go/rust/java 等
   const codeBlockRe = /```(\w+)/g;
-  const langMap: Record<string, string> = {
-    html: 'html', htm: 'html', jsx: 'typescript', tsx: 'typescript',
-    javascript: 'typescript', js: 'typescript', typescript: 'typescript', ts: 'typescript',
-    vue: 'typescript', svelte: 'typescript', dart: 'dart',
-    python: 'python', py: 'python', go: 'go', rust: 'rust', rs: 'rust',
-    java: 'java', c: 'c', cpp: 'c', 'c++': 'c', kotlin: 'java', swift: 'dart',
+  const uiLangMap: Record<string, string> = {
+    html: 'html', htm: 'html',
+    jsx: 'typescript', tsx: 'typescript',
+    javascript: 'typescript', js: 'typescript',
+    typescript: 'typescript', ts: 'typescript',
+    vue: 'typescript', svelte: 'typescript',
+    dart: 'dart',
+    swift: 'dart',
+    kotlin: 'java',
     css: 'html', scss: 'html',
+    // json 代码块只在包含 DSL 节点时才算 UI (下面额外检查)
+    json: '__json_dsl_check__',
   };
   let match: RegExpExecArray | null;
   while ((match = codeBlockRe.exec(text)) !== null) {
     const lang = match[1].toLowerCase();
-    if (langMap[lang]) return langMap[lang];
+    const mapped = uiLangMap[lang];
+    if (!mapped) continue;
+    // json 代码块: 只在有 DSL type 字段时触发预览
+    if (mapped === '__json_dsl_check__') {
+      // 检查 json 代码块是否包含 DSL 节点 (有 type 字段)
+      const blockEnd = text.indexOf('```', match.index + match[0].length);
+      const jsonCode = blockEnd > 0
+        ? text.slice(match.index + match[0].length, blockEnd)
+        : text.slice(match.index + match[0].length);
+      if (/"type"\s*:/.test(jsonCode) || /"ui"\s*:/.test(jsonCode)) {
+        return 'json';
+      }
+      continue;
+    }
+    return mapped;
   }
 
   const uiKeywords = [

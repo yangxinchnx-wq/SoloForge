@@ -168,7 +168,7 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
     const phaseClass = phaseColors[phaseLabel] ?? 'text-on-surface/60 bg-on-surface/5';
 
     return (
-      <div className="w-full pl-[58px] pr-3">
+      <div className="w-full pl-[5px] pr-0">
         <div className="border border-outline/30 rounded-lg bg-bg/50 p-3 space-y-2">
           {/* 阶段 + 进度头 */}
           <div className="flex items-center gap-1.5">
@@ -182,21 +182,6 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
               </span>
             )}
           </div>
-
-          {/* 总进度条 */}
-          {subCount > 0 && (
-            <div className="flex items-center gap-2">
-              <div className="flex-1 h-1 rounded-full bg-on-surface/10 overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-primary transition-all duration-300"
-                  style={{ width: `${summary.progress}%` }}
-                />
-              </div>
-              <span className="text-[10px] font-mono text-on-surface/40 tabular-nums w-8 text-right">
-                {summary.progress}%
-              </span>
-            </div>
-          )}
 
           {/* 用户输入回显 */}
           {userInput && (
@@ -250,7 +235,7 @@ function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: Ta
   const cacheRate = totalPrompt > 0 ? Math.round((totalCached / totalPrompt) * 100) : 0;
 
   return (
-    <div className="w-full pl-[58px] pr-3">
+    <div className="w-full pl-[5px] pr-0">
       {/* 总结内容 — 无气泡, 紧贴流程下方 (4px 间距由根 div -mt-1.5 实现) */}
       {hasSummaryContent && (
       <div className="space-y-0.5">

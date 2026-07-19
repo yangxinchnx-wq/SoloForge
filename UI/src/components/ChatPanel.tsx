@@ -586,9 +586,9 @@ export default function ChatPanel({
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto p-4 select-text scrollbar-thin scrollbar-thumb-outline/50"
+        className="flex-1 overflow-y-auto py-4 px-0 select-text scrollbar-thin scrollbar-thumb-outline/50"
       >
-        <div className="max-w-5xl lg:max-w-[94%] xl:max-w-[90%] mx-auto w-full flex flex-col space-y-5 py-2 px-4 md:px-6">
+        <div className="max-w-5xl lg:max-w-[94%] xl:max-w-[90%] mx-auto w-full flex flex-col space-y-5 py-2">
           {activeMessages.length === 0 && !isGenerating && (
             <div className="flex-1 flex flex-col items-center justify-center min-h-[300px] select-none">
               <div
@@ -613,6 +613,10 @@ export default function ChatPanel({
             //   而是隐藏气泡内容, 保留 header + process parts (loading → 实时过程)
             //   确保发送瞬间流送区立即出现
             const isEmptyGenerating = !isUser && !msg.content.trim() && index === activeMessages.length - 1;
+            // ★ 2026-07-20: 气泡内容存在性检查 — 只有文本/附件/工具调用至少有一项时才渲染气泡轮廓
+            //   修复: 流送 parts 已到达 (hasStreamData=true) 但 msg.content 还为空时,
+            //   ResizableBubble 渲染了空气泡轮廓 (只有 resize-handle, 无实际内容)
+            const hasBubbleContent = !!(msg.content.trim() || msg.attachment || (msg.toolCalls && msg.toolCalls.length > 0));
             // ★ 2026-07-13: 计算当前 assistant 消息是第几个 assistant
             //   用于关联 uiMessageStore 中对应索引的 UIMessage.id
             //   conversations 中 assistant 消息按顺序与 uiMessageStore 的 assistant UIMessage 一一对应
@@ -623,6 +627,12 @@ export default function ChatPanel({
               }
             }
             const uiMessageId = assistantOrdinal >= 0 ? assistantUiMessageIds[assistantOrdinal] : undefined;
+            // ★ 2026-07-20: 获取当前 assistant 消息对应的 UIMessage 状态
+            //   status='streaming'/'pending' → 流送过程进行中, 不显示结果气泡
+            //   status='done'/'error' → 流送结束, 显示结果气泡
+            //   uiMsg=undefined → 历史消息 (无 UIMessage), 正常显示气泡
+            const uiMsg = uiMessageId ? uiMessages.find(m => m.id === uiMessageId) : undefined;
+            const isAssistantStreaming = !isUser && uiMsg != null && (uiMsg.status === 'streaming' || uiMsg.status === 'pending');
             // ★ 2026-07-13: 判断是否是最后一个 assistant 消息
             //   StreamPanel (TaskExecutionCard + 任务总结) 只在最后一个 assistant 消息上方渲染
             // ★ FIX 2026-07-14: isLastAssistant 改用 index 判断, 不再依赖 assistantOrdinal 映射
@@ -638,16 +648,26 @@ export default function ChatPanel({
                 {/* Header Row: Avatar + Info
                     ★ 2026-07-13: 用户名称可隐藏, 头像可隐藏 (右键菜单控制)
                     时间移到气泡右下角, 这里不再显示 */}
-                <div className={`flex gap-3 items-center mb-1 ${isUser ? 'flex-row-reverse' : ''}`}>
+                <div className={`flex gap-3 items-center mb-1 pl-[5px] ${isUser ? 'flex-row-reverse' : ''}`}>
                   {/* Avatar block */}
                   {isUser ? (
                     !hideUserAvatar && (
-                      <img
-                        src={userAvatarSrc}
-                        alt="用户头像"
-                        className="w-11 h-11 shrink-0 object-cover pointer-events-none"
-                        draggable={false}
-                      />
+                      <div
+                        className="shrink-0 overflow-hidden"
+                        style={{
+                          width: 36,
+                          height: 36,
+                          borderRadius: 10,
+                          boxShadow: 'inset 0 0 0 0.5px rgba(0,0,0,0.20), 0 0 6px rgba(0,0,0,0.06), 2px 3px 5px rgba(0,0,0,0.08)',
+                        }}
+                      >
+                        <img
+                          src={userAvatarSrc}
+                          alt="用户头像"
+                          className="w-9 h-9 object-cover pointer-events-none"
+                          draggable={false}
+                        />
+                      </div>
                     )
                   ) : (
                     <div className="w-11 h-11 rounded-full bg-on-surface/5 border border-on-surface/10 flex items-center justify-center shrink-0">
@@ -680,7 +700,7 @@ export default function ChatPanel({
                     发送瞬间 (isEmptyGenerating) StreamPanel 还无 task, 显示 loading 占位 */}
                 {/* ★ FIX 2026-07-14: 加载占位只在无内容且无流送数据时显示 */}
                 {!isUser && isEmptyGenerating && !hasStreamData && (
-                  <div className="w-full pl-[58px] pr-3">
+                  <div className="w-full pl-[5px] pr-3">
                     <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] text-on-surface/50 font-mono">
                       <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
                       <span>正在准备…</span>
@@ -691,7 +711,7 @@ export default function ChatPanel({
                     包括 phase-change / model-action (LLM思考) / model-delegation / subtask-* / audit-* / clarify / error / browser-*
                     最后一条 assistant 额外渲染 StreamPanel (PromptCards + 总结) */}
                 {!isUser && uiMessageId && (
-                  <div className="w-full pl-[58px] pr-3">
+                  <div className="w-full pl-[5px] pr-3">
                     <UIMessagePartsRenderer chatId={activeChatId} messageId={uiMessageId} />
                   </div>
                 )}
@@ -705,9 +725,11 @@ export default function ChatPanel({
                 )}
 
                 {/* Content block: aligned on right or left
-                    ★ FIX 2026-07-14: 有流送数据时也显示内容块 (工具调用等), 即使文本为空 */}
-                {(!isEmptyGenerating || hasStreamData) && (
-                <div className={`flex flex-col gap-1 font-sans text-left ${isUser ? 'pr-3 pl-[58px] items-end max-w-[88%]' : 'pl-[58px] pr-3 items-start w-full'}`}>
+                    ★ FIX 2026-07-14: 有流送数据时也显示内容块 (工具调用等), 即使文本为空
+                    ★ FIX 2026-07-20: assistant 无气泡内容 (无文本/附件/工具调用) 时不渲染空气泡轮廓
+                    ★ FIX 2026-07-20: assistant 流送过程中 (status=streaming/pending) 不显示结果气泡 */}
+                {(!isEmptyGenerating || hasStreamData) && (isUser || (hasBubbleContent && !isAssistantStreaming)) && (
+                <div className={`flex flex-col gap-1 font-sans text-left ${isUser ? 'pr-0 pl-[58px] items-end max-w-[88%]' : 'pl-[5px] pr-3 items-start w-full'}`}>
                   {isUser ? (
                   <div
                     onContextMenu={(e) => handleUserContextMenu(e, index)}
@@ -875,7 +897,7 @@ export default function ChatPanel({
           )}
 
           {isGenerating && streamState.suggestEnables.length > 0 && (
-            <div className="sf-anim sf-anim-slide-up flex flex-col gap-2 max-w-[95%] pl-[58px] text-left mb-2">
+            <div className="sf-anim sf-anim-slide-up flex flex-col gap-2 max-w-[95%] pl-[5px] text-left mb-2">
               {/* SuggestEnableView 保留: StreamPanel 未处理 suggest_enable 事件 */}
               <SuggestEnableView items={streamState.suggestEnables} onAccept={handleAcceptEnable} />
             </div>

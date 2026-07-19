@@ -438,7 +438,19 @@ export function parseCodeBlocks(text: string): CodeBlockInfo[] {
   return blocks;
 }
 
-function buildDisplayText(text: string, blocks: CodeBlockInfo[]): string {
+/**
+ * 构建显示文本 — 只隐藏成功推送到画布的代码块
+ *
+ * ★ FIX 2026-07-20: 之前对所有带 translatorLang 的代码块都从显示文本中剥离,
+ *   不管是否真正成功翻译推送到画布。导致普通对话中的 Python/C 等代码块
+ *   也被隐藏, 用户看到内容被截断。
+ *
+ * 现在: 只剥离 pushedBlockStarts 中包含的代码块 (即成功推送的)。
+ * 未成功翻译的代码块保留原始代码显示。
+ *
+ * @param pushedBlockStarts 成功推送到画布的代码块起始位置集合
+ */
+function buildDisplayText(text: string, blocks: CodeBlockInfo[], pushedBlockStarts: Set<number>): string {
   if (blocks.length === 0) return text;
 
   let result = '';
@@ -446,27 +458,26 @@ function buildDisplayText(text: string, blocks: CodeBlockInfo[]): string {
 
   for (const block of blocks) {
     result += text.slice(lastEnd, block.openFenceStart);
+
+    // ★ FIX 2026-07-20: 只剥离成功推送到画布的代码块
+    const wasPushed = pushedBlockStarts.has(block.openFenceStart);
+
     if (block.complete) {
-      if (block.translatorLang) {
-        // ★ 2026-07-19: UI 代码块已翻译推画布, 隐藏代码不显示
-        //   但从中提取图片 (JSON DSL image 节点 / HTML <img> 标签),
-        //   转为 markdown 图片语法让 FormatChatMessage 直接渲染显示
+      if (block.translatorLang && wasPushed) {
+        // UI 代码块已成功翻译推画布, 隐藏代码, 但提取图片显示
         const imageMarkdown = extractImagesFromCode(block.code, block.translatorLang);
         if (imageMarkdown) {
           result += imageMarkdown;
         }
       } else {
-        // 非 UI 代码块: 保留原始代码显示
+        // 非 UI 代码块或未成功翻译的 UI 代码块: 保留原始代码显示
         result += text.slice(block.openFenceStart, block.closeFenceEnd);
       }
       lastEnd = block.closeFenceEnd;
     } else {
-      if (block.translatorLang) {
-        // ★ 2026-07-19: UI 代码块正在翻译, 隐藏代码不显示
-        //   未完成的代码块不提取图片 (JSON 可能不完整, 解析会失败)
-      } else {
-        result += text.slice(block.openFenceStart);
-      }
+      // 未完成的代码块: 始终保留显示 (不管是否有 translatorLang)
+      //   之前对带 translatorLang 的未完成块也隐藏, 导致流式期间代码不可见
+      result += text.slice(block.openFenceStart);
       lastEnd = text.length;
     }
   }
@@ -488,6 +499,8 @@ function buildDisplayText(text: string, blocks: CodeBlockInfo[]): string {
  *   3. HTML/JSX/Vue: <img src="..." alt="...">
  */
 function extractImagesFromCode(code: string, translatorLang: string): string {
+// ★ FIX 2026-07-20: 此函数现在只被 buildDisplayText 在 pushedBlockStarts 包含该块时调用
+//   之前对所有 translatorLang != null 的块都调用, 导致未成功翻译的代码块也被剥离
   const images: string[] = [];
 
   if (translatorLang === '__json_dsl__') {
@@ -944,6 +957,10 @@ export class IncrementalCanvasPusher {
   private rawText: string = '';
   private _handled: boolean = false;
   private pushedBlockStarts: Set<number> = new Set();
+  // ★ FIX 2026-07-20: 成功推送到画布的代码块起始位置集合
+  //   区别于 pushedBlockStarts (只标记"已处理"), 这个集合只包含翻译成功并推送到画布的块
+  //   buildDisplayText 只隐藏这些块, 未成功翻译的代码块保留在聊天中显示
+  private successfullyPushedBlockStarts: Set<number> = new Set();
   private trackers: Map<number, LineTracker> = new Map();
   private flushing: boolean = false;
 
@@ -956,7 +973,8 @@ export class IncrementalCanvasPusher {
     this.tryIncrementalTranslate();
     const blocks = parseCodeBlocks(this.rawText);
     return {
-      displayText: buildDisplayText(this.rawText, blocks),
+      // ★ FIX 2026-07-20: 传入 successfullyPushedBlockStarts, 只隐藏成功翻译推送的代码块
+      displayText: buildDisplayText(this.rawText, blocks, this.successfullyPushedBlockStarts),
       inCodeBlock: blocks.some(b => !b.complete),
     };
   }
@@ -1011,6 +1029,13 @@ export class IncrementalCanvasPusher {
       for (const { block } of finalTasks) {
         this.pushedBlockStarts.add(block.openFenceStart);
       }
+      // ★ FIX 2026-07-20: 只将翻译成功 (tracker.pushed == true) 的块加入 successfullyPushedBlockStarts
+      //   这样 buildDisplayText 只隐藏真正推送到画布的代码块, 未成功翻译的代码保留在聊天中
+      for (const { tracker, block } of finalTasks) {
+        if (tracker.pushed) {
+          this.successfullyPushedBlockStarts.add(block.openFenceStart);
+        }
+      }
       // ★ 2026-07-14: 不要覆盖已成功的 _handled — 增量阶段可能已成功推送
       //   flush 遇到非 DSL 工具调用 (read_file 等) 时 pushed=false,
       //   但不应丢失增量阶段已推送的状态
@@ -1030,7 +1055,8 @@ export class IncrementalCanvasPusher {
 
   getDisplayText(): string {
     const blocks = parseCodeBlocks(this.rawText);
-    return buildDisplayText(this.rawText, blocks);
+    // ★ FIX 2026-07-20: 传入 successfullyPushedBlockStarts, 只隐藏成功翻译推送的代码块
+    return buildDisplayText(this.rawText, blocks, this.successfullyPushedBlockStarts);
   }
 
   private tryIncrementalTranslate(): void {
@@ -1054,7 +1080,12 @@ export class IncrementalCanvasPusher {
       if (newDelta) {
         const shouldTranslate = tracker.feedCode(newDelta);
         if (shouldTranslate) {
-          tracker.translateAndPush(false).catch(() => {});
+          tracker.translateAndPush(false).then(() => {
+            // ★ FIX 2026-07-20: 增量翻译完成后, 如果成功推送, 加入 successfullyPushedBlockStarts
+            if (tracker.pushed) {
+              this.successfullyPushedBlockStarts.add(block.openFenceStart);
+            }
+          }).catch(() => {});
           this._handled = true;
         }
       }
