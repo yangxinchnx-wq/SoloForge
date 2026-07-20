@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useMemo, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Send, ChevronDown, ChevronUp, FileCode, X, SlidersHorizontal, Check, ShieldAlert, ThumbsUp, ThumbsDown, Copy, Loader2, Pause, Play, RefreshCw, Lock, Unlock } from '../utils/icons';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MountTransition } from './MountTransition';
@@ -11,10 +12,10 @@ import ResourceManagerBar from './ResourceManagerBar';
 import { ModelIcon } from './ModelIcon';
 import { ToolCallCard } from './ToolCallCard';
 import StreamPanel from './StreamPanel';
+import { StreamContextMenu } from './StreamContextMenu';
 // ★ 2026-07-13: 多轮对话独立气泡 — 每轮 assistant 消息渲染自己的过程 parts
 import { UIMessagePartsRenderer } from './UIMessagePartsRenderer';
 // ★ 2026-07-19: assistant 消息气泡可拖拽调整高度
-import { ResizableBubble } from './ResizableBubble';
 import { useUIMessages } from '../services/uiMessageStore';
 import type { ChatPanelProps, ChatSettingsItem } from '../types/chat';
 import { getSettingsSummary } from '../types/chat';
@@ -27,11 +28,13 @@ import { SuggestEnableView } from './streamViews';
 // 2026-07-03 阶段3.1.E: 12 个 state + 9 个 handler 收敛到 useChatStore
 import { useChatStore, fallbackActiveSettings } from '../state/useChatStore';
 import { useAppStore } from '../state/appStore';
+import { useRenderTrace } from '../hooks/useRenderTrace';
 
 // 4 个权限模式图标 (NormalIcon/PerformanceIcon/ExpertIcon/UltimateIcon) 已外移到
 // permissionModeIcons.tsx (2026-07-03 阶段3.1.B)
-// 兼容性 re-export: SettingsModal 仍可 `from './ChatPanel'` 拿这 4 个图标
-export { NormalIcon, PerformanceIcon, ExpertIcon, UltimateIcon } from './permissionModeIcons';
+// ★ 2026-07-20: 移除兼容性 re-export — export { } 会导致 Vite Fast Refresh 降级为
+//   full page reload (Fast Refresh 要求文件只导出组件, 不能有 re-export)
+//   使用者请直接从 permissionModeIcons.tsx 导入
 
 // ChatPanelProps / ChatSettingsItem 已外移到 types/chat.ts (2026-07-03 阶段3.1.A)
 export type { ChatPanelProps, ChatSettingsItem } from '../types/chat';
@@ -108,20 +111,25 @@ const modeButtonVariants = {
 //   - 持久化 useEffect + persistIdleCancelRef 已迁到 useChatStore 模块级 subscribe
 //   - props 依赖通过 syncRuntimeOptions 同步到 store.options,action 内部 get().options 读取
 
-export default function ChatPanel({
+const ChatPanel = React.memo(function ChatPanel({
   modelProviderMap = {}
 }: ChatPanelProps) {
   // ★ 从 appStore 直接订阅, 切断 App→MainLayout props 透传链, 避免打字/切文件/切对话全局刷新
   //   原 props (permissionMode/selectedChatId/mainModel/secModels/mixedTasks/selectedFile/editorContent)
   //   全部改由 store 细粒度订阅, MainLayout 不再传这些 prop
+  //
+  // ★★ 2026-07-20 优化: 移除 selectedFile/editorContent/mixedTasks 的响应式订阅
+  //   这三个字段不在 ChatPanel JSX 中直接使用, 只需同步到 useChatStore.options
+  //   供 handleSend/resumeChat 内部 get().options 读取即可。
+  //   selectedFile/editorContent 高频变化 (编辑器打字时),
+  //   响应式订阅会导致 ChatPanel (1200+行大组件) 每次打字都重渲染 →
+  //   消息列表/输入框/模式选择器等全部重新创建 JSX → 全局刷新感。
+  //   改用 useAppStore.subscribe(selector, listener) 监听变化, 只同步不重渲染。
   const permissionMode = useAppStore(s => s.currentPermissionMode);
   const setPermissionMode = useAppStore(s => s.setCurrentPermissionMode);
   const selectedChatId = useAppStore(s => s.selectedChatId);
   const mainModel = useAppStore(s => s.mainModel);
   const secModels = useAppStore(s => s.secModels);
-  const mixedTasks = useAppStore(s => s.mixedTasks);
-  const selectedFile = useAppStore(s => s.selectedFile);
-  const editorContent = useAppStore(s => s.editorContent);
   // ==========================================
   // 【后端对接提示 - 获取特定会话下的历史消息记录】
   // 原先直接通过 localStorage 读取了所有对话列表记录。接入后端数据库后：
@@ -140,6 +148,8 @@ export default function ChatPanel({
   const inputValue = useChatStore(s => s.inputValue);
   const showModeDropdown = useChatStore(s => s.showModeDropdown);
   const workspaceApproval = useChatStore(s => s.workspaceApproval);
+  // ★ 调试: 渲染追踪 (传入所有订阅的 store 值, 检测哪个变化触发了重渲染)
+  useRenderTrace('ChatPanel', { modelProviderMap, permissionMode, selectedChatId, mainModel, secModels_count: secModels?.length, inputValue_len: inputValue?.length, isGenerating, isPaused });
 
   // ★ 直接从 appStore 取 setActiveSettingsChat, 不再走 CustomEvent 间接调用
   //   原: button → window.dispatchEvent → useFileOperations useEffect → setActiveSettingsChat
@@ -166,17 +176,43 @@ export default function ChatPanel({
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // 2026-07-03 阶段3.1.E: 同步 props 到 store.options (action 内部用 get().options 读取)
+  // ★★ 2026-07-20: selectedFile/editorContent 改用 getState() 读取 + subscribe 监听
+  //   不再作为响应式依赖, 避免编辑器打字时触发 ChatPanel 重渲染
   useEffect(() => {
+    const appState = useAppStore.getState();
     syncRuntimeOptions({
       permissionMode,
       selectedChatId,
       mainModel,
       secModels,
-      selectedFile,
-      editorContent,
+      selectedFile: appState.selectedFile,
+      editorContent: appState.editorContent,
       modelProviderMap,
     });
-  }, [permissionMode, selectedChatId, mainModel, secModels, selectedFile, editorContent, modelProviderMap, syncRuntimeOptions]);
+  }, [permissionMode, selectedChatId, mainModel, secModels, modelProviderMap, syncRuntimeOptions]);
+
+  // ★★ 2026-07-20: 用 subscribe 监听 selectedFile/editorContent 变化
+  //   只同步到 useChatStore.options, 不触发 ChatPanel 重渲染
+  //   编辑器打字 → editorContent 变 → 此回调执行 → syncRuntimeOptions → 完
+  //   ChatPanel 不参与重渲染, 消息列表/输入框等子组件不受影响
+  useEffect(() => {
+    const unsubSelectedFile = useAppStore.subscribe(
+      (s) => s.selectedFile,
+      (selectedFile) => {
+        syncRuntimeOptions({ selectedFile });
+      }
+    );
+    const unsubEditorContent = useAppStore.subscribe(
+      (s) => s.editorContent,
+      (editorContent) => {
+        syncRuntimeOptions({ editorContent });
+      }
+    );
+    return () => {
+      unsubSelectedFile();
+      unsubEditorContent();
+    };
+  }, [syncRuntimeOptions]);
 
   // 2026-07-03 阶段3.1.E: chatsList/configs 跨窗口更新事件监听
   useEffect(() => {
@@ -416,6 +452,16 @@ export default function ChatPanel({
   const [hideUserName, setHideUserName] = useState(false);
   const [hideUserAvatar, setHideUserAvatar] = useState(false);
 
+  // ★ 2026-07-20: assistant 消息气泡右键菜单 — 流送区外观设置
+  //   与用户消息的 ctxMenu 分开, 避免冲突
+  const [streamCtxMenu, setStreamCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const handleStreamContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setStreamCtxMenu({ x: e.clientX, y: e.clientY });
+  }, []);
+  const handleCloseStreamContextMenu = useCallback(() => setStreamCtxMenu(null), []);
+
   // ★ 2026-07-13: 重新生成 — 以当前用户消息重新发送
   const handleRegenerate = (index: number) => {
     const userMsg = activeMessages[index];
@@ -615,7 +661,7 @@ export default function ChatPanel({
             const isEmptyGenerating = !isUser && !msg.content.trim() && index === activeMessages.length - 1;
             // ★ 2026-07-20: 气泡内容存在性检查 — 只有文本/附件/工具调用至少有一项时才渲染气泡轮廓
             //   修复: 流送 parts 已到达 (hasStreamData=true) 但 msg.content 还为空时,
-            //   ResizableBubble 渲染了空气泡轮廓 (只有 resize-handle, 无实际内容)
+            //   气泡渲染了空气泡轮廓 (无实际内容)
             const hasBubbleContent = !!(msg.content.trim() || msg.attachment || (msg.toolCalls && msg.toolCalls.length > 0));
             // ★ 2026-07-13: 计算当前 assistant 消息是第几个 assistant
             //   用于关联 uiMessageStore 中对应索引的 UIMessage.id
@@ -700,18 +746,17 @@ export default function ChatPanel({
                     发送瞬间 (isEmptyGenerating) StreamPanel 还无 task, 显示 loading 占位 */}
                 {/* ★ FIX 2026-07-14: 加载占位只在无内容且无流送数据时显示 */}
                 {!isUser && isEmptyGenerating && !hasStreamData && (
-                  <div className="w-full pl-[5px] pr-3">
-                    <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] text-on-surface/50 font-mono">
-                      <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
-                      <span>正在准备…</span>
-                    </div>
+                  <div className="w-full pl-[5px] pr-[5px]">
+<div className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] text-on-surface/50 font-mono">
+<span>正在准备…</span>
+</div>
                   </div>
                 )}
-                {/* ★ FIX 2026-07-14: 所有 assistant 消息统一用 UIMessagePartsRenderer 渲染过程 parts
-                    包括 phase-change / model-action (LLM思考) / model-delegation / subtask-* / audit-* / clarify / error / browser-*
-                    最后一条 assistant 额外渲染 StreamPanel (PromptCards + 总结) */}
-                {!isUser && uiMessageId && (
-                  <div className="w-full pl-[5px] pr-3">
+                {/* ★ 2026-07-20: 过程与结果互斥 — 最后一条 assistant 消息只用 StreamPanel 渲染过程,
+                    历史消息用 UIMessagePartsRenderer 渲染 (默认折叠).
+                    两者不共存, 避免过程重复. */}
+                {!isUser && uiMessageId && !isLastAssistant && (
+                  <div className="w-full pl-[5px] pr-[5px]">
                     <UIMessagePartsRenderer chatId={activeChatId} messageId={uiMessageId} />
                   </div>
                 )}
@@ -754,7 +799,8 @@ export default function ChatPanel({
                     )}
                   </div>
                   ) : (
-                  <ResizableBubble
+                  <div
+                    onContextMenu={handleStreamContextMenu}
                     className="relative px-3.5 py-2.5 rounded-xl text-[12px] leading-relaxed select-text space-y-1.5 overflow-hidden border w-full bg-surface/50 border-primary/40 text-on-surface"
                   >
                     <FormatChatMessage content={msg.content} />
@@ -774,7 +820,7 @@ export default function ChatPanel({
                         ))}
                       </div>
                     )}
-                  </ResizableBubble>
+                  </div>
                   )}
 
                   {/* 用户消息: 复制 + 重新生成按钮 + 时间 */}
@@ -894,6 +940,16 @@ export default function ChatPanel({
                 {hideUserAvatar && <Check className="w-3 h-3 text-primary" />}
               </button>
             </div>
+          )}
+
+          {/* ★ 2026-07-20: assistant 消息气泡右键菜单 — 流送区外观设置 (Portal 到 body) */}
+          {streamCtxMenu && createPortal(
+            <StreamContextMenu
+              x={streamCtxMenu.x}
+              y={streamCtxMenu.y}
+              onClose={handleCloseStreamContextMenu}
+            />,
+            document.body
           )}
 
           {isGenerating && streamState.suggestEnables.length > 0 && (
@@ -1223,4 +1279,6 @@ export default function ChatPanel({
       </MountTransition>
     </div>
   );
-}
+});
+
+export default ChatPanel;

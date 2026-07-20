@@ -34,7 +34,7 @@ const DEFAULT_FG = '#000000';
  *
  * 让 Canvas 纹理只覆盖屏幕区域:
  *   - 圆角矩形裁剪 (匹配 iPhone 屏幕圆角)
- *   - 灵动岛/刘海挖孔 (让该区域透明, 显示模型本身的黑色挖孔)
+ *   - 灵动岛/刘海区域 (绘制纯黑色药丸形, 模拟摄像头挖孔)
  */
 export interface ScreenShape {
   /** 屏幕圆角半径 (像素, 纹理坐标系) */
@@ -260,11 +260,12 @@ export function renderDslToCanvas(
   // 递归渲染 DSL 内容
   renderNode(ctx, node, box);
 
-  // ★ 灵动岛挖孔: 清除该区域 (让纹理透明, 显示模型本身的黑色挖孔)
+  // ★ 灵动岛: 绘制纯黑色药丸形 (模拟摄像头挖孔区域)
+  //   不用 destination-out 透明挖孔, 而是直接画黑色, 这样即使模型没有 island mesh 也能看到挖孔效果
   if (screenShape?.notch) {
     const n = screenShape.notch;
     ctx.save();
-    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = '#000000';
     drawRoundRect(ctx, n.x, n.y, n.width, n.height, n.radius);
     ctx.fill();
     ctx.restore();

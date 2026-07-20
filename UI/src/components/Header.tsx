@@ -8,13 +8,14 @@ import {
 } from './header-bar';
 import { useThemedSurface } from './header-bar/themeColors';
 import { useAppStore } from '../state/appStore';
+import { useRenderTrace } from '../hooks/useRenderTrace';
 
 interface HeaderProps {
   sidebarWidth?: number;
   isResizingSidebar?: boolean;
 }
 
-export default function Header({
+const Header = React.memo(function Header({
   sidebarWidth = 298,
   isResizingSidebar = false,
 }: HeaderProps) {
@@ -26,6 +27,8 @@ export default function Header({
   const mixedTasks = useAppStore(s => s.mixedTasks);
   const setMixedTasks = useAppStore(s => s.setMixedTasks);
   const permissionMode = useAppStore(s => s.currentPermissionMode);
+  // ★ 调试: 渲染追踪 (传入所有订阅的 store 值, 检测哪个变化触发了重渲染)
+  useRenderTrace('Header', { sidebarWidth, isResizingSidebar, mainModel, secModels_count: secModels?.length, mixedTasks, permissionMode });
   const themed = useThemedSurface();
   const { glass, isDark, rgba, headerSurface } = themed;
   const [isSecModelSelectorOpen, setIsSecModelSelectorOpen] = useState(false);
@@ -154,8 +157,12 @@ export default function Header({
       setAvailableModels(models);
       setAllAvailableModelsList(getDynamicSecondarySubmodels());
       setModelIconMap(getModelIconMap());
-      // 自动选中第一个可用模型 (当 mainModel 为空或不在可用列表中时)
-      if (models.length > 0 && !models.includes(mainModel)) {
+      // ★ FIX 2026-07-20: 用 getState() 读取最新 mainModel, 不作为 effect 依赖
+      //   原 effect 依赖 [mainModel], mainModel 变化 → effect 重新执行 →
+      //   setAvailableModels(新数组引用) → Header 重渲染 → 循环
+      //   现在只依赖 [setMainModel] (稳定引用), effect 只在挂载时执行一次
+      const currentMainModel = useAppStore.getState().mainModel;
+      if (models.length > 0 && !models.includes(currentMainModel)) {
         setMainModel(models[0]);
       }
     };
@@ -166,7 +173,7 @@ export default function Header({
       window.removeEventListener('storage', refreshLists);
       window.removeEventListener('providers_updated', refreshLists);
     };
-  }, [mainModel, setMainModel]);
+  }, [setMainModel]);
 
   // ── 副模型集合的增删改 ──────────────────────────────────────────────
   const addSecModel = useCallback((m: string) => {
@@ -394,4 +401,6 @@ draggable
       </div>
     </header>
   );
-}
+});
+
+export default Header;

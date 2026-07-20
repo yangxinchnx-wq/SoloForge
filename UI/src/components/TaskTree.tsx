@@ -3,7 +3,7 @@
  * 展示根任务、子任务列表、审查区、进度条
  */
 import React, { memo } from 'react';
-import { Layers, ChevronDown, Loader2 } from '../utils/icons';
+import { Layers, ChevronDown } from '../utils/icons';
 import type { RootTask, PermissionMode } from '../types/streaming';
 import type { ArbitrationResult } from '../types/streaming';
 import { SubTaskNode } from './SubTaskNode';
@@ -40,9 +40,6 @@ export const TaskTree = memo(function TaskTree({ task, mainModel, modelCount, mo
     <div className="flex flex-col gap-2">
       {/* 状态指示行 */}
       <div className="flex items-center gap-2 px-1">
-        {isActive && (
-          <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin shrink-0" />
-        )}
         <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
           isDone ? 'text-green-400 bg-green-500/10'
             : isError ? 'text-red-400 bg-red-500/10'

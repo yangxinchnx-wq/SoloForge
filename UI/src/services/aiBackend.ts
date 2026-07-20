@@ -1,4 +1,4 @@
-﻿﻿/**
+﻿﻿﻿﻿/**
  * aiBackend — 统一 AI 流式后端接口
  *   dev (浏览器 / Vite dev server) → /api/java-agent/api/chat/stream (Java SSE)
  *                                  → Node.js(3000) 直连透传到 Java Spring AI Agent(8770)
@@ -19,7 +19,7 @@
  */
 
 import { StreamingLatencyTracker } from './perfMonitor';
-import { getDeviceConstraint, getCanvasSize } from '../state/canvasDeviceStore';
+import { getDeviceConstraint, type CanvasDeviceInfo } from '../state/canvasDeviceStore';
 
 export type ChatStreamEvent =
   | { kind: 'text'; text: string; taskId?: string }
@@ -197,6 +197,53 @@ export function detectForceCanvas(prompt: string): string | null {
 }
 
 /**
+ * ★ 检查设备是否有灵动岛 (Dynamic Island)
+ *
+ * 灵动岛出现在 iPhone 14 Pro 及以后的机型上。
+ * 返回灵动岛尺寸信息 (基于屏幕尺寸按比例计算), 或 null。
+ *
+ * 尺寸比例基于 iPhone 15 Pro Max 真机 (430×932):
+ *   - 宽: 125px / 430 ≈ 29%
+ *   - 高: 37px / 932 ≈ 4%
+ *   - 距顶部: 11px / 932 ≈ 1.2%
+ */
+function getDynamicIslandInfo(device: CanvasDeviceInfo): { width: number; height: number; topMargin: number; leftMargin: number; radius: number } | null {
+  const label = (device.label || '').toLowerCase();
+  const sizeKey = (device.sizeKey || '').toLowerCase();
+  const glbFile = (device.glbFile || '').toLowerCase();
+
+  // iPhone 14 Pro / 14 Pro Max / iPhone 15 全系列 / iPhone 16 全系列
+  const hasDynamicIsland =
+    glbFile.includes('iphone_15') ||
+    glbFile.includes('iphone_16') ||
+    label.includes('iphone 14 pro') ||
+    label.includes('iphone 15') ||
+    label.includes('iphone 16') ||
+    sizeKey.includes('iphone14pro') ||
+    sizeKey.includes('iphone15') ||
+    sizeKey.includes('iphone16');
+
+  if (!hasDynamicIsland) return null;
+
+  const NOTCH_W_RATIO = 125 / 430;
+  const NOTCH_H_RATIO = 37 / 932;
+  const NOTCH_TOP_MARGIN_RATIO = 11 / 932;
+
+  const notchW = Math.round(NOTCH_W_RATIO * device.width);
+  const notchH = Math.round(NOTCH_H_RATIO * device.height);
+  const topMargin = Math.round(NOTCH_TOP_MARGIN_RATIO * device.height);
+  const leftMargin = Math.round((device.width - notchW) / 2);
+
+  return {
+    width: notchW,
+    height: notchH,
+    topMargin,
+    leftMargin,
+    radius: Math.round(notchH / 2),
+  };
+}
+
+/**
  * ★ 2026-07-14: 构建画布尺寸约束提示词
  *
  * 无论是否触发强制画布关键词, 都会注入画布尺寸信息。
@@ -207,7 +254,7 @@ export function detectForceCanvas(prompt: string): string | null {
  *   2. 无设备约束 → 返回画布实际帧尺寸 (PreviewPanel 计算的)
  *   3. 都没有 → 返回默认尺寸 430×932 (iPhone 15 Pro Max)
  */
-function buildCanvasSizeHint(canvasId?: string): string {
+function buildCanvasSizeHint(canvasId?: string): string | null {
   const device = getDeviceConstraint(canvasId);
   if (device) {
     const groupHint =
@@ -220,7 +267,7 @@ function buildCanvasSizeHint(canvasId?: string): string {
       device.group === 'tablet' ? '中等宽度' :
       device.group === 'watch'  ? '极小圆形/方形屏幕' :
                                   '宽屏桌面';
-    return `## 画布尺寸约束
+    let hint = `## 画布尺寸约束
 当前画布目标设备: ${device.label}
 屏幕尺寸: ${device.width}×${device.height}px
 设备类型: ${device.group}${device.renderMode === '3D' ? ' (3D 模式)' : ''}
@@ -230,37 +277,57 @@ function buildCanvasSizeHint(canvasId?: string): string {
 - 所有坐标和尺寸都基于 ${device.width}×${device.height} 的画布
 - 布局要考虑 ${screenHint}
 - ${groupHint}`;
+
+    // ★ 灵动岛约束: 如果设备有灵动岛, 告诉 LLM 避开该区域
+    const island = getDynamicIslandInfo(device);
+    if (island) {
+      const safeTop = island.topMargin + island.height + 8;
+      hint += `
+
+## 灵动岛约束 (Dynamic Island)
+此设备屏幕顶部有灵动岛, 你生成的 UI 必须避开该区域:
+- 灵动岛位置: 水平居中, 距顶部 ${island.topMargin}px
+- 灵动岛尺寸: ${island.width}×${island.height}px (药丸形, 圆角半径 ${island.radius}px)
+- 灵动岛左边距: ${island.leftMargin}px
+- 灵动岛覆盖区域: x=${island.leftMargin}, y=${island.topMargin}, w=${island.width}, h=${island.height}
+
+**关键**: 顶部内容的 padding-top 至少为 ${safeTop}px (灵动岛底部 ${island.topMargin + island.height}px + 8px 安全间距), 避免被灵动岛遮挡。
+- 状态栏区域 (顶部 ${safeTop}px) 不要放置按钮、文字或图片
+- 导航栏标题从 ${safeTop}px 开始向下排列`;
+    }
+
+    return hint;
   }
 
-  // 无设备约束: 使用画布实际帧尺寸 (PreviewPanel 动态计算, 填满可用区域)
-  const size = getCanvasSize(canvasId);
-  return `## 画布尺寸约束
-当前画布尺寸: ${size.width}×${size.height}px
-设备类型: 自由画布 (无设备约束)
-
-**重要**: 你生成的 UI 必须严格适配此画布尺寸。
-- 根节点宽度必须不超过 ${size.width}px, 高度必须不超过 ${size.height}px
-- 所有坐标和尺寸都基于 ${size.width}×${size.height} 的画布
-- 使用响应式布局: 优先用 flex/column/row 自动撑满, 避免硬编码过大尺寸
-- 字体大小: 标题 18-24px, 正文 14-16px, 辅助文字 12px
-- 间距: padding 12-16px, 元素间距 8-12px
-- 如果内容超出画布高度, 使用 scroll 类型节点包裹`;
+  // ★ 无设备约束时返回 null, 不注入尺寸提示
+  //   之前返回默认 430×932 的提示, 导致普通对话被画布指令污染
+  return null;
 }
 
 /**
- * 构建最终 prompt — 仅在检测到画布关键词时注入画布指令 + 尺寸约束
+ * 构建最终 prompt — 有设备时注入尺寸约束，有画布关键词时注入完整画布指令
  *
  * ★ FIX 2026-07-20: 之前对每条消息都注入画布尺寸约束 (即使没有画布关键词),
  *   导致普通对话被画布指令污染, LLM 返回一堆不相干的画布/UI 内容。
  *   现在只在 detectForceCanvas 返回非 null (用户明确要求画布操作) 时才注入。
+ *
+ * ★ FIX 2026-07-21: 进一步优化 — 当用户选了设备时, 即使没有画布关键词,
+ *   也注入尺寸约束 (但不注入 DSL 格式指令), 让 LLM 始终知道目标设备尺寸。
+ *   这样用户说"做个登录页面"时 LLM 也能生成适配设备尺寸的 UI。
  */
 function buildPromptWithCanvasForce(prompt: string, canvasId?: string): string {
   const instruction = detectForceCanvas(prompt);
+  const sizeHint = buildCanvasSizeHint(canvasId);
 
   if (instruction) {
     // 强制画布模式: 注入完整指令 + 尺寸约束
-    const sizeHint = buildCanvasSizeHint(canvasId);
-    return `${instruction}\n${sizeHint}\n\n用户原始请求: ${prompt}`;
+    return `${instruction}\n${sizeHint ?? ''}\n\n用户原始请求: ${prompt}`;
+  }
+
+  // ★ 有设备选中但无画布关键词: 只注入尺寸约束 (不注入 DSL 格式指令)
+  //   这样 LLM 知道目标设备尺寸, 但不会被 DSL 格式规范污染
+  if (sizeHint) {
+    return `${sizeHint}\n\n用户原始请求: ${prompt}`;
   }
 
   // 普通对话: 不注入任何画布相关指令, 直接返回原始 prompt

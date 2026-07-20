@@ -19,6 +19,7 @@ import { MODEL_THEMES, MATERIAL_FINISHES, type ThemeId, type MaterialFinish } fr
 import type { UniversalNode } from '../services/canvas/UniversalAST';
 import { ChevronDown, Check } from '../utils/icons';
 import { useAppStore } from '../state/appStore';
+import { useRenderTrace } from '../hooks/useRenderTrace';
 import { useChatClickCanvasBridge } from '../hooks/useChatClickCanvasBridge';
 import { useLayoutState, useLayoutStatus } from '../context/LayoutContext';
 
@@ -374,6 +375,8 @@ function ThemeContextMenu({
 // ── 主组件 ──
 
 export default function PreviewPanel() {
+  // ★ 调试: 渲染追踪
+  useRenderTrace('PreviewPanel');
   // ★ 自包含化: 从 store/LayoutContext/hook 直接读取, 切断 MainLayout props 透传链
   //   原 11 个 props (width/isResizing/dragStartWidth/selectedChatId/canvasId/canvasReady/
   //   canvases/maxCanvases/onSelectCanvas/onCreateCanvas/onRenameCanvas) 全部改由内部订阅

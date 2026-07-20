@@ -34,6 +34,8 @@ import {
   type CanvasResource,
   type CanvasListResponse,
 } from '../services/canvas/sessionApi';
+import { setCanvasSessionId } from '../services/incrementalCanvasPusher';
+import { useCanvasDeviceStore } from '../state/canvasDeviceStore';
 
 /**
  * ★ FIX 2026-07-14: 判断是否为临时 chat ID
@@ -197,6 +199,24 @@ export function useChatClickCanvasBridge(
     }
     lastResolvedFor.current = id;
     setCanvasId(targetId);
+    // ★ FIX 2026-07-20: 同步到 canvasSessionIdMap, 确保 ensureCanvasForChat 不会创建重复画布
+    //   之前 bridge 解析到 canvas ID 后只存 React state, canvasSessionIdMap 不知道,
+    //   导致 ensureCanvasForChat 创建新画布 → 设备信息存储在不同的 key 下 → LLM 拿不到设备尺寸
+    if (targetId) {
+      setCanvasSessionId(id, targetId);
+      // ★ 如果 canvasSessionIdMap 之前有 fallback key 的设备/帧尺寸, 迁移到真实 key
+      //   (ensureCanvasForChat 也会做这个迁移, 但只在创建新画布时做, 这里是复用已有画布时做)
+      const devState = useCanvasDeviceStore.getState();
+      const fallbackKey = `canvas-${id}`;
+      const fallbackDevice = devState.getDevice(fallbackKey);
+      if (fallbackDevice && !devState.getDevice(targetId)) {
+        devState.setDevice(targetId, fallbackDevice);
+      }
+      const fallbackFrame = devState.getFrameSize(fallbackKey);
+      if (fallbackFrame && fallbackFrame.width > 0 && !devState.getFrameSize(targetId)) {
+        devState.setFrameSize(targetId, fallbackFrame);
+      }
+    }
     setReady(true);
     return targetId;
   };
@@ -253,6 +273,10 @@ export function useChatClickCanvasBridge(
       // 立刻本地切, 不等服务端 round-trip; 后台拉列表顺便记 access
       setCanvasId(cid);
       lastResolvedFor.current = chatId || null;
+      // ★ FIX 2026-07-20: 同步到 canvasSessionIdMap
+      if (cid && chatId) {
+        setCanvasSessionId(chatId, cid);
+      }
       // fire-and-forget: 记 access + 刷新列表
       void (async () => {
         try {
@@ -269,6 +293,10 @@ export function useChatClickCanvasBridge(
       if (created) {
         lastResolvedFor.current = chatId || null;
         setCanvasId(created.sessionId);
+        // ★ FIX 2026-07-20: 同步到 canvasSessionIdMap
+        if (chatId) {
+          setCanvasSessionId(chatId, created.sessionId);
+        }
         // 刷新列表
         void resolve(chatId || '');
       }

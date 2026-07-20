@@ -3,9 +3,68 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig} from 'vite';
 
+// ★ 2026-07-20: 阻止 Fast Refresh 降级为 full page reload
+//   Fast Refresh 规则: .tsx 文件如果有非组件导出 (re-export export{}from / 工具函数 export function xxx),
+//   oxc 转换器 (@vitejs/plugin-react 6 + Vite 8 Rolldown) 会在 accept 回调内调用:
+//     import.meta.hot.accept((nextExports) => {
+//       const invalidateMessage = RefreshRuntime.validateRefreshBoundaryAndEnqueueUpdate(...);
+//       if (invalidateMessage) import.meta.hot.invalidate(invalidateMessage);  ← 这里触发整页刷新
+//     });
+//   当文件有非组件导出时, validateRefreshBoundaryAndEnqueueUpdate 返回非空 message → invalidate 被调用 → 整页刷新。
+//
+//   这个插件在原生转换之后 (enforce:'post') 运行, 把 invalidate(arg) 替换为 void 0 (no-op),
+//   让 Fast Refresh 正常应用更新而不是降级为 full page reload。
+//   注意: 非组件导出的值的热更新可能不完美 (importer 可能缓存旧引用), 但开发时只需保存不刷新即可, 可接受。
+const preventFastRefreshDowngrade = () => ({
+  name: 'prevent-fast-refresh-downgrade',
+  enforce: 'post' as const,
+  // ★ 只在 dev (serve) 模式运行 — 生产构建中不存在 import.meta.hot,
+  //   插件扫描所有 .tsx 文件是无效开销, 还触发 PLUGIN_TIMINGS 警告
+  apply: 'serve' as const,
+  transform(code: string, id: string) {
+    if (!/\.[tj]sx$/.test(id)) return null;
+    // ★ 正则必须匹配带参数的 invalidate(invalidateMessage), 不能只匹配空括号 invalidate()
+    //   Vite 8 oxc 转换器生成的代码始终带参数: invalidate(invalidateMessage)
+    if (code.includes('import.meta.hot.invalidate')) {
+      // 替换 invalidate(arg) 为 void 0 — 在 accept 回调内, 跳过 invalidate 让 Fast Refresh 正常更新
+      return code.replace(/import\.meta\.hot\.invalidate\([^)]*\)/g, 'void 0');
+    }
+    return null;
+  },
+});
+
+// ★ 2026-07-20: 为 .ts 文件自动添加 HMR 自接受边界
+//   根因: Vite 的 import.meta.hot.accept() (自接受) 只处理模块自身的更新, 不包括依赖的更新。
+//   .tsx 组件文件由 Fast Refresh 注入 accept(callback) — 但这是自接受, 不会接受 .ts 依赖的更新。
+//   当一个没有 HMR 边界的 .ts 文件被修改时, Vite 沿 import 图向上找 accept 边界:
+//     .ts 文件 (无 accept) → .tsx 组件 (自接受, 不覆盖依赖) → 父组件 (同样不覆盖) → 根 → full page reload
+//   解决: 为所有 .ts 文件自动添加 import.meta.hot.accept(), 让 .ts 文件自己接受更新。
+//   修改 .ts 文件时, Vite 重新执行该模块, 新的导出值通过 ESM live binding 立即可用。
+//   注意: 使用旧引用的组件不会自动重渲染 — 需要手动刷新或修改组件触发重渲染。
+//   排除: .tsx (Fast Refresh 覆盖) / .test.ts (测试文件) / .worker.ts (Worker 文件)
+const autoHmrForTsFiles = () => ({
+  name: 'auto-hmr-for-ts-files',
+  enforce: 'post' as const,
+  apply: 'serve' as const,
+  transform(code: string, id: string) {
+    // 只处理 .ts 文件 (不含 .tsx — Fast Refresh 覆盖)
+    if (!/\.ts$/.test(id)) return null;
+    // 排除 node_modules
+    if (id.includes('node_modules')) return null;
+    // 排除测试文件
+    if (id.includes('.test.')) return null;
+    // 排除 Worker 文件
+    if (id.includes('.worker.')) return null;
+    // 已有 HMR 边界的文件不重复添加
+    if (code.includes('import.meta.hot')) return null;
+    // 在文件末尾添加自接受边界
+    return code + '\nif (import.meta.hot) { import.meta.hot.accept(); }\n';
+  },
+});
+
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), preventFastRefreshDowngrade(), autoHmrForTsFiles(), tailwindcss()],
     resolve: {
       // 2026-07-02: Vite 8 / Rolldown 不再自动补 .tsx 扩展名, .ts 文件里 import '../context/Foo'
       //   (无扩展名) 会报 Module not found. 这里显式列出全部可能的扩展名, .ts 文件 import

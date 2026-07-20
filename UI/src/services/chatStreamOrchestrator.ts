@@ -118,11 +118,28 @@ export function streamPreviewForChat(opts: StreamPreviewOptions): StreamPreviewH
     try {
       const adapter = getAdapter(safeLang);
       // ★ 2026-07-14: 注入画布尺寸到 system prompt, 让 LLM 知道画布有多大
+      // ★ 2026-07-20: 注入灵动岛尺寸约束, 让 LLM 避开该区域
       const canvasSize = getCanvasSize(deviceId || undefined);
       const device = getDeviceConstraint(deviceId || undefined);
-      const sizeContext = device
-        ? `\n\n## 画布尺寸约束\n目标设备: ${device.label} (${device.width}×${device.height}px, ${device.group})\nUI 必须适配此设备尺寸。`
-        : `\n\n## 画布尺寸约束\n画布尺寸: ${canvasSize.width}×${canvasSize.height}px\nUI 必须适配此画布尺寸, 避免硬编码过大尺寸。`;
+      let sizeContext: string;
+      if (device) {
+        sizeContext = `\n\n## 画布尺寸约束\n目标设备: ${device.label} (${device.width}×${device.height}px, ${device.group})\nUI 必须适配此设备尺寸。`;
+        // 灵动岛约束
+        const label = (device.label || '').toLowerCase();
+        const glbFile = (device.glbFile || '').toLowerCase();
+        const hasIsland = glbFile.includes('iphone_15') || glbFile.includes('iphone_16') ||
+          label.includes('iphone 14 pro') || label.includes('iphone 15') || label.includes('iphone 16');
+        if (hasIsland) {
+          const notchW = Math.round(125 / 430 * device.width);
+          const notchH = Math.round(37 / 932 * device.height);
+          const topMargin = Math.round(11 / 932 * device.height);
+          const leftMargin = Math.round((device.width - notchW) / 2);
+          const safeTop = topMargin + notchH + 8;
+          sizeContext += `\n\n## 灵动岛约束 (Dynamic Island)\n此设备有灵动岛, UI 必须避开该区域:\n- 灵动岛: ${notchW}×${notchH}px, 距顶部 ${topMargin}px, 左边距 ${leftMargin}px (水平居中)\n- 覆盖区域: x=${leftMargin}, y=${topMargin}, w=${notchW}, h=${notchH}\n- 顶部内容 padding-top 至少 ${safeTop}px, 避免被灵动岛遮挡。`;
+        }
+      } else {
+        sizeContext = `\n\n## 画布尺寸约束\n画布尺寸: ${canvasSize.width}×${canvasSize.height}px\nUI 必须适配此画布尺寸, 避免硬编码过大尺寸。`;
+      }
       const systemPrompt = adapter.buildSystemPrompt(userGoal + sizeContext);
       const handle = llmClient.stream({
         systemPrompt,

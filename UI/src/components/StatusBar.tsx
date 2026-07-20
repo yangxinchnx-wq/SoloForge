@@ -3,7 +3,7 @@ import { GitBranch, Terminal, HardDrive, Sun, Moon, Zap, ShieldAlert } from '../
 import { useHotTheme } from '../context/ThemeContext';
 import { usePendingConfirmBadge } from './terminal/hooks/usePendingConfirmBadge';
 
-export default function StatusBar() {
+const StatusBar = React.memo(function StatusBar() {
   // ★ 从 ThemeContext 直接订阅, 切断 MainLayout props 透传链
   const { primaryColorTargets, currentThemeId = 'light', setCurrentThemeId } = useHotTheme();
   const applyThemeColor = !!primaryColorTargets?.statusBar;
@@ -578,4 +578,6 @@ export default function StatusBar() {
       })}
     </div>
   );
-}
+});
+
+export default StatusBar;

@@ -14,8 +14,8 @@ import ChannelsTab from './settingsTabs/ChannelsTab';
 import DataManagementTab from './settingsTabs/DataManagementTab';
 import AgentCustomTab from './settingsTabs/AgentCustomTab';
 
-// 兼容性 re-export：维持历史 import 路径可用
-export { NormalIcon, PerformanceIcon, ExpertIcon, UltimateIcon } from './ChatPanel';
+// ★ 2026-07-20: 移除兼容性 re-export — export { } 会导致 Vite Fast Refresh 降级为
+//   full page reload。使用者请直接从 permissionModeIcons.tsx 导入
 
 interface SettingsModalProps {
   onClose: () => void;

@@ -8,7 +8,7 @@
  *   - 文本缓冲 UI: 展示流式 LLM 输出 (之前缺失)
  */
 import React, { useState, useDeferredValue, memo } from 'react';
-import { ChevronDown, Bot, Globe, Wrench, Zap, Loader2, CheckCircle2, AlertCircle, Clock } from '../utils/icons';
+import { ChevronDown, Bot, Globe, Wrench, Zap, CheckCircle2, AlertCircle, Clock } from '../utils/icons';
 import { MountTransition } from './MountTransition';
 import type { SubTask, SubTaskSource } from '../types/streaming';
 import { StepRecordItem } from './StepRecordItem';
@@ -62,8 +62,6 @@ function SubTaskNodeImpl({ subTask, mainModel, chatId, defaultOpen = true }: Sub
     ? <CheckCircle2 className="w-3.5 h-3.5 text-green-400 shrink-0" />
     : isError
     ? <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
-    : isRunning
-    ? <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin shrink-0" />
     : <Clock className="w-3.5 h-3.5 text-on-surface/30 shrink-0" />;
 
   return (
@@ -105,7 +103,6 @@ function SubTaskNodeImpl({ subTask, mainModel, chatId, defaultOpen = true }: Sub
                     <StepRecordItem
                       key={`${step.step}-${i}`}
                       step={step}
-                      isLast={i === subTask.stepHistory.length - 1}
                     />
                   ))}
                 </div>
@@ -125,16 +122,10 @@ function SubTaskNodeImpl({ subTask, mainModel, chatId, defaultOpen = true }: Sub
                   <span className="text-[10px] text-on-surface/40 font-mono">
                     {textExpanded ? '折叠输出' : `展开输出 (${textBuffer.length} 字符)`}
                   </span>
-                  {isRunning && !isDone && (
-                    <Loader2 className="w-2.5 h-2.5 text-blue-400 animate-spin shrink-0" />
-                  )}
                 </div>
                 {textExpanded && (
                   <div className="mt-1 ml-1 pl-2 border-l border-outline/10 text-[11px] text-on-surface/70 leading-relaxed whitespace-pre-wrap break-words font-mono max-h-[300px] overflow-y-auto">
                     {textBuffer}
-                    {isRunning && !isDone && (
-                      <span className="inline-block w-1.5 h-3 bg-blue-400 animate-pulse ml-0.5 align-middle" />
-                    )}
                   </div>
                 )}
               </div>

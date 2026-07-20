@@ -1,5 +1,5 @@
 /**
- * ScreenMesh.tsx — 3D 模型屏幕区域定位工具
+ * ScreenMesh.ts — 3D 模型屏幕区域定位工具
  *
  * ★ 2026-07-20 修复"红色正方形在右侧" bug:
  *
@@ -30,6 +30,11 @@ export interface ScreenInfo {
   position: [number, number, number];
   quaternion: [number, number, number, number];
   size: [number, number];
+  /** ★ 屏幕区域的完整 bbox (scene local space), 用于计算灵动岛在纹理上的位置 */
+  screenBox?: THREE.Box3;
+  /** ★ 屏幕的宽轴和高轴 */
+  widthAxis?: 'x' | 'y' | 'z';
+  heightAxis?: 'x' | 'y' | 'z';
 }
 
 // ───────────────────────────── 核心工具函数 ─────────────────────────────
@@ -126,7 +131,57 @@ export function findScreenMesh(scene: THREE.Object3D): THREE.Mesh | null {
   return found;
 }
 
-// ───────────────────────────── 计算 ScreenInfo ─────────────────────────────
+/**
+ * ★ 计算灵动岛在屏幕纹理上的挖孔区域
+ *
+ * 灵动岛在所有 iPhone 15+ 机型上的位置是固定的:
+ *   - 水平居中于屏幕
+ *   - 靠近屏幕顶部 (距顶部约 11px / 932px ≈ 1.2%)
+ *   - 尺寸: 宽约 125/430 ≈ 29% 屏幕宽度, 高约 37/932 ≈ 4% 屏幕高度
+ *
+ * 旧方案用 island mesh 的包围盒做挖孔, 但模型中 island mesh 是整个前玻璃面板
+ * (36×36mm), 不是灵动岛本身 → 挖孔过大且位置偏移
+ *
+ * 新方案: 直接从屏幕包围盒 + 固定比例计算, 不依赖 island mesh
+ */
+export function computeNotchRect(
+  screenBox: THREE.Box3,
+  widthAxis: 'x' | 'y' | 'z',
+  heightAxis: 'x' | 'y' | 'z',
+  texWidth: number,
+  texHeight: number,
+): { x: number; y: number; width: number; height: number; radius: number } | null {
+  if (screenBox.isEmpty()) return null;
+
+  const screenSize = new THREE.Vector3();
+  screenBox.getSize(screenSize);
+
+  const screenW = screenSize[widthAxis];
+  const screenH = screenSize[heightAxis];
+  if (screenW <= 0 || screenH <= 0) return null;
+
+  // 灵动岛固定比例 (基于 iPhone 15 Pro Max 真机尺寸 430×932)
+  const NOTCH_W_RATIO = 125 / 430; // ≈ 0.2907
+  const NOTCH_H_RATIO = 37 / 932;  // ≈ 0.0397
+  const NOTCH_TOP_MARGIN_RATIO = 11 / 932; // ≈ 0.0118 (距屏幕顶部 11px)
+
+  const texW = NOTCH_W_RATIO * texWidth;
+  const texH = NOTCH_H_RATIO * texHeight;
+
+  // X: 屏幕水平居中
+  const texX = (texWidth - texW) / 2;
+
+  // Y: 距屏幕顶部固定比例 (3D Y 朝上, Canvas Y 朝下, 已在比例中隐含翻转)
+  const texY = NOTCH_TOP_MARGIN_RATIO * texHeight;
+
+  return {
+    x: texX,
+    y: texY,
+    width: texW,
+    height: texH,
+    radius: texH / 2, // 灵动岛是药丸形, 圆角半径 = 高度/2
+  };
+}
 
 /**
  * 计算指定 screen mesh 的屏幕信息
@@ -190,6 +245,9 @@ export function computeMeshInfo(mesh: THREE.Mesh, sceneRoot: THREE.Object3D): Sc
     position,
     quaternion,
     size: [screenW, screenH],
+    screenBox: unionBox.clone(),
+    widthAxis,
+    heightAxis,
   };
 }
 
@@ -283,4 +341,12 @@ function computeLocalBoundingBox(scene: THREE.Object3D): THREE.Box3 {
     box.union(bbox);
   });
   return box;
+}
+
+// ★ HMR 边界 — 此文件是纯工具函数 (无 JSX), 不会被 Fast Refresh 覆盖。
+//   没有这个 accept(), 修改此文件时 Vite 会沿 import 图向上找 accept 边界,
+//   找不到就触发 full page reload。加上后, 修改此文件只重新执行本模块,
+//   importer 通过 ESM live binding 拿到新函数引用。
+if (import.meta.hot) {
+  import.meta.hot.accept();
 }

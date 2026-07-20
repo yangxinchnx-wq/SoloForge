@@ -4,6 +4,7 @@ import { LayoutProvider } from './context/LayoutContext';
 import { usePreviewBridge } from './hooks/usePreviewBridge';
 import { useBroadcastSync } from './hooks/useBroadcastSync';
 import { useFileOperations } from './hooks/useFileOperations';
+import { useRenderTrace } from './hooks/useRenderTrace';
 import { useAppStore } from './state/appStore';
 import { useChatsStore } from './state/chatsStore';
 import { useWorkspaceStore } from './state/useWorkspaceStore';
@@ -22,6 +23,9 @@ const AppFallback = () => (
 );
 
 export default function App() {
+  // ★ 调试: 渲染追踪 (根组件)
+  useRenderTrace('App');
+
   // ── 启动诊断 ──
   // ★ 2026-07-14: 移除 POST /api/debug-log 请求
   //   每次刷新都发 POST, 经过 patchedFetch (await ensureToken) 增加不必要的网络往返。

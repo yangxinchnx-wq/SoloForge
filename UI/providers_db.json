@@ -603,15 +603,16 @@
     "id": "gemini",
     "name": "Google Gemini",
     "desc": "Google 顶尖多模态基础模型系列",
-    "enabled": false,
-    "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+    "enabled": true,
+    "baseUrl": "https://generativelanguage.googleapis.com/v1beta/models",
     "defaultUrl": "https://generativelanguage.googleapis.com/v1beta",
     "models": [],
     "customModels": [],
-    "status": "idle",
+    "status": "failed",
     "color": "#1a73e8",
     "scanned": false,
-    "apiKey": ""
+    "apiKey": "",
+    "errorMessage": "fetch failed"
   },
   {
     "id": "siliconflow",

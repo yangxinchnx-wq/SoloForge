@@ -22,6 +22,7 @@ import { ModalRenderer } from '../components/ModalRenderer';
 import { SidebarResizeHandle, HistoryResizeHandle, PreviewResizeHandle } from '../components/ResizeHandles';
 import { useLayoutState, useLayoutStatus } from '../context/LayoutContext';
 import { useAppStore } from '../state/appStore';
+import { useRenderTrace } from '../hooks/useRenderTrace';
 
 // ── 面板 lazy 化 (2026-07-18) ──────────────────────────────
 // 每个 IDE 面板拆成独立 chunk,首屏只加载核心 (Header/ActivityBar/ChatPanel/StatusBar),
@@ -66,6 +67,8 @@ export const MainLayout = React.memo(function MainLayout({
   const showHistory = useAppStore((s) => s.showHistory);
   const showCodeEditor = useAppStore((s) => s.showCodeEditor);
   const showFloatingEditor = useAppStore((s) => s.showFloatingEditor);
+  // ★ 调试: 渲染追踪 (在 store 订阅之后调用, 传入实际值)
+  useRenderTrace('MainLayout', { activeTab, showHistory, showCodeEditor, showFloatingEditor, sidebarWidth, isResizingSidebar });
   // setter 引用稳定, 订阅不触发重渲染
   const setActiveTab = useAppStore((s) => s.setActiveTab);
   const setShowHistory = useAppStore((s) => s.setShowHistory);

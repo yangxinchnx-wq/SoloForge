@@ -32,8 +32,8 @@ import * as THREE from 'three';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Environment, Lightformer, useGLTF } from '@react-three/drei';
 import { isContainerLike, type UniversalNode } from '../services/canvas/UniversalAST';
-import { findScreenMesh, computeMeshInfo, computeAutoScreenPosition, type ScreenInfo } from './ScreenMesh';
-import { createDslTexture, updateDslTexture } from './DslCanvasRenderer';
+import { findScreenMesh, computeMeshInfo, computeAutoScreenPosition, computeNotchRect, type ScreenInfo } from './ScreenMesh';
+import { createDslTexture, updateDslTexture, IPHONE_15_PROMAX_SHAPE, type ScreenShape } from './DslCanvasRenderer';
 import {
   getDefaultTheme,
   getDefaultFinish,
@@ -256,7 +256,7 @@ function AdaptiveModel({ modelUrl, dsl, theme, finish }: { modelUrl: string; dsl
   return (
     <group ref={groupRef}>
       <primitive object={scene} />
-      <ScreenOverlay scene={scene} dsl={dsl} />
+      <ScreenOverlay scene={scene} dsl={dsl} modelUrl={modelUrl} />
     </group>
   );
 }
@@ -296,15 +296,15 @@ function isEmptyDsl(node: UniversalNode | null | undefined): boolean {
   return children.every(isEmptyDsl);
 }
 
-function ScreenOverlay({ scene, dsl }: { scene: THREE.Object3D; dsl: UniversalNode }): React.JSX.Element | null {
-  // ★ 测试: 空 DSL 时用红色正方形替代, 验证贴图位置
-  const TEST_RED_SQUARE: UniversalNode = {
+function ScreenOverlay({ scene, dsl, modelUrl }: { scene: THREE.Object3D; dsl: UniversalNode; modelUrl: string }): React.JSX.Element | null {
+  // ★ 空 DSL 时用白色背景 (模拟亮屏状态)
+  const DEFAULT_WHITE: UniversalNode = {
     type: 'container',
-    style: { background: '#ff0000' },
+    style: { background: '#ffffff' },
     children: [],
   } as UniversalNode;
 
-  const effectiveDsl = isEmptyDsl(dsl) ? TEST_RED_SQUARE : dsl;
+  const effectiveDsl = isEmptyDsl(dsl) ? DEFAULT_WHITE : dsl;
 
   // 计算屏幕位置: 优先找 'screen' mesh, 找不到用自动定位算法
   const screenInfo = React.useMemo<ScreenInfo | null>(() => {
@@ -316,18 +316,50 @@ function ScreenOverlay({ scene, dsl }: { scene: THREE.Object3D; dsl: UniversalNo
     return computeAutoScreenPosition(scene);
   }, [scene]);
 
-  // ★ 创建/更新 CanvasTexture
+  // ★ 动态计算屏幕形状 (圆角 + 灵动岛挖孔)
+  //   圆角半径用 IPHONE_15_PROMAX_SHAPE 的值
+  //   灵动岛位置和尺寸从屏幕包围盒 + 固定比例计算 (基于 iPhone 15 Pro Max 真机尺寸)
+  const screenShape: ScreenShape | undefined = React.useMemo(() => {
+    if (!modelUrl.includes('iphone_15')) return undefined;
+    if (!screenInfo?.screenBox || !screenInfo.widthAxis || !screenInfo.heightAxis) {
+      return IPHONE_15_PROMAX_SHAPE; // 兜底: 用硬编码值
+    }
+
+    const notch = computeNotchRect(
+      screenInfo.screenBox,
+      screenInfo.widthAxis,
+      screenInfo.heightAxis,
+      TEX_WIDTH,
+      TEX_HEIGHT,
+    );
+
+    return {
+      cornerRadius: IPHONE_15_PROMAX_SHAPE.cornerRadius,
+      notch: notch ?? IPHONE_15_PROMAX_SHAPE.notch,
+    };
+  }, [modelUrl, scene, screenInfo]);
+
+  // ★ 创建/更新 CanvasTexture (传入 screenShape 裁剪圆角 + 灵动岛)
   //   useMemo 创建初始纹理, useEffect 在 DSL 变化时更新纹理 (避免重复创建 CanvasTexture)
   const textureRef = React.useRef<THREE.CanvasTexture | null>(null);
 
   if (!textureRef.current) {
-    textureRef.current = createDslTexture(effectiveDsl, TEX_WIDTH, TEX_HEIGHT);
+    try {
+      textureRef.current = createDslTexture(effectiveDsl, TEX_WIDTH, TEX_HEIGHT, undefined, screenShape);
+    } catch (err) {
+      console.error('[ScreenOverlay] createDslTexture failed, using white fallback:', err);
+      textureRef.current = createDslTexture(DEFAULT_WHITE, TEX_WIDTH, TEX_HEIGHT, undefined, screenShape);
+    }
   }
 
   React.useEffect(() => {
     if (!textureRef.current) return;
-    updateDslTexture(textureRef.current, effectiveDsl, TEX_WIDTH, TEX_HEIGHT);
-  }, [effectiveDsl]);
+    try {
+      updateDslTexture(textureRef.current, effectiveDsl, TEX_WIDTH, TEX_HEIGHT, undefined, screenShape);
+    } catch (err) {
+      console.error('[ScreenOverlay] updateDslTexture failed:', err);
+    }
+  }, [effectiveDsl, screenShape]);
 
   // ★ 组件卸载时释放纹理
   React.useEffect(() => {
@@ -342,10 +374,12 @@ function ScreenOverlay({ scene, dsl }: { scene: THREE.Object3D; dsl: UniversalNo
   return (
     <mesh position={screenInfo.position} quaternion={screenInfo.quaternion}>
       <planeGeometry args={[screenInfo.size[0], screenInfo.size[1]]} />
+      {/* ★ transparent + alphaTest: 透明区域 (圆角外/灵动岛) 不渲染, 显示模型本身 */}
       <meshBasicMaterial
         map={textureRef.current}
         toneMapped={false}
-        transparent={false}
+        transparent={true}
+        alphaTest={0.5}
         side={THREE.FrontSide}
         polygonOffset
         polygonOffsetFactor={-1}
@@ -391,12 +425,22 @@ function processMeshesInitial(scene: THREE.Object3D, modelUrl: string): void {
       return;
     }
 
-    // 灵动岛 → 纯黑 (iPhone 15+ 的屏幕挖孔区域)
-    if (isIsland) {
+    // ★ island 不在 processMeshesInitial 中处理, 由 applyThemeToMeshes 全权负责
+    //   (避免创建新材质后 applyThemeToMeshes 修改的是旧引用)
+
+    // ★ 镜头玻璃 (Sphere* + camera glass) → 替换为新的不透明黑色材质
+    //   GLB 中这些 mesh 共享 Material.009 (alphaMode:BLEND, 半透明蓝色 baseColor [0.026,0.093,0.363,0.486])
+    //   只改 color/transparent 属性不够, three.js 需要重新编译 shader (needsUpdate) 才能生效。
+    //   直接创建新材质最干净。
+    const isCameraGlass = nodeName.includes('sphere') || (nodeName.includes('cam') && nodeName.includes('glass'));
+    if (isCameraGlass) {
       mesh.material = new THREE.MeshStandardMaterial({
-        color: 0x000000,
-        roughness: 0.1,
-        metalness: 0.0,
+        color: 0x111111,
+        metalness: 0.6,
+        roughness: 0.05,
+        transparent: false,
+        opacity: 1.0,
+        envMapIntensity: 1.5,
       });
       return;
     }
@@ -452,8 +496,35 @@ function applyThemeToMeshes(scene: THREE.Object3D, modelUrl: string, theme: Them
                      combinedName.includes('glass_front');
     const isIsland = combinedName.includes('island');
 
-    // ★ 跳过屏幕和灵动岛 mesh (已在 processMeshesInitial 中替换为固定深色材质)
-    if (isScreen || isIsland) return;
+    const isSphere = combinedName.includes('sphere');
+    const isCameraGlass = isSphere || (combinedName.includes('cam') && combinedName.includes('glass'));
+
+    // ★ 跳过屏幕 mesh 和镜头玻璃/摄像头盖板 (已在 processMeshesInitial 中替换为固定黑色材质)
+    // island 不再跳过: 主题切换时也需要更新 island 颜色
+    if (isScreen || isCameraGlass) return;
+
+    // ★ island mesh: 和后盖完全同色同材质 (前面会被屏幕贴图覆盖, 背面从摄像头开孔看到的是后盖色)
+    if (isIsland) {
+      const islandMats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      islandMats.forEach((mat) => {
+        const m = mat as THREE.MeshStandardMaterial;
+        if (m && (m as any).isMeshStandardMaterial) {
+          m.color.setHex(themeColors.back);
+          m.metalness = finishParams.metalness;
+          m.roughness = finishParams.roughness;
+          m.envMapIntensity = finishParams.envMapIntensity;
+          // 和后盖一样应用贴图
+          if (finish === 'glass') {
+            m.map = null;
+          } else if (finish === 'leather') {
+            m.map = getLeatherTexture();
+          } else {
+            m.map = getMatteTitaniumTexture();
+          }
+        }
+      });
+      return;
+    }
 
     const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     materials.forEach((mat) => {
@@ -687,24 +758,33 @@ function applyIphone15Materials(
       m.roughness = 0.3;
     }
   } else if (nodeName.includes('cam') && nodeName.includes('glass')) {
-    // 摄像头玻璃盖板: 深色玻璃
-    m.color.setHex(0x1a1a2a);
+    // 摄像头玻璃盖板: 和主题背板同色
+    m.color.setHex(tc.back);
     m.metalness = 0.0;
     m.roughness = 0.05;
     m.envMapIntensity = 1.0;
   } else if (nodeName.includes('sphere')) {
-    // 镜头玻璃: 深蓝黑, 有强反射 (镜头的标志性外观)
-    m.color.setHex(0x050510);
+    // 镜头玻璃: 黑色, 有强反射 (镜头的标志性外观)
+    m.color.setHex(0x111111);
     m.metalness = 0.6;
     m.roughness = 0.05;
     m.transparent = false;
     m.opacity = 1.0;
     m.envMapIntensity = 1.5;
   } else if (nodeName.includes('cam')) {
-    // 摄像头组件 (back camera, front camra1)
-    m.color.setHex(0x2a2a2a);
-    m.metalness = 0.5;
-    m.roughness = 0.4;
+    // 摄像头组件
+    if (nodeName.includes('back')) {
+      // 后摄底座: 和边框同色 (iPhone 15 Pro 的摄像头模块底座是钛金属材质, 和边框一体)
+      m.color.setHex(tc.frame);
+      m.metalness = 0.85;
+      m.roughness = 0.35;
+      m.envMapIntensity = 1.2;
+    } else {
+      // 前摄: 深色 (藏在屏幕下方)
+      m.color.setHex(0x2a2a2a);
+      m.metalness = 0.5;
+      m.roughness = 0.4;
+    }
   } else if (nodeName.includes('cylinder')) {
     // 圆柱体: 根据原始材质区分金属环和内部组件
     //   metal (metalness > 0.7) → 主题色金属环 (外圈装饰)
@@ -715,13 +795,14 @@ function applyIphone15Materials(
       m.roughness = 0.2;
       m.envMapIntensity = 1.3;
     } else {
-      m.color.setHex(0x1a1a1a);
+      // 内部组件: 主题色
+      m.color.setHex(tc.back);
       m.metalness = 0.5;
       m.roughness = 0.3;
     }
   } else if (nodeName.includes('sound') || nodeName.includes('scroo')) {
-    // 扬声器/螺丝: 深灰
-    m.color.setHex(0x303030);
+    // 扬声器/螺丝: 主题色
+    m.color.setHex(tc.back);
     m.metalness = 0.4;
     m.roughness = 0.5;
   } else if (nodeName.includes('case')) {
@@ -737,14 +818,14 @@ function applyIphone15Materials(
       if (!m.map) m.map = getBrushedTitaniumTexture();
       m.envMapIntensity = 1.2;
     } else if (m.metalness < 0.1) {
-      // 按钮/开口: 深色, 和边框形成对比
-      m.color.setHex(0x1a1a1a);
+      // 按钮/开口: 主题色
+      m.color.setHex(tc.frame);
       m.metalness = 0.3;
       m.roughness = 0.4;
       m.envMapIntensity = 0.8;
     } else {
-      // 天线带: 中等灰色, 保持金属质感
-      m.color.setHex(0x8a8a8a);
+      // 天线带: 主题色
+      m.color.setHex(tc.frame);
       m.metalness = 0.6;
       m.roughness = 0.5;
       m.envMapIntensity = 1.0;

@@ -45,7 +45,6 @@ export function VirtualStepList({ steps, rowHeight = 26, maxHeight = 220 }: Virt
           >
             <StepRecordItem
               step={steps[index]}
-              isLast={index === steps.length - 1}
             />
           </div>
         ))}

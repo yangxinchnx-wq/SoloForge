@@ -3,21 +3,20 @@
  * 嵌入 ChatPanel 消息流中，替代原占位图片
  * 样式与消息卡片一致，无缝融入对话流
  *
- * 2026-07-10 性能优化 (Move State Down / Lift Content Up):
- *   - StreamPanel 只订阅 hasTask (boolean) + promptCards, 不订阅完整 task
- *   - TaskExecutionCard 独立订阅 task, 隔离高频更新
- *   - PromptCard 区不再因 task 变化而重渲染
- *   - usePromptCards 替代手动 promptCardPool.getActive 调用 (响应式)
+ * ★ 2026-07-20 v2 组件树完整接入 + 过程/结果互斥:
+ *   - TaskExecutionCard 完整接入 TaskTree → SubTaskNode → StepRecordItem + ModelDelegationTag
+ *   - 过程与结果互斥: streaming 时展开 TaskTree (过程), 结束后自动折叠成小图标
+ *   - 用户可点击小图标重新展开过程
+ *   - Token 统计在折叠状态下仍然显示
  *
- * 参考: Dan Abramov "Before You memo()" — https://overreacted.io/before-you-memo/
- *
- * ★ 2026-07-13 增强: 过程↔总结 crossfade 过渡动画
- *   - 过程块退出时向上淡出 (stream-process-exit)
- *   - 总结块进入时从下淡入 (stream-summary-enter)
- *   - 消除 2 秒后折叠的视觉跳变感
+ * ★ 2026-07-20 右键菜单修复:
+ *   - onContextMenu 提升到 StreamPanel 外层 div, 覆盖整个流送区
+ *   - 右键菜单 (StreamContextMenu) 渲染在 .stream-process-root 外部, 字体大小不受 CSS 变量影响
+ *   - 即使 TaskExecutionCard 返回 null, 右键菜单仍可弹出 (只要有 hasTask 或 cards)
  */
-import React, { useEffect, useMemo } from 'react';
-import { Loader2, CheckCircle2, AlertCircle, Clock, Gauge } from '../utils/icons';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
+import { Gauge, ChevronDown, ChevronRight, CheckCircle2, AlertCircle, Settings } from '../utils/icons';
 import type { PermissionMode } from '../types/streaming';
 import type { UIUsagePart } from '../types/messages';
 import { useStreamingStore } from '../state/streamingStore';
@@ -28,6 +27,10 @@ import { useAutoPersist, clearChatAll } from '../services/actorIntegration';
 import { useStreamSummary } from '../services/useStreamSummary';
 import { useRootTaskFromParts } from '../services/usePartsDerived';
 import { useLastAssistantMessage } from '../services/uiMessageStore';
+import { useStreamAppearanceStore } from '../state/streamAppearanceStore';
+import { StreamContextMenu } from './StreamContextMenu';
+import { TaskTree } from './TaskTree';
+import { UIMessagePartsRenderer } from './UIMessagePartsRenderer';
 
 interface StreamPanelProps {
   chatId: string;
@@ -37,25 +40,63 @@ interface StreamPanelProps {
 }
 
 export default function StreamPanel({ chatId, mainModel, modelCount, permissionMode }: StreamPanelProps) {
-  // P0: hasTask 从 uiMessageStore 派生 (替代 streamingStore.tasks[chatId])
-  // useStreamSummary 只返回派生摘要, 不订阅完整 task 对象
   const summary = useStreamSummary(chatId);
   const hasTask = summary.hasData;
 
-  // P3 集成: 自动持久化 streamingStore 状态 (每 10 次变化 + beforeunload)
   useAutoPersist(chatId);
 
-  // useSyncExternalStore: 响应式订阅 promptCardPool
   const cards = usePromptCards(chatId);
   const blockingCards = cards.filter(c => c.spec.priority === 'blocking');
   const nonBlockingCards = cards.filter(c => c.spec.priority === 'non_blocking');
+
+  // ★ 2026-07-20 终极修复: document 级 capture 阶段监听 + boundingRect 坐标检测
+  //   + React onContextMenu 双保险 + 左键齿轮按钮 fallback
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const fontColor = useStreamAppearanceStore(s => s.fontColor);
+  const fontSize = useStreamAppearanceStore(s => s.fontSize);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // 方案 A: document 级 capture 阶段监听 + boundingRect 坐标检测
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const el = rootRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      if (e.clientX >= rect.left && e.clientX <= rect.right &&
+          e.clientY >= rect.top && e.clientY <= rect.bottom) {
+        console.log('[StreamPanel] contextmenu capture: in bounds', { x: e.clientX, y: e.clientY, rect });
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setCtxMenu({ x: e.clientX, y: e.clientY });
+      }
+    };
+    document.addEventListener('contextmenu', handler, true);
+    return () => document.removeEventListener('contextmenu', handler, true);
+  }, []);
+
+  // 方案 B: React onContextMenu 作为备份 (双保险)
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    console.log('[StreamPanel] contextmenu React event fired', { x: e.clientX, y: e.clientY });
+    e.preventDefault();
+    e.stopPropagation();
+    setCtxMenu({ x: e.clientX, y: e.clientY });
+  }, []);
+
+  // 方案 C: 左键齿轮按钮 — 最可靠的 fallback
+  const handleGearClick = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setCtxMenu({ x: rect.left, y: rect.bottom + 4 });
+  }, []);
+
+  const handleCloseContextMenu = useCallback(() => setCtxMenu(null), []);
 
   // Ctrl+L 清空
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === 'l') {
         e.preventDefault();
-        // P3 集成: clearChatAll 同时清理 streamingStore + Actor + uiMessageStore + persistence
         clearChatAll(chatId);
         promptCardPool.clearChat(chatId);
       }
@@ -64,47 +105,78 @@ export default function StreamPanel({ chatId, mainModel, modelCount, permissionM
     return () => window.removeEventListener('keydown', handler);
   }, [chatId]);
 
-  // 无任务且无卡片时不显示
   if (!hasTask && blockingCards.length === 0 && nonBlockingCards.length === 0) return null;
 
   return (
-    <div className="flex flex-col gap-2 -mt-1.5 text-left">
-      {/* 阻塞型 PromptCard（追问）— 独立于 task, 不受 task 更新影响 */}
-      {blockingCards.map(card => (
-        <PromptCard
-          key={card.spec.id}
-          instance={card}
-          onResolve={action => promptCardPool.resolve(card.spec.id, action)}
-          onTimeout={() => promptCardPool.expire(card.spec.id)}
-        />
-      ))}
+    <>
+      {/* ★ rootRef 用于 boundingRect 坐标检测, onContextMenu 作为备份
+          齿轮按钮提供左键点击 fallback */}
+      <div
+        ref={rootRef}
+        className="stream-process-root w-full flex flex-col gap-2 -mt-1.5 text-left pl-[5px] pr-[5px]"
+        onContextMenu={handleContextMenu}
+        style={{
+          '--stream-font-size': `${fontSize}px`,
+          '--stream-font-color': fontColor || undefined,
+        } as React.CSSProperties}
+        data-stream-color={fontColor ? '1' : undefined}
+      >
+        {/* ★ 左键齿轮按钮 — 点击打开外观设置面板 (右键也可打开) */}
+        <div className="flex items-center justify-end -mb-1">
+          <button
+            type="button"
+            title="流送区外观设置"
+            onClick={handleGearClick}
+            className="p-1 rounded-md text-on-surface/30 hover:text-primary hover:bg-primary/10 transition-colors"
+          >
+            <Settings className="w-3 h-3" />
+          </button>
+        </div>
 
-      {/* 任务执行卡片 — 独立组件, 内部订阅 task, 隔离高频更新 */}
-      {hasTask && (
-        <TaskExecutionCard
-          chatId={chatId}
-          mainModel={mainModel}
-          modelCount={modelCount}
-          permissionMode={permissionMode}
-        />
+        {blockingCards.map(card => (
+          <PromptCard
+            key={card.spec.id}
+            instance={card}
+            onResolve={action => promptCardPool.resolve(card.spec.id, action)}
+            onTimeout={() => promptCardPool.expire(card.spec.id)}
+          />
+        ))}
+
+        {hasTask && (
+          <TaskExecutionCard
+            chatId={chatId}
+            mainModel={mainModel}
+            modelCount={modelCount}
+            permissionMode={permissionMode}
+          />
+        )}
+
+        {nonBlockingCards.map(card => (
+          <PromptCard
+            key={card.spec.id}
+            instance={card}
+            onResolve={action => promptCardPool.resolve(card.spec.id, action)}
+            onTimeout={() => promptCardPool.expire(card.spec.id)}
+          />
+        ))}
+      </div>
+
+      {/* ★ 右键菜单 — 通过 Portal 渲染到 document.body,
+          逃离婚 .sf-anim 父级的层叠上下文, 确保 position:fixed 相对于视口,
+          z-index 不被限制, 菜单始终在最顶层 */}
+      {ctxMenu && createPortal(
+        <StreamContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          onClose={handleCloseContextMenu}
+        />,
+        document.body
       )}
-
-      {/* 非阻塞型 PromptCard（工具建议）— 独立于 task */}
-      {nonBlockingCards.map(card => (
-        <PromptCard
-          key={card.spec.id}
-          instance={card}
-          onResolve={action => promptCardPool.resolve(card.spec.id, action)}
-          onTimeout={() => promptCardPool.expire(card.spec.id)}
-        />
-      ))}
-    </div>
+    </>
   );
 }
 
 // ==================== TaskExecutionCard — 隔离的任务执行区 ====================
-// Move State Down: 把 task 订阅从 StreamPanel 下移到此处
-// StreamPanel 只在 task 创建/删除时重渲染, 此组件在每个 task 事件时重渲染
 
 interface TaskExecutionCardProps {
   chatId: string;
@@ -114,173 +186,123 @@ interface TaskExecutionCardProps {
 }
 
 function TaskExecutionCard({ chatId, mainModel, modelCount, permissionMode }: TaskExecutionCardProps) {
-  // P0: 显示状态全部从 uiMessageStore (Data Parts) 派生
   const summary = useStreamSummary(chatId);
   const streamMeta = useStreamingStore(s => s.streamTaskMeta[chatId]);
   const userInput = streamMeta?.userInput;
   const rootTaskId = streamMeta?.rootTaskId;
   const task = useRootTaskFromParts(chatId, userInput, rootTaskId);
 
-  // ★ FIX 2026-07-14: 所有 Hook 必须在任何条件 return 之前调用 (Rules of Hooks)
-  //   之前 useLastAssistantMessage + useMemo 放在了 if (isActive) return 之后,
-  //   导致 isActive 切换时 Hook 数量变化 → "Rendered more hooks than during the previous render"
   const lastMsg = useLastAssistantMessage(chatId);
   const usageParts = useMemo(
     () => (lastMsg?.parts.filter(p => p.type === 'usage') as UIUsagePart[]) ?? [],
     [lastMsg],
   );
 
+  // ★ 2026-07-21 FIX: 过程不再自动消失 — manualExpanded 默认 true
+  //   旧代码: 默认 false → 流送结束后 processExpanded = false → 过程消失
+  //   新代码: 默认 true → 流送结束后过程保持可见, 用户可手动折叠
+  //   isStreaming 时永远展开 (不受 manualExpanded 影响)
+  const [manualExpanded, setManualExpanded] = useState(true);
+  const isStreaming = lastMsg?.status === 'streaming' || lastMsg?.status === 'pending';
+  const processExpanded = isStreaming || manualExpanded;
+
+  const handleToggleProcess = useCallback(() => {
+    setManualExpanded(prev => !prev);
+  }, []);
+
+  // ★ 2026-07-20 FIX: 移除过早的 return null — 即使 task 为空, parts 仍然存在需要渲染
+  //   旧代码: if (isStreaming && !isActive) return null; → 流送刚开始无 phase 时整个组件消失
+  //   旧代码: if (!task && !showTokenStats) return null; → task 派生失败时 parts 也消失
+  //   新代码: 只在完全无数据 (无 task + 无 parts) 时返回 null
   if (!task && !summary.hasData) return null;
 
   const isDone = summary.isDone;
   const isError = summary.isError;
-  const isActive = summary.isActive;
-  const subCount = summary.subtaskCount;
-  const doneCount = summary.doneCount;
 
-  // ★ 2026-07-19: streaming 时不显示总结 — 即使 phase=DONE, 只要消息还在 streaming
-  //   (SSE 流未关闭), 就不显示总结。等 SSE 流关闭 (completeMessage 调用后) 才显示。
-  //   修复: 用户发消息后 Java Agent 发送 phase_change DONE, 但 SSE 流还在传输,
-  //   此时总结轮廓直接出现, 而过程 (UIMessagePartsRenderer) 还没展示完。
-  const isStreaming = lastMsg?.status === 'streaming';
-
-  // ★ FIX 2026-07-14: 进行中也显示丰富信息, 不再只显示 spinner
-  //   过程块由 UIMessagePartsRenderer 渲染, 这里显示:
-  //   - 当前阶段 (phase)
-  //   - 总进度条
-  //   - 子任务完成数
-  //   - 用户输入回显
-
-  // 进行中: 显示进度面板 (不再是单一 spinner)
-  if (isActive) {
-    const phaseLabel = summary.phase || '执行中';
-    const phaseColors: Record<string, string> = {
-      CLARIFY: 'text-orange-400 bg-orange-500/10',
-      PLANNING: 'text-violet-400 bg-violet-500/10',
-      DECOMPOSING: 'text-blue-400 bg-blue-500/10',
-      DISPATCHING: 'text-cyan-400 bg-cyan-500/10',
-      EXECUTING: 'text-indigo-400 bg-indigo-500/10',
-      REVIEWING: 'text-amber-400 bg-amber-500/10',
-      AUDITING: 'text-purple-400 bg-purple-500/10',
-      DELIVERING: 'text-teal-400 bg-teal-500/10',
-      SINGLE_MODEL: 'text-blue-400 bg-blue-500/10',
-    };
-    const phaseClass = phaseColors[phaseLabel] ?? 'text-on-surface/60 bg-on-surface/5';
-
-    return (
-      <div className="w-full pl-[5px] pr-0">
-        <div className="border border-outline/30 rounded-lg bg-bg/50 p-3 space-y-2">
-          {/* 阶段 + 进度头 */}
-          <div className="flex items-center gap-1.5">
-            <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
-            <span className={`px-1.5 py-0.5 rounded font-mono font-bold text-[10px] ${phaseClass}`}>
-              {phaseLabel}
-            </span>
-            {subCount > 0 && (
-              <span className="text-[10px] text-on-surface/40 font-mono ml-auto">
-                {doneCount}/{subCount} 子任务完成
-              </span>
-            )}
-          </div>
-
-          {/* 用户输入回显 */}
-          {userInput && (
-            <div className="text-[10px] text-on-surface/40 truncate pl-1 border-l-2 border-primary/30">
-              {userInput}
-            </div>
-          )}
-
-          {/* 子任务列表 (进行中/已完成) */}
-          {task?.subTasks && task.subTasks.length > 0 && (
-            <div className="flex flex-col gap-0.5 pt-1">
-              {task.subTasks.map(st => (
-                <div key={st.id} className="flex items-start gap-1.5 text-[10px] py-0.5">
-                  {st.status === 'done'
-                    ? <CheckCircle2 className="w-2.5 h-2.5 text-green-400 shrink-0 mt-0.5" />
-                    : st.status === 'error'
-                    ? <AlertCircle className="w-2.5 h-2.5 text-red-400 shrink-0 mt-0.5" />
-                    : <Loader2 className="w-2.5 h-2.5 text-primary animate-spin shrink-0 mt-0.5" />
-                  }
-                  <span className={`break-words [text-wrap:pretty] ${st.status === 'done' ? 'text-on-surface/40 line-through' : 'text-on-surface/70'}`}>
-                    {st.description}
-                  </span>
-                  {st.source === 'browser-use' && (
-                    <span className="text-[9px] text-indigo-400/60 font-mono shrink-0">[browser]</span>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // 完成/错误: 显示总结块 + Token 统计
-  // ★ 2026-07-19: streaming 时不显示总结 (即使 isDone=true), 等 SSE 流关闭后才显示
-  if (isStreaming) return null;
-  if (!isDone && !isError) return null;
-
-  // ★ 2026-07-19: 空总结 (无子任务+非错误+无 Token) 不渲染空轮廓
-  const hasSubTasks = subCount > 0 || (task?.subTasks && task.subTasks.length > 0);
-  const hasSummaryContent = hasSubTasks || isError;
-  if (!hasSummaryContent && usageParts.length === 0) return null;
+  const showTokenStats = (isDone || isError) && usageParts.length > 0;
 
   const formatToken = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
-  // 聚合多个 usage part (多模型场景各自一个 usage part)
   const totalPrompt = usageParts.reduce((s, p) => s + p.promptTokens, 0);
   const totalCompletion = usageParts.reduce((s, p) => s + p.completionTokens, 0);
   const totalTokens = usageParts.reduce((s, p) => s + p.totalTokens, 0);
   const totalCached = usageParts.reduce((s, p) => s + (p.cachedTokens ?? 0), 0);
   const cacheRate = totalPrompt > 0 ? Math.round((totalCached / totalPrompt) * 100) : 0;
 
-  return (
-    <div className="w-full pl-[5px] pr-0">
-      {/* 总结内容 — 无气泡, 紧贴流程下方 (4px 间距由根 div -mt-1.5 实现) */}
-      {hasSummaryContent && (
-      <div className="space-y-0.5">
-        {subCount > 0 && (
-          <div className="text-[10px] text-on-surface/40 font-mono">
-            {doneCount}/{subCount} 完成
-          </div>
-        )}
-        {task?.subTasks.length > 0 && task.subTasks.map(st => (
-          <div key={st.id} className="flex items-start gap-2 text-[11px] py-0.5">
-            {st.status === 'done'
-              ? <CheckCircle2 className="w-3 h-3 text-green-400 shrink-0 mt-0.5" />
-              : st.status === 'error'
-              ? <AlertCircle className="w-3 h-3 text-red-400 shrink-0 mt-0.5" />
-              : <Clock className="w-3 h-3 text-on-surface/30 shrink-0 mt-0.5" />
-            }
-            <span className={`break-words [text-wrap:pretty] ${st.status === 'done' ? 'text-on-surface/50 line-through' : 'text-on-surface/80'}`}>
-              {st.description}
-            </span>
-          </div>
-        ))}
-        {isError && !task?.subTasks?.length && (
-          <div className="text-[11px] text-red-400/80 py-0.5">
-            任务执行失败
-          </div>
-        )}
-      </div>
-      )}
+  const statusIcon = isDone
+    ? <CheckCircle2 className="w-3 h-3 text-green-400 shrink-0" />
+    : isError
+    ? <AlertCircle className="w-3 h-3 text-red-400 shrink-0" />
+    : null;
 
-      {/* Token 统计 — 总结内容下方 */}
-      {usageParts.length > 0 && (
-        <div className="flex items-center gap-2 px-1 py-1 text-[10px] font-mono text-on-surface/40">
-          <Gauge className="w-3 h-3 text-on-surface/40 shrink-0" />
-          <span className="shrink-0">Token</span>
-          <span className="text-on-surface/50">
-            {formatToken(totalPrompt)} + {formatToken(totalCompletion)}
-          </span>
-          <span className="text-on-surface/30">=</span>
-          <span className="text-on-surface/70 font-bold">{formatToken(totalTokens)}</span>
-          {totalCached > 0 && (
-            <span className="text-emerald-400/60">
-              (缓存命中 {formatToken(totalCached)} · {cacheRate}%)
-            </span>
+  return (
+    <div className="w-full">
+      {/* ★ 2026-07-20 FIX: 过程和结果严格互斥
+          - processExpanded=true 时只显示过程 (streaming 中或用户手动展开)
+          - processExpanded=false 时只显示折叠按钮 + token 统计
+          - 总结气泡由 ChatPanel 的 isAssistantStreaming 控制, 与 isStreaming 同步 */}
+      {processExpanded ? (
+        <div>
+          <button
+            onClick={handleToggleProcess}
+            className="flex items-center gap-1.5 px-1 py-0.5 text-[11px] text-on-surface/50 hover:text-on-surface/80 transition-colors mb-1"
+          >
+            <ChevronDown className="w-3 h-3 text-primary shrink-0" />
+            <span className="font-medium">过程</span>
+            {summary.subtaskCount > 0 && (
+              <span className="text-[10px] text-on-surface/30 font-mono">
+                {summary.doneCount}/{summary.subtaskCount}
+              </span>
+            )}
+          </button>
+
+          {task && (
+            <TaskTree
+              task={task}
+              mainModel={mainModel}
+              modelCount={modelCount}
+              mode={permissionMode}
+              chatId={chatId}
+            />
           )}
+
+          {/* ★ 2026-07-20: 渲染 parts 内容 — 显示实际过程 (文本输出/步骤/工具调用等)
+              flat 模式: 不带 CollapsibleProcess 折叠包装器, 避免双层折叠
+              ★ 2026-07-20 FIX: 移到 task && 外部, 即使 task 为空也渲染 parts */}
+          <UIMessagePartsRenderer chatId={chatId} flat />
         </div>
+      ) : (
+        <>
+          <button
+            onClick={handleToggleProcess}
+            className="flex items-center gap-1.5 px-1 py-0.5 text-[11px] text-on-surface/50 hover:text-on-surface/80 transition-colors"
+          >
+            <ChevronRight className="w-3 h-3 text-primary shrink-0" />
+            {statusIcon}
+            <span className="font-medium">过程</span>
+            {summary.subtaskCount > 0 && (
+              <span className="text-[10px] text-on-surface/30 font-mono">
+                {summary.doneCount}/{summary.subtaskCount}
+              </span>
+            )}
+          </button>
+
+          {showTokenStats && (
+            <div className="flex items-center gap-2 px-1 py-1 text-[10px] font-mono text-on-surface/40">
+              <Gauge className="w-3 h-3 text-on-surface/40 shrink-0" />
+              <span className="shrink-0">Token</span>
+              <span className="text-on-surface/50">
+                {formatToken(totalPrompt)} + {formatToken(totalCompletion)}
+              </span>
+              <span className="text-on-surface/30">=</span>
+              <span className="text-on-surface/70 font-bold">{formatToken(totalTokens)}</span>
+              {totalCached > 0 && (
+                <span className="text-emerald-400/60">
+                  (缓存命中 {formatToken(totalCached)} · {cacheRate}%)
+                </span>
+              )}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

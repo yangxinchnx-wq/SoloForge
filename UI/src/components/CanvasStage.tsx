@@ -23,7 +23,6 @@ import type { UniversalNode } from '../services/canvas/UniversalAST';
 import { isContainerLike } from '../services/canvas/UniversalAST';
 import { useCanvasDeviceStore, type CanvasDeviceInfo } from '../state/canvasDeviceStore';
 import { play2DLayoutTransition } from '../services/canvas/canvasAnimations';
-import { animate } from 'animejs';
 import { getDefaultTheme, getDefaultFinish, type ThemeId, type MaterialFinish } from '../services/canvas/modelThemes';
 import WebAstPreview from './WebAstPreview';
 
@@ -82,6 +81,33 @@ function Stage2D({ dsl, device, bgColor, canvasId }: Stage2DProps) {
   const [userZoom, setUserZoom] = useState(1);
   const setFrameSize = useCanvasDeviceStore((s) => s.setFrameSize);
 
+  // ★ PNG 自然尺寸 (用于计算设备边框 inset)
+  //   PNG 图片包含设备外壳 (bezel + body), 实际屏幕区域比图片小。
+  //   加载 PNG 后获取 naturalWidth/naturalHeight, 计算边框厚度,
+  //   让 DSL 内容精确显示在屏幕区域内。
+  const [pngNaturalSize, setPngNaturalSize] = useState<{ w: number; h: number } | null>(null);
+
+  // ★ 计算设备边框 inset
+  //   PNG 自然尺寸 = (nativeW + 2*frameX) * scale × (nativeH + 2*frameY) * scale
+  //   寻找合适的整数 scale (通常是 2 或 3), 使得 frameX/frameY 为正且合理
+  const frameInset = useMemo<{ frameX: number; frameY: number } | null>(() => {
+    if (!device || !pngNaturalSize || device.width === 0 || device.height === 0) return null;
+    for (let s = 1; s <= 10; s++) {
+      const fw = (pngNaturalSize.w / s - device.width) / 2;
+      const fh = (pngNaturalSize.h / s - device.height) / 2;
+      // frame 必须非负且小于原生尺寸的一半 (否则说明 scale 太小)
+      if (fw >= 0 && fh >= 0 && fw < device.width / 2 && fh < device.height / 2) {
+        return { frameX: fw, frameY: fh };
+      }
+    }
+    return null;
+  }, [device, pngNaturalSize]);
+
+  // ★ 容器尺寸: 有 PNG 边框时包含边框, 无 PNG 时用原生尺寸
+  //   容器和 PNG 同比例 → objectFit:'fill' 不会扭曲 PNG
+  const containerW = device ? (frameInset ? device.width + 2 * frameInset.frameX : device.width) : 0;
+  const containerH = device ? (frameInset ? device.height + 2 * frameInset.frameY : device.height) : 0;
+
   // ★ 检测 DSL 是否为空容器（容器类型且无子节点）
   //   非容器类型（text/button/image 等）自身就是内容，不算空
   const isEmptyDsl = isContainerLike(dsl) ? (!dsl.children || dsl.children.length === 0) : false;
@@ -98,7 +124,7 @@ function Stage2D({ dsl, device, bgColor, canvasId }: Stage2DProps) {
     }
   }, [dsl]);
 
-  // ★ 修复 2: 计算缩放比例，让设备原生尺寸适配容器
+  // ★ 修复 2: 计算缩放比例，让设备 (包含边框) 适配容器
   useEffect(() => {
     if (!device || !containerRef.current) {
       // 无设备时记录容器尺寸
@@ -112,14 +138,17 @@ function Stage2D({ dsl, device, bgColor, canvasId }: Stage2DProps) {
     const computeScale = () => {
       if (!containerRef.current || !device) return;
       const rect = containerRef.current.getBoundingClientRect();
-      // 留 4px 边距给 PNG 边框
+      // 留 8px 边距
       const availableW = rect.width - 8;
       const availableH = rect.height - 8;
-      const scaleX = availableW / device.width;
-      const scaleY = availableH / device.height;
+      // ★ 用 containerW/containerH (包含边框) 计算 scale, 确保整个设备框可见
+      const cw = containerW || device.width;
+      const ch = containerH || device.height;
+      const scaleX = availableW / cw;
+      const scaleY = availableH / ch;
       const s = Math.min(scaleX, scaleY, 1); // 自动适配不放大，只缩小
       setAutoScale(s);
-      // ★ 修复 5: 记录实际渲染帧尺寸（供 LLM prompt 注入）
+      // ★ 记录屏幕原生尺寸 (供 LLM prompt 注入)
       if (canvasId) {
         setFrameSize(canvasId, { width: device.width, height: device.height });
       }
@@ -130,7 +159,7 @@ function Stage2D({ dsl, device, bgColor, canvasId }: Stage2DProps) {
     const resizeObserver = new ResizeObserver(computeScale);
     resizeObserver.observe(containerRef.current);
     return () => resizeObserver.disconnect();
-  }, [device, canvasId, setFrameSize]);
+  }, [device, canvasId, setFrameSize, containerW, containerH]);
 
   // ★ 滚轮缩放: 上滚放大, 下滚缩小, 范围 0.3~3
   useEffect(() => {
@@ -155,6 +184,7 @@ function Stage2D({ dsl, device, bgColor, canvasId }: Stage2DProps) {
   }, []);
 
   // ★ 设备尺寸 + 缩放 — 加 CSS transition 让尺寸变化平滑
+  //   ★ 有 PNG 边框时用 containerW/containerH (包含边框), 确保整个设备框可见
   const stageStyle: React.CSSProperties = useMemo(() => {
     const base: React.CSSProperties = {
       position: 'relative' as const,
@@ -165,12 +195,20 @@ function Stage2D({ dsl, device, bgColor, canvasId }: Stage2DProps) {
     if (!device) {
       return { ...base, width: '100%', height: '100%' };
     }
-    return { ...base, width: `${device.width}px`, height: `${device.height}px` };
-  }, [device, effectiveScale]);
+    // ★ 有边框时用 containerW/containerH, 无边框时用原生尺寸
+    const w = containerW || device.width;
+    const h = containerH || device.height;
+    return { ...base, width: `${w}px`, height: `${h}px` };
+  }, [device, effectiveScale, containerW, containerH]);
 
   const pngPath = device ? inferPngPath(device) : null;
   // ★ 用 sizeKey 作为 AnimatePresence 的 key，设备切换时触发 crossfade
   const pngKey = device?.sizeKey ?? 'none';
+
+  // ★ 设备切换时重置 PNG 自然尺寸 (避免用旧设备的尺寸计算新设备的边框)
+  useEffect(() => {
+    setPngNaturalSize(null);
+  }, [pngPath]);
 
   return (
     <div
@@ -188,12 +226,16 @@ function Stage2D({ dsl, device, bgColor, canvasId }: Stage2DProps) {
     >
       <div style={stageStyle}>
         {/* DSL 渲染层 — 用 framer-motion 淡入 */}
+        {/* ★ inset: 有 PNG 边框时按 frameInset 内缩, 让 DSL 内容精确显示在屏幕区域内 */}
         <motion.div
           ref={dslLayerRef}
           key={dsl === prevDslRef.current ? undefined : 'stable'}
           style={{
             position: 'absolute',
-            inset: 0,
+            top: frameInset ? `${frameInset.frameY}px` : 0,
+            bottom: frameInset ? `${frameInset.frameY}px` : 0,
+            left: frameInset ? `${frameInset.frameX}px` : 0,
+            right: frameInset ? `${frameInset.frameX}px` : 0,
             overflow: 'hidden',
             borderRadius: device ? '32px' : 0,
           }}
@@ -274,13 +316,19 @@ function Stage2D({ dsl, device, bgColor, canvasId }: Stage2DProps) {
               animate={PNG_TRANSITION.animate}
               exit={PNG_TRANSITION.exit}
               transition={PNG_TRANSITION.transition}
+              onLoad={(e) => {
+                const img = e.currentTarget as HTMLImageElement;
+                if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                  setPngNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
+                }
+              }}
               style={{
                 position: 'absolute',
                 inset: 0,
                 width: '100%',
                 height: '100%',
                 pointerEvents: 'none',
-                objectFit: 'contain',
+                objectFit: 'fill',
                 zIndex: 10,
               }}
               onError={(e) => {
@@ -310,30 +358,13 @@ function Stage3D({ dsl, device, bgColor, theme, finish }: Stage3DProps) {
     return null;
   }, [device]);
 
-  // ★ 3D 容器淡入: 模型加载完成后 anime.js opacity 0→1
-  const containerRef = useRef<HTMLDivElement>(null);
-  const prevUrl = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (!containerRef.current || !modelUrl) return;
-    // 首次加载或模型切换时淡入
-    if (prevUrl.current !== modelUrl) {
-      prevUrl.current = modelUrl;
-      animate(containerRef.current, {
-        opacity: [0, 1],
-        duration: 500,
-        ease: 'outCubic',
-      });
-    }
-  }, [modelUrl]);
-
   if (!modelUrl) {
     // glbFile 缺失，降级为 2D
     return <Stage2D dsl={dsl} device={null} bgColor={bgColor} />;
   }
 
   return (
-    <div ref={containerRef} style={{ position: 'absolute', inset: 0, background: bgColor, opacity: 0 }}>
+    <div style={{ position: 'absolute', inset: 0, background: bgColor }}>
       <React.Suspense
         fallback={
           <div

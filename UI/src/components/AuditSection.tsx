@@ -35,7 +35,7 @@ export function AuditSection({ auditTask, result, mode, modelCount }: AuditSecti
           {auditTask.auditorType === 'sub_agent' ? '子Agent 审查' : '主模型 审查'}
         </span>
         {isReviewing && (
-          <span className="text-[10px] text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded animate-pulse ml-auto">
+          <span className="text-[10px] text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded ml-auto">
             审查中...
           </span>
         )}

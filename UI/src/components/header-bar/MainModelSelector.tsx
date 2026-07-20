@@ -18,7 +18,7 @@ import { useThemedSurface } from './themeColors';
 import { ChevronDown } from '../../utils/icons';
 import { ModelIcon } from '../ModelIcon';
 import { computeAvailableModels, pickModel } from './mainModelSelectorLogic';
-export { computeAvailableModels, pickModel } from './mainModelSelectorLogic';
+// ★ 2026-07-20: 移除 re-export — export { } from 会导致 Fast Refresh 降级为 full page reload
 
 export interface MainModelSelectorProps {
   mainModel: string;

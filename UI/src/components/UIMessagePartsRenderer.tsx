@@ -23,12 +23,12 @@
  *   - subtask-step / delivery 不再过滤
  */
 
-import React, { memo, useDeferredValue, useState, useCallback, useEffect } from 'react';
+import React, { memo, useDeferredValue, useState, useCallback, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   CheckCircle2,
   AlertCircle,
-  Loader2,
   ArrowRight,
   Zap,
   Shield,
@@ -39,6 +39,8 @@ import {
   Globe,
   Gauge,
   FolderTree,
+  Settings,
+  Clock,
 } from '../utils/icons';
 import { useLastAssistantMessage, useUIMessages } from '../services/uiMessageStore';
 import { useAgentName, useAgentAvatar } from '../state/streamingStore';
@@ -82,11 +84,16 @@ interface UIMessagePartsRendererProps {
    *  ★ 2026-07-13: 支持多轮对话独立气泡 — 每轮 assistant 消息渲染自己的 parts。
    *  不传则回退到最后一条 assistant 消息 (兼容旧调用方)。 */
   messageId?: string;
+  /** ★ 2026-07-20: flat 模式 — 不渲染 CollapsibleProcess 折叠包装器,
+   *  直接平铺渲染 parts。用于 StreamPanel 内部 (StreamPanel 已有自己的折叠控制)。
+   *  默认 false — 用于 ChatPanel 历史消息, 带折叠包装器。 */
+  flat?: boolean;
 }
 
 export const UIMessagePartsRenderer = memo(function UIMessagePartsRenderer({
   chatId,
   messageId,
+  flat = false,
 }: UIMessagePartsRendererProps) {
   const allMessages = useUIMessages(chatId);
   const lastAssistant = useLastAssistantMessage(chatId);
@@ -95,7 +102,9 @@ export const UIMessagePartsRenderer = memo(function UIMessagePartsRenderer({
     : lastAssistant;
 
   const deferredParts = useDeferredValue(message?.parts ?? EMPTY_PARTS);
-  const isStreaming = message?.status === 'streaming';
+  // ★ 2026-07-20 FIX: 对齐 isStreaming 检查 — 包含 'pending' 状态
+  //   与 ChatPanel 的 isAssistantStreaming 和 StreamPanel 的 isStreaming 一致
+  const isStreaming = message?.status === 'streaming' || message?.status === 'pending';
 
   // ★ 2026-07-14 v2: 过滤 text (主气泡已显示) + usage (移至总结下方显示)
   // ★ 2026-07-19: subtask-progress 不再过滤 — 改为文本信息行渲染 (工具调用/worker状态)
@@ -110,14 +119,52 @@ export const UIMessagePartsRenderer = memo(function UIMessagePartsRenderer({
   if (processParts.length === 0) {
     return isStreaming ? (
       <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] text-on-surface/50 font-mono">
-        <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
         <span>正在准备…</span>
       </div>
     ) : null;
   }
 
+  // ★ 2026-07-20: flat 模式 — 直接平铺渲染 parts, 不带 CollapsibleProcess 折叠包装器
+  //   用于 StreamPanel 内部 (StreamPanel 已有自己的 processExpanded 折叠控制)
+  //   避免双层折叠: StreamPanel 的 "过程" 按钮 + CollapsibleProcess 的 "流程" 按钮
+  if (flat) {
+    return (
+      <FlatPartsList parts={processParts} isStreaming={isStreaming} chatId={chatId} />
+    );
+  }
+
   return (
     <CollapsibleProcess parts={processParts} isStreaming={isStreaming} chatId={chatId} />
+  );
+});
+
+// ==================== FlatPartsList — 平铺渲染 (无折叠包装器) ====================
+// ★ 2026-07-20: 用于 StreamPanel 内部, 直接渲染 parts 列表
+//   StreamPanel 已有 processExpanded 控制可见性, 不需要再套一层 CollapsibleProcess
+
+interface FlatPartsListProps {
+  parts: UIPart[];
+  isStreaming: boolean;
+  chatId: string;
+}
+
+const FlatPartsList = memo(function FlatPartsList({ parts, isStreaming, chatId }: FlatPartsListProps) {
+  return (
+    <div className="flex flex-col gap-1.5 pl-1 pb-1 pt-0.5">
+      {parts.map((part, index) => {
+        const isLast = index === parts.length - 1;
+        return (
+          <div key={`${part.type}-${index}`}>
+            <PartRenderer
+              part={part}
+              isStreaming={isStreaming && isLast}
+              isLast={isLast}
+              chatId={chatId}
+            />
+          </div>
+        );
+      })}
+    </div>
   );
 });
 
@@ -134,30 +181,61 @@ interface CollapsibleProcessProps {
 }
 
 const CollapsibleProcess = memo(function CollapsibleProcess({ parts, isStreaming, chatId }: CollapsibleProcessProps) {
-  // ★ 2026-07-20: 默认展开 — 不管什么模式 (agent/llm/单模型/多模型), 过程始终可见
-  //   用户可手动点击折叠, 但默认和 streaming 结束后都保持展开
+  // ★ 2026-07-21 FIX: 过程不再自动消失 — 默认展开, 流送结束后也不折叠
+  //   旧代码: isOpen 默认 isStreaming, 结束后 useEffect 自动折叠 → 过程消失
+  //   新代码: isOpen 默认 true, 只有用户手动点击才折叠
   const [isOpen, setIsOpen] = useState(true);
   const [userToggled, setUserToggled] = useState(false);
 
   // ★ 2026-07-19: 右键菜单 + 外观设置 (字体颜色/大小)
+  // ★ 2026-07-20 终极修复: document 级 capture + React onContextMenu + 左键齿轮按钮三重保障
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const fontColor = useStreamAppearanceStore(s => s.fontColor);
   const fontSize = useStreamAppearanceStore(s => s.fontSize);
+  const rootRef = useRef<HTMLDivElement>(null);
 
+  // 方案 A: document 级 capture 阶段监听 + boundingRect 坐标检测
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const el = rootRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      if (e.clientX >= rect.left && e.clientX <= rect.right &&
+          e.clientY >= rect.top && e.clientY <= rect.bottom) {
+        console.log('[UIMessagePartsRenderer] contextmenu capture: in bounds', { x: e.clientX, y: e.clientY });
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setCtxMenu({ x: e.clientX, y: e.clientY });
+      }
+    };
+    document.addEventListener('contextmenu', handler, true);
+    return () => document.removeEventListener('contextmenu', handler, true);
+  }, []);
+
+  // 方案 B: React onContextMenu 备份
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    console.log('[UIMessagePartsRenderer] contextmenu React event fired', { x: e.clientX, y: e.clientY });
     e.preventDefault();
     e.stopPropagation();
     setCtxMenu({ x: e.clientX, y: e.clientY });
   }, []);
 
+  // 方案 C: 左键齿轮按钮
+  const handleGearClick = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setCtxMenu({ x: rect.left, y: rect.bottom + 4 });
+  }, []);
+
   const handleCloseContextMenu = useCallback(() => setCtxMenu(null), []);
 
-  // ★ 2026-07-20: 过程始终展开 — 不再自动折叠
-  //   不管 streaming 中还是结束后, 过程都保持可见
-  //   用户手动折叠后 (userToggled=true), 新一轮 streaming 时重置为展开
+  // ★ 2026-07-21 FIX: 移除自动折叠逻辑 — 过程保持可见
+  //   旧代码: streaming 结束后自动 setIsOpen(false) → 过程消失
+  //   新代码: 只有用户手动点击才改变折叠状态
+  //   新一轮 streaming 开始时恢复展开 (如果用户之前折叠了)
   useEffect(() => {
     if (isStreaming && userToggled) {
-      // 新一轮 streaming 开始, 重置用户操作标记, 恢复展开
       setUserToggled(false);
       setIsOpen(true);
     }
@@ -169,7 +247,9 @@ const CollapsibleProcess = memo(function CollapsibleProcess({ parts, isStreaming
   }, []);
 
   return (
+    <>
     <div
+      ref={rootRef}
       className="stream-process-root"
       onContextMenu={handleContextMenu}
       style={{
@@ -179,21 +259,30 @@ const CollapsibleProcess = memo(function CollapsibleProcess({ parts, isStreaming
       } as React.CSSProperties}
       data-stream-color={fontColor ? '1' : undefined}
     >
-      {/* 折叠头 — 内联, 无容器样式 */}
-      <button
-        onClick={handleToggle}
-        className="flex items-center gap-1.5 px-1 py-0.5 text-[11px] text-on-surface/50 hover:text-on-surface/80 transition-colors"
-      >
-        {isStreaming ? (
-          <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
-        ) : isOpen ? (
-          <ChevronDown className="w-3 h-3 text-primary shrink-0" />
-        ) : (
-          <ChevronRight className="w-3 h-3 text-primary shrink-0" />
-        )}
-        <span className="font-medium">流程</span>
-        <span className="text-[10px] text-on-surface/30 font-mono ml-0.5">{parts.length}</span>
-      </button>
+      {/* 折叠头 — 内联, 无容器样式 + 齡轮按钮 */}
+      <div className="flex items-center gap-1">
+        <button
+          onClick={handleToggle}
+          className="flex items-center gap-1.5 px-1 py-0.5 text-[11px] text-on-surface/50 hover:text-on-surface/80 transition-colors"
+        >
+          {isOpen ? (
+            <ChevronDown className="w-3 h-3 text-primary shrink-0" />
+          ) : (
+            <ChevronRight className="w-3 h-3 text-primary shrink-0" />
+          )}
+          <span className="font-medium">流程</span>
+          <span className="text-[10px] text-on-surface/30 font-mono ml-0.5">{parts.length}</span>
+        </button>
+        {/* 齡轮按钮 — 左键点击打开外观设置 */}
+        <button
+          type="button"
+          title="流送区外观设置"
+          onClick={handleGearClick}
+          className="p-1 rounded-md text-on-surface/30 hover:text-primary hover:bg-primary/10 transition-colors ml-auto"
+        >
+          <Settings className="w-3 h-3" />
+        </button>
+      </div>
 
       {/* 展开内容 — 无 border/bg, 直接内联 */}
       <AnimatePresence initial={false}>
@@ -229,15 +318,19 @@ const CollapsibleProcess = memo(function CollapsibleProcess({ parts, isStreaming
         )}
       </AnimatePresence>
 
-      {/* ★ 2026-07-19: 右键菜单 — 字体颜色/大小调节 */}
-      {ctxMenu && (
+      {/* ★ 2026-07-20: 右键菜单通过 Portal 渲染到 document.body,
+          逃离婚 .sf-anim 父级层叠上下文, 确保 position:fixed 相对于视口,
+          z-index 不被限制, 菜单始终在最顶层 */}
+    </div>
+      {ctxMenu && createPortal(
         <StreamContextMenu
           x={ctxMenu.x}
           y={ctxMenu.y}
           onClose={handleCloseContextMenu}
-        />
+        />,
+        document.body
       )}
-    </div>
+    </>
   );
 });
 
@@ -297,7 +390,7 @@ const PartRenderer = memo(function PartRenderer({ part, isStreaming, isLast, cha
 
 const TextPartView = memo(function TextPartView({ part, isStreaming }: { part: UITextPart; isStreaming: boolean }) {
   return (
-    <div className="text-[12px] leading-relaxed text-on-surface/90 whitespace-pre-wrap break-words [text-wrap:pretty]">
+    <div className="leading-[1.7] text-on-surface/90 whitespace-pre-wrap break-words [text-wrap:pretty]">
       {part.text}
       <AnimatePresence>
         {isStreaming && part.streaming && (
@@ -306,8 +399,13 @@ const TextPartView = memo(function TextPartView({ part, isStreaming }: { part: U
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="inline-block w-1.5 h-3.5 bg-primary ml-0.5 align-middle rounded-sm"
-            style={{ animation: 'pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite' }}
+            className="inline-block bg-primary ml-0.5 align-middle rounded-sm"
+            style={{
+              animation: 'pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+              width: '0.12em',
+              height: '1.1em',
+              minWidth: '2px',
+            }}
           />
         )}
       </AnimatePresence>
@@ -472,7 +570,7 @@ const SubTaskStepPartView = memo(function SubTaskStepPartView({ part }: { part: 
                 transition={SPRING}
                 className="absolute inset-0"
               >
-                <Loader2 className="w-3 h-3 text-blue-400 animate-spin" />
+                <Clock className="w-3 h-3 text-blue-400" />
               </motion.div>
             )}
           </AnimatePresence>
