@@ -22,6 +22,7 @@ import type {
   UISubTaskDonePart,
   UIModelDelegationPart,
   UIModelActionPart,
+  UIAgentLifecyclePart,
   UIAuditStartPart,
   UIAuditFindingPart,
   UIAuditDonePart,
@@ -76,7 +77,7 @@ export function streamEventToUIPart(event: StreamEvent, prevPhase?: TaskPhase): 
         assigneeModel: event.content,
         agentId: event.agentId,
         description: event.detail ?? '',
-        source: 'llm' as SubTaskSource,
+        source: event.source ?? 'llm',
       };
       return part;
     }
@@ -117,9 +118,10 @@ export function streamEventToUIPart(event: StreamEvent, prevPhase?: TaskPhase): 
     case 'model_delegation': {
       const part: UIModelDelegationPart = {
         type: 'model-delegation',
-        fromModel: '', // 由调用方填充
+        fromModel: event.fromModel ?? '主模型', // 调用关系在适配层闭合
         toModel: event.content,
         agentId: event.agentId,
+        subTaskId: event.subTaskId,
         detail: event.detail,
         timestamp: event.ts,
       };
@@ -131,6 +133,20 @@ export function streamEventToUIPart(event: StreamEvent, prevPhase?: TaskPhase): 
         type: 'model-action',
         action: event.content,
         detail: event.detail,
+        subTaskId: event.subTaskId,
+        timestamp: event.ts,
+      };
+      return part;
+    }
+
+    case 'agent_created':
+    case 'agent_dissolved': {
+      const part: UIAgentLifecyclePart = {
+        type: 'agent-lifecycle',
+        agentId: event.agentId ?? event.content,
+        name: event.detail,
+        avatar: event.avatar,
+        action: event.kind === 'agent_created' ? 'created' : 'dissolved',
         subTaskId: event.subTaskId,
         timestamp: event.ts,
       };
@@ -228,8 +244,8 @@ export function streamEventToUIPart(event: StreamEvent, prevPhase?: TaskPhase): 
 
     // ── 不映射为独立 part 的事件 ──
     // task_created: 由 store createTask 直接处理, 不需要 part
-    // agent_created / agent_dissolved: 元数据, 不在 UI 消息流展示
-    // browser_task_done / error / cancelled: 由 subtask_done 统一处理
+    // agent_created / agent_dissolved 进入统一 parts，以支持执行过程回放
+    // browser_task_done / error / cancelled 由 subtask_done 统一处理
     // browser_enable_request / tool_suggestion: 走 promptCardPool, 不走 part
     // tool_enabled / tool_skipped / tool_timeout: 由 model_action 统一处理
     default:

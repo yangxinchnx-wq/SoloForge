@@ -219,6 +219,10 @@ export interface StreamEvent {
   rootTaskId: string;
   subTaskId?: string;
   agentId?: string;
+  /** 委派关系中的调用方模型；缺省时 UI 使用“主模型”。 */
+  fromModel?: string;
+  /** 子任务来源，供用户视图选择合适的角色表现。 */
+  source?: SubTaskSource;
   avatar?: string;          // agent 头像 (emoji 或图片 URL), subtask_created 时带
   kind: StreamEventKind;
   content: string;

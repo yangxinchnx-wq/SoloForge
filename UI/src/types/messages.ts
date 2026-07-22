@@ -50,6 +50,7 @@ export type UIPartType =
   | 'subtask-done'      // 子任务完成
   | 'model-delegation'  // 模型委派
   | 'model-action'      // 模型动作
+  | 'agent-lifecycle'   // Agent 创建/结束
   | 'audit-start'       // 审计开始
   | 'audit-finding'     // 审计发现
   | 'audit-done'        // 审计完成
@@ -126,6 +127,7 @@ export interface UIModelDelegationPart {
   fromModel: string;
   toModel: string;
   agentId?: string;         // 被委派的 Agent ID（用于实时查询 agent 名字）
+  subTaskId?: string;       // 被委派的子任务 ID，保证关系稳定关联
   detail?: string;
   timestamp: number;
 }
@@ -134,6 +136,16 @@ export interface UIModelActionPart {
   type: 'model-action';
   action: string;
   detail?: string;
+  subTaskId?: string;
+  timestamp: number;
+}
+
+export interface UIAgentLifecyclePart {
+  type: 'agent-lifecycle';
+  agentId: string;
+  name?: string;
+  avatar?: string;
+  action: 'created' | 'dissolved';
   subTaskId?: string;
   timestamp: number;
 }
@@ -225,6 +237,7 @@ export type UIPart =
   | UISubTaskDonePart
   | UIModelDelegationPart
   | UIModelActionPart
+  | UIAgentLifecyclePart
   | UIAuditStartPart
   | UIAuditFindingPart
   | UIAuditDonePart
@@ -288,6 +301,7 @@ export function uiMessageToModelMessage(msg: UIMessage): ModelMessage {
       case 'subtask-done':
       case 'model-delegation':
       case 'model-action':
+      case 'agent-lifecycle':
       case 'audit-start':
       case 'audit-finding':
       case 'audit-done':

@@ -14,6 +14,8 @@ import type { StreamEvent, StreamEventKind } from '../types/streaming';
 
 export interface PhaseMapperContext {
   activeChatId: string;
+  /** 当前主模型，用于闭合委派关系 */
+  mainModel?: string;
   /** 推送单个流送事件到 store */
   pushStreamEvent: (kind: StreamEventKind, extra?: Partial<StreamEvent>) => void;
   /** 取 workerIdx 对应的 subTaskId */
@@ -69,8 +71,18 @@ function decomposeAndDispatch(subtasks: any[], ctx: PhaseMapperContext, detailSu
 
     // 生成 subTaskId 放入 event, 不再反查 store
     const subId = ctx.newSubTaskId();
-    // 从后端事件读取真实 agentId (后端 phase0_subtask 生成), 回退到占位符
     const agentId: string | undefined = typeof s === 'object' ? s.agentId : undefined;
+    const source = typeof s === 'object' ? s.source : undefined;
+    const fromModel = typeof s === 'object' ? s.fromModel : undefined;
+    ctx.pushStreamEvent('model_delegation', {
+      agentId: agentId ?? `agent-${workerIdx}`,
+      subTaskId: subId,
+      content: modelName,
+      detail: taskDesc,
+      fromModel: fromModel ?? ctx.mainModel ?? '主模型',
+      source,
+      status: 'running',
+    });
     ctx.pushStreamEvent('subtask_created', {
       agentId: agentId ?? `agent-${workerIdx}`,
       content: modelName,

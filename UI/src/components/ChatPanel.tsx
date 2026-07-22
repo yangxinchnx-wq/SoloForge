@@ -14,7 +14,7 @@ import { ToolCallCard } from './ToolCallCard';
 import StreamPanel from './StreamPanel';
 import { StreamContextMenu } from './StreamContextMenu';
 // ★ 2026-07-13: 多轮对话独立气泡 — 每轮 assistant 消息渲染自己的过程 parts
-import { UIMessagePartsRenderer } from './UIMessagePartsRenderer';
+import { ExecutionStream } from './ExecutionStream';
 // ★ 2026-07-19: assistant 消息气泡可拖拽调整高度
 import { useUIMessages } from '../services/uiMessageStore';
 import type { ChatPanelProps, ChatSettingsItem } from '../types/chat';
@@ -757,7 +757,7 @@ const ChatPanel = React.memo(function ChatPanel({
                     两者不共存, 避免过程重复. */}
                 {!isUser && uiMessageId && !isLastAssistant && (
                   <div className="w-full pl-[5px] pr-[5px]">
-                    <UIMessagePartsRenderer chatId={activeChatId} messageId={uiMessageId} />
+                    <ExecutionStream chatId={activeChatId} messageId={uiMessageId} />
                   </div>
                 )}
                 {!isUser && isLastAssistant && (!isEmptyGenerating || hasStreamData) && (

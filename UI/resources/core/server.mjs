@@ -2119,7 +2119,9 @@ var init_shadow_governor_client = __esm({
       fallbackEnabled: true,
       maxLineBytes: 8192,
       maxLinesPerTick: 50,
-      bufferPoolSize: 65536
+      bufferPoolSize: 65536,
+      maxPendingRequests: 500
+      // 突发流控: 超过 500 个 pending 请求时降级 fallback, 防止 Map 无限增长
     };
     ShadowGovernorClient = class {
       socket = null;
@@ -2138,7 +2140,7 @@ var init_shadow_governor_client = __esm({
       bufferPool;
       bufferOffset = 0;
       isDiscardMode = false;
-      stats = { requestsSent: 0, predictionsReceived: 0, errors: 0, reconnects: 0, bufferOverflows: 0 };
+      stats = { requestsSent: 0, predictionsReceived: 0, errors: 0, reconnects: 0, bufferOverflows: 0, pendingOverflows: 0 };
       kernelRef;
       constructor(kernel2, config) {
         if (!kernel2 || !kernel2.configCenter) {
@@ -2159,7 +2161,8 @@ var init_shadow_governor_client = __esm({
           fallbackEnabled: config?.fallbackEnabled ?? cc.get("governor.ppo.fallback_enabled", true),
           maxLineBytes: config?.maxLineBytes || cc.get("governor.ppo.max_line_bytes", 8192),
           maxLinesPerTick: config?.maxLinesPerTick || cc.get("governor.ppo.max_lines_per_tick", 50),
-          bufferPoolSize: config?.bufferPoolSize || cc.get("governor.ppo.buffer_pool_size", 65536)
+          bufferPoolSize: config?.bufferPoolSize || cc.get("governor.ppo.buffer_pool_size", 65536),
+          maxPendingRequests: config?.maxPendingRequests || cc.get("governor.ppo.max_pending_requests", 500)
         };
         this.maxReconnectAttempts = cc.get("governor.reconnect.max_attempts", 3);
         this.actionLabels = cc.get("governor.action.labels", ["no_op", "spawn_agent", "pause_background", "switch_small_model", "reduce_context", "enable_gc"]);
@@ -2321,6 +2324,12 @@ var init_shadow_governor_client = __esm({
         return new Promise((resolve2, reject) => {
           if (!this.socket || !this.connected || !this.isWritable) {
             resolve2({ id: id2, action: 0, action_name: this.actionLabels[0], prob: 1 });
+            return;
+          }
+          if (this.pendingRequests.size >= this.config.maxPendingRequests) {
+            this.stats.pendingOverflows++;
+            this.pushMetricsToMonitorBus("governor.pending.overflow", 1);
+            resolve2({ id: id2, action: 0, action_name: this.actionLabels[0], prob: 0 });
             return;
           }
           const timer = setTimeout(() => {
@@ -13195,6 +13204,9 @@ function getCompensationClient() {
       maxRetriesPerRequest: null
       // 补偿队列可以无限重试
     });
+    compensationClient.on("error", (err) => {
+      console.error("[Garnet] Compensation client error:", err.message);
+    });
   }
   return compensationClient;
 }
@@ -13273,6 +13285,46 @@ var init_client = __esm({
 // ../src/core/events/court-events.ts
 var init_court_events = __esm({
   "../src/core/events/court-events.ts"() {
+  }
+});
+
+// ../src/llm/llmConfig.ts
+function loadFromEnv() {
+  const env = process.env ?? {};
+  return {
+    provider: env.SOLOFORGE_LLM_PROVIDER ?? "openai",
+    baseUrl: env.SOLOFORGE_LLM_BASE_URL ?? DEFAULT_BASE_URL,
+    apiKey: env.SOLOFORGE_LLM_API_KEY ?? "",
+    defaultModel: env.SOLOFORGE_LLM_MODEL ?? DEFAULT_MODEL,
+    timeoutMs: parseInt(env.SOLOFORGE_LLM_TIMEOUT_MS ?? String(DEFAULT_TIMEOUT_MS), 10),
+    apiToken: env.SOLOFORGE_LLM_API_TOKEN ?? ""
+  };
+}
+function getLLMProxyConfig() {
+  if (!cached) cached = loadFromEnv();
+  return cached;
+}
+function isLLMProxyReady() {
+  const c = getLLMProxyConfig();
+  return Boolean(c.apiKey && c.baseUrl && c.defaultModel);
+}
+function describeLLMProxyConfig() {
+  const c = getLLMProxyConfig();
+  return {
+    provider: c.provider,
+    baseUrl: c.baseUrl,
+    defaultModel: c.defaultModel,
+    ready: isLLMProxyReady(),
+    tokenRequired: c.apiToken.length > 0
+  };
+}
+var DEFAULT_BASE_URL, DEFAULT_MODEL, DEFAULT_TIMEOUT_MS, cached;
+var init_llmConfig = __esm({
+  "../src/llm/llmConfig.ts"() {
+    DEFAULT_BASE_URL = "https://api.openai.com/v1";
+    DEFAULT_MODEL = "gpt-4o-mini";
+    DEFAULT_TIMEOUT_MS = 6e4;
+    cached = null;
   }
 });
 
@@ -13467,9 +13519,9 @@ var init_modelCapabilities = __esm({
       // ── 智谱 GLM ──
       "glm-4": { supportsTools: true, supportsVision: true, supportsJson: true, supportsStreaming: true, contextWindow: 128e3, maxOutput: 4096, source: "builtin", updatedAt: 0 },
       "glm-4-flash": { supportsTools: true, supportsVision: false, supportsJson: true, supportsStreaming: true, contextWindow: 128e3, maxOutput: 4096, source: "builtin", updatedAt: 0 },
-      // ── 小米 MiMo (不支持 function calling) ──
-      "mimo-v2.5": { supportsTools: false, supportsVision: false, supportsJson: true, supportsStreaming: true, contextWindow: 128e3, maxOutput: 8192, source: "builtin", updatedAt: 0 },
-      "mimo-v2.5-pro": { supportsTools: false, supportsVision: false, supportsJson: true, supportsStreaming: true, contextWindow: 128e3, maxOutput: 8192, source: "builtin", updatedAt: 0 },
+      // ── 小米 MiMo (2026-07-16 实测：支持 function calling + reasoning_content) ──
+      "mimo-v2.5": { supportsTools: true, supportsVision: false, supportsJson: true, supportsStreaming: true, contextWindow: 32768, maxOutput: 4096, source: "builtin", updatedAt: 0 },
+      "mimo-v2.5-pro": { supportsTools: true, supportsVision: false, supportsJson: true, supportsStreaming: true, contextWindow: 32768, maxOutput: 4096, source: "builtin", updatedAt: 0 },
       // ── Moonshot Kimi ──
       "moonshot-v1-8k": { supportsTools: true, supportsVision: false, supportsJson: true, supportsStreaming: true, contextWindow: 8192, maxOutput: 4096, source: "builtin", updatedAt: 0 },
       "moonshot-v1-32k": { supportsTools: true, supportsVision: false, supportsJson: true, supportsStreaming: true, contextWindow: 32768, maxOutput: 4096, source: "builtin", updatedAt: 0 },
@@ -13491,7 +13543,7 @@ var init_modelCapabilities = __esm({
       { prefix: "deepseek-r1", capability: { supportsTools: false, supportsVision: false } },
       { prefix: "qwen", capability: { supportsTools: true, supportsVision: false } },
       { prefix: "glm-4", capability: { supportsTools: true, supportsVision: true } },
-      { prefix: "mimo", capability: { supportsTools: false, supportsVision: false } },
+      { prefix: "mimo", capability: { supportsTools: true, supportsVision: false } },
       { prefix: "moonshot", capability: { supportsTools: true, supportsVision: false } },
       { prefix: "doubao", capability: { supportsTools: true, supportsVision: false } },
       { prefix: "yi-", capability: { supportsTools: true, supportsVision: false } },
@@ -13507,6 +13559,1743 @@ var init_modelCapabilities = __esm({
     manualOverrides = /* @__PURE__ */ new Map();
     CAPABILITIES_FILE = join(process.cwd(), "data", "model-capabilities.json");
     loadFromFile();
+  }
+});
+
+// ../src/core/agent/tools/tool-definitions.ts
+import fs from "fs/promises";
+import path from "path";
+import { spawn } from "child_process";
+function getToolsForActiveIds(activeToolIds) {
+  if (!activeToolIds || activeToolIds.length === 0) {
+    return AGENT_TOOLS;
+  }
+  const activeSet = new Set(activeToolIds);
+  const result = [];
+  for (const tool of AGENT_TOOLS) {
+    if (CORE_TOOL_NAMES.has(tool.function.name) || tool.function.name.startsWith("solo_canvas_")) {
+      result.push(tool);
+    }
+  }
+  for (const tool of EXTENDED_TOOL_SCHEMAS) {
+    if (activeSet.has(tool.function.name)) {
+      result.push(tool);
+    }
+  }
+  return result;
+}
+function applyToolResultBudget(toolName, output, extraInfo) {
+  const budget = TOOL_RESULT_BUDGET[toolName] ?? DEFAULT_TOOL_RESULT_BUDGET;
+  if (output.length <= budget) return output;
+  if (toolName === "read_file") {
+    const truncated2 = output.slice(0, budget);
+    const totalChars = output.length;
+    const totalLines = output.split("\n").length;
+    const shownLines = truncated2.split("\n").length;
+    return truncated2 + `
+
+... [TRUNCATED by Agent Loop Budget] showing first ${shownLines} of ~${totalLines} lines (${totalChars} chars total). Use offset=${shownLines + 1} and limit=100 to read the next section.`;
+  }
+  if (toolName === "execute_cmd") {
+    const tail = output.slice(-budget);
+    return `... [TRUNCATED: first ${output.length - budget} chars omitted, showing last ${budget}] ...
+` + tail;
+  }
+  const truncated = output.slice(0, budget);
+  return truncated + `
+
+... [TRUNCATED by Agent Loop Budget] ${output.length} chars total, showing first ${budget}.`;
+}
+function resolvePath(filePath) {
+  if (path.isAbsolute(filePath)) return filePath;
+  return path.resolve(PROJECT_ROOT, filePath);
+}
+function isPathWithinWorkspace(targetPath, workspaceFolder) {
+  if (!workspaceFolder) return true;
+  const resolved = path.isAbsolute(targetPath) ? targetPath : path.resolve(workspaceFolder, targetPath);
+  const normalizedTarget = path.normalize(resolved);
+  const normalizedWs = path.normalize(workspaceFolder);
+  return normalizedTarget === normalizedWs || normalizedTarget.startsWith(normalizedWs + path.sep);
+}
+function checkWorkspaceBoundary(targetPath, workspaceFolder) {
+  if (!workspaceFolder) return null;
+  if (isPathWithinWorkspace(targetPath, workspaceFolder)) return null;
+  return `\u8DEF\u5F84 "${targetPath}" \u4E0D\u5728\u5DE5\u4F5C\u533A\u6587\u4EF6\u5939 "${workspaceFolder}" \u8303\u56F4\u5185\u3002\u5F53\u524D\u5BF9\u8BDD\u5DF2\u7ED1\u5B9A\u5DE5\u4F5C\u533A, \u6587\u4EF6\u64CD\u4F5C\u4EC5\u9650\u4E8E\u6B64\u6587\u4EF6\u5939\u5185\u3002\u5982\u9700\u64CD\u4F5C\u5916\u90E8\u6587\u4EF6, \u8BF7\u5728\u5BF9\u8BDD\u4E2D\u544A\u77E5\u7528\u6237\u5E76\u8BF7\u6C42\u6388\u6743\u3002`;
+}
+async function invokeCanvasToolViaUI(toolName, args) {
+  const requesterChatSessionId = args.requesterChatSessionId;
+  if (!requesterChatSessionId) {
+    return `Error: ${toolName} requires 'requesterChatSessionId' arg`;
+  }
+  const headers = {
+    "Content-Type": "application/json",
+    "X-Requester-Chat-Session-Id": requesterChatSessionId
+  };
+  try {
+    const res = await fetch(`${UI_BASE_URL}/api/canvas/tools/invoke`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ name: toolName, arguments: args })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success !== true) {
+      return `Error: ${data.error || `HTTP ${res.status}`}`;
+    }
+    if (data.payload === void 0 || data.payload === null) {
+      return "OK";
+    }
+    return typeof data.payload === "string" ? data.payload : JSON.stringify(data.payload, null, 2);
+  } catch (err) {
+    return `Error: failed to call UI canvas endpoint (${UI_BASE_URL}): ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+async function invokeExtendedToolViaUI(toolName, args) {
+  try {
+    const res = await fetch(`${UI_BASE_URL}/api/tools/invoke`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: toolName, arguments: args })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success !== true) {
+      return `Error: ${data.error || `HTTP ${res.status}`}`;
+    }
+    return data.output ?? "OK";
+  } catch (err) {
+    return `Error: failed to call UI tool endpoint (${UI_BASE_URL}) for ${toolName}: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+async function executeToolCall(request3) {
+  const start = Date.now();
+  try {
+    let output;
+    switch (request3.name) {
+      case "read_file": {
+        const filePath = resolvePath(request3.arguments.file_path);
+        const boundaryErr = checkWorkspaceBoundary(filePath, request3.workspaceFolder);
+        if (boundaryErr) {
+          output = boundaryErr;
+          break;
+        }
+        const content = await fs.readFile(filePath, "utf-8");
+        const lines = content.split("\n");
+        const offset = (request3.arguments.offset ?? 1) - 1;
+        const limit = request3.arguments.limit ?? lines.length;
+        const slice = lines.slice(offset, offset + limit);
+        output = slice.join("\n");
+        output = applyToolResultBudget("read_file", output);
+        break;
+      }
+      case "write_file": {
+        const filePath = resolvePath(request3.arguments.file_path);
+        const boundaryErr = checkWorkspaceBoundary(filePath, request3.workspaceFolder);
+        if (boundaryErr) {
+          output = boundaryErr;
+          break;
+        }
+        await fs.mkdir(path.dirname(filePath), { recursive: true });
+        await fs.writeFile(filePath, request3.arguments.content, "utf-8");
+        output = `Successfully wrote ${request3.arguments.content.length} chars to ${request3.arguments.file_path}`;
+        break;
+      }
+      case "execute_cmd": {
+        const cwd = request3.arguments.cwd ? resolvePath(request3.arguments.cwd) : request3.workspaceFolder || PROJECT_ROOT;
+        const boundaryErr = checkWorkspaceBoundary(cwd, request3.workspaceFolder);
+        if (boundaryErr) {
+          output = boundaryErr;
+          break;
+        }
+        const command = String(request3.arguments.command || "");
+        const hook = request3.streamHook;
+        const toolStart = Date.now();
+        const isWin = process.platform === "win32";
+        const child = isWin ? spawn("cmd.exe", ["/c", command], { cwd, windowsHide: true }) : spawn("sh", ["-c", command], { cwd });
+        let stdoutBuf = "";
+        let stderrBuf = "";
+        const pushStdout = (chunk) => {
+          stdoutBuf += chunk;
+          if (hook) {
+            try {
+              hook.emit("tool_stdout", {
+                chatId: hook.chatId,
+                subTaskId: hook.subTaskId,
+                toolCallId: request3.id,
+                tool: "execute_cmd",
+                chunk,
+                ts: Date.now()
+              });
+            } catch {
+            }
+          }
+        };
+        const pushStderr = (chunk) => {
+          stderrBuf += chunk;
+          if (hook) {
+            try {
+              hook.emit("tool_stderr", {
+                chatId: hook.chatId,
+                subTaskId: hook.subTaskId,
+                toolCallId: request3.id,
+                tool: "execute_cmd",
+                chunk,
+                ts: Date.now()
+              });
+            } catch {
+            }
+          }
+        };
+        child.stdout?.on("data", (data) => pushStdout(data.toString("utf-8")));
+        child.stderr?.on("data", (data) => pushStderr(data.toString("utf-8")));
+        const exitCode = await new Promise((resolve2) => {
+          child.on("close", (code) => resolve2(code ?? 0));
+          child.on("error", (err) => {
+            pushStderr(`
+[spawn error] ${err.message}
+`);
+            resolve2(1);
+          });
+          setTimeout(() => {
+            try {
+              child.kill("SIGTERM");
+            } catch {
+            }
+            resolve2(124);
+          }, 3e4);
+        });
+        const durationMs = Date.now() - toolStart;
+        if (hook) {
+          try {
+            hook.emit("tool_exit", {
+              chatId: hook.chatId,
+              subTaskId: hook.subTaskId,
+              toolCallId: request3.id,
+              tool: "execute_cmd",
+              exitCode,
+              durationMs,
+              ts: Date.now()
+            });
+          } catch {
+          }
+        }
+        output = (stdoutBuf + (stderrBuf ? `
+[stderr]
+${stderrBuf}` : "")).trim();
+        output = applyToolResultBudget("execute_cmd", output);
+        if (exitCode !== 0) {
+          return {
+            tool_call_id: request3.id,
+            name: "execute_cmd",
+            output: output + `
+[exit ${exitCode}]`,
+            isError: true,
+            durationMs
+          };
+        }
+        break;
+      }
+      case "search_code": {
+        const regex = new RegExp(request3.arguments.pattern, "i");
+        const matches = [];
+        const maxResults = 30;
+        async function searchDir(dir, depth) {
+          if (depth > 5 || matches.length >= maxResults) return;
+          let entries;
+          try {
+            entries = await fs.readdir(dir, { withFileTypes: true });
+          } catch {
+            return;
+          }
+          for (const entry of entries) {
+            if (matches.length >= maxResults) break;
+            if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.name === "dist") continue;
+            const fullPath = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+              await searchDir(fullPath, depth + 1);
+            } else if (entry.isFile()) {
+              if (request3.arguments.glob) {
+                const ext = request3.arguments.glob.replace("*", "");
+                if (!entry.name.endsWith(ext)) continue;
+              }
+              try {
+                const content = await fs.readFile(fullPath, "utf-8");
+                const lines = content.split("\n");
+                for (let i = 0; i < lines.length && matches.length < maxResults; i++) {
+                  if (regex.test(lines[i])) {
+                    const rel = path.relative(PROJECT_ROOT, fullPath);
+                    matches.push(`${rel}:${i + 1}: ${lines[i].trim()}`);
+                  }
+                }
+              } catch {
+              }
+            }
+          }
+        }
+        await searchDir(PROJECT_ROOT, 0);
+        output = matches.length > 0 ? matches.join("\n") : "No matches found.";
+        output = applyToolResultBudget("search_code", output);
+        break;
+      }
+      case "list_files": {
+        const dirPath = request3.arguments.dir_path ? resolvePath(request3.arguments.dir_path) : request3.workspaceFolder || PROJECT_ROOT;
+        const boundaryErr = checkWorkspaceBoundary(dirPath, request3.workspaceFolder);
+        if (boundaryErr) {
+          output = boundaryErr;
+          break;
+        }
+        const pattern = request3.arguments.pattern ?? "*";
+        const entries = await fs.readdir(dirPath, { withFileTypes: true });
+        output = entries.slice(0, 100).map((e) => `${e.isDirectory() ? "\u{1F4C1}" : "\u{1F4C4}"} ${e.name}`).join("\n");
+        break;
+      }
+      // ─── canvas_push_ui: 直接推送 UI AST 到 Flutter 画布 ──
+      // 断路修复: 让 Agent 能通过 tool_call 直接推送 Universal AST,
+      // 无需依赖前端 tryLocalTranslateAndPush 从文本提取代码块。
+      // 链路: executeToolCall → POST /api/canvas/relay/push-ui → Flutter /render
+      case "canvas_push_ui": {
+        const sessionId = String(request3.arguments.sessionId || "");
+        const dsl = request3.arguments.dsl;
+        const language = String(request3.arguments.language || "typescript");
+        if (!sessionId) {
+          output = 'Error: canvas_push_ui requires "sessionId" argument';
+          break;
+        }
+        if (!dsl || typeof dsl !== "object") {
+          output = 'Error: canvas_push_ui requires "dsl" argument (Universal AST object)';
+          break;
+        }
+        try {
+          const relayUrl = `${UI_BASE_URL}/api/canvas/relay/push-ui`;
+          const relayRes = await fetch(relayUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sessionId, dsl, language })
+          });
+          const relayData = await relayRes.json().catch(() => ({}));
+          if (!relayRes.ok || relayData.success !== true) {
+            output = `Error: canvas relay push-ui failed: ${relayData.error || `HTTP ${relayRes.status}`}`;
+          } else {
+            output = `Successfully pushed UI to canvas (sessionId=${sessionId}, port=${relayData.port}, dslBytes=${relayData.dslBytes}). The UI has been rendered on the Flutter canvas.`;
+          }
+        } catch (err) {
+          output = `Error: failed to reach canvas relay (${UI_BASE_URL}): ${err instanceof Error ? err.message : String(err)}`;
+        }
+        break;
+      }
+      // ─── 画布工具（solo_canvas_*）──
+      // 转发到 UI 进程 UI/src/server/routes/canvasTools.ts 的 HTTP 端点
+      // UI_BASE_URL 默认 http://localhost:3000（Vite dev server），
+      // Electron 生产环境由主进程注入（见 electron/main.cjs）
+      default:
+        if (request3.name.startsWith("solo_canvas_")) {
+          output = await invokeCanvasToolViaUI(request3.name, request3.arguments);
+          break;
+        }
+        if (request3.name.startsWith("browser_") || request3.name.startsWith("bu_") || request3.name.startsWith("win_")) {
+          output = await invokeExtendedToolViaUI(request3.name, request3.arguments);
+          break;
+        }
+        output = `Unknown tool: ${request3.name}`;
+    }
+    output = applyToolResultBudget(request3.name, output);
+    return {
+      tool_call_id: request3.id,
+      name: request3.name,
+      output,
+      isError: false,
+      durationMs: Date.now() - start
+    };
+  } catch (err) {
+    return {
+      tool_call_id: request3.id,
+      name: request3.name,
+      output: `Error: ${err instanceof Error ? err.message : String(err)}`,
+      isError: true,
+      durationMs: Date.now() - start
+    };
+  }
+}
+var AGENT_TOOLS, CORE_TOOL_NAMES, EXTENDED_TOOL_SCHEMAS, TOOL_RESULT_BUDGET, DEFAULT_TOOL_RESULT_BUDGET, PROJECT_ROOT, UI_BASE_URL;
+var init_tool_definitions = __esm({
+  "../src/core/agent/tools/tool-definitions.ts"() {
+    AGENT_TOOLS = [
+      {
+        type: "function",
+        function: {
+          name: "read_file",
+          description: "\u8BFB\u53D6\u9879\u76EE\u4E2D\u7684\u6587\u4EF6\u5185\u5BB9\u3002\u8FD4\u56DE\u6587\u4EF6\u7684\u5B8C\u6574\u6587\u672C\u3002\u7528\u4E8E\u7406\u89E3\u73B0\u6709\u4EE3\u7801\u3001\u67E5\u770B\u914D\u7F6E\u6587\u4EF6\u7B49\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              file_path: {
+                type: "string",
+                description: "\u6587\u4EF6\u7684\u7EDD\u5BF9\u8DEF\u5F84\u6216\u76F8\u5BF9\u4E8E\u9879\u76EE\u6839\u76EE\u5F55\u7684\u76F8\u5BF9\u8DEF\u5F84"
+              },
+              offset: {
+                type: "number",
+                description: "\u4ECE\u7B2C\u51E0\u884C\u5F00\u59CB\u8BFB\u53D6\uFF08\u53EF\u9009\uFF0C\u9ED8\u8BA4\u4ECE\u7B2C 1 \u884C\uFF09"
+              },
+              limit: {
+                type: "number",
+                description: "\u6700\u591A\u8BFB\u53D6\u591A\u5C11\u884C\uFF08\u53EF\u9009\uFF0C\u9ED8\u8BA4\u8BFB\u53D6\u5168\u90E8\uFF09"
+              }
+            },
+            required: ["file_path"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "write_file",
+          description: "\u5C06\u5185\u5BB9\u5199\u5165\u9879\u76EE\u6587\u4EF6\u3002\u5982\u679C\u6587\u4EF6\u4E0D\u5B58\u5728\u4F1A\u81EA\u52A8\u521B\u5EFA\uFF08\u5305\u62EC\u7236\u76EE\u5F55\uFF09\u3002\u7528\u4E8E\u751F\u6210\u4EE3\u7801\u3001\u914D\u7F6E\u6587\u4EF6\u7B49\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              file_path: {
+                type: "string",
+                description: "\u6587\u4EF6\u7684\u7EDD\u5BF9\u8DEF\u5F84\u6216\u76F8\u5BF9\u4E8E\u9879\u76EE\u6839\u76EE\u5F55\u7684\u76F8\u5BF9\u8DEF\u5F84"
+              },
+              content: {
+                type: "string",
+                description: "\u8981\u5199\u5165\u7684\u6587\u4EF6\u5185\u5BB9"
+              }
+            },
+            required: ["file_path", "content"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "execute_cmd",
+          description: "\u5728\u9879\u76EE\u6839\u76EE\u5F55\u4E0B\u6267\u884C\u7EC8\u7AEF\u547D\u4EE4\u3002\u7528\u4E8E\u8FD0\u884C\u6784\u5EFA\u3001\u6D4B\u8BD5\u3001\u5B89\u88C5\u4F9D\u8D56\u7B49\u3002\u8D85\u65F6 30 \u79D2\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              command: {
+                type: "string",
+                description: "\u8981\u6267\u884C\u7684\u547D\u4EE4\uFF08\u5982 npm test, tsc --noEmit\uFF09"
+              },
+              cwd: {
+                type: "string",
+                description: "\u5DE5\u4F5C\u76EE\u5F55\uFF08\u53EF\u9009\uFF0C\u9ED8\u8BA4\u9879\u76EE\u6839\u76EE\u5F55\uFF09"
+              }
+            },
+            required: ["command"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "search_code",
+          description: "\u5728\u9879\u76EE\u4E2D\u641C\u7D22\u4EE3\u7801\u5185\u5BB9\uFF08\u57FA\u4E8E\u6B63\u5219\u8868\u8FBE\u5F0F\uFF09\u3002\u8FD4\u56DE\u5339\u914D\u7684\u6587\u4EF6\u8DEF\u5F84\u548C\u884C\u53F7\u3002\u7528\u4E8E\u67E5\u627E\u51FD\u6570\u5B9A\u4E49\u3001\u5F15\u7528\u3001\u914D\u7F6E\u9879\u7B49\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              pattern: {
+                type: "string",
+                description: "\u6B63\u5219\u8868\u8FBE\u5F0F\u641C\u7D22\u6A21\u5F0F"
+              },
+              glob: {
+                type: "string",
+                description: "\u6587\u4EF6\u8FC7\u6EE4 glob \u6A21\u5F0F\uFF08\u53EF\u9009\uFF0C\u5982 *.ts, *.tsx\uFF09"
+              }
+            },
+            required: ["pattern"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "list_files",
+          description: "\u5217\u51FA\u6307\u5B9A\u76EE\u5F55\u4E0B\u7684\u6587\u4EF6\u548C\u5B50\u76EE\u5F55\u3002\u7528\u4E8E\u4E86\u89E3\u9879\u76EE\u7ED3\u6784\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              dir_path: {
+                type: "string",
+                description: "\u76EE\u5F55\u8DEF\u5F84\uFF08\u53EF\u9009\uFF0C\u9ED8\u8BA4\u9879\u76EE\u6839\u76EE\u5F55\uFF09"
+              },
+              pattern: {
+                type: "string",
+                description: "glob \u5339\u914D\u6A21\u5F0F\uFF08\u53EF\u9009\uFF0C\u5982 **/*.ts\uFF09"
+              }
+            },
+            required: []
+          }
+        }
+      },
+      // ── 画布工具（solo_canvas_*）──
+      // Schema 来自 UI 端 UI/src/server/routes/canvasTools.ts:47-162
+      // 通过 HTTP POST {SOLOFORGE_UI_BASE_URL}/api/canvas/tools/invoke 调用
+      {
+        type: "function",
+        function: {
+          name: "solo_canvas_list",
+          description: "\u5217\u51FA\u6240\u6709\u53EF\u7528\u753B\u5E03\uFF08\u516C\u5F00\u7684 + \u81EA\u5DF1\u521B\u5EFA\u7684\uFF09\u3002\u8FD4\u56DE sessionId\u3001displayName\u3001description\u3001ownerChatSessionId\u3001\u8BBE\u5907\u6570\u91CF\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              requesterChatSessionId: { type: "string", description: "\u5F53\u524D\u5BF9\u8BDD\u7684 chat session ID\uFF08\u7528\u4E8E ACL\uFF09" }
+            },
+            required: ["requesterChatSessionId"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "solo_canvas_get",
+          description: "\u83B7\u53D6\u753B\u5E03\u5B8C\u6574\u72B6\u6001\uFF1A\u9009\u4E2D\u7684\u8BBE\u5907\u3001\u8BBE\u5907\u5217\u8868\u3001\u80CC\u666F\u8272\u3001\u5907\u6CE8\u7B49\u3002canvasId \u53EF\u4E0D\u4F20\u2014\u2014\u7CFB\u7EDF\u4F1A\u81EA\u52A8\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              canvasId: { type: "string", description: "\u753B\u5E03 ID\uFF0C\u5982 canvas_1\uFF08\u53EF\u9009\uFF1B\u4E0D\u4F20\u65F6\u4F7F\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\uFF09" },
+              requesterChatSessionId: { type: "string" }
+            },
+            required: ["requesterChatSessionId"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "solo_canvas_create",
+          description: "\u521B\u5EFA\u4E00\u4E2A\u65B0\u753B\u5E03\u3002\u8FD4\u56DE\u521B\u5EFA\u7684\u753B\u5E03 ID \u548C displayName\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              description: { type: "string", description: "\u753B\u5E03\u5907\u6CE8\uFF08\u53EF\u9009\uFF09" },
+              requesterChatSessionId: { type: "string" }
+            },
+            required: ["requesterChatSessionId"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "solo_canvas_add_device",
+          description: "\u5411\u753B\u5E03\u6DFB\u52A0\u4E00\u4E2A 3D \u8BBE\u5907\uFF08iPhone / iPad / MacBook \u7B49\uFF09\u3002canvasId \u53EF\u4E0D\u4F20\u2014\u2014\u7CFB\u7EDF\u4F1A\u81EA\u52A8\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              canvasId: { type: "string", description: "\u753B\u5E03 ID\uFF08\u53EF\u9009\uFF1B\u4E0D\u4F20\u65F6\u4F7F\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\uFF09" },
+              device: { type: "string", description: "\u8BBE\u5907 JSON \u5BF9\u8C61\uFF08modelKey/xRatio/yRatio \u7B49\uFF09" },
+              requesterChatSessionId: { type: "string" }
+            },
+            required: ["device", "requesterChatSessionId"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "solo_canvas_update_device",
+          description: "\u66F4\u65B0\u753B\u5E03\u4E0A\u7684\u67D0\u4E2A\u8BBE\u5907\uFF08\u4F4D\u7F6E\u3001\u989C\u8272\u3001UI session \u7B49\uFF09\u3002canvasId \u53EF\u4E0D\u4F20\u2014\u2014\u7CFB\u7EDF\u4F1A\u81EA\u52A8\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              canvasId: { type: "string", description: "\u753B\u5E03 ID\uFF08\u53EF\u9009\uFF1B\u4E0D\u4F20\u65F6\u4F7F\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\uFF09" },
+              deviceId: { type: "string" },
+              updates: { type: "string", description: "\u8981\u66F4\u65B0\u7684\u5B57\u6BB5 JSON \u5B57\u7B26\u4E32" },
+              requesterChatSessionId: { type: "string" }
+            },
+            required: ["deviceId", "updates", "requesterChatSessionId"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "solo_canvas_remove_device",
+          description: "\u4ECE\u753B\u5E03\u79FB\u9664\u6307\u5B9A\u8BBE\u5907\u3002canvasId \u53EF\u4E0D\u4F20\u2014\u2014\u7CFB\u7EDF\u4F1A\u81EA\u52A8\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              canvasId: { type: "string", description: "\u753B\u5E03 ID\uFF08\u53EF\u9009\uFF1B\u4E0D\u4F20\u65F6\u4F7F\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\uFF09" },
+              deviceId: { type: "string" },
+              requesterChatSessionId: { type: "string" }
+            },
+            required: ["deviceId", "requesterChatSessionId"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "solo_canvas_rename",
+          description: "\u4FEE\u6539\u753B\u5E03\u7684\u5907\u6CE8 / \u63CF\u8FF0\uFF08\u4EC5 owner \u53EF\u8C03\uFF09\u3002canvasId \u53EF\u4E0D\u4F20\u2014\u2014\u7CFB\u7EDF\u4F1A\u81EA\u52A8\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              canvasId: { type: "string", description: "\u753B\u5E03 ID\uFF08\u53EF\u9009\uFF1B\u4E0D\u4F20\u65F6\u4F7F\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\uFF09" },
+              description: { type: "string" },
+              requesterChatSessionId: { type: "string" }
+            },
+            required: ["description", "requesterChatSessionId"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "solo_canvas_delete",
+          description: "\u5220\u9664\u6574\u4E2A\u753B\u5E03\uFF08\u4EC5 owner \u53EF\u8C03\uFF0C\u614E\u7528\uFF09\u3002canvasId \u53EF\u4E0D\u4F20\u2014\u2014\u7CFB\u7EDF\u4F1A\u81EA\u52A8\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              canvasId: { type: "string", description: "\u753B\u5E03 ID\uFF08\u53EF\u9009\uFF1B\u4E0D\u4F20\u65F6\u4F7F\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\uFF09" },
+              requesterChatSessionId: { type: "string" }
+            },
+            required: ["requesterChatSessionId"]
+          }
+        }
+      },
+      // ── canvas_push_ui: 直接推送 UI AST 到画布 (核心断路修复) ──
+      // 让 LLM/Agent 能通过 tool_call 直接推送 Universal AST 到 Flutter 画布,
+      // 不再依赖前端 tryLocalTranslateAndPush 从文本提取代码块。
+      // 链路: Agent tool_call → executeToolCall → POST /api/canvas/relay/push-ui → Flutter /render
+      {
+        type: "function",
+        function: {
+          name: "canvas_push_ui",
+          description: "Push a Universal AST UI tree directly to the Flutter canvas for immediate rendering. Use this tool when the user asks to draw/render/display UI on the canvas. The dsl is a UniversalNode tree (JSON object with type, children, props). The sessionId identifies which canvas to push to.",
+          parameters: {
+            type: "object",
+            properties: {
+              sessionId: {
+                type: "string",
+                description: "Canvas session ID (the chat session ID). The relay will look up the registered Flutter port for this session."
+              },
+              dsl: {
+                type: "object",
+                description: 'Universal AST node tree. Root node has {type, children, props}. Example: {"type":"column","children":[{"type":"text","props":{"data":"Hello World"}}]}'
+              },
+              language: {
+                type: "string",
+                description: "Source language of the UI code (e.g. html, dart, typescript). Optional, defaults to typescript."
+              }
+            },
+            required: ["sessionId", "dsl"]
+          }
+        }
+      }
+    ];
+    CORE_TOOL_NAMES = /* @__PURE__ */ new Set([
+      "read_file",
+      "write_file",
+      "execute_cmd",
+      "search_code",
+      "list_files",
+      "canvas_push_ui"
+      // 断路修复: 画布推送工具始终可用
+    ]);
+    EXTENDED_TOOL_SCHEMAS = [
+      // ── Obscura 浏览器工具 ──
+      {
+        type: "function",
+        function: {
+          name: "browser_screenshot",
+          description: "\u5BF9\u6307\u5B9A URL \u7684\u7F51\u9875\u8FDB\u884C\u9AD8\u6E05\u622A\u56FE\u3002\u8FD4\u56DE\u622A\u56FE\u4FDD\u5B58\u8DEF\u5F84\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              url: { type: "string", description: "\u8981\u622A\u56FE\u7684\u7F51\u9875 URL" },
+              selector: { type: "string", description: "CSS \u9009\u62E9\u5668, \u4EC5\u622A\u53D6\u5339\u914D\u5143\u7D20 (\u53EF\u9009)" }
+            },
+            required: ["url"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "browser_devtools",
+          description: "\u6253\u5F00 Chrome DevTools \u8C03\u8BD5\u6307\u5B9A\u7F51\u9875\u3002\u8FD4\u56DE\u9875\u9762\u6982\u8981\u4FE1\u606F\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              url: { type: "string", description: "\u8981\u8C03\u8BD5\u7684\u7F51\u9875 URL" }
+            },
+            required: ["url"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "browser_console",
+          description: "\u5B9E\u65F6\u6355\u83B7\u6307\u5B9A\u7F51\u9875\u7684\u6D4F\u89C8\u5668\u63A7\u5236\u53F0\u65E5\u5FD7\u3002\u8FD4\u56DE\u6700\u8FD1\u7684\u65E5\u5FD7\u6761\u76EE\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              url: { type: "string", description: "\u76EE\u6807\u7F51\u9875 URL" },
+              lines: { type: "number", description: "\u8FD4\u56DE\u6700\u8FD1\u591A\u5C11\u6761\u65E5\u5FD7 (\u53EF\u9009, \u9ED8\u8BA4 50)" }
+            },
+            required: ["url"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "browser_network",
+          description: "\u62E6\u622A\u5E76\u5206\u6790\u6307\u5B9A\u7F51\u9875\u7684\u7F51\u7EDC\u8BF7\u6C42\u3002\u8FD4\u56DE\u8BF7\u6C42\u5217\u8868 (URL/\u65B9\u6CD5/\u72B6\u6001\u7801/\u8017\u65F6)\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              url: { type: "string", description: "\u76EE\u6807\u7F51\u9875 URL" },
+              filter: { type: "string", description: "URL \u8FC7\u6EE4\u5173\u952E\u8BCD (\u53EF\u9009)" }
+            },
+            required: ["url"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "browser_dom_inspect",
+          description: "\u68C0\u67E5\u6307\u5B9A\u7F51\u9875\u7684 DOM \u6811\u7ED3\u6784\u3002\u8FD4\u56DE\u7B80\u5316\u7248\u7684 DOM \u6811\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              url: { type: "string", description: "\u76EE\u6807\u7F51\u9875 URL" },
+              selector: { type: "string", description: "CSS \u9009\u62E9\u5668, \u4EC5\u68C0\u67E5\u5339\u914D\u7684\u5143\u7D20 (\u53EF\u9009)" }
+            },
+            required: ["url"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "browser_perf_trace",
+          description: "\u5BF9\u6307\u5B9A\u7F51\u9875\u8FDB\u884C\u6027\u80FD\u8FFD\u8E2A\u5206\u6790\u3002\u8FD4\u56DE\u9875\u9762\u52A0\u8F7D\u4E0E\u6E32\u67D3\u6027\u80FD\u62A5\u544A\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              url: { type: "string", description: "\u76EE\u6807\u7F51\u9875 URL" }
+            },
+            required: ["url"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "browser_cookies",
+          description: "\u8BFB\u53D6\u6216\u5199\u5165\u6307\u5B9A\u57DF\u540D\u7684\u6D4F\u89C8\u5668 Cookie\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              url: { type: "string", description: "\u76EE\u6807\u7F51\u9875 URL" },
+              action: { type: "string", description: "\u64CD\u4F5C\u7C7B\u578B: get (\u8BFB\u53D6) \u6216 set (\u5199\u5165)" },
+              name: { type: "string", description: "Cookie \u540D\u79F0 (set \u65F6\u5FC5\u586B)" },
+              value: { type: "string", description: "Cookie \u503C (set \u65F6\u5FC5\u586B)" }
+            },
+            required: ["url", "action"]
+          }
+        }
+      },
+      // ── Browser-Use 任务编排工具 ──
+      {
+        type: "function",
+        function: {
+          name: "bu_run_task",
+          description: "\u7528\u81EA\u7136\u8BED\u8A00\u63CF\u8FF0\u4E00\u4E2A\u6D4F\u89C8\u5668\u4EFB\u52A1, LLM \u81EA\u52A8\u89C4\u5212\u5E76\u6267\u884C\u6B65\u9AA4\u3002\u8FD4\u56DE\u4EFB\u52A1 ID \u548C\u6267\u884C\u7ED3\u679C\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              task: { type: "string", description: '\u81EA\u7136\u8BED\u8A00\u4EFB\u52A1\u63CF\u8FF0 (\u5982 "\u6253\u5F00 GitHub \u5E76\u641C\u7D22 SoloForge")' },
+              url: { type: "string", description: "\u8D77\u59CB\u9875\u9762 URL (\u53EF\u9009)" }
+            },
+            required: ["task"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "bu_pause",
+          description: "\u6682\u505C\u6B63\u5728\u6267\u884C\u7684\u6D4F\u89C8\u5668\u4EFB\u52A1\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              task_id: { type: "string", description: "\u4EFB\u52A1 ID" }
+            },
+            required: ["task_id"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "bu_resume",
+          description: "\u6062\u590D\u5DF2\u6682\u505C\u7684\u6D4F\u89C8\u5668\u4EFB\u52A1\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              task_id: { type: "string", description: "\u4EFB\u52A1 ID" }
+            },
+            required: ["task_id"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "bu_state",
+          description: "\u67E5\u8BE2\u6D4F\u89C8\u5668\u4EFB\u52A1\u7684\u6267\u884C\u72B6\u6001\u4E0E\u8FDB\u5EA6\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              task_id: { type: "string", description: "\u4EFB\u52A1 ID" }
+            },
+            required: ["task_id"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "bu_screenshot",
+          description: "\u5BF9\u6D4F\u89C8\u5668\u4EFB\u52A1\u5F53\u524D\u9875\u9762\u8FDB\u884C\u622A\u56FE\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              task_id: { type: "string", description: "\u4EFB\u52A1 ID" }
+            },
+            required: ["task_id"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "bu_history",
+          description: "\u67E5\u770B\u6D4F\u89C8\u5668\u4EFB\u52A1\u7684 ReAct \u63A8\u7406\u5386\u53F2\u4E0E\u6267\u884C\u8F68\u8FF9\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              task_id: { type: "string", description: "\u4EFB\u52A1 ID" }
+            },
+            required: ["task_id"]
+          }
+        }
+      },
+      // ── Windows-MCP 系统自动化工具 ──
+      {
+        type: "function",
+        function: {
+          name: "win_reg_read",
+          description: "\u8BFB\u53D6 Windows \u6CE8\u518C\u8868\u952E\u503C\u3002\u8FD4\u56DE\u952E\u503C\u6570\u636E\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              path: { type: "string", description: "\u6CE8\u518C\u8868\u8DEF\u5F84 (\u5982 HKLM\\Software\\Microsoft\\Windows\\CurrentVersion)" },
+              name: { type: "string", description: "\u952E\u503C\u540D\u79F0 (\u53EF\u9009, \u4E0D\u4F20\u5219\u8FD4\u56DE\u6240\u6709\u5B50\u952E)" }
+            },
+            required: ["path"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "win_service_ctrl",
+          description: "\u7BA1\u7406 Windows \u7CFB\u7EDF\u670D\u52A1 (\u542F\u52A8/\u505C\u6B62/\u67E5\u8BE2\u72B6\u6001)\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              action: { type: "string", description: "\u64CD\u4F5C: start / stop / status / list" },
+              name: { type: "string", description: "\u670D\u52A1\u540D\u79F0 (list \u64CD\u4F5C\u53EF\u4E0D\u4F20)" }
+            },
+            required: ["action"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "win_task_scheduler",
+          description: "\u521B\u5EFA\u6216\u7BA1\u7406 Windows \u7CFB\u7EDF\u5B9A\u65F6\u4EFB\u52A1\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              action: { type: "string", description: "\u64CD\u4F5C: create / delete / list / run" },
+              name: { type: "string", description: "\u4EFB\u52A1\u540D\u79F0" },
+              command: { type: "string", description: "\u8981\u6267\u884C\u7684\u547D\u4EE4 (create \u65F6\u5FC5\u586B)" },
+              trigger: { type: "string", description: "\u89E6\u53D1\u6761\u4EF6 (\u5982 daily, onstart)" }
+            },
+            required: ["action"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "win_event_log",
+          description: "\u8BFB\u53D6 Windows \u4E8B\u4EF6\u65E5\u5FD7\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              source: { type: "string", description: "\u65E5\u5FD7\u6E90 (\u5982 Application, System, Security)" },
+              count: { type: "number", description: "\u8FD4\u56DE\u6700\u8FD1\u591A\u5C11\u6761 (\u53EF\u9009, \u9ED8\u8BA4 20)" }
+            },
+            required: ["source"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "win_powershell",
+          description: "\u6267\u884C PowerShell \u811A\u672C\u547D\u4EE4\u3002\u6BD4 execute_cmd \u66F4\u9002\u5408 Windows \u7CFB\u7EDF\u7BA1\u7406\u64CD\u4F5C\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              script: { type: "string", description: "PowerShell \u811A\u672C\u5185\u5BB9" }
+            },
+            required: ["script"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "win_firewall",
+          description: "\u67E5\u770B\u6216\u4FEE\u6539 Windows \u9632\u706B\u5899\u89C4\u5219\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              action: { type: "string", description: "\u64CD\u4F5C: list / add / delete / enable / disable" },
+              name: { type: "string", description: "\u89C4\u5219\u540D\u79F0 (list \u64CD\u4F5C\u53EF\u4E0D\u4F20)" }
+            },
+            required: ["action"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "win_perfmon",
+          description: "\u83B7\u53D6 Windows \u6027\u80FD\u76D1\u89C6\u5668\u6570\u636E (CPU\u3001\u5185\u5B58\u3001\u78C1\u76D8\u5B9E\u65F6\u76D1\u63A7)\u3002",
+          parameters: {
+            type: "object",
+            properties: {
+              counter: { type: "string", description: "\u6027\u80FD\u8BA1\u6570\u5668\u8DEF\u5F84 (\u53EF\u9009, \u4E0D\u4F20\u5219\u8FD4\u56DE\u5E38\u7528\u6307\u6807)" }
+            },
+            required: []
+          }
+        }
+      }
+    ];
+    TOOL_RESULT_BUDGET = {
+      read_file: 4e3,
+      execute_cmd: 3e3,
+      search_code: 2e3,
+      list_files: 3e3
+    };
+    DEFAULT_TOOL_RESULT_BUDGET = 4e3;
+    PROJECT_ROOT = path.resolve(
+      typeof __dirname !== "undefined" ? __dirname : path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/i, "$1")),
+      "../../../../"
+    );
+    UI_BASE_URL = process.env.SOLOFORGE_UI_BASE_URL || "http://localhost:3000";
+  }
+});
+
+// ../src/core/agent/tools/session-tool-cache.ts
+import { createHash } from "crypto";
+function isCacheableToolResult(toolName, output) {
+  if (output.startsWith("Error:") || output.startsWith("Tool error:")) {
+    return false;
+  }
+  const nonCacheableTools = /* @__PURE__ */ new Set([
+    "execute_cmd",
+    // 命令执行有副作用
+    "browser_screenshot",
+    // 截图随时间变化
+    "bu_screenshot",
+    // 同上
+    "bu_state",
+    // 状态随时变化
+    "win_perfmon",
+    // 性能计数器实时变化
+    "win_event_log",
+    // 事件日志实时增长
+    "browser_network",
+    // 网络请求实时变化
+    "browser_console"
+    // 控制台日志实时变化
+  ]);
+  return !nonCacheableTools.has(toolName);
+}
+var DEFAULT_TTL_MS, MAX_ENTRIES, CLEANUP_INTERVAL_MS, SessionToolCache, sessionToolCache;
+var init_session_tool_cache = __esm({
+  "../src/core/agent/tools/session-tool-cache.ts"() {
+    init_logger();
+    DEFAULT_TTL_MS = 10 * 60 * 1e3;
+    MAX_ENTRIES = 500;
+    CLEANUP_INTERVAL_MS = 5 * 60 * 1e3;
+    SessionToolCache = class {
+      cache = /* @__PURE__ */ new Map();
+      cleanupTimer = null;
+      hitCount = 0;
+      missCount = 0;
+      constructor() {
+        this.cleanupTimer = setInterval(() => this.cleanupExpired(), CLEANUP_INTERVAL_MS);
+        if (this.cleanupTimer.unref) {
+          this.cleanupTimer.unref();
+        }
+      }
+      /**
+       * 生成缓存 key
+       * @param chatId 会话 ID
+       * @param toolName 工具名
+       * @param args 工具参数
+       */
+      buildKey(chatId, toolName, args) {
+        const argsJson = JSON.stringify(args);
+        const argsHash = createHash("sha256").update(argsJson).digest("hex").slice(0, 16);
+        return createHash("sha256").update(`${chatId}:${toolName}:${argsHash}`).digest("hex").slice(0, 32);
+      }
+      /**
+       * 查询缓存
+       * @param chatId 会话 ID
+       * @param toolName 工具名
+       * @param args 工具参数
+       * @returns 命中时返回输出, 未命中返回 null
+       */
+      lookup(chatId, toolName, args) {
+        const key = this.buildKey(chatId, toolName, args);
+        const entry = this.cache.get(key);
+        if (!entry) {
+          this.missCount++;
+          return null;
+        }
+        if (Date.now() - entry.timestamp > entry.ttl) {
+          this.cache.delete(key);
+          this.missCount++;
+          return null;
+        }
+        entry.hitCount++;
+        this.hitCount++;
+        return entry.output;
+      }
+      /**
+       * 存储工具结果
+       * @param chatId 会话 ID
+       * @param toolName 工具名
+       * @param args 工具参数
+       * @param output 工具输出
+       * @param ttl TTL (ms), 默认 10 分钟
+       */
+      store(chatId, toolName, args, output, ttl = DEFAULT_TTL_MS) {
+        const key = this.buildKey(chatId, toolName, args);
+        const argsHash = createHash("sha256").update(JSON.stringify(args)).digest("hex").slice(0, 16);
+        if (this.cache.size >= MAX_ENTRIES) {
+          this.evictOldest();
+        }
+        this.cache.set(key, {
+          key,
+          toolName,
+          argsHash,
+          output,
+          timestamp: Date.now(),
+          hitCount: 0,
+          ttl
+        });
+      }
+      /**
+       * 清理指定 chatId 的所有缓存
+       * @param chatId 会话 ID
+       */
+      clearByChatId(chatId) {
+        const prefix = createHash("sha256").update(chatId).digest("hex").slice(0, 8);
+        let cleared = 0;
+        for (const [key, entry] of this.cache.entries()) {
+          if (key.startsWith(prefix) || entry.key.startsWith(prefix)) {
+            this.cache.delete(key);
+            cleared++;
+          }
+        }
+        if (cleared > 0) {
+          logger.debug("SessionToolCache", `Cleared ${cleared} entries for chatId=${chatId}`);
+        }
+      }
+      /**
+       * 清理所有过期条目
+       */
+      cleanupExpired() {
+        const now = Date.now();
+        let cleared = 0;
+        for (const [key, entry] of this.cache.entries()) {
+          if (now - entry.timestamp > entry.ttl) {
+            this.cache.delete(key);
+            cleared++;
+          }
+        }
+        if (cleared > 0) {
+          logger.debug("SessionToolCache", `Cleaned up ${cleared} expired entries (remaining: ${this.cache.size})`);
+        }
+      }
+      /**
+       * 淘汰最旧的条目 (LRU 策略的简化版)
+       */
+      evictOldest() {
+        let oldestKey = null;
+        let oldestTime = Infinity;
+        for (const [key, entry] of this.cache.entries()) {
+          if (entry.timestamp < oldestTime) {
+            oldestTime = entry.timestamp;
+            oldestKey = key;
+          }
+        }
+        if (oldestKey) {
+          this.cache.delete(oldestKey);
+        }
+      }
+      /**
+       * 获取缓存统计
+       */
+      getStats() {
+        const total = this.hitCount + this.missCount;
+        return {
+          size: this.cache.size,
+          hitCount: this.hitCount,
+          missCount: this.missCount,
+          hitRate: total > 0 ? this.hitCount / total : 0
+        };
+      }
+      /**
+       * 销毁缓存 (进程退出时调用)
+       */
+      destroy() {
+        if (this.cleanupTimer) {
+          clearInterval(this.cleanupTimer);
+          this.cleanupTimer = null;
+        }
+        this.cache.clear();
+      }
+    };
+    sessionToolCache = new SessionToolCache();
+  }
+});
+
+// ../src/llm/circuit-breaker.ts
+function circuitProviderKey(baseUrl, model) {
+  return `${baseUrl}|${model}`;
+}
+var FAILURE_THRESHOLD, COOLDOWN_MS, HALF_OPEN_TIMEOUT_MS, LlmCircuitBreaker, llmCircuitBreaker;
+var init_circuit_breaker = __esm({
+  "../src/llm/circuit-breaker.ts"() {
+    init_logger();
+    FAILURE_THRESHOLD = 5;
+    COOLDOWN_MS = 3e4;
+    HALF_OPEN_TIMEOUT_MS = 6e4;
+    LlmCircuitBreaker = class {
+      circuits = /* @__PURE__ */ new Map();
+      moduleName = "CircuitBreaker";
+      /**
+       * 评估是否允许请求通过
+       */
+      evaluate(providerKey) {
+        const circuit = this.getOrCreate(providerKey);
+        switch (circuit.state) {
+          case "CLOSED":
+            return { action: "proceed", state: "CLOSED" };
+          case "OPEN": {
+            const elapsed = Date.now() - circuit.openedAt;
+            if (elapsed >= COOLDOWN_MS) {
+              circuit.state = "HALF_OPEN";
+              logger.info(
+                this.moduleName,
+                `HALF_OPEN: provider=${providerKey} (cooled down after ${elapsed}ms)`
+              );
+              return { action: "proceed", state: "HALF_OPEN" };
+            }
+            const waitMs = COOLDOWN_MS - elapsed;
+            return {
+              action: "reject",
+              state: "OPEN",
+              reason: `circuit OPEN (cooldown ${Math.ceil(waitMs / 1e3)}s remaining)`
+            };
+          }
+          case "HALF_OPEN": {
+            const elapsed = Date.now() - circuit.openedAt;
+            if (elapsed > HALF_OPEN_TIMEOUT_MS) {
+              circuit.state = "OPEN";
+              circuit.openedAt = Date.now();
+              logger.warn(
+                this.moduleName,
+                `HALF_OPEN timeout \u2192 OPEN: provider=${providerKey}`
+              );
+              return {
+                action: "reject",
+                state: "OPEN",
+                reason: "half-open probe timeout"
+              };
+            }
+            return { action: "proceed", state: "HALF_OPEN" };
+          }
+          default:
+            return { action: "proceed", state: "CLOSED" };
+        }
+      }
+      /**
+       * 记录请求成功
+       */
+      recordSuccess(providerKey, _latencyMs) {
+        const circuit = this.getOrCreate(providerKey);
+        circuit.consecutiveFailures = 0;
+        circuit.lastSuccessAt = Date.now();
+        circuit.totalRequests++;
+        if (circuit.state === "HALF_OPEN") {
+          circuit.state = "CLOSED";
+          logger.info(
+            this.moduleName,
+            `CLOSED (recovered): provider=${providerKey}`
+          );
+        }
+      }
+      /**
+       * 记录请求失败
+       * @param statusCode HTTP 状态码 (429, 503, 500, 0=网络错误)
+       */
+      recordFailure(providerKey, statusCode) {
+        const circuit = this.getOrCreate(providerKey);
+        circuit.totalRequests++;
+        circuit.totalFailures++;
+        const isCircuitBreakerError = statusCode === 429 || statusCode === 503 || statusCode >= 500 && statusCode < 600 || statusCode === 0;
+        if (!isCircuitBreakerError) return;
+        circuit.consecutiveFailures++;
+        if (circuit.state === "HALF_OPEN") {
+          circuit.state = "OPEN";
+          circuit.openedAt = Date.now();
+          logger.warn(
+            this.moduleName,
+            `HALF_OPEN probe failed (${statusCode}) \u2192 OPEN: provider=${providerKey}`
+          );
+          return;
+        }
+        if (circuit.consecutiveFailures >= FAILURE_THRESHOLD && circuit.state === "CLOSED") {
+          circuit.state = "OPEN";
+          circuit.openedAt = Date.now();
+          logger.error(
+            this.moduleName,
+            `CIRCUIT OPEN: provider=${providerKey} (${circuit.consecutiveFailures} consecutive failures, last=${statusCode})`
+          );
+        }
+      }
+      /**
+       * 获取 provider 的熔断器状态 (用于监控/诊断)
+       */
+      getStatus(providerKey) {
+        const circuit = this.circuits.get(providerKey);
+        if (!circuit) return null;
+        return {
+          state: circuit.state,
+          consecutiveFailures: circuit.consecutiveFailures,
+          totalRequests: circuit.totalRequests,
+          totalFailures: circuit.totalFailures
+        };
+      }
+      /**
+       * 获取所有 provider 的熔断器状态
+       */
+      getAllStatuses() {
+        const result = [];
+        for (const [key, circuit] of this.circuits) {
+          result.push({
+            providerKey: key,
+            state: circuit.state,
+            consecutiveFailures: circuit.consecutiveFailures
+          });
+        }
+        return result;
+      }
+      /**
+       * 生成 provider key (与 function-calling-client 的 baseUrl|model 格式一致)
+       */
+      static providerKey(baseUrl, model) {
+        return `${baseUrl}|${model}`;
+      }
+      /**
+       * 从错误对象中提取 HTTP 状态码
+       */
+      static extractStatusCode(error) {
+        if (error instanceof Error) {
+          const msg = error.message;
+          const match = msg.match(/HTTP\s+(\d+)/);
+          if (match) return parseInt(match[1], 10);
+          if (msg.includes("fetch") || msg.includes("ECONNRESET") || msg.includes("network")) {
+            return 0;
+          }
+        }
+        return 0;
+      }
+      getOrCreate(providerKey) {
+        let circuit = this.circuits.get(providerKey);
+        if (!circuit) {
+          circuit = {
+            state: "CLOSED",
+            consecutiveFailures: 0,
+            openedAt: 0,
+            lastSuccessAt: 0,
+            totalRequests: 0,
+            totalFailures: 0
+          };
+          this.circuits.set(providerKey, circuit);
+        }
+        return circuit;
+      }
+    };
+    llmCircuitBreaker = new LlmCircuitBreaker();
+  }
+});
+
+// ../src/core/agent/tools/function-calling-client.ts
+import { createHash as createHash2 } from "crypto";
+function estimateTokens(messages) {
+  let totalChars = 0;
+  for (const m of messages) {
+    totalChars += 10;
+    if (m.content) totalChars += m.content.length;
+    if (m.tool_calls) {
+      for (const tc of m.tool_calls) {
+        totalChars += tc.function.name.length + tc.function.arguments.length + 20;
+      }
+    }
+  }
+  return Math.ceil(totalChars / 3.5);
+}
+function computeToolFingerprint(toolCalls) {
+  const sig = toolCalls.map((tc) => `${tc.function.name}:${tc.function.arguments}`).sort().join("|");
+  return createHash2("sha256").update(sig).digest("hex").slice(0, 16);
+}
+function buildBudgetNudge() {
+  return {
+    role: "user",
+    content: "[System: Token budget approaching limit. Please synthesize your findings so far and provide a final answer based on the information you have gathered. Do NOT call any more tools. Give your best answer now.]"
+  };
+}
+function buildStallNudge() {
+  return {
+    role: "user",
+    content: "[System: You have been making the same tool calls repeatedly without progress. Please stop calling tools and provide your final answer based on what you have gathered so far.]"
+  };
+}
+async function callLLMWithTools(opts) {
+  let baseUrl;
+  let apiKey;
+  let model;
+  if (opts.llmConfig && opts.llmConfig.apiKey) {
+    baseUrl = opts.llmConfig.baseUrl.replace(/\/$/, "");
+    apiKey = opts.llmConfig.apiKey;
+    model = opts.model ?? opts.llmConfig.model;
+  } else {
+    const cfg = getLLMProxyConfig();
+    baseUrl = cfg.baseUrl.replace(/\/$/, "");
+    apiKey = cfg.apiKey;
+    model = opts.model ?? cfg.defaultModel;
+  }
+  const hardCap = opts.maxRounds ?? 20;
+  const tokenBudget = opts.tokenBudget ?? 5e4;
+  const budgetEnabled = tokenBudget > 0 && isFinite(tokenBudget);
+  if (!apiKey) throw new Error("LLM API key not configured (neither in request nor env)");
+  if (!model) throw new Error("LLM model not configured");
+  const toolSupport = supportsTools(model);
+  const hasTools = opts.tools.length > 0;
+  let toolsStripped = false;
+  if (hasTools && toolSupport === false) {
+    console.log(`[ModelCapabilities] ${model} \u5DF2\u77E5\u4E0D\u652F\u6301 function calling (${describeCapabilities(model)}), \u8DF3\u8FC7 tools`);
+    toolsStripped = true;
+  }
+  const allMessages = [...opts.messages];
+  const start = Date.now();
+  let toolCallCount = 0;
+  const toolResultCache = /* @__PURE__ */ new Map();
+  let cacheHits = 0;
+  const actualUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedTokens: 0, llmCallCount: 0 };
+  let previousFingerprint = "";
+  let consecutiveStallRounds = 0;
+  let stallNudgeSent = false;
+  let exitedByStallDetection = false;
+  let cumulativeTokens = estimateTokens(allMessages);
+  let budgetNudgeSent = false;
+  let exitedByTokenBudget = false;
+  let currentTools = toolsStripped ? [] : opts.tools;
+  for (let round = 0; round < hardCap; round++) {
+    if (budgetEnabled && cumulativeTokens > tokenBudget) {
+      if (currentTools.length > 0) {
+        currentTools = [];
+        if (!budgetNudgeSent) {
+          allMessages.push(buildBudgetNudge());
+          budgetNudgeSent = true;
+        }
+      } else {
+        exitedByTokenBudget = true;
+        break;
+      }
+    }
+    if (opts.onRoundStart) {
+      try {
+        const injected = opts.onRoundStart(round);
+        if (injected && injected.length > 0) {
+          allMessages.push(...injected);
+        }
+      } catch {
+      }
+    }
+    const response = await callLLMOnce({
+      baseUrl,
+      apiKey,
+      model,
+      messages: allMessages,
+      tools: currentTools,
+      temperature: opts.temperature ?? 0.2,
+      maxTokens: opts.maxTokens ?? 4096,
+      signal: opts.signal
+    });
+    const u = response.__usage;
+    if (u) {
+      actualUsage.promptTokens += u.promptTokens ?? 0;
+      actualUsage.completionTokens += u.completionTokens ?? 0;
+      actualUsage.totalTokens += u.totalTokens ?? 0;
+      actualUsage.cachedTokens += u.cachedTokens ?? 0;
+      actualUsage.llmCallCount += 1;
+    }
+    cumulativeTokens += estimateTokens([response]);
+    const toolCalls = response.tool_calls;
+    if (!toolCalls || toolCalls.length === 0) {
+      allMessages.push(response);
+      if (opts.onThinking && response.content) {
+        opts.onThinking(response.content);
+      }
+      return {
+        finalMessage: response,
+        allMessages,
+        toolCallCount,
+        totalDurationMs: Date.now() - start,
+        totalTokensEstimated: cumulativeTokens,
+        exitedByStallDetection,
+        exitedByTokenBudget,
+        cacheHits,
+        actualTokenUsage: { ...actualUsage }
+      };
+    }
+    allMessages.push(response);
+    toolCallCount += toolCalls.length;
+    const currentFingerprint = computeToolFingerprint(toolCalls);
+    if (currentFingerprint === previousFingerprint) {
+      consecutiveStallRounds++;
+    } else {
+      consecutiveStallRounds = 0;
+    }
+    previousFingerprint = currentFingerprint;
+    if (consecutiveStallRounds === 2 && !stallNudgeSent) {
+      allMessages.push(buildStallNudge());
+      stallNudgeSent = true;
+    }
+    if (consecutiveStallRounds >= 3 && currentTools.length > 0) {
+      currentTools = [];
+      exitedByStallDetection = true;
+    }
+    const toolResults = await Promise.all(toolCalls.map(async (tc) => {
+      const request3 = {
+        id: tc.id,
+        name: tc.function.name,
+        arguments: JSON.parse(tc.function.arguments)
+      };
+      const cacheKey = `${request3.name}:${JSON.stringify(request3.arguments)}`;
+      const cached3 = toolResultCache.get(cacheKey);
+      if (cached3) {
+        cacheHits++;
+        return {
+          tool_call_id: request3.id,
+          name: request3.name,
+          output: cached3 + "\n[CACHED: \u6B64\u7ED3\u679C\u7531\u524D\u6B21\u76F8\u540C\u8C03\u7528\u590D\u7528,\u65E0\u9700\u518D\u6B21\u8BF7\u6C42]"
+        };
+      }
+      if (opts.chatId && isCacheableToolResult(request3.name, "")) {
+        const sessionCached = sessionToolCache.lookup(opts.chatId, request3.name, request3.arguments);
+        if (sessionCached !== null) {
+          cacheHits++;
+          toolResultCache.set(cacheKey, sessionCached);
+          return {
+            tool_call_id: request3.id,
+            name: request3.name,
+            output: sessionCached + "\n[CACHED: \u6B64\u7ED3\u679C\u7531\u4F1A\u8BDD\u7EA7\u7F13\u5B58\u590D\u7528,\u65E0\u9700\u518D\u6B21\u8BF7\u6C42]"
+          };
+        }
+      }
+      const result = opts.onToolCall ? await opts.onToolCall(request3) : await executeToolCall(request3);
+      if (!result.output.startsWith("Error:") && !result.output.startsWith("Tool error:")) {
+        toolResultCache.set(cacheKey, result.output);
+        if (opts.chatId && isCacheableToolResult(request3.name, result.output)) {
+          sessionToolCache.store(opts.chatId, request3.name, request3.arguments, result.output);
+        }
+      }
+      return result;
+    }));
+    for (const result of toolResults) {
+      allMessages.push({
+        role: "tool",
+        tool_call_id: result.tool_call_id,
+        name: result.name,
+        content: result.output
+      });
+      cumulativeTokens += estimateTokens([{ role: "tool", content: result.output }]);
+    }
+    if (budgetEnabled && !budgetNudgeSent && cumulativeTokens > tokenBudget * 0.8) {
+      allMessages.push(buildBudgetNudge());
+      budgetNudgeSent = true;
+    }
+  }
+  const lastMsg = allMessages[allMessages.length - 1];
+  return {
+    finalMessage: lastMsg,
+    allMessages,
+    toolCallCount,
+    totalDurationMs: Date.now() - start,
+    totalTokensEstimated: cumulativeTokens,
+    exitedByStallDetection,
+    exitedByTokenBudget,
+    cacheHits,
+    actualTokenUsage: { ...actualUsage }
+  };
+}
+async function callLLMOnce(opts) {
+  const cbKey = circuitProviderKey(opts.baseUrl, opts.model);
+  const cbDecision = llmCircuitBreaker.evaluate(cbKey);
+  if (cbDecision.action === "reject") {
+    throw new Error(`LLM circuit breaker OPEN: ${opts.baseUrl} model=${opts.model} \u2014 ${cbDecision.reason}`);
+  }
+  if (cbDecision.action === "wait" && cbDecision.waitMs) {
+    await new Promise((r) => setTimeout(r, cbDecision.waitMs));
+  }
+  const t0 = Date.now();
+  const url = `${opts.baseUrl}/chat/completions`;
+  const isAnthropic = /anthropic|claude/i.test(opts.baseUrl);
+  let messagesForBody = opts.messages;
+  if (isAnthropic && messagesForBody.length > 0 && messagesForBody[0].role === "system") {
+    messagesForBody = messagesForBody.map(
+      (m, i) => i === 0 ? { ...m, cache_control: { type: "ephemeral" } } : m
+    );
+  }
+  let toolsForBody = opts.tools;
+  if (isAnthropic && toolsForBody.length > 0) {
+    toolsForBody = toolsForBody.map(
+      (t, i) => i === toolsForBody.length - 1 ? { ...t, cache_control: { type: "ephemeral" } } : t
+    );
+  }
+  const body = {
+    model: opts.model,
+    messages: messagesForBody,
+    temperature: opts.temperature,
+    max_tokens: opts.maxTokens
+  };
+  if (toolsForBody && toolsForBody.length > 0) {
+    body.tools = toolsForBody;
+    body.tool_choice = "auto";
+  }
+  const MAX_RETRIES3 = 4;
+  const BASE_BACKOFF_MS = 200;
+  const MAX_BACKOFF_MS = 8e3;
+  const sleep = (ms, signal) => new Promise((resolve2, reject) => {
+    if (signal?.aborted) return reject(new DOMException("Aborted", "AbortError"));
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve2();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+  let lastError = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES3; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12e4);
+    if (opts.signal) {
+      if (opts.signal.aborted) {
+        clearTimeout(timeoutId);
+        controller.abort();
+      } else opts.signal.addEventListener("abort", () => controller.abort(), { once: true });
+    }
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${opts.apiKey}`
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal
+      });
+      if (!response.ok) {
+        const errText = await response.text().catch(() => "");
+        const status = response.status;
+        if (status >= 400 && status < 500 && status !== 429) {
+          if ((status === 400 || status === 404 || status === 500) && body.tools && body.tools.length > 0) {
+            learnCapability(body.model, "tools", false);
+            console.log(`[ModelCapabilities] \u4ECE HTTP ${status} \u5B66\u4E60: ${body.model} \u4E0D\u652F\u6301 tools, \u5DF2\u8BB0\u5F55`);
+            const degradedBody = { ...body, tools: void 0, tool_choice: void 0 };
+            try {
+              const degradedResponse = await fetch(url, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.apiKey}` },
+                body: JSON.stringify(degradedBody),
+                signal: controller.signal
+              });
+              if (degradedResponse.ok) {
+                const json2 = await degradedResponse.json();
+                const choice2 = json2?.choices?.[0];
+                if (choice2) {
+                  const msg2 = choice2.message;
+                  const assistantMsg2 = {
+                    role: "assistant",
+                    content: msg2.content ?? null,
+                    tool_calls: void 0
+                    // 降级后无 tool_calls
+                  };
+                  const usage2 = json2?.usage;
+                  if (usage2 && typeof usage2 === "object") {
+                    assistantMsg2.__usage = {
+                      promptTokens: usage2.prompt_tokens ?? 0,
+                      completionTokens: usage2.completion_tokens ?? 0,
+                      totalTokens: usage2.total_tokens ?? 0,
+                      cachedTokens: usage2.prompt_tokens_details?.cached_tokens ?? usage2.prompt_cache_hit_tokens ?? 0
+                    };
+                  }
+                  console.log(`[ModelCapabilities] \u964D\u7EA7\u91CD\u8BD5\u6210\u529F: ${body.model} (\u65E0 tools)`);
+                  return assistantMsg2;
+                }
+              }
+            } catch (degradedErr) {
+              console.log(`[ModelCapabilities] \u964D\u7EA7\u91CD\u8BD5\u4E5F\u5931\u8D25: ${degradedErr}`);
+            }
+          }
+          throw new Error(`LLM HTTP ${status}: ${errText.slice(0, 300)}`);
+        }
+        if (status === 500 && body.tools && body.tools.length > 0 && attempt === 0) {
+          learnCapability(body.model, "tools", false);
+          console.log(`[ModelCapabilities] \u4ECE HTTP 500 \u5B66\u4E60: ${body.model} \u53EF\u80FD\u4E0D\u652F\u6301 tools, \u5C1D\u8BD5\u964D\u7EA7`);
+          const degradedBody = { ...body, tools: void 0, tool_choice: void 0 };
+          try {
+            const degradedResponse = await fetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.apiKey}` },
+              body: JSON.stringify(degradedBody),
+              signal: controller.signal
+            });
+            if (degradedResponse.ok) {
+              const json2 = await degradedResponse.json();
+              const choice2 = json2?.choices?.[0];
+              if (choice2) {
+                const msg2 = choice2.message;
+                const assistantMsg2 = {
+                  role: "assistant",
+                  content: msg2.content ?? null,
+                  tool_calls: void 0
+                };
+                const usage2 = json2?.usage;
+                if (usage2 && typeof usage2 === "object") {
+                  assistantMsg2.__usage = {
+                    promptTokens: usage2.prompt_tokens ?? 0,
+                    completionTokens: usage2.completion_tokens ?? 0,
+                    totalTokens: usage2.total_tokens ?? 0,
+                    cachedTokens: usage2.prompt_tokens_details?.cached_tokens ?? usage2.prompt_cache_hit_tokens ?? 0
+                  };
+                }
+                console.log(`[ModelCapabilities] \u964D\u7EA7\u91CD\u8BD5\u6210\u529F: ${body.model} (\u65E0 tools)`);
+                return assistantMsg2;
+              }
+            }
+          } catch (degradedErr) {
+            console.log(`[ModelCapabilities] \u964D\u7EA7\u91CD\u8BD5\u4E5F\u5931\u8D25: ${degradedErr}`);
+          }
+        }
+        if (attempt < MAX_RETRIES3) {
+          const retryAfter = response.headers.get("retry-after");
+          let waitMs;
+          if (retryAfter && /^\d+$/.test(retryAfter.trim())) {
+            waitMs = Math.min(parseInt(retryAfter, 10) * 1e3, MAX_BACKOFF_MS);
+          } else {
+            const jitter = Math.random() * 100;
+            waitMs = Math.min(BASE_BACKOFF_MS * Math.pow(2, attempt) + jitter, MAX_BACKOFF_MS);
+          }
+          lastError = new Error(`LLM HTTP ${status}: ${errText.slice(0, 300)}`);
+          if (attempt === 0) {
+            console.log(`[LLM-Retry] HTTP ${status} (attempt ${attempt + 1}/${MAX_RETRIES3 + 1}), waiting ${Math.round(waitMs)}ms before retry...`);
+          }
+          await sleep(waitMs, opts.signal);
+          continue;
+        }
+        llmCircuitBreaker.recordFailure(cbKey, status);
+        throw new Error(`LLM HTTP ${status}: ${errText.slice(0, 300)}`);
+      }
+      const json = await response.json();
+      const choice = json?.choices?.[0];
+      if (!choice) throw new Error("LLM returned empty choices");
+      llmCircuitBreaker.recordSuccess(cbKey, Date.now() - t0);
+      const msg = choice.message;
+      const assistantMsg = {
+        role: "assistant",
+        content: msg.content ?? null,
+        tool_calls: msg.tool_calls?.map((tc) => ({
+          id: tc.id,
+          type: "function",
+          function: {
+            name: tc.function.name,
+            arguments: tc.function.arguments
+          }
+        }))
+      };
+      const usage = json?.usage;
+      if (usage && typeof usage === "object") {
+        assistantMsg.__usage = {
+          promptTokens: usage.prompt_tokens ?? 0,
+          completionTokens: usage.completion_tokens ?? 0,
+          totalTokens: usage.total_tokens ?? 0,
+          cachedTokens: usage.prompt_tokens_details?.cached_tokens ?? usage.prompt_cache_hit_tokens ?? 0
+        };
+      }
+      return assistantMsg;
+    } catch (err) {
+      if (err?.name === "AbortError") {
+        throw err;
+      }
+      llmCircuitBreaker.recordFailure(cbKey, 0);
+      if (attempt < MAX_RETRIES3) {
+        const jitter = Math.random() * 100;
+        const waitMs = Math.min(BASE_BACKOFF_MS * Math.pow(2, attempt) + jitter, MAX_BACKOFF_MS);
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (attempt === 0) {
+          console.log(`[LLM-Retry] Network error (attempt ${attempt + 1}/${MAX_RETRIES3 + 1}): ${lastError.message.slice(0, 100)}, waiting ${Math.round(waitMs)}ms...`);
+        }
+        await sleep(waitMs, opts.signal);
+        continue;
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+  throw lastError ?? new Error("LLM call failed after all retries");
+}
+var init_function_calling_client = __esm({
+  "../src/core/agent/tools/function-calling-client.ts"() {
+    init_llmConfig();
+    init_modelCapabilities();
+    init_tool_definitions();
+    init_session_tool_cache();
+    init_circuit_breaker();
   }
 });
 
@@ -14130,6 +15919,713 @@ var init_garnet_bridge = __esm({
       }
       getSubscribedEvents() {
         return [...BRIDGE_EVENTS];
+      }
+    };
+  }
+});
+
+// ../src/runtime/tcp-client.ts
+import * as net3 from "net";
+import { EventEmitter } from "events";
+var JavaAgentTcpClient;
+var init_tcp_client = __esm({
+  "../src/runtime/tcp-client.ts"() {
+    JavaAgentTcpClient = class extends EventEmitter {
+      host;
+      port;
+      socket = null;
+      connected = false;
+      intentionalClose = false;
+      reconnectAttempts = 0;
+      maxReconnectAttempts = 10;
+      reconnectDelay = 2e3;
+      reconnectTimer = null;
+      buffer = "";
+      messageId = 0;
+      pendingRequests = /* @__PURE__ */ new Map();
+      constructor(host = "127.0.0.1", port = 8771) {
+        super();
+        this.host = host;
+        this.port = port;
+      }
+      connect() {
+        return new Promise((resolve2, reject) => {
+          if (this.connected && this.socket) {
+            resolve2();
+            return;
+          }
+          this.intentionalClose = false;
+          this.socket = new net3.Socket();
+          this.socket.connect(this.port, this.host, () => {
+            console.log(`[tcp-client] Connected to Java Agent at ${this.host}:${this.port}`);
+            this.connected = true;
+            this.reconnectAttempts = 0;
+            this.emit("connected");
+            resolve2();
+          });
+          this.socket.on("data", (data) => {
+            this.handleData(data);
+          });
+          this.socket.on("close", () => {
+            const wasConnected = this.connected;
+            this.connected = false;
+            this.emit("disconnected");
+            if (!this.intentionalClose) {
+              this.attemptReconnect();
+            }
+          });
+          this.socket.on("error", (error) => {
+            console.error(`[tcp-client] Connection error: ${error.message}`);
+            this.emit("error", error);
+            if (!this.connected) {
+              reject(error);
+            }
+          });
+        });
+      }
+      handleData(data) {
+        this.buffer += data.toString();
+        const lines = this.buffer.split("\n");
+        this.buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (line.trim()) {
+            try {
+              const message = JSON.parse(line);
+              this.handleMessage(message);
+            } catch (e) {
+              console.error(`[tcp-client] Failed to parse message: ${line}`);
+            }
+          }
+        }
+      }
+      handleMessage(message) {
+        if (message.messageId && this.pendingRequests.has(message.messageId)) {
+          const pending = this.pendingRequests.get(message.messageId);
+          clearTimeout(pending.timeout);
+          this.pendingRequests.delete(message.messageId);
+          if (message.error) {
+            pending.reject(new Error(message.error));
+          } else {
+            pending.resolve(message);
+          }
+          return;
+        }
+        this.emit("message", message);
+        switch (message.type) {
+          case "worker_started":
+            this.emit("workerStarted", message);
+            break;
+          case "worker_chunk":
+            this.emit("workerChunk", message);
+            break;
+          case "worker_done":
+            this.emit("workerDone", message);
+            break;
+          case "worker_failed":
+            this.emit("workerFailed", message);
+            break;
+          case "tool_call":
+            this.emit("toolCall", message);
+            break;
+          case "pool_share":
+            this.emit("poolShare", message);
+            break;
+          case "dispatch_done":
+            this.emit("dispatchDone", message);
+            break;
+          case "pong":
+            break;
+        }
+      }
+      attemptReconnect() {
+        if (this.intentionalClose) {
+          return;
+        }
+        if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+          console.error("[tcp-client] Max reconnection attempts reached");
+          this.emit("reconnectFailed");
+          return;
+        }
+        this.reconnectAttempts++;
+        const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
+        console.log(`[tcp-client] Attempting reconnect ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms`);
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectTimer = null;
+          this.connect().catch(() => {
+          });
+        }, delay);
+      }
+      send(message) {
+        if (!this.connected || !this.socket) {
+          console.error("[tcp-client] Cannot send message: not connected");
+          return;
+        }
+        const json = JSON.stringify(message);
+        this.socket.write(json + "\n");
+      }
+      sendAndWait(message, timeoutMs = 3e4) {
+        return new Promise((resolve2, reject) => {
+          const messageId = `msg_${++this.messageId}`;
+          message.messageId = messageId;
+          const timeout = setTimeout(() => {
+            this.pendingRequests.delete(messageId);
+            reject(new Error(`Request timeout: ${message.type}`));
+          }, timeoutMs);
+          this.pendingRequests.set(messageId, { resolve: resolve2, reject, timeout });
+          this.send(message);
+        });
+      }
+      disconnect() {
+        this.intentionalClose = true;
+        if (this.reconnectTimer) {
+          clearTimeout(this.reconnectTimer);
+          this.reconnectTimer = null;
+        }
+        for (const [id2, pending] of this.pendingRequests) {
+          clearTimeout(pending.timeout);
+          pending.reject(new Error("Connection closed"));
+        }
+        this.pendingRequests.clear();
+        if (this.socket) {
+          this.socket.destroy();
+          this.socket = null;
+        }
+        this.connected = false;
+      }
+      isConnected() {
+        return this.connected;
+      }
+    };
+  }
+});
+
+// ../src/core/agent/tool-result-relay.ts
+var ToolResultRelay;
+var init_tool_result_relay = __esm({
+  "../src/core/agent/tool-result-relay.ts"() {
+    init_logger();
+    ToolResultRelay = class {
+      client;
+      constructor(client) {
+        this.client = client;
+      }
+      /**
+       * Handle incoming tool call from Java Agent.
+       *
+       * @param message Tool call message from Java Agent
+       */
+      async handleToolCall(message) {
+        const { dispatchId, workerIdx, tool, args } = message;
+        logger.info("ToolResultRelay", `Relaying tool call: ${tool} for dispatch ${dispatchId}`);
+        try {
+          const result = await this.executeTool(tool, args);
+          await this.sendToolResult(dispatchId, workerIdx, tool, args, result);
+        } catch (error) {
+          logger.error("ToolResultRelay", `Tool execution failed: ${error}`);
+          try {
+            await this.sendToolResult(dispatchId, workerIdx, tool, args, `ERROR: ${error}`);
+          } catch (sendErr) {
+            logger.error("ToolResultRelay", `Failed to send error result back to Java: ${sendErr}`);
+          }
+        }
+      }
+      /**
+       * Execute a tool and return the result without sending back to Java.
+       * Used by HTTP endpoint and other direct callers.
+       */
+      async executeTool(tool, args) {
+        logger.info("ToolResultRelay", `Executing tool: ${tool}`);
+        let result;
+        switch (tool) {
+          case "browser_devtools":
+          case "browser_use":
+          case "bu_run_task":
+          case "bu_pause":
+          case "bu_resume":
+          case "bu_state":
+          case "bu_screenshot":
+          case "bu_history":
+            result = await this.executeBrowserTool(tool, args);
+            break;
+          case "win_reg_read":
+          case "service_ctrl":
+          case "task_scheduler":
+          case "event_log":
+          case "powershell":
+          case "firewall":
+          case "perfmon":
+          case "windows_mcp":
+            result = await this.executeWindowsMcpTool(tool, args);
+            break;
+          case "console":
+          case "network":
+          case "dom_inspect":
+          case "screenshot":
+          case "perf_trace":
+          case "cookies":
+          case "obscura":
+            result = await this.executeObscuraTool(tool, args);
+            break;
+          default:
+            result = `ERROR: Unknown tool: ${tool}`;
+        }
+        return result;
+      }
+      async executeBrowserTool(tool, args) {
+        logger.info("ToolResultRelay", `Executing browser tool: ${tool}`);
+        return `Browser tool ${tool} executed (placeholder)`;
+      }
+      async executeWindowsMcpTool(tool, args) {
+        logger.info("ToolResultRelay", `Executing Windows MCP tool: ${tool}`);
+        return `Windows MCP tool ${tool} executed (placeholder)`;
+      }
+      async executeObscuraTool(tool, args) {
+        logger.info("ToolResultRelay", `Executing Obscura tool: ${tool}`);
+        return `Obscura tool ${tool} executed (placeholder)`;
+      }
+      async sendToolResult(dispatchId, workerIdx, tool, args, result) {
+        const message = {
+          type: "tool_result",
+          dispatchId,
+          workerIdx,
+          tool,
+          args,
+          result
+        };
+        this.client.send(message);
+        logger.info("ToolResultRelay", `Sent tool result for ${tool} back to Java Agent`);
+      }
+    };
+  }
+});
+
+// ../src/core/agent/tcp-integration.ts
+var JavaAgentTcpIntegration;
+var init_tcp_integration = __esm({
+  "../src/core/agent/tcp-integration.ts"() {
+    init_tcp_client();
+    init_logger();
+    init_tool_result_relay();
+    JavaAgentTcpIntegration = class {
+      client;
+      eventBus;
+      toolRelay;
+      initialized = false;
+      constructor(eventBus) {
+        this.eventBus = eventBus;
+        this.client = new JavaAgentTcpClient("127.0.0.1", 8771);
+        this.toolRelay = new ToolResultRelay(this.client);
+        this.setupEventHandlers();
+      }
+      async initialize() {
+        try {
+          await this.client.connect();
+          this.initialized = true;
+          logger.info("JavaAgentTcpIntegration", "Connected to Java Agent TCP server");
+          this.client.send({ type: "ping" });
+        } catch (error) {
+          logger.error("JavaAgentTcpIntegration", `Failed to connect to Java Agent: ${error}`);
+          throw error;
+        }
+      }
+      setupEventHandlers() {
+        this.client.on("error", (error) => {
+          logger.error("JavaAgentTcpIntegration", `TCP client error (non-fatal): ${error.message}`);
+        });
+        this.client.on("workerStarted", (message) => {
+          logger.info("JavaAgentTcpIntegration", `TCP event worker_started: dispatchId=${message.dispatchId}, workerIdx=${message.workerIdx}`);
+          this.eventBus.emit("worker_started", {
+            dispatchId: message.dispatchId,
+            workerIdx: message.workerIdx,
+            agentId: message.agentId
+          });
+        });
+        this.client.on("workerChunk", (message) => {
+          logger.debug("JavaAgentTcpIntegration", `TCP event worker_chunk: dispatchId=${message.dispatchId}, workerIdx=${message.workerIdx}, len=${message.content?.length ?? 0}`);
+          this.eventBus.emit("worker_chunk", {
+            dispatchId: message.dispatchId,
+            workerIdx: message.workerIdx,
+            content: message.content,
+            agentId: message.agentId
+          });
+        });
+        this.client.on("workerDone", (message) => {
+          logger.info("JavaAgentTcpIntegration", `TCP event worker_done: dispatchId=${message.dispatchId}, workerIdx=${message.workerIdx}`);
+          this.eventBus.emit("worker_done", {
+            dispatchId: message.dispatchId,
+            workerIdx: message.workerIdx,
+            output: message.output
+          });
+        });
+        this.client.on("workerFailed", (message) => {
+          logger.info("JavaAgentTcpIntegration", `TCP event worker_failed: dispatchId=${message.dispatchId}, workerIdx=${message.workerIdx}, error=${message.error}`);
+          this.eventBus.emit("worker_failed", {
+            dispatchId: message.dispatchId,
+            workerIdx: message.workerIdx,
+            error: message.error
+          });
+        });
+        this.client.on("toolCall", async (message) => {
+          logger.info("JavaAgentTcpIntegration", `TCP event tool_call: dispatchId=${message.dispatchId}, tool=${message.tool}`);
+          try {
+            await this.toolRelay.handleToolCall(message);
+          } catch (e) {
+            logger.error("JavaAgentTcpIntegration", `Unhandled tool call error: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        });
+        this.client.on("poolShare", (message) => {
+          logger.info("JavaAgentTcpIntegration", `TCP event pool_share: dispatchId=${message.dispatchId}`);
+          this.eventBus.emit("pool_share", {
+            dispatchId: message.dispatchId,
+            entries: message.entries
+          });
+        });
+        this.client.on("dispatchDone", (message) => {
+          logger.info("JavaAgentTcpIntegration", `TCP event dispatch_done: dispatchId=${message.dispatchId}`);
+          this.eventBus.emit("dispatch_done", {
+            dispatchId: message.dispatchId
+          });
+        });
+      }
+      /**
+       * Send dispatch request to Java Agent.
+       * 
+       * @param dispatchId Unique dispatch identifier
+       * @param chatId Conversation ID
+       * @param prompt User prompt
+       * @param workers Worker configurations
+       * @param settings Agent settings
+       * @param tools Available tools
+       * @param permissionMode Permission mode
+       */
+      async sendDispatch(dispatchId, chatId, prompt, workers, settings, tools, permissionMode = "normal") {
+        if (!this.initialized) {
+          logger.warn("JavaAgentTcpIntegration", "Cannot send dispatch: not connected to Java Agent");
+          return;
+        }
+        const message = {
+          type: "dispatch",
+          dispatchId,
+          chatId,
+          prompt,
+          workers,
+          settings,
+          tools,
+          permissionMode
+        };
+        this.client.send(message);
+        logger.info("JavaAgentTcpIntegration", `Sent dispatch ${dispatchId} to Java Agent`);
+      }
+      /**
+       * Send tool execution result back to Java Agent.
+       */
+      async sendToolResult(dispatchId, workerIdx, toolName, toolArgs, result) {
+        if (!this.initialized) {
+          logger.warn("JavaAgentTcpIntegration", "Cannot send tool result: not connected");
+          return;
+        }
+        const message = {
+          type: "tool_result",
+          dispatchId,
+          workerIdx,
+          tool: toolName,
+          args: toolArgs,
+          result
+        };
+        this.client.send(message);
+      }
+      /**
+       * Execute a tool directly (for HTTP endpoint or other callers).
+       * Returns the tool result without sending back to Java via TCP.
+       */
+      async executeTool(tool, args) {
+        if (!this.initialized) {
+          throw new Error("Java Agent TCP not connected");
+        }
+        return this.toolRelay.executeTool(tool, args);
+      }
+      /**
+       * Send stop command to Java Agent to terminate workers.
+       */
+      async sendStopCommand(dispatchId, workerIdx) {
+        if (!this.initialized) {
+          logger.warn("JavaAgentTcpIntegration", "Cannot send stop: not connected");
+          return;
+        }
+        const message = {
+          type: "evaluate",
+          dispatchId,
+          action: "STOP",
+          workerIdx
+        };
+        this.client.send(message);
+        logger.info("JavaAgentTcpIntegration", `Sent STOP command for dispatch ${dispatchId}`);
+      }
+      /**
+       * Check if connected to Java Agent.
+       */
+      isConnected() {
+        return this.initialized && this.client.isConnected();
+      }
+      /**
+       * Shutdown the TCP integration.
+       */
+      shutdown() {
+        this.client.disconnect();
+        this.initialized = false;
+      }
+    };
+  }
+});
+
+// ../src/kernel/java-agent-tcp-component.ts
+var java_agent_tcp_component_exports = {};
+__export(java_agent_tcp_component_exports, {
+  JavaAgentTcpComponent: () => JavaAgentTcpComponent
+});
+var JavaAgentTcpComponent;
+var init_java_agent_tcp_component = __esm({
+  "../src/kernel/java-agent-tcp-component.ts"() {
+    init_tcp_integration();
+    init_logger();
+    JavaAgentTcpComponent = class {
+      name = "java-agent-tcp";
+      integration = null;
+      eventBus;
+      kernel;
+      constructor(kernel2, eventBus) {
+        this.kernel = kernel2;
+        this.eventBus = eventBus;
+      }
+      async start() {
+        logger.info("JavaAgentTcpComponent", "Starting Java Agent TCP component...");
+        try {
+          this.integration = new JavaAgentTcpIntegration(this.eventBus);
+          await this.integration.initialize();
+          this.kernel.javaAgentTcp = this;
+          logger.info("JavaAgentTcpComponent", "Java Agent TCP component started successfully");
+        } catch (error) {
+          logger.error("JavaAgentTcpComponent", `Failed to start: ${error}`);
+          console.warn("[JavaAgentTcpComponent] Java Agent not available, running in standalone mode");
+        }
+      }
+      async stop() {
+        logger.info("JavaAgentTcpComponent", "Stopping Java Agent TCP component...");
+        if (this.integration) {
+          this.integration.shutdown();
+        }
+        logger.info("JavaAgentTcpComponent", "Java Agent TCP component stopped");
+      }
+      async healthCheck() {
+        return this.integration?.isConnected() ?? false;
+      }
+      getIntegration() {
+        return this.integration;
+      }
+    };
+  }
+});
+
+// ../src/kernel/realtime-judge-stop-component.ts
+var realtime_judge_stop_component_exports = {};
+__export(realtime_judge_stop_component_exports, {
+  RealtimeJudgeStopComponent: () => RealtimeJudgeStopComponent
+});
+var MODULE_NAME, CHUNK_THRESHOLD, MIN_CHUNKS_BETWEEN_CHECKS, MAX_CHECKS_PER_WORKER, DispatchTracker, RealtimeJudgeStopComponent;
+var init_realtime_judge_stop_component = __esm({
+  "../src/kernel/realtime-judge-stop-component.ts"() {
+    init_logger();
+    init_function_calling_client();
+    init_llmConfig();
+    MODULE_NAME = "RealtimeJudgeStop";
+    CHUNK_THRESHOLD = 600;
+    MIN_CHUNKS_BETWEEN_CHECKS = 3;
+    MAX_CHECKS_PER_WORKER = 2;
+    DispatchTracker = class {
+      buffers = /* @__PURE__ */ new Map();
+      taskHint;
+      constructor(taskHint) {
+        this.taskHint = taskHint;
+      }
+      getOrCreate(workerIdx) {
+        let buf = this.buffers.get(workerIdx);
+        if (!buf) {
+          buf = { content: "", chunkCount: 0, checksRun: 0, chunksSinceLastCheck: 0, stopped: false };
+          this.buffers.set(workerIdx, buf);
+        }
+        return buf;
+      }
+    };
+    RealtimeJudgeStopComponent = class {
+      name = "realtime-judge-stop";
+      eventBus;
+      kernel;
+      dispatches = /* @__PURE__ */ new Map();
+      handlersBound = false;
+      constructor(kernel2, eventBus) {
+        this.kernel = kernel2;
+        this.eventBus = eventBus;
+      }
+      async start() {
+        this.bindHandlers();
+        logger.info(MODULE_NAME, "Real-time judge stop component started");
+      }
+      async stop() {
+        this.unbindHandlers();
+        this.dispatches.clear();
+        logger.info(MODULE_NAME, "Real-time judge stop component stopped");
+      }
+      async healthCheck() {
+        return true;
+      }
+      bindHandlers() {
+        if (this.handlersBound) return;
+        this.eventBus.on("worker_chunk", this.onWorkerChunk);
+        this.eventBus.on("worker_done", this.onWorkerDone);
+        this.eventBus.on("worker_failed", this.onWorkerFailed);
+        this.eventBus.on("dispatch_done", this.onDispatchDone);
+        this.handlersBound = true;
+      }
+      unbindHandlers() {
+        if (!this.handlersBound) return;
+        this.eventBus.off("worker_chunk", this.onWorkerChunk);
+        this.eventBus.off("worker_done", this.onWorkerDone);
+        this.eventBus.off("worker_failed", this.onWorkerFailed);
+        this.eventBus.off("dispatch_done", this.onDispatchDone);
+        this.handlersBound = false;
+      }
+      onWorkerChunk = (payload) => {
+        const dispatchId = payload?.dispatchId;
+        const workerIdx = payload?.workerIdx;
+        const content = payload?.content;
+        if (!dispatchId || typeof workerIdx !== "number" || typeof content !== "string") return;
+        const tracker = this.dispatches.get(dispatchId);
+        if (!tracker) return;
+        const buf = tracker.getOrCreate(workerIdx);
+        if (buf.stopped) return;
+        buf.content += content;
+        buf.chunkCount++;
+        buf.chunksSinceLastCheck++;
+        if (buf.content.length < CHUNK_THRESHOLD) return;
+        if (buf.chunksSinceLastCheck < MIN_CHUNKS_BETWEEN_CHECKS) return;
+        if (buf.checksRun >= MAX_CHECKS_PER_WORKER) return;
+        logger.info(MODULE_NAME, `Triggering off-track check: dispatchId=${dispatchId}, workerIdx=${workerIdx}, contentLen=${buf.content.length}, chunkCount=${buf.chunkCount}, checksRun=${buf.checksRun}`);
+        buf.chunksSinceLastCheck = 0;
+        buf.checksRun++;
+        this.runOffTrackCheck(dispatchId, workerIdx, buf, tracker.taskHint).catch((err) => {
+          logger.warn(MODULE_NAME, `Off-track check failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      };
+      onWorkerDone = (payload) => {
+        const dispatchId = payload?.dispatchId;
+        if (!dispatchId) return;
+        const tracker = this.dispatches.get(dispatchId);
+        if (!tracker) return;
+        const workerIdx = payload?.workerIdx;
+        if (typeof workerIdx === "number") {
+          const buf = tracker.buffers.get(workerIdx);
+          if (buf) buf.stopped = true;
+        }
+      };
+      onWorkerFailed = (payload) => {
+        const dispatchId = payload?.dispatchId;
+        if (!dispatchId) return;
+        const tracker = this.dispatches.get(dispatchId);
+        if (!tracker) return;
+        const workerIdx = payload?.workerIdx;
+        if (typeof workerIdx === "number") {
+          const buf = tracker.buffers.get(workerIdx);
+          if (buf) buf.stopped = true;
+        }
+      };
+      onDispatchDone = (payload) => {
+        const dispatchId = payload?.dispatchId;
+        if (!dispatchId) return;
+        this.dispatches.delete(dispatchId);
+      };
+      /**
+       * 用轻量 LLM 判断 worker 是否明显跑偏。
+       * 返回 true 表示应该喊停。
+       */
+      async runOffTrackCheck(dispatchId, workerIdx, buf, taskHint) {
+        try {
+          const cfg = getLLMProxyConfig();
+          const recentContent = buf.content.slice(-1200);
+          const messages = [
+            {
+              role: "system",
+              content: `You are a real-time quality monitor for an AI assistant worker.
+Given the task and a snippet of the worker's ongoing output, decide if the worker is clearly off-track, hallucinating badly, or producing garbage.
+Respond in EXACTLY this JSON format:
+{"off_track": true/false, "reason": "<brief>"}
+
+Only mark off_track=true if the output is clearly useless. Minor imperfections should be false.`
+            },
+            {
+              role: "user",
+              content: `Task: ${taskHint.slice(0, 400)}
+
+Worker output so far:
+${recentContent}`
+            }
+          ];
+          const result = await callLLMWithTools({
+            messages,
+            tools: [],
+            model: cfg.defaultModel,
+            temperature: 0.2,
+            maxTokens: 1024,
+            maxRounds: 1
+          });
+          const raw2 = result.finalMessage.content ?? "";
+          logger.info(MODULE_NAME, `Off-track check raw response (worker ${workerIdx}): ${raw2.slice(0, 200)}`);
+          const jsonMatch = raw2.match(/\{[\s\S]*?\}/);
+          if (!jsonMatch) {
+            logger.info(MODULE_NAME, `Off-track check returned no JSON, assuming on-track`);
+            return false;
+          }
+          const parsed = JSON.parse(jsonMatch[0]);
+          const offTrack = Boolean(parsed.off_track);
+          if (offTrack) {
+            logger.warn(MODULE_NAME, `Worker ${workerIdx} judged off-track: ${parsed.reason ?? ""}, sending STOP`);
+            buf.stopped = true;
+            await this.sendStop(dispatchId, workerIdx);
+            this.eventBus.emit("worker_stopped_by_judge", {
+              dispatchId,
+              workerIdx,
+              reason: parsed.reason ?? "off-track"
+            });
+            return true;
+          }
+          logger.info(MODULE_NAME, `Worker ${workerIdx} on-track (check ${buf.checksRun}): ${parsed.reason ?? ""}`);
+          return false;
+        } catch (err) {
+          logger.warn(MODULE_NAME, `Off-track check error (assuming on-track): ${err instanceof Error ? err.message : String(err)}`);
+          return false;
+        }
+      }
+      async sendStop(dispatchId, workerIdx) {
+        const tcp = this.kernel?.javaAgentTcp?.getIntegration?.();
+        if (!tcp || typeof tcp.sendStopCommand !== "function") {
+          logger.warn(MODULE_NAME, `Cannot send STOP: Java Agent TCP integration not available`);
+          return;
+        }
+        await tcp.sendStopCommand(dispatchId, workerIdx);
+      }
+      /**
+       * Register a dispatch for real-time monitoring with its task hint.
+       * Called by the orchestrator when a dispatch starts.
+       */
+      registerDispatch(dispatchId, taskHint) {
+        if (!taskHint) return;
+        this.dispatches.set(dispatchId, new DispatchTracker(taskHint));
+        logger.debug(MODULE_NAME, `Registered dispatch ${dispatchId} for monitoring`);
+      }
+      /**
+       * Unregister a dispatch (e.g. on early termination).
+       */
+      unregisterDispatch(dispatchId) {
+        this.dispatches.delete(dispatchId);
       }
     };
   }
@@ -34576,18 +37072,18 @@ var require_base64 = __commonJS({
 var require_eventemitter = __commonJS({
   "../node_modules/@protobufjs/eventemitter/index.js"(exports, module) {
     "use strict";
-    module.exports = EventEmitter2;
-    function EventEmitter2() {
+    module.exports = EventEmitter3;
+    function EventEmitter3() {
       this._listeners = /* @__PURE__ */ Object.create(null);
     }
-    EventEmitter2.prototype.on = function on(evt, fn, ctx) {
+    EventEmitter3.prototype.on = function on(evt, fn, ctx) {
       (this._listeners[evt] || (this._listeners[evt] = [])).push({
         fn,
         ctx: ctx || this
       });
       return this;
     };
-    EventEmitter2.prototype.off = function off(evt, fn) {
+    EventEmitter3.prototype.off = function off(evt, fn) {
       if (evt === void 0)
         this._listeners = /* @__PURE__ */ Object.create(null);
       else {
@@ -34606,7 +37102,7 @@ var require_eventemitter = __commonJS({
       }
       return this;
     };
-    EventEmitter2.prototype.emit = function emit(evt) {
+    EventEmitter3.prototype.emit = function emit(evt) {
       var listeners = this._listeners[evt];
       if (listeners) {
         var args = [], i = 1;
@@ -60158,7 +62654,7 @@ var require_transport = __commonJS({
     var resolver_1 = require_resolver();
     var subchannel_address_1 = require_subchannel_address();
     var uri_parser_1 = require_uri_parser();
-    var net3 = __require("net");
+    var net4 = __require("net");
     var subchannel_call_1 = require_subchannel_call();
     var call_number_1 = require_call_number();
     var TRACER_NAME = "transport";
@@ -60625,7 +63121,7 @@ var require_transport = __commonJS({
               const errorCallback = (error) => {
                 reject(error);
               };
-              const socket = net3.connect(address, () => {
+              const socket = net4.connect(address, () => {
                 socket.removeListener("close", closeCallback);
                 socket.removeListener("error", errorCallback);
                 resolve2(socket);
@@ -79784,10 +82280,10 @@ var require_extension = __commonJS({
 var require_websocket = __commonJS({
   "../node_modules/ws/lib/websocket.js"(exports, module) {
     "use strict";
-    var EventEmitter2 = __require("events");
+    var EventEmitter3 = __require("events");
     var https2 = __require("https");
     var http4 = __require("http");
-    var net3 = __require("net");
+    var net4 = __require("net");
     var tls = __require("tls");
     var { randomBytes: randomBytes3, createHash: createHash4 } = __require("crypto");
     var { Duplex, Readable: Readable2 } = __require("stream");
@@ -79816,7 +82312,7 @@ var require_websocket = __commonJS({
     var protocolVersions = [8, 13];
     var readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
     var subprotocolRegex = /^[!#$%&'*+\-.0-9A-Z^_`|a-z~]+$/;
-    var WebSocket2 = class _WebSocket extends EventEmitter2 {
+    var WebSocket2 = class _WebSocket extends EventEmitter3 {
       /**
        * Create a new `WebSocket`.
        *
@@ -80531,12 +83027,12 @@ var require_websocket = __commonJS({
     }
     function netConnect(options) {
       options.path = options.socketPath;
-      return net3.connect(options);
+      return net4.connect(options);
     }
     function tlsConnect(options) {
       options.path = void 0;
       if (!options.servername && options.servername !== "") {
-        options.servername = net3.isIP(options.host) ? "" : options.host;
+        options.servername = net4.isIP(options.host) ? "" : options.host;
       }
       return tls.connect(options);
     }
@@ -80823,7 +83319,7 @@ var require_subprotocol = __commonJS({
 var require_websocket_server = __commonJS({
   "../node_modules/ws/lib/websocket-server.js"(exports, module) {
     "use strict";
-    var EventEmitter2 = __require("events");
+    var EventEmitter3 = __require("events");
     var http4 = __require("http");
     var { Duplex } = __require("stream");
     var { createHash: createHash4 } = __require("crypto");
@@ -80836,7 +83332,7 @@ var require_websocket_server = __commonJS({
     var RUNNING = 0;
     var CLOSING = 1;
     var CLOSED = 2;
-    var WebSocketServer2 = class extends EventEmitter2 {
+    var WebSocketServer2 = class extends EventEmitter3 {
       /**
        * Create a `WebSocketServer` instance.
        *
@@ -82024,12 +84520,12 @@ var require_errors2 = __commonJS({
 // ../node_modules/kafkajs/src/instrumentation/emitter.js
 var require_emitter = __commonJS({
   "../node_modules/kafkajs/src/instrumentation/emitter.js"(exports, module) {
-    var { EventEmitter: EventEmitter2 } = __require("events");
+    var { EventEmitter: EventEmitter3 } = __require("events");
     var InstrumentationEvent = require_event();
     var { KafkaJSError } = require_errors2();
     module.exports = class InstrumentationEventEmitter {
       constructor() {
-        this.emitter = new EventEmitter2();
+        this.emitter = new EventEmitter3();
       }
       /**
        * @param {string} eventName
@@ -92967,7 +95463,7 @@ var require_socketRequest = __commonJS({
 // ../node_modules/kafkajs/src/network/requestQueue/index.js
 var require_requestQueue = __commonJS({
   "../node_modules/kafkajs/src/network/requestQueue/index.js"(exports, module) {
-    var { EventEmitter: EventEmitter2 } = __require("events");
+    var { EventEmitter: EventEmitter3 } = __require("events");
     var SocketRequest = require_socketRequest();
     var events = require_instrumentationEvents();
     var { KafkaJSInvariantViolation } = require_errors2();
@@ -92977,7 +95473,7 @@ var require_requestQueue = __commonJS({
     };
     var REQUEST_QUEUE_EMPTY = "requestQueueEmpty";
     var CHECK_PENDING_REQUESTS_INTERVAL = 10;
-    module.exports = class RequestQueue extends EventEmitter2 {
+    module.exports = class RequestQueue extends EventEmitter3 {
       /**
        * @param {Object} options
        * @param {number} options.maxInFlightRequests
@@ -95144,7 +97640,7 @@ var require_transactionStates = __commonJS({
 // ../node_modules/kafkajs/src/producer/eosManager/transactionStateMachine.js
 var require_transactionStateMachine = __commonJS({
   "../node_modules/kafkajs/src/producer/eosManager/transactionStateMachine.js"(exports, module) {
-    var { EventEmitter: EventEmitter2 } = __require("events");
+    var { EventEmitter: EventEmitter3 } = __require("events");
     var { KafkaJSNonRetriableError } = require_errors2();
     var STATES = require_transactionStates();
     var VALID_STATE_TRANSITIONS = {
@@ -95175,7 +97671,7 @@ var require_transactionStateMachine = __commonJS({
           return fn.apply(object, args);
         };
       };
-      const stateMachine = Object.assign(new EventEmitter2(), {
+      const stateMachine = Object.assign(new EventEmitter3(), {
         /**
          * Create a clone of "object" where we ensure state machine is in correct state
          * prior to calling any of the configured methods
@@ -97422,7 +99918,7 @@ var require_seq = __commonJS({
 // ../node_modules/kafkajs/src/consumer/fetcher.js
 var require_fetcher = __commonJS({
   "../node_modules/kafkajs/src/consumer/fetcher.js"(exports, module) {
-    var EventEmitter2 = __require("events");
+    var EventEmitter3 = __require("events");
     var createFetcher = ({
       nodeId,
       workerQueue,
@@ -97431,7 +99927,7 @@ var require_fetcher = __commonJS({
       logger: rootLogger
     }) => {
       const logger3 = rootLogger.namespace(`Fetcher ${nodeId}`);
-      const emitter = new EventEmitter2();
+      const emitter = new EventEmitter3();
       let isRunning = false;
       const getWorkerQueue = () => workerQueue;
       const assignmentKey = ({ topic, partition }) => `${topic}|${partition}`;
@@ -97616,7 +100112,7 @@ var require_fetchManager = __commonJS({
 // ../node_modules/kafkajs/src/consumer/runner.js
 var require_runner = __commonJS({
   "../node_modules/kafkajs/src/consumer/runner.js"(exports, module) {
-    var { EventEmitter: EventEmitter2 } = __require("events");
+    var { EventEmitter: EventEmitter3 } = __require("events");
     var Long = require_long();
     var createRetry = require_retry();
     var { isKafkaJSError, isRebalancing } = require_errors2();
@@ -97627,7 +100123,7 @@ var require_runner = __commonJS({
     var isSameOffset = (offsetA, offsetB) => Long.fromValue(offsetA).equals(Long.fromValue(offsetB));
     var CONSUMING_START = "consuming-start";
     var CONSUMING_STOP = "consuming-stop";
-    module.exports = class Runner extends EventEmitter2 {
+    module.exports = class Runner extends EventEmitter3 {
       /**
        * @param {object} options
        * @param {import("../../types").Logger} options.logger
@@ -99866,13 +102362,13 @@ var require_socketFactory = __commonJS({
   "../node_modules/kafkajs/src/network/socketFactory.js"(exports, module) {
     var KEEP_ALIVE_DELAY = 6e4;
     module.exports = () => {
-      const net3 = __require("net");
+      const net4 = __require("net");
       const tls = __require("tls");
       return ({ host, port, ssl, onConnect }) => {
         const socket = ssl ? tls.connect(
-          Object.assign({ host, port }, !net3.isIP(host) ? { servername: host } : {}, ssl),
+          Object.assign({ host, port }, !net4.isIP(host) ? { servername: host } : {}, ssl),
           onConnect
-        ) : net3.connect({ host, port }, onConnect);
+        ) : net4.connect({ host, port }, onConnect);
         socket.setKeepAlive(true, KEEP_ALIVE_DELAY);
         return socket;
       };
@@ -110274,1581 +112770,9 @@ var ConsensAgentCourtRoom = class {
 
 // ../src/core/court/llm_escalation.ts
 init_logger();
+init_function_calling_client();
+init_llmConfig();
 import crypto8 from "crypto";
-
-// ../src/core/agent/tools/function-calling-client.ts
-import { createHash as createHash2 } from "crypto";
-
-// ../src/llm/llmConfig.ts
-var DEFAULT_BASE_URL = "https://api.openai.com/v1";
-var DEFAULT_MODEL = "gpt-4o-mini";
-var DEFAULT_TIMEOUT_MS = 6e4;
-var cached = null;
-function loadFromEnv() {
-  const env = process.env ?? {};
-  return {
-    provider: env.SOLOFORGE_LLM_PROVIDER ?? "openai",
-    baseUrl: env.SOLOFORGE_LLM_BASE_URL ?? DEFAULT_BASE_URL,
-    apiKey: env.SOLOFORGE_LLM_API_KEY ?? "",
-    defaultModel: env.SOLOFORGE_LLM_MODEL ?? DEFAULT_MODEL,
-    timeoutMs: parseInt(env.SOLOFORGE_LLM_TIMEOUT_MS ?? String(DEFAULT_TIMEOUT_MS), 10),
-    apiToken: env.SOLOFORGE_LLM_API_TOKEN ?? ""
-  };
-}
-function getLLMProxyConfig() {
-  if (!cached) cached = loadFromEnv();
-  return cached;
-}
-function isLLMProxyReady() {
-  const c = getLLMProxyConfig();
-  return Boolean(c.apiKey && c.baseUrl && c.defaultModel);
-}
-function describeLLMProxyConfig() {
-  const c = getLLMProxyConfig();
-  return {
-    provider: c.provider,
-    baseUrl: c.baseUrl,
-    defaultModel: c.defaultModel,
-    ready: isLLMProxyReady(),
-    tokenRequired: c.apiToken.length > 0
-  };
-}
-
-// ../src/core/agent/tools/function-calling-client.ts
-init_modelCapabilities();
-
-// ../src/core/agent/tools/tool-definitions.ts
-import fs from "fs/promises";
-import path from "path";
-import { spawn } from "child_process";
-var AGENT_TOOLS = [
-  {
-    type: "function",
-    function: {
-      name: "read_file",
-      description: "\u8BFB\u53D6\u9879\u76EE\u4E2D\u7684\u6587\u4EF6\u5185\u5BB9\u3002\u8FD4\u56DE\u6587\u4EF6\u7684\u5B8C\u6574\u6587\u672C\u3002\u7528\u4E8E\u7406\u89E3\u73B0\u6709\u4EE3\u7801\u3001\u67E5\u770B\u914D\u7F6E\u6587\u4EF6\u7B49\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          file_path: {
-            type: "string",
-            description: "\u6587\u4EF6\u7684\u7EDD\u5BF9\u8DEF\u5F84\u6216\u76F8\u5BF9\u4E8E\u9879\u76EE\u6839\u76EE\u5F55\u7684\u76F8\u5BF9\u8DEF\u5F84"
-          },
-          offset: {
-            type: "number",
-            description: "\u4ECE\u7B2C\u51E0\u884C\u5F00\u59CB\u8BFB\u53D6\uFF08\u53EF\u9009\uFF0C\u9ED8\u8BA4\u4ECE\u7B2C 1 \u884C\uFF09"
-          },
-          limit: {
-            type: "number",
-            description: "\u6700\u591A\u8BFB\u53D6\u591A\u5C11\u884C\uFF08\u53EF\u9009\uFF0C\u9ED8\u8BA4\u8BFB\u53D6\u5168\u90E8\uFF09"
-          }
-        },
-        required: ["file_path"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "write_file",
-      description: "\u5C06\u5185\u5BB9\u5199\u5165\u9879\u76EE\u6587\u4EF6\u3002\u5982\u679C\u6587\u4EF6\u4E0D\u5B58\u5728\u4F1A\u81EA\u52A8\u521B\u5EFA\uFF08\u5305\u62EC\u7236\u76EE\u5F55\uFF09\u3002\u7528\u4E8E\u751F\u6210\u4EE3\u7801\u3001\u914D\u7F6E\u6587\u4EF6\u7B49\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          file_path: {
-            type: "string",
-            description: "\u6587\u4EF6\u7684\u7EDD\u5BF9\u8DEF\u5F84\u6216\u76F8\u5BF9\u4E8E\u9879\u76EE\u6839\u76EE\u5F55\u7684\u76F8\u5BF9\u8DEF\u5F84"
-          },
-          content: {
-            type: "string",
-            description: "\u8981\u5199\u5165\u7684\u6587\u4EF6\u5185\u5BB9"
-          }
-        },
-        required: ["file_path", "content"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "execute_cmd",
-      description: "\u5728\u9879\u76EE\u6839\u76EE\u5F55\u4E0B\u6267\u884C\u7EC8\u7AEF\u547D\u4EE4\u3002\u7528\u4E8E\u8FD0\u884C\u6784\u5EFA\u3001\u6D4B\u8BD5\u3001\u5B89\u88C5\u4F9D\u8D56\u7B49\u3002\u8D85\u65F6 30 \u79D2\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          command: {
-            type: "string",
-            description: "\u8981\u6267\u884C\u7684\u547D\u4EE4\uFF08\u5982 npm test, tsc --noEmit\uFF09"
-          },
-          cwd: {
-            type: "string",
-            description: "\u5DE5\u4F5C\u76EE\u5F55\uFF08\u53EF\u9009\uFF0C\u9ED8\u8BA4\u9879\u76EE\u6839\u76EE\u5F55\uFF09"
-          }
-        },
-        required: ["command"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "search_code",
-      description: "\u5728\u9879\u76EE\u4E2D\u641C\u7D22\u4EE3\u7801\u5185\u5BB9\uFF08\u57FA\u4E8E\u6B63\u5219\u8868\u8FBE\u5F0F\uFF09\u3002\u8FD4\u56DE\u5339\u914D\u7684\u6587\u4EF6\u8DEF\u5F84\u548C\u884C\u53F7\u3002\u7528\u4E8E\u67E5\u627E\u51FD\u6570\u5B9A\u4E49\u3001\u5F15\u7528\u3001\u914D\u7F6E\u9879\u7B49\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          pattern: {
-            type: "string",
-            description: "\u6B63\u5219\u8868\u8FBE\u5F0F\u641C\u7D22\u6A21\u5F0F"
-          },
-          glob: {
-            type: "string",
-            description: "\u6587\u4EF6\u8FC7\u6EE4 glob \u6A21\u5F0F\uFF08\u53EF\u9009\uFF0C\u5982 *.ts, *.tsx\uFF09"
-          }
-        },
-        required: ["pattern"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "list_files",
-      description: "\u5217\u51FA\u6307\u5B9A\u76EE\u5F55\u4E0B\u7684\u6587\u4EF6\u548C\u5B50\u76EE\u5F55\u3002\u7528\u4E8E\u4E86\u89E3\u9879\u76EE\u7ED3\u6784\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          dir_path: {
-            type: "string",
-            description: "\u76EE\u5F55\u8DEF\u5F84\uFF08\u53EF\u9009\uFF0C\u9ED8\u8BA4\u9879\u76EE\u6839\u76EE\u5F55\uFF09"
-          },
-          pattern: {
-            type: "string",
-            description: "glob \u5339\u914D\u6A21\u5F0F\uFF08\u53EF\u9009\uFF0C\u5982 **/*.ts\uFF09"
-          }
-        },
-        required: []
-      }
-    }
-  },
-  // ── 画布工具（solo_canvas_*）──
-  // Schema 来自 UI 端 UI/src/server/routes/canvasTools.ts:47-162
-  // 通过 HTTP POST {SOLOFORGE_UI_BASE_URL}/api/canvas/tools/invoke 调用
-  {
-    type: "function",
-    function: {
-      name: "solo_canvas_list",
-      description: "\u5217\u51FA\u6240\u6709\u53EF\u7528\u753B\u5E03\uFF08\u516C\u5F00\u7684 + \u81EA\u5DF1\u521B\u5EFA\u7684\uFF09\u3002\u8FD4\u56DE sessionId\u3001displayName\u3001description\u3001ownerChatSessionId\u3001\u8BBE\u5907\u6570\u91CF\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          requesterChatSessionId: { type: "string", description: "\u5F53\u524D\u5BF9\u8BDD\u7684 chat session ID\uFF08\u7528\u4E8E ACL\uFF09" }
-        },
-        required: ["requesterChatSessionId"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "solo_canvas_get",
-      description: "\u83B7\u53D6\u753B\u5E03\u5B8C\u6574\u72B6\u6001\uFF1A\u9009\u4E2D\u7684\u8BBE\u5907\u3001\u8BBE\u5907\u5217\u8868\u3001\u80CC\u666F\u8272\u3001\u5907\u6CE8\u7B49\u3002canvasId \u53EF\u4E0D\u4F20\u2014\u2014\u7CFB\u7EDF\u4F1A\u81EA\u52A8\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          canvasId: { type: "string", description: "\u753B\u5E03 ID\uFF0C\u5982 canvas_1\uFF08\u53EF\u9009\uFF1B\u4E0D\u4F20\u65F6\u4F7F\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\uFF09" },
-          requesterChatSessionId: { type: "string" }
-        },
-        required: ["requesterChatSessionId"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "solo_canvas_create",
-      description: "\u521B\u5EFA\u4E00\u4E2A\u65B0\u753B\u5E03\u3002\u8FD4\u56DE\u521B\u5EFA\u7684\u753B\u5E03 ID \u548C displayName\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          description: { type: "string", description: "\u753B\u5E03\u5907\u6CE8\uFF08\u53EF\u9009\uFF09" },
-          requesterChatSessionId: { type: "string" }
-        },
-        required: ["requesterChatSessionId"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "solo_canvas_add_device",
-      description: "\u5411\u753B\u5E03\u6DFB\u52A0\u4E00\u4E2A 3D \u8BBE\u5907\uFF08iPhone / iPad / MacBook \u7B49\uFF09\u3002canvasId \u53EF\u4E0D\u4F20\u2014\u2014\u7CFB\u7EDF\u4F1A\u81EA\u52A8\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          canvasId: { type: "string", description: "\u753B\u5E03 ID\uFF08\u53EF\u9009\uFF1B\u4E0D\u4F20\u65F6\u4F7F\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\uFF09" },
-          device: { type: "string", description: "\u8BBE\u5907 JSON \u5BF9\u8C61\uFF08modelKey/xRatio/yRatio \u7B49\uFF09" },
-          requesterChatSessionId: { type: "string" }
-        },
-        required: ["device", "requesterChatSessionId"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "solo_canvas_update_device",
-      description: "\u66F4\u65B0\u753B\u5E03\u4E0A\u7684\u67D0\u4E2A\u8BBE\u5907\uFF08\u4F4D\u7F6E\u3001\u989C\u8272\u3001UI session \u7B49\uFF09\u3002canvasId \u53EF\u4E0D\u4F20\u2014\u2014\u7CFB\u7EDF\u4F1A\u81EA\u52A8\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          canvasId: { type: "string", description: "\u753B\u5E03 ID\uFF08\u53EF\u9009\uFF1B\u4E0D\u4F20\u65F6\u4F7F\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\uFF09" },
-          deviceId: { type: "string" },
-          updates: { type: "string", description: "\u8981\u66F4\u65B0\u7684\u5B57\u6BB5 JSON \u5B57\u7B26\u4E32" },
-          requesterChatSessionId: { type: "string" }
-        },
-        required: ["deviceId", "updates", "requesterChatSessionId"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "solo_canvas_remove_device",
-      description: "\u4ECE\u753B\u5E03\u79FB\u9664\u6307\u5B9A\u8BBE\u5907\u3002canvasId \u53EF\u4E0D\u4F20\u2014\u2014\u7CFB\u7EDF\u4F1A\u81EA\u52A8\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          canvasId: { type: "string", description: "\u753B\u5E03 ID\uFF08\u53EF\u9009\uFF1B\u4E0D\u4F20\u65F6\u4F7F\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\uFF09" },
-          deviceId: { type: "string" },
-          requesterChatSessionId: { type: "string" }
-        },
-        required: ["deviceId", "requesterChatSessionId"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "solo_canvas_rename",
-      description: "\u4FEE\u6539\u753B\u5E03\u7684\u5907\u6CE8 / \u63CF\u8FF0\uFF08\u4EC5 owner \u53EF\u8C03\uFF09\u3002canvasId \u53EF\u4E0D\u4F20\u2014\u2014\u7CFB\u7EDF\u4F1A\u81EA\u52A8\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          canvasId: { type: "string", description: "\u753B\u5E03 ID\uFF08\u53EF\u9009\uFF1B\u4E0D\u4F20\u65F6\u4F7F\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\uFF09" },
-          description: { type: "string" },
-          requesterChatSessionId: { type: "string" }
-        },
-        required: ["description", "requesterChatSessionId"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "solo_canvas_delete",
-      description: "\u5220\u9664\u6574\u4E2A\u753B\u5E03\uFF08\u4EC5 owner \u53EF\u8C03\uFF0C\u614E\u7528\uFF09\u3002canvasId \u53EF\u4E0D\u4F20\u2014\u2014\u7CFB\u7EDF\u4F1A\u81EA\u52A8\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          canvasId: { type: "string", description: "\u753B\u5E03 ID\uFF08\u53EF\u9009\uFF1B\u4E0D\u4F20\u65F6\u4F7F\u7528\u5F53\u524D\u4F1A\u8BDD\u7ED1\u5B9A\u7684\u753B\u5E03\uFF09" },
-          requesterChatSessionId: { type: "string" }
-        },
-        required: ["requesterChatSessionId"]
-      }
-    }
-  },
-  // ── canvas_push_ui: 直接推送 UI AST 到画布 (核心断路修复) ──
-  // 让 LLM/Agent 能通过 tool_call 直接推送 Universal AST 到 Flutter 画布,
-  // 不再依赖前端 tryLocalTranslateAndPush 从文本提取代码块。
-  // 链路: Agent tool_call → executeToolCall → POST /api/canvas/relay/push-ui → Flutter /render
-  {
-    type: "function",
-    function: {
-      name: "canvas_push_ui",
-      description: "Push a Universal AST UI tree directly to the Flutter canvas for immediate rendering. Use this tool when the user asks to draw/render/display UI on the canvas. The dsl is a UniversalNode tree (JSON object with type, children, props). The sessionId identifies which canvas to push to.",
-      parameters: {
-        type: "object",
-        properties: {
-          sessionId: {
-            type: "string",
-            description: "Canvas session ID (the chat session ID). The relay will look up the registered Flutter port for this session."
-          },
-          dsl: {
-            type: "object",
-            description: 'Universal AST node tree. Root node has {type, children, props}. Example: {"type":"column","children":[{"type":"text","props":{"data":"Hello World"}}]}'
-          },
-          language: {
-            type: "string",
-            description: "Source language of the UI code (e.g. html, dart, typescript). Optional, defaults to typescript."
-          }
-        },
-        required: ["sessionId", "dsl"]
-      }
-    }
-  }
-];
-var CORE_TOOL_NAMES = /* @__PURE__ */ new Set([
-  "read_file",
-  "write_file",
-  "execute_cmd",
-  "search_code",
-  "list_files",
-  "canvas_push_ui"
-  // 断路修复: 画布推送工具始终可用
-]);
-var EXTENDED_TOOL_SCHEMAS = [
-  // ── Obscura 浏览器工具 ──
-  {
-    type: "function",
-    function: {
-      name: "browser_screenshot",
-      description: "\u5BF9\u6307\u5B9A URL \u7684\u7F51\u9875\u8FDB\u884C\u9AD8\u6E05\u622A\u56FE\u3002\u8FD4\u56DE\u622A\u56FE\u4FDD\u5B58\u8DEF\u5F84\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          url: { type: "string", description: "\u8981\u622A\u56FE\u7684\u7F51\u9875 URL" },
-          selector: { type: "string", description: "CSS \u9009\u62E9\u5668, \u4EC5\u622A\u53D6\u5339\u914D\u5143\u7D20 (\u53EF\u9009)" }
-        },
-        required: ["url"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "browser_devtools",
-      description: "\u6253\u5F00 Chrome DevTools \u8C03\u8BD5\u6307\u5B9A\u7F51\u9875\u3002\u8FD4\u56DE\u9875\u9762\u6982\u8981\u4FE1\u606F\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          url: { type: "string", description: "\u8981\u8C03\u8BD5\u7684\u7F51\u9875 URL" }
-        },
-        required: ["url"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "browser_console",
-      description: "\u5B9E\u65F6\u6355\u83B7\u6307\u5B9A\u7F51\u9875\u7684\u6D4F\u89C8\u5668\u63A7\u5236\u53F0\u65E5\u5FD7\u3002\u8FD4\u56DE\u6700\u8FD1\u7684\u65E5\u5FD7\u6761\u76EE\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          url: { type: "string", description: "\u76EE\u6807\u7F51\u9875 URL" },
-          lines: { type: "number", description: "\u8FD4\u56DE\u6700\u8FD1\u591A\u5C11\u6761\u65E5\u5FD7 (\u53EF\u9009, \u9ED8\u8BA4 50)" }
-        },
-        required: ["url"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "browser_network",
-      description: "\u62E6\u622A\u5E76\u5206\u6790\u6307\u5B9A\u7F51\u9875\u7684\u7F51\u7EDC\u8BF7\u6C42\u3002\u8FD4\u56DE\u8BF7\u6C42\u5217\u8868 (URL/\u65B9\u6CD5/\u72B6\u6001\u7801/\u8017\u65F6)\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          url: { type: "string", description: "\u76EE\u6807\u7F51\u9875 URL" },
-          filter: { type: "string", description: "URL \u8FC7\u6EE4\u5173\u952E\u8BCD (\u53EF\u9009)" }
-        },
-        required: ["url"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "browser_dom_inspect",
-      description: "\u68C0\u67E5\u6307\u5B9A\u7F51\u9875\u7684 DOM \u6811\u7ED3\u6784\u3002\u8FD4\u56DE\u7B80\u5316\u7248\u7684 DOM \u6811\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          url: { type: "string", description: "\u76EE\u6807\u7F51\u9875 URL" },
-          selector: { type: "string", description: "CSS \u9009\u62E9\u5668, \u4EC5\u68C0\u67E5\u5339\u914D\u7684\u5143\u7D20 (\u53EF\u9009)" }
-        },
-        required: ["url"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "browser_perf_trace",
-      description: "\u5BF9\u6307\u5B9A\u7F51\u9875\u8FDB\u884C\u6027\u80FD\u8FFD\u8E2A\u5206\u6790\u3002\u8FD4\u56DE\u9875\u9762\u52A0\u8F7D\u4E0E\u6E32\u67D3\u6027\u80FD\u62A5\u544A\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          url: { type: "string", description: "\u76EE\u6807\u7F51\u9875 URL" }
-        },
-        required: ["url"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "browser_cookies",
-      description: "\u8BFB\u53D6\u6216\u5199\u5165\u6307\u5B9A\u57DF\u540D\u7684\u6D4F\u89C8\u5668 Cookie\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          url: { type: "string", description: "\u76EE\u6807\u7F51\u9875 URL" },
-          action: { type: "string", description: "\u64CD\u4F5C\u7C7B\u578B: get (\u8BFB\u53D6) \u6216 set (\u5199\u5165)" },
-          name: { type: "string", description: "Cookie \u540D\u79F0 (set \u65F6\u5FC5\u586B)" },
-          value: { type: "string", description: "Cookie \u503C (set \u65F6\u5FC5\u586B)" }
-        },
-        required: ["url", "action"]
-      }
-    }
-  },
-  // ── Browser-Use 任务编排工具 ──
-  {
-    type: "function",
-    function: {
-      name: "bu_run_task",
-      description: "\u7528\u81EA\u7136\u8BED\u8A00\u63CF\u8FF0\u4E00\u4E2A\u6D4F\u89C8\u5668\u4EFB\u52A1, LLM \u81EA\u52A8\u89C4\u5212\u5E76\u6267\u884C\u6B65\u9AA4\u3002\u8FD4\u56DE\u4EFB\u52A1 ID \u548C\u6267\u884C\u7ED3\u679C\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          task: { type: "string", description: '\u81EA\u7136\u8BED\u8A00\u4EFB\u52A1\u63CF\u8FF0 (\u5982 "\u6253\u5F00 GitHub \u5E76\u641C\u7D22 SoloForge")' },
-          url: { type: "string", description: "\u8D77\u59CB\u9875\u9762 URL (\u53EF\u9009)" }
-        },
-        required: ["task"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "bu_pause",
-      description: "\u6682\u505C\u6B63\u5728\u6267\u884C\u7684\u6D4F\u89C8\u5668\u4EFB\u52A1\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          task_id: { type: "string", description: "\u4EFB\u52A1 ID" }
-        },
-        required: ["task_id"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "bu_resume",
-      description: "\u6062\u590D\u5DF2\u6682\u505C\u7684\u6D4F\u89C8\u5668\u4EFB\u52A1\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          task_id: { type: "string", description: "\u4EFB\u52A1 ID" }
-        },
-        required: ["task_id"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "bu_state",
-      description: "\u67E5\u8BE2\u6D4F\u89C8\u5668\u4EFB\u52A1\u7684\u6267\u884C\u72B6\u6001\u4E0E\u8FDB\u5EA6\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          task_id: { type: "string", description: "\u4EFB\u52A1 ID" }
-        },
-        required: ["task_id"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "bu_screenshot",
-      description: "\u5BF9\u6D4F\u89C8\u5668\u4EFB\u52A1\u5F53\u524D\u9875\u9762\u8FDB\u884C\u622A\u56FE\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          task_id: { type: "string", description: "\u4EFB\u52A1 ID" }
-        },
-        required: ["task_id"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "bu_history",
-      description: "\u67E5\u770B\u6D4F\u89C8\u5668\u4EFB\u52A1\u7684 ReAct \u63A8\u7406\u5386\u53F2\u4E0E\u6267\u884C\u8F68\u8FF9\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          task_id: { type: "string", description: "\u4EFB\u52A1 ID" }
-        },
-        required: ["task_id"]
-      }
-    }
-  },
-  // ── Windows-MCP 系统自动化工具 ──
-  {
-    type: "function",
-    function: {
-      name: "win_reg_read",
-      description: "\u8BFB\u53D6 Windows \u6CE8\u518C\u8868\u952E\u503C\u3002\u8FD4\u56DE\u952E\u503C\u6570\u636E\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          path: { type: "string", description: "\u6CE8\u518C\u8868\u8DEF\u5F84 (\u5982 HKLM\\Software\\Microsoft\\Windows\\CurrentVersion)" },
-          name: { type: "string", description: "\u952E\u503C\u540D\u79F0 (\u53EF\u9009, \u4E0D\u4F20\u5219\u8FD4\u56DE\u6240\u6709\u5B50\u952E)" }
-        },
-        required: ["path"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "win_service_ctrl",
-      description: "\u7BA1\u7406 Windows \u7CFB\u7EDF\u670D\u52A1 (\u542F\u52A8/\u505C\u6B62/\u67E5\u8BE2\u72B6\u6001)\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          action: { type: "string", description: "\u64CD\u4F5C: start / stop / status / list" },
-          name: { type: "string", description: "\u670D\u52A1\u540D\u79F0 (list \u64CD\u4F5C\u53EF\u4E0D\u4F20)" }
-        },
-        required: ["action"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "win_task_scheduler",
-      description: "\u521B\u5EFA\u6216\u7BA1\u7406 Windows \u7CFB\u7EDF\u5B9A\u65F6\u4EFB\u52A1\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          action: { type: "string", description: "\u64CD\u4F5C: create / delete / list / run" },
-          name: { type: "string", description: "\u4EFB\u52A1\u540D\u79F0" },
-          command: { type: "string", description: "\u8981\u6267\u884C\u7684\u547D\u4EE4 (create \u65F6\u5FC5\u586B)" },
-          trigger: { type: "string", description: "\u89E6\u53D1\u6761\u4EF6 (\u5982 daily, onstart)" }
-        },
-        required: ["action"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "win_event_log",
-      description: "\u8BFB\u53D6 Windows \u4E8B\u4EF6\u65E5\u5FD7\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          source: { type: "string", description: "\u65E5\u5FD7\u6E90 (\u5982 Application, System, Security)" },
-          count: { type: "number", description: "\u8FD4\u56DE\u6700\u8FD1\u591A\u5C11\u6761 (\u53EF\u9009, \u9ED8\u8BA4 20)" }
-        },
-        required: ["source"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "win_powershell",
-      description: "\u6267\u884C PowerShell \u811A\u672C\u547D\u4EE4\u3002\u6BD4 execute_cmd \u66F4\u9002\u5408 Windows \u7CFB\u7EDF\u7BA1\u7406\u64CD\u4F5C\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          script: { type: "string", description: "PowerShell \u811A\u672C\u5185\u5BB9" }
-        },
-        required: ["script"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "win_firewall",
-      description: "\u67E5\u770B\u6216\u4FEE\u6539 Windows \u9632\u706B\u5899\u89C4\u5219\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          action: { type: "string", description: "\u64CD\u4F5C: list / add / delete / enable / disable" },
-          name: { type: "string", description: "\u89C4\u5219\u540D\u79F0 (list \u64CD\u4F5C\u53EF\u4E0D\u4F20)" }
-        },
-        required: ["action"]
-      }
-    }
-  },
-  {
-    type: "function",
-    function: {
-      name: "win_perfmon",
-      description: "\u83B7\u53D6 Windows \u6027\u80FD\u76D1\u89C6\u5668\u6570\u636E (CPU\u3001\u5185\u5B58\u3001\u78C1\u76D8\u5B9E\u65F6\u76D1\u63A7)\u3002",
-      parameters: {
-        type: "object",
-        properties: {
-          counter: { type: "string", description: "\u6027\u80FD\u8BA1\u6570\u5668\u8DEF\u5F84 (\u53EF\u9009, \u4E0D\u4F20\u5219\u8FD4\u56DE\u5E38\u7528\u6307\u6807)" }
-        },
-        required: []
-      }
-    }
-  }
-];
-function getToolsForActiveIds(activeToolIds) {
-  if (!activeToolIds || activeToolIds.length === 0) {
-    return AGENT_TOOLS;
-  }
-  const activeSet = new Set(activeToolIds);
-  const result = [];
-  for (const tool of AGENT_TOOLS) {
-    if (CORE_TOOL_NAMES.has(tool.function.name) || tool.function.name.startsWith("solo_canvas_")) {
-      result.push(tool);
-    }
-  }
-  for (const tool of EXTENDED_TOOL_SCHEMAS) {
-    if (activeSet.has(tool.function.name)) {
-      result.push(tool);
-    }
-  }
-  return result;
-}
-var TOOL_RESULT_BUDGET = {
-  read_file: 4e3,
-  execute_cmd: 3e3,
-  search_code: 2e3,
-  list_files: 3e3
-};
-var DEFAULT_TOOL_RESULT_BUDGET = 4e3;
-function applyToolResultBudget(toolName, output, extraInfo) {
-  const budget = TOOL_RESULT_BUDGET[toolName] ?? DEFAULT_TOOL_RESULT_BUDGET;
-  if (output.length <= budget) return output;
-  if (toolName === "read_file") {
-    const truncated2 = output.slice(0, budget);
-    const totalChars = output.length;
-    const totalLines = output.split("\n").length;
-    const shownLines = truncated2.split("\n").length;
-    return truncated2 + `
-
-... [TRUNCATED by Agent Loop Budget] showing first ${shownLines} of ~${totalLines} lines (${totalChars} chars total). Use offset=${shownLines + 1} and limit=100 to read the next section.`;
-  }
-  if (toolName === "execute_cmd") {
-    const tail = output.slice(-budget);
-    return `... [TRUNCATED: first ${output.length - budget} chars omitted, showing last ${budget}] ...
-` + tail;
-  }
-  const truncated = output.slice(0, budget);
-  return truncated + `
-
-... [TRUNCATED by Agent Loop Budget] ${output.length} chars total, showing first ${budget}.`;
-}
-var PROJECT_ROOT = path.resolve(
-  typeof __dirname !== "undefined" ? __dirname : path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/i, "$1")),
-  "../../../../"
-);
-function resolvePath(filePath) {
-  if (path.isAbsolute(filePath)) return filePath;
-  return path.resolve(PROJECT_ROOT, filePath);
-}
-function isPathWithinWorkspace(targetPath, workspaceFolder) {
-  if (!workspaceFolder) return true;
-  const resolved = path.isAbsolute(targetPath) ? targetPath : path.resolve(workspaceFolder, targetPath);
-  const normalizedTarget = path.normalize(resolved);
-  const normalizedWs = path.normalize(workspaceFolder);
-  return normalizedTarget === normalizedWs || normalizedTarget.startsWith(normalizedWs + path.sep);
-}
-function checkWorkspaceBoundary(targetPath, workspaceFolder) {
-  if (!workspaceFolder) return null;
-  if (isPathWithinWorkspace(targetPath, workspaceFolder)) return null;
-  return `\u8DEF\u5F84 "${targetPath}" \u4E0D\u5728\u5DE5\u4F5C\u533A\u6587\u4EF6\u5939 "${workspaceFolder}" \u8303\u56F4\u5185\u3002\u5F53\u524D\u5BF9\u8BDD\u5DF2\u7ED1\u5B9A\u5DE5\u4F5C\u533A, \u6587\u4EF6\u64CD\u4F5C\u4EC5\u9650\u4E8E\u6B64\u6587\u4EF6\u5939\u5185\u3002\u5982\u9700\u64CD\u4F5C\u5916\u90E8\u6587\u4EF6, \u8BF7\u5728\u5BF9\u8BDD\u4E2D\u544A\u77E5\u7528\u6237\u5E76\u8BF7\u6C42\u6388\u6743\u3002`;
-}
-var UI_BASE_URL = process.env.SOLOFORGE_UI_BASE_URL || "http://localhost:3000";
-async function invokeCanvasToolViaUI(toolName, args) {
-  const requesterChatSessionId = args.requesterChatSessionId;
-  if (!requesterChatSessionId) {
-    return `Error: ${toolName} requires 'requesterChatSessionId' arg`;
-  }
-  const headers = {
-    "Content-Type": "application/json",
-    "X-Requester-Chat-Session-Id": requesterChatSessionId
-  };
-  try {
-    const res = await fetch(`${UI_BASE_URL}/api/canvas/tools/invoke`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ name: toolName, arguments: args })
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.success !== true) {
-      return `Error: ${data.error || `HTTP ${res.status}`}`;
-    }
-    if (data.payload === void 0 || data.payload === null) {
-      return "OK";
-    }
-    return typeof data.payload === "string" ? data.payload : JSON.stringify(data.payload, null, 2);
-  } catch (err) {
-    return `Error: failed to call UI canvas endpoint (${UI_BASE_URL}): ${err instanceof Error ? err.message : String(err)}`;
-  }
-}
-async function invokeExtendedToolViaUI(toolName, args) {
-  try {
-    const res = await fetch(`${UI_BASE_URL}/api/tools/invoke`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: toolName, arguments: args })
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.success !== true) {
-      return `Error: ${data.error || `HTTP ${res.status}`}`;
-    }
-    return data.output ?? "OK";
-  } catch (err) {
-    return `Error: failed to call UI tool endpoint (${UI_BASE_URL}) for ${toolName}: ${err instanceof Error ? err.message : String(err)}`;
-  }
-}
-async function executeToolCall(request3) {
-  const start = Date.now();
-  try {
-    let output;
-    switch (request3.name) {
-      case "read_file": {
-        const filePath = resolvePath(request3.arguments.file_path);
-        const boundaryErr = checkWorkspaceBoundary(filePath, request3.workspaceFolder);
-        if (boundaryErr) {
-          output = boundaryErr;
-          break;
-        }
-        const content = await fs.readFile(filePath, "utf-8");
-        const lines = content.split("\n");
-        const offset = (request3.arguments.offset ?? 1) - 1;
-        const limit = request3.arguments.limit ?? lines.length;
-        const slice = lines.slice(offset, offset + limit);
-        output = slice.join("\n");
-        output = applyToolResultBudget("read_file", output);
-        break;
-      }
-      case "write_file": {
-        const filePath = resolvePath(request3.arguments.file_path);
-        const boundaryErr = checkWorkspaceBoundary(filePath, request3.workspaceFolder);
-        if (boundaryErr) {
-          output = boundaryErr;
-          break;
-        }
-        await fs.mkdir(path.dirname(filePath), { recursive: true });
-        await fs.writeFile(filePath, request3.arguments.content, "utf-8");
-        output = `Successfully wrote ${request3.arguments.content.length} chars to ${request3.arguments.file_path}`;
-        break;
-      }
-      case "execute_cmd": {
-        const cwd = request3.arguments.cwd ? resolvePath(request3.arguments.cwd) : request3.workspaceFolder || PROJECT_ROOT;
-        const boundaryErr = checkWorkspaceBoundary(cwd, request3.workspaceFolder);
-        if (boundaryErr) {
-          output = boundaryErr;
-          break;
-        }
-        const command = String(request3.arguments.command || "");
-        const hook = request3.streamHook;
-        const toolStart = Date.now();
-        const isWin = process.platform === "win32";
-        const child = isWin ? spawn("cmd.exe", ["/c", command], { cwd, windowsHide: true }) : spawn("sh", ["-c", command], { cwd });
-        let stdoutBuf = "";
-        let stderrBuf = "";
-        const pushStdout = (chunk) => {
-          stdoutBuf += chunk;
-          if (hook) {
-            try {
-              hook.emit("tool_stdout", {
-                chatId: hook.chatId,
-                subTaskId: hook.subTaskId,
-                toolCallId: request3.id,
-                tool: "execute_cmd",
-                chunk,
-                ts: Date.now()
-              });
-            } catch {
-            }
-          }
-        };
-        const pushStderr = (chunk) => {
-          stderrBuf += chunk;
-          if (hook) {
-            try {
-              hook.emit("tool_stderr", {
-                chatId: hook.chatId,
-                subTaskId: hook.subTaskId,
-                toolCallId: request3.id,
-                tool: "execute_cmd",
-                chunk,
-                ts: Date.now()
-              });
-            } catch {
-            }
-          }
-        };
-        child.stdout?.on("data", (data) => pushStdout(data.toString("utf-8")));
-        child.stderr?.on("data", (data) => pushStderr(data.toString("utf-8")));
-        const exitCode = await new Promise((resolve2) => {
-          child.on("close", (code) => resolve2(code ?? 0));
-          child.on("error", (err) => {
-            pushStderr(`
-[spawn error] ${err.message}
-`);
-            resolve2(1);
-          });
-          setTimeout(() => {
-            try {
-              child.kill("SIGTERM");
-            } catch {
-            }
-            resolve2(124);
-          }, 3e4);
-        });
-        const durationMs = Date.now() - toolStart;
-        if (hook) {
-          try {
-            hook.emit("tool_exit", {
-              chatId: hook.chatId,
-              subTaskId: hook.subTaskId,
-              toolCallId: request3.id,
-              tool: "execute_cmd",
-              exitCode,
-              durationMs,
-              ts: Date.now()
-            });
-          } catch {
-          }
-        }
-        output = (stdoutBuf + (stderrBuf ? `
-[stderr]
-${stderrBuf}` : "")).trim();
-        output = applyToolResultBudget("execute_cmd", output);
-        if (exitCode !== 0) {
-          return {
-            tool_call_id: request3.id,
-            name: "execute_cmd",
-            output: output + `
-[exit ${exitCode}]`,
-            isError: true,
-            durationMs
-          };
-        }
-        break;
-      }
-      case "search_code": {
-        const regex = new RegExp(request3.arguments.pattern, "i");
-        const matches = [];
-        const maxResults = 30;
-        async function searchDir(dir, depth) {
-          if (depth > 5 || matches.length >= maxResults) return;
-          let entries;
-          try {
-            entries = await fs.readdir(dir, { withFileTypes: true });
-          } catch {
-            return;
-          }
-          for (const entry of entries) {
-            if (matches.length >= maxResults) break;
-            if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.name === "dist") continue;
-            const fullPath = path.join(dir, entry.name);
-            if (entry.isDirectory()) {
-              await searchDir(fullPath, depth + 1);
-            } else if (entry.isFile()) {
-              if (request3.arguments.glob) {
-                const ext = request3.arguments.glob.replace("*", "");
-                if (!entry.name.endsWith(ext)) continue;
-              }
-              try {
-                const content = await fs.readFile(fullPath, "utf-8");
-                const lines = content.split("\n");
-                for (let i = 0; i < lines.length && matches.length < maxResults; i++) {
-                  if (regex.test(lines[i])) {
-                    const rel = path.relative(PROJECT_ROOT, fullPath);
-                    matches.push(`${rel}:${i + 1}: ${lines[i].trim()}`);
-                  }
-                }
-              } catch {
-              }
-            }
-          }
-        }
-        await searchDir(PROJECT_ROOT, 0);
-        output = matches.length > 0 ? matches.join("\n") : "No matches found.";
-        output = applyToolResultBudget("search_code", output);
-        break;
-      }
-      case "list_files": {
-        const dirPath = request3.arguments.dir_path ? resolvePath(request3.arguments.dir_path) : request3.workspaceFolder || PROJECT_ROOT;
-        const boundaryErr = checkWorkspaceBoundary(dirPath, request3.workspaceFolder);
-        if (boundaryErr) {
-          output = boundaryErr;
-          break;
-        }
-        const pattern = request3.arguments.pattern ?? "*";
-        const entries = await fs.readdir(dirPath, { withFileTypes: true });
-        output = entries.slice(0, 100).map((e) => `${e.isDirectory() ? "\u{1F4C1}" : "\u{1F4C4}"} ${e.name}`).join("\n");
-        break;
-      }
-      // ─── canvas_push_ui: 直接推送 UI AST 到 Flutter 画布 ──
-      // 断路修复: 让 Agent 能通过 tool_call 直接推送 Universal AST,
-      // 无需依赖前端 tryLocalTranslateAndPush 从文本提取代码块。
-      // 链路: executeToolCall → POST /api/canvas/relay/push-ui → Flutter /render
-      case "canvas_push_ui": {
-        const sessionId = String(request3.arguments.sessionId || "");
-        const dsl = request3.arguments.dsl;
-        const language = String(request3.arguments.language || "typescript");
-        if (!sessionId) {
-          output = 'Error: canvas_push_ui requires "sessionId" argument';
-          break;
-        }
-        if (!dsl || typeof dsl !== "object") {
-          output = 'Error: canvas_push_ui requires "dsl" argument (Universal AST object)';
-          break;
-        }
-        try {
-          const relayUrl = `${UI_BASE_URL}/api/canvas/relay/push-ui`;
-          const relayRes = await fetch(relayUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ sessionId, dsl, language })
-          });
-          const relayData = await relayRes.json().catch(() => ({}));
-          if (!relayRes.ok || relayData.success !== true) {
-            output = `Error: canvas relay push-ui failed: ${relayData.error || `HTTP ${relayRes.status}`}`;
-          } else {
-            output = `Successfully pushed UI to canvas (sessionId=${sessionId}, port=${relayData.port}, dslBytes=${relayData.dslBytes}). The UI has been rendered on the Flutter canvas.`;
-          }
-        } catch (err) {
-          output = `Error: failed to reach canvas relay (${UI_BASE_URL}): ${err instanceof Error ? err.message : String(err)}`;
-        }
-        break;
-      }
-      // ─── 画布工具（solo_canvas_*）──
-      // 转发到 UI 进程 UI/src/server/routes/canvasTools.ts 的 HTTP 端点
-      // UI_BASE_URL 默认 http://localhost:3000（Vite dev server），
-      // Electron 生产环境由主进程注入（见 electron/main.cjs）
-      default:
-        if (request3.name.startsWith("solo_canvas_")) {
-          output = await invokeCanvasToolViaUI(request3.name, request3.arguments);
-          break;
-        }
-        if (request3.name.startsWith("browser_") || request3.name.startsWith("bu_") || request3.name.startsWith("win_")) {
-          output = await invokeExtendedToolViaUI(request3.name, request3.arguments);
-          break;
-        }
-        output = `Unknown tool: ${request3.name}`;
-    }
-    output = applyToolResultBudget(request3.name, output);
-    return {
-      tool_call_id: request3.id,
-      name: request3.name,
-      output,
-      isError: false,
-      durationMs: Date.now() - start
-    };
-  } catch (err) {
-    return {
-      tool_call_id: request3.id,
-      name: request3.name,
-      output: `Error: ${err instanceof Error ? err.message : String(err)}`,
-      isError: true,
-      durationMs: Date.now() - start
-    };
-  }
-}
-
-// ../src/core/agent/tools/session-tool-cache.ts
-init_logger();
-import { createHash } from "crypto";
-var DEFAULT_TTL_MS = 10 * 60 * 1e3;
-var MAX_ENTRIES = 500;
-var CLEANUP_INTERVAL_MS = 5 * 60 * 1e3;
-var SessionToolCache = class {
-  cache = /* @__PURE__ */ new Map();
-  cleanupTimer = null;
-  hitCount = 0;
-  missCount = 0;
-  constructor() {
-    this.cleanupTimer = setInterval(() => this.cleanupExpired(), CLEANUP_INTERVAL_MS);
-    if (this.cleanupTimer.unref) {
-      this.cleanupTimer.unref();
-    }
-  }
-  /**
-   * 生成缓存 key
-   * @param chatId 会话 ID
-   * @param toolName 工具名
-   * @param args 工具参数
-   */
-  buildKey(chatId, toolName, args) {
-    const argsJson = JSON.stringify(args);
-    const argsHash = createHash("sha256").update(argsJson).digest("hex").slice(0, 16);
-    return createHash("sha256").update(`${chatId}:${toolName}:${argsHash}`).digest("hex").slice(0, 32);
-  }
-  /**
-   * 查询缓存
-   * @param chatId 会话 ID
-   * @param toolName 工具名
-   * @param args 工具参数
-   * @returns 命中时返回输出, 未命中返回 null
-   */
-  lookup(chatId, toolName, args) {
-    const key = this.buildKey(chatId, toolName, args);
-    const entry = this.cache.get(key);
-    if (!entry) {
-      this.missCount++;
-      return null;
-    }
-    if (Date.now() - entry.timestamp > entry.ttl) {
-      this.cache.delete(key);
-      this.missCount++;
-      return null;
-    }
-    entry.hitCount++;
-    this.hitCount++;
-    return entry.output;
-  }
-  /**
-   * 存储工具结果
-   * @param chatId 会话 ID
-   * @param toolName 工具名
-   * @param args 工具参数
-   * @param output 工具输出
-   * @param ttl TTL (ms), 默认 10 分钟
-   */
-  store(chatId, toolName, args, output, ttl = DEFAULT_TTL_MS) {
-    const key = this.buildKey(chatId, toolName, args);
-    const argsHash = createHash("sha256").update(JSON.stringify(args)).digest("hex").slice(0, 16);
-    if (this.cache.size >= MAX_ENTRIES) {
-      this.evictOldest();
-    }
-    this.cache.set(key, {
-      key,
-      toolName,
-      argsHash,
-      output,
-      timestamp: Date.now(),
-      hitCount: 0,
-      ttl
-    });
-  }
-  /**
-   * 清理指定 chatId 的所有缓存
-   * @param chatId 会话 ID
-   */
-  clearByChatId(chatId) {
-    const prefix = createHash("sha256").update(chatId).digest("hex").slice(0, 8);
-    let cleared = 0;
-    for (const [key, entry] of this.cache.entries()) {
-      if (key.startsWith(prefix) || entry.key.startsWith(prefix)) {
-        this.cache.delete(key);
-        cleared++;
-      }
-    }
-    if (cleared > 0) {
-      logger.debug("SessionToolCache", `Cleared ${cleared} entries for chatId=${chatId}`);
-    }
-  }
-  /**
-   * 清理所有过期条目
-   */
-  cleanupExpired() {
-    const now = Date.now();
-    let cleared = 0;
-    for (const [key, entry] of this.cache.entries()) {
-      if (now - entry.timestamp > entry.ttl) {
-        this.cache.delete(key);
-        cleared++;
-      }
-    }
-    if (cleared > 0) {
-      logger.debug("SessionToolCache", `Cleaned up ${cleared} expired entries (remaining: ${this.cache.size})`);
-    }
-  }
-  /**
-   * 淘汰最旧的条目 (LRU 策略的简化版)
-   */
-  evictOldest() {
-    let oldestKey = null;
-    let oldestTime = Infinity;
-    for (const [key, entry] of this.cache.entries()) {
-      if (entry.timestamp < oldestTime) {
-        oldestTime = entry.timestamp;
-        oldestKey = key;
-      }
-    }
-    if (oldestKey) {
-      this.cache.delete(oldestKey);
-    }
-  }
-  /**
-   * 获取缓存统计
-   */
-  getStats() {
-    const total = this.hitCount + this.missCount;
-    return {
-      size: this.cache.size,
-      hitCount: this.hitCount,
-      missCount: this.missCount,
-      hitRate: total > 0 ? this.hitCount / total : 0
-    };
-  }
-  /**
-   * 销毁缓存 (进程退出时调用)
-   */
-  destroy() {
-    if (this.cleanupTimer) {
-      clearInterval(this.cleanupTimer);
-      this.cleanupTimer = null;
-    }
-    this.cache.clear();
-  }
-};
-var sessionToolCache = new SessionToolCache();
-function isCacheableToolResult(toolName, output) {
-  if (output.startsWith("Error:") || output.startsWith("Tool error:")) {
-    return false;
-  }
-  const nonCacheableTools = /* @__PURE__ */ new Set([
-    "execute_cmd",
-    // 命令执行有副作用
-    "browser_screenshot",
-    // 截图随时间变化
-    "bu_screenshot",
-    // 同上
-    "bu_state",
-    // 状态随时变化
-    "win_perfmon",
-    // 性能计数器实时变化
-    "win_event_log",
-    // 事件日志实时增长
-    "browser_network",
-    // 网络请求实时变化
-    "browser_console"
-    // 控制台日志实时变化
-  ]);
-  return !nonCacheableTools.has(toolName);
-}
-
-// ../src/core/agent/tools/function-calling-client.ts
-function estimateTokens(messages) {
-  let totalChars = 0;
-  for (const m of messages) {
-    totalChars += 10;
-    if (m.content) totalChars += m.content.length;
-    if (m.tool_calls) {
-      for (const tc of m.tool_calls) {
-        totalChars += tc.function.name.length + tc.function.arguments.length + 20;
-      }
-    }
-  }
-  return Math.ceil(totalChars / 3.5);
-}
-function computeToolFingerprint(toolCalls) {
-  const sig = toolCalls.map((tc) => `${tc.function.name}:${tc.function.arguments}`).sort().join("|");
-  return createHash2("sha256").update(sig).digest("hex").slice(0, 16);
-}
-function buildBudgetNudge() {
-  return {
-    role: "user",
-    content: "[System: Token budget approaching limit. Please synthesize your findings so far and provide a final answer based on the information you have gathered. Do NOT call any more tools. Give your best answer now.]"
-  };
-}
-function buildStallNudge() {
-  return {
-    role: "user",
-    content: "[System: You have been making the same tool calls repeatedly without progress. Please stop calling tools and provide your final answer based on what you have gathered so far.]"
-  };
-}
-async function callLLMWithTools(opts) {
-  let baseUrl;
-  let apiKey;
-  let model;
-  if (opts.llmConfig && opts.llmConfig.apiKey) {
-    baseUrl = opts.llmConfig.baseUrl.replace(/\/$/, "");
-    apiKey = opts.llmConfig.apiKey;
-    model = opts.model ?? opts.llmConfig.model;
-  } else {
-    const cfg = getLLMProxyConfig();
-    baseUrl = cfg.baseUrl.replace(/\/$/, "");
-    apiKey = cfg.apiKey;
-    model = opts.model ?? cfg.defaultModel;
-  }
-  const hardCap = opts.maxRounds ?? 20;
-  const tokenBudget = opts.tokenBudget ?? 5e4;
-  const budgetEnabled = tokenBudget > 0 && isFinite(tokenBudget);
-  if (!apiKey) throw new Error("LLM API key not configured (neither in request nor env)");
-  if (!model) throw new Error("LLM model not configured");
-  const toolSupport = supportsTools(model);
-  const hasTools = opts.tools.length > 0;
-  let toolsStripped = false;
-  if (hasTools && toolSupport === false) {
-    console.log(`[ModelCapabilities] ${model} \u5DF2\u77E5\u4E0D\u652F\u6301 function calling (${describeCapabilities(model)}), \u8DF3\u8FC7 tools`);
-    toolsStripped = true;
-  }
-  const allMessages = [...opts.messages];
-  const start = Date.now();
-  let toolCallCount = 0;
-  const toolResultCache = /* @__PURE__ */ new Map();
-  let cacheHits = 0;
-  const actualUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedTokens: 0, llmCallCount: 0 };
-  let previousFingerprint = "";
-  let consecutiveStallRounds = 0;
-  let stallNudgeSent = false;
-  let exitedByStallDetection = false;
-  let cumulativeTokens = estimateTokens(allMessages);
-  let budgetNudgeSent = false;
-  let exitedByTokenBudget = false;
-  let currentTools = toolsStripped ? [] : opts.tools;
-  for (let round = 0; round < hardCap; round++) {
-    if (budgetEnabled && cumulativeTokens > tokenBudget) {
-      if (currentTools.length > 0) {
-        currentTools = [];
-        if (!budgetNudgeSent) {
-          allMessages.push(buildBudgetNudge());
-          budgetNudgeSent = true;
-        }
-      } else {
-        exitedByTokenBudget = true;
-        break;
-      }
-    }
-    if (opts.onRoundStart) {
-      try {
-        const injected = opts.onRoundStart(round);
-        if (injected && injected.length > 0) {
-          allMessages.push(...injected);
-        }
-      } catch {
-      }
-    }
-    const response = await callLLMOnce({
-      baseUrl,
-      apiKey,
-      model,
-      messages: allMessages,
-      tools: currentTools,
-      temperature: opts.temperature ?? 0.2,
-      maxTokens: opts.maxTokens ?? 4096,
-      signal: opts.signal
-    });
-    const u = response.__usage;
-    if (u) {
-      actualUsage.promptTokens += u.promptTokens ?? 0;
-      actualUsage.completionTokens += u.completionTokens ?? 0;
-      actualUsage.totalTokens += u.totalTokens ?? 0;
-      actualUsage.cachedTokens += u.cachedTokens ?? 0;
-      actualUsage.llmCallCount += 1;
-    }
-    cumulativeTokens += estimateTokens([response]);
-    const toolCalls = response.tool_calls;
-    if (!toolCalls || toolCalls.length === 0) {
-      allMessages.push(response);
-      if (opts.onThinking && response.content) {
-        opts.onThinking(response.content);
-      }
-      return {
-        finalMessage: response,
-        allMessages,
-        toolCallCount,
-        totalDurationMs: Date.now() - start,
-        totalTokensEstimated: cumulativeTokens,
-        exitedByStallDetection,
-        exitedByTokenBudget,
-        cacheHits,
-        actualTokenUsage: { ...actualUsage }
-      };
-    }
-    allMessages.push(response);
-    toolCallCount += toolCalls.length;
-    const currentFingerprint = computeToolFingerprint(toolCalls);
-    if (currentFingerprint === previousFingerprint) {
-      consecutiveStallRounds++;
-    } else {
-      consecutiveStallRounds = 0;
-    }
-    previousFingerprint = currentFingerprint;
-    if (consecutiveStallRounds === 2 && !stallNudgeSent) {
-      allMessages.push(buildStallNudge());
-      stallNudgeSent = true;
-    }
-    if (consecutiveStallRounds >= 3 && currentTools.length > 0) {
-      currentTools = [];
-      exitedByStallDetection = true;
-    }
-    const toolResults = await Promise.all(toolCalls.map(async (tc) => {
-      const request3 = {
-        id: tc.id,
-        name: tc.function.name,
-        arguments: JSON.parse(tc.function.arguments)
-      };
-      const cacheKey = `${request3.name}:${JSON.stringify(request3.arguments)}`;
-      const cached3 = toolResultCache.get(cacheKey);
-      if (cached3) {
-        cacheHits++;
-        return {
-          tool_call_id: request3.id,
-          name: request3.name,
-          output: cached3 + "\n[CACHED: \u6B64\u7ED3\u679C\u7531\u524D\u6B21\u76F8\u540C\u8C03\u7528\u590D\u7528,\u65E0\u9700\u518D\u6B21\u8BF7\u6C42]"
-        };
-      }
-      if (opts.chatId && isCacheableToolResult(request3.name, "")) {
-        const sessionCached = sessionToolCache.lookup(opts.chatId, request3.name, request3.arguments);
-        if (sessionCached !== null) {
-          cacheHits++;
-          toolResultCache.set(cacheKey, sessionCached);
-          return {
-            tool_call_id: request3.id,
-            name: request3.name,
-            output: sessionCached + "\n[CACHED: \u6B64\u7ED3\u679C\u7531\u4F1A\u8BDD\u7EA7\u7F13\u5B58\u590D\u7528,\u65E0\u9700\u518D\u6B21\u8BF7\u6C42]"
-          };
-        }
-      }
-      const result = opts.onToolCall ? await opts.onToolCall(request3) : await executeToolCall(request3);
-      if (!result.output.startsWith("Error:") && !result.output.startsWith("Tool error:")) {
-        toolResultCache.set(cacheKey, result.output);
-        if (opts.chatId && isCacheableToolResult(request3.name, result.output)) {
-          sessionToolCache.store(opts.chatId, request3.name, request3.arguments, result.output);
-        }
-      }
-      return result;
-    }));
-    for (const result of toolResults) {
-      allMessages.push({
-        role: "tool",
-        tool_call_id: result.tool_call_id,
-        name: result.name,
-        content: result.output
-      });
-      cumulativeTokens += estimateTokens([{ role: "tool", content: result.output }]);
-    }
-    if (budgetEnabled && !budgetNudgeSent && cumulativeTokens > tokenBudget * 0.8) {
-      allMessages.push(buildBudgetNudge());
-      budgetNudgeSent = true;
-    }
-  }
-  const lastMsg = allMessages[allMessages.length - 1];
-  return {
-    finalMessage: lastMsg,
-    allMessages,
-    toolCallCount,
-    totalDurationMs: Date.now() - start,
-    totalTokensEstimated: cumulativeTokens,
-    exitedByStallDetection,
-    exitedByTokenBudget,
-    cacheHits,
-    actualTokenUsage: { ...actualUsage }
-  };
-}
-async function callLLMOnce(opts) {
-  const url = `${opts.baseUrl}/chat/completions`;
-  const isAnthropic = /anthropic|claude/i.test(opts.baseUrl);
-  let messagesForBody = opts.messages;
-  if (isAnthropic && messagesForBody.length > 0 && messagesForBody[0].role === "system") {
-    messagesForBody = messagesForBody.map(
-      (m, i) => i === 0 ? { ...m, cache_control: { type: "ephemeral" } } : m
-    );
-  }
-  let toolsForBody = opts.tools;
-  if (isAnthropic && toolsForBody.length > 0) {
-    toolsForBody = toolsForBody.map(
-      (t, i) => i === toolsForBody.length - 1 ? { ...t, cache_control: { type: "ephemeral" } } : t
-    );
-  }
-  const body = {
-    model: opts.model,
-    messages: messagesForBody,
-    tools: toolsForBody,
-    tool_choice: "auto",
-    temperature: opts.temperature,
-    max_tokens: opts.maxTokens
-  };
-  const MAX_RETRIES3 = 4;
-  const BASE_BACKOFF_MS = 200;
-  const MAX_BACKOFF_MS = 8e3;
-  const sleep = (ms, signal) => new Promise((resolve2, reject) => {
-    if (signal?.aborted) return reject(new DOMException("Aborted", "AbortError"));
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve2();
-    }, ms);
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(new DOMException("Aborted", "AbortError"));
-    };
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
-  let lastError = null;
-  for (let attempt = 0; attempt <= MAX_RETRIES3; attempt++) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12e4);
-    if (opts.signal) {
-      if (opts.signal.aborted) {
-        clearTimeout(timeoutId);
-        controller.abort();
-      } else opts.signal.addEventListener("abort", () => controller.abort(), { once: true });
-    }
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${opts.apiKey}`
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal
-      });
-      if (!response.ok) {
-        const errText = await response.text().catch(() => "");
-        const status = response.status;
-        if (status >= 400 && status < 500 && status !== 429) {
-          if ((status === 400 || status === 404 || status === 500) && body.tools && body.tools.length > 0) {
-            learnCapability(body.model, "tools", false);
-            console.log(`[ModelCapabilities] \u4ECE HTTP ${status} \u5B66\u4E60: ${body.model} \u4E0D\u652F\u6301 tools, \u5DF2\u8BB0\u5F55`);
-            const degradedBody = { ...body, tools: void 0, tool_choice: void 0 };
-            try {
-              const degradedResponse = await fetch(url, {
-                method: "POST",
-                headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.apiKey}` },
-                body: JSON.stringify(degradedBody),
-                signal: controller.signal
-              });
-              if (degradedResponse.ok) {
-                const json2 = await degradedResponse.json();
-                const choice2 = json2?.choices?.[0];
-                if (choice2) {
-                  const msg2 = choice2.message;
-                  const assistantMsg2 = {
-                    role: "assistant",
-                    content: msg2.content ?? null,
-                    tool_calls: void 0
-                    // 降级后无 tool_calls
-                  };
-                  const usage2 = json2?.usage;
-                  if (usage2 && typeof usage2 === "object") {
-                    assistantMsg2.__usage = {
-                      promptTokens: usage2.prompt_tokens ?? 0,
-                      completionTokens: usage2.completion_tokens ?? 0,
-                      totalTokens: usage2.total_tokens ?? 0,
-                      cachedTokens: usage2.prompt_tokens_details?.cached_tokens ?? usage2.prompt_cache_hit_tokens ?? 0
-                    };
-                  }
-                  console.log(`[ModelCapabilities] \u964D\u7EA7\u91CD\u8BD5\u6210\u529F: ${body.model} (\u65E0 tools)`);
-                  return assistantMsg2;
-                }
-              }
-            } catch (degradedErr) {
-              console.log(`[ModelCapabilities] \u964D\u7EA7\u91CD\u8BD5\u4E5F\u5931\u8D25: ${degradedErr}`);
-            }
-          }
-          throw new Error(`LLM HTTP ${status}: ${errText.slice(0, 300)}`);
-        }
-        if (status === 500 && body.tools && body.tools.length > 0 && attempt === 0) {
-          learnCapability(body.model, "tools", false);
-          console.log(`[ModelCapabilities] \u4ECE HTTP 500 \u5B66\u4E60: ${body.model} \u53EF\u80FD\u4E0D\u652F\u6301 tools, \u5C1D\u8BD5\u964D\u7EA7`);
-          const degradedBody = { ...body, tools: void 0, tool_choice: void 0 };
-          try {
-            const degradedResponse = await fetch(url, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", Authorization: `Bearer ${opts.apiKey}` },
-              body: JSON.stringify(degradedBody),
-              signal: controller.signal
-            });
-            if (degradedResponse.ok) {
-              const json2 = await degradedResponse.json();
-              const choice2 = json2?.choices?.[0];
-              if (choice2) {
-                const msg2 = choice2.message;
-                const assistantMsg2 = {
-                  role: "assistant",
-                  content: msg2.content ?? null,
-                  tool_calls: void 0
-                };
-                const usage2 = json2?.usage;
-                if (usage2 && typeof usage2 === "object") {
-                  assistantMsg2.__usage = {
-                    promptTokens: usage2.prompt_tokens ?? 0,
-                    completionTokens: usage2.completion_tokens ?? 0,
-                    totalTokens: usage2.total_tokens ?? 0,
-                    cachedTokens: usage2.prompt_tokens_details?.cached_tokens ?? usage2.prompt_cache_hit_tokens ?? 0
-                  };
-                }
-                console.log(`[ModelCapabilities] \u964D\u7EA7\u91CD\u8BD5\u6210\u529F: ${body.model} (\u65E0 tools)`);
-                return assistantMsg2;
-              }
-            }
-          } catch (degradedErr) {
-            console.log(`[ModelCapabilities] \u964D\u7EA7\u91CD\u8BD5\u4E5F\u5931\u8D25: ${degradedErr}`);
-          }
-        }
-        if (attempt < MAX_RETRIES3) {
-          const retryAfter = response.headers.get("retry-after");
-          let waitMs;
-          if (retryAfter && /^\d+$/.test(retryAfter.trim())) {
-            waitMs = Math.min(parseInt(retryAfter, 10) * 1e3, MAX_BACKOFF_MS);
-          } else {
-            const jitter = Math.random() * 100;
-            waitMs = Math.min(BASE_BACKOFF_MS * Math.pow(2, attempt) + jitter, MAX_BACKOFF_MS);
-          }
-          lastError = new Error(`LLM HTTP ${status}: ${errText.slice(0, 300)}`);
-          if (attempt === 0) {
-            console.log(`[LLM-Retry] HTTP ${status} (attempt ${attempt + 1}/${MAX_RETRIES3 + 1}), waiting ${Math.round(waitMs)}ms before retry...`);
-          }
-          await sleep(waitMs, opts.signal);
-          continue;
-        }
-        throw new Error(`LLM HTTP ${status}: ${errText.slice(0, 300)}`);
-      }
-      const json = await response.json();
-      const choice = json?.choices?.[0];
-      if (!choice) throw new Error("LLM returned empty choices");
-      const msg = choice.message;
-      const assistantMsg = {
-        role: "assistant",
-        content: msg.content ?? null,
-        tool_calls: msg.tool_calls?.map((tc) => ({
-          id: tc.id,
-          type: "function",
-          function: {
-            name: tc.function.name,
-            arguments: tc.function.arguments
-          }
-        }))
-      };
-      const usage = json?.usage;
-      if (usage && typeof usage === "object") {
-        assistantMsg.__usage = {
-          promptTokens: usage.prompt_tokens ?? 0,
-          completionTokens: usage.completion_tokens ?? 0,
-          totalTokens: usage.total_tokens ?? 0,
-          cachedTokens: usage.prompt_tokens_details?.cached_tokens ?? usage.prompt_cache_hit_tokens ?? 0
-        };
-      }
-      return assistantMsg;
-    } catch (err) {
-      if (err?.name === "AbortError") {
-        throw err;
-      }
-      if (attempt < MAX_RETRIES3) {
-        const jitter = Math.random() * 100;
-        const waitMs = Math.min(BASE_BACKOFF_MS * Math.pow(2, attempt) + jitter, MAX_BACKOFF_MS);
-        lastError = err instanceof Error ? err : new Error(String(err));
-        if (attempt === 0) {
-          console.log(`[LLM-Retry] Network error (attempt ${attempt + 1}/${MAX_RETRIES3 + 1}): ${lastError.message.slice(0, 100)}, waiting ${Math.round(waitMs)}ms...`);
-        }
-        await sleep(waitMs, opts.signal);
-        continue;
-      }
-      throw err;
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  }
-  throw lastError ?? new Error("LLM call failed after all retries");
-}
-
-// ../src/core/court/llm_escalation.ts
 var LlmEscalationRoom = class {
   constructor(kernel2, persistenceManager) {
     this.kernel = kernel2;
@@ -114291,6 +115215,25 @@ async function bootstrapSystemNetwork(kernel2, surrealClient) {
   await initSocietyEngines(kernel2);
   await initCourtSystem(kernel2);
   await initNetworkLayer(kernel2);
+  try {
+    const { JavaAgentTcpComponent: JavaAgentTcpComponent2 } = await Promise.resolve().then(() => (init_java_agent_tcp_component(), java_agent_tcp_component_exports));
+    const javaAgentTcp = new JavaAgentTcpComponent2(kernel2, kernel2.eventBus);
+    await javaAgentTcp.start();
+    const lifecycleManager = kernel2.getLifecycleManager();
+    lifecycleManager.register(javaAgentTcp);
+    logger.info("Bootstrap", "\u{1F517} [JavaAgentTcp] Java Agent TCP component initialized");
+  } catch (tcpErr) {
+    logger.warn("Bootstrap", "\u26A0\uFE0F [JavaAgentTcp] Initialization failed", { error: tcpErr instanceof Error ? tcpErr.message : String(tcpErr) });
+  }
+  try {
+    const { RealtimeJudgeStopComponent: RealtimeJudgeStopComponent2 } = await Promise.resolve().then(() => (init_realtime_judge_stop_component(), realtime_judge_stop_component_exports));
+    const judgeStop = new RealtimeJudgeStopComponent2(kernel2, kernel2.eventBus);
+    await judgeStop.start();
+    kernel2.realtimeJudgeStop = judgeStop;
+    logger.info("Bootstrap", "\u{1F9D1}\u200D\u2696\uFE0F [RealtimeJudgeStop] Real-time judge stop component started");
+  } catch (judgeErr) {
+    logger.warn("Bootstrap", "\u26A0\uFE0F [RealtimeJudgeStop] Initialization failed", { error: judgeErr instanceof Error ? judgeErr.message : String(judgeErr) });
+  }
   logger.info("Bootstrap", "\u{1F3C6} \u603B\u88C5\u5382\u7EAF\u51C0\u4EA4\u4ED8\u5B8C\u6210 - \u67B6\u6784\u96F6\u6C61\u67D3\u95ED\u5408");
 }
 
@@ -115018,6 +115961,7 @@ function createAuditSinkFromSurreal(sp, extra) {
 init_tenantContext();
 
 // ../src/llm/openaiStreamClient.ts
+init_llmConfig();
 var DEFAULT_TIMEOUT_MS2 = 6e4;
 async function* streamOpenAIChat(opts) {
   const cfg = getLLMProxyConfig();
@@ -115122,6 +116066,7 @@ async function* streamOpenAIChat(opts) {
 }
 
 // ../src/llm/openaiSyncClient.ts
+init_llmConfig();
 var DEFAULT_TIMEOUT_MS3 = 3e4;
 async function callOpenAIChat(opts) {
   const cfg = getLLMProxyConfig();
@@ -115190,6 +116135,7 @@ async function callOpenAIChat(opts) {
 }
 
 // ../src/llm/llmProxyHandler.ts
+init_llmConfig();
 init_apiKeyVault();
 init_logger();
 init_metrics2();
@@ -116252,7 +117198,7 @@ async function handleTestReputationEnqueue(body, deps) {
 import fs5 from "fs";
 import path5 from "path";
 import os from "os";
-import { spawnSync, spawn as spawn3, execSync } from "child_process";
+import { spawn as spawn3, execSync } from "child_process";
 import { fileURLToPath } from "url";
 init_otel_metric_bridge();
 init_logger();
@@ -116802,263 +117748,119 @@ async function handleJavaAgentProxy(reqPath, method, body) {
     return { status: 502, headers: { "Content-Type": "application/json" }, body: { success: false, error: `Java Agent service not started: ${err.message}` } };
   }
 }
-async function handleJavaAgentSSE(req, res, body) {
-  const javaUrl = "http://127.0.0.1:8770/api/chat/stream";
-  try {
-    const javaRes = await fetch(javaUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
-      body: typeof body === "string" ? body : JSON.stringify(body)
-    });
-    if (!javaRes.ok) {
-      const errText = await javaRes.text();
-      res.writeHead(javaRes.status, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ success: false, error: errText }));
-      return;
-    }
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      "Connection": "keep-alive",
-      "X-Accel-Buffering": "no"
-    });
-    const reader = javaRes.body?.getReader();
-    if (!reader) {
-      res.write('event: error\ndata: {"error":"No response body from Java Agent"}\n\n');
-      res.end();
-      return;
-    }
-    const decoder = new TextDecoder();
-    let buffer = "";
-    req.on("close", () => {
-      try {
-        reader.cancel();
-      } catch {
-      }
-    });
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-      for (const line of lines) {
-        if (line.startsWith("event:") || line.startsWith("data:") || line === "") {
-          res.write(line + "\n");
-        }
-      }
-      if (buffer === "" || buffer === "\n") {
-        res.write("\n");
-      }
-    }
-    if (buffer.trim()) {
-      res.write(buffer + "\n\n");
-    }
-    res.end();
-  } catch (err) {
+async function handleJavaAgentSSE(req, res, body, kernel2) {
+  const dispatchId = body?.dispatchId ?? `dispatch_${Date.now()}`;
+  const chatId = body?.chatId ?? `chat-${Date.now()}`;
+  const taskHint = typeof body?.prompt === "string" ? body.prompt : "";
+  const judgeStop = kernel2?.realtimeJudgeStop;
+  if (judgeStop && typeof judgeStop.registerDispatch === "function" && taskHint) {
+    judgeStop.registerDispatch(dispatchId, taskHint);
+  }
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no"
+  });
+  const writeSSE = (event, data) => {
     try {
-      res.writeHead(502, { "Content-Type": "text/event-stream; charset=utf-8" });
-      res.write(`event: error
-data: ${JSON.stringify({ error: `Java Agent service not started: ${err.message}` })}
+      res.write(`event: ${event}
+data: ${JSON.stringify(data)}
 
 `);
-      res.end();
+    } catch {
+    }
+  };
+  let aborted = false;
+  req.on("close", () => {
+    aborted = true;
+  });
+  let onWorkerStarted = null;
+  let onWorkerChunk = null;
+  let onWorkerDone = null;
+  let onWorkerFailed = null;
+  let onWorkerStoppedByJudge = null;
+  let onDispatchDone = null;
+  let listenersAttached = false;
+  const cleanupListeners = () => {
+    if (!listenersAttached) return;
+    if (onWorkerStarted) kernel2.eventBus.off("worker_started", onWorkerStarted);
+    if (onWorkerChunk) kernel2.eventBus.off("worker_chunk", onWorkerChunk);
+    if (onWorkerDone) kernel2.eventBus.off("worker_done", onWorkerDone);
+    if (onWorkerFailed) kernel2.eventBus.off("worker_failed", onWorkerFailed);
+    if (onWorkerStoppedByJudge) kernel2.eventBus.off("worker_stopped_by_judge", onWorkerStoppedByJudge);
+    if (onDispatchDone) kernel2.eventBus.off("dispatch_done", onDispatchDone);
+    listenersAttached = false;
+    if (judgeStop && typeof judgeStop.unregisterDispatch === "function") {
+      judgeStop.unregisterDispatch(dispatchId);
+    }
+  };
+  try {
+    let completed = false;
+    onWorkerStarted = (payload) => {
+      if (payload?.dispatchId !== dispatchId) return;
+      writeSSE("worker_started", payload);
+    };
+    onWorkerChunk = (payload) => {
+      if (payload?.dispatchId !== dispatchId) return;
+      writeSSE("worker_chunk", payload);
+    };
+    onWorkerDone = (payload) => {
+      if (payload?.dispatchId !== dispatchId) return;
+      writeSSE("worker_done", payload);
+    };
+    onWorkerFailed = (payload) => {
+      if (payload?.dispatchId !== dispatchId) return;
+      writeSSE("worker_failed", payload);
+    };
+    onWorkerStoppedByJudge = (payload) => {
+      if (payload?.dispatchId !== dispatchId) return;
+      writeSSE("worker_stopped_by_judge", payload);
+    };
+    onDispatchDone = (payload) => {
+      if (payload?.dispatchId !== dispatchId) return;
+      writeSSE("dispatch_done", payload);
+      completed = true;
+    };
+    kernel2.eventBus.on("worker_started", onWorkerStarted);
+    kernel2.eventBus.on("worker_chunk", onWorkerChunk);
+    kernel2.eventBus.on("worker_done", onWorkerDone);
+    kernel2.eventBus.on("worker_failed", onWorkerFailed);
+    kernel2.eventBus.on("worker_stopped_by_judge", onWorkerStoppedByJudge);
+    kernel2.eventBus.on("dispatch_done", onDispatchDone);
+    listenersAttached = true;
+    const executeBody = { ...body, dispatchId, chatId };
+    const executeRes = await fetch("http://127.0.0.1:8770/api/chat/execute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(executeBody)
+    });
+    if (!executeRes.ok) {
+      const errText = await executeRes.text();
+      writeSSE("error", { error: `Java Agent dispatch failed: ${errText}` });
+      return;
+    }
+    const timeoutMs = 5 * 60 * 1e3;
+    const start = Date.now();
+    while (!completed && !aborted && Date.now() - start < timeoutMs) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    if (!aborted && !completed) {
+      writeSSE("error", { error: "Dispatch timeout (5min)" });
+    } else if (!aborted) {
+      writeSSE("done", { dispatchId });
+    }
+  } catch (err) {
+    if (!aborted) {
+      writeSSE("error", { error: `Java Agent service not started: ${err.message}` });
+    }
+  } finally {
+    cleanupListeners();
+    try {
+      if (!aborted) res.end();
     } catch {
     }
   }
-}
-var ANALYTICS_QUERIES = {
-  governance_summary: {
-    description: "Governance compliance records aggregated by action_taken",
-    sql: `SELECT action_taken, compliant, COUNT(*) AS cnt FROM db.main.governance_record GROUP BY action_taken, compliant ORDER BY cnt DESC LIMIT 20`
-  },
-  top_institutions: {
-    description: "Top institutions by reputation score",
-    sql: `SELECT entity_id, entity_type, score, name FROM db.main.reputation ORDER BY CAST(score AS DOUBLE) NULLS LAST LIMIT 10`
-  },
-  law_violation_by_type: {
-    description: "Law violations aggregated by status",
-    sql: `SELECT status, COUNT(*) AS cnt, COUNT(DISTINCT law_id) AS distinct_laws FROM db.main.law_violation GROUP BY status HAVING cnt > 0 ORDER BY cnt DESC LIMIT 20`
-  },
-  memory_table_counts: {
-    description: "Row counts per business table (DuckDB view)",
-    sql: `SELECT 'coalition' AS table_name, COUNT(*) AS row_count FROM db.main.coalition UNION ALL SELECT 'economy', COUNT(*) FROM db.main.economy UNION ALL SELECT 'governance', COUNT(*) FROM db.main.governance UNION ALL SELECT 'governance_record', COUNT(*) FROM db.main.governance_record UNION ALL SELECT 'law', COUNT(*) FROM db.main.law UNION ALL SELECT 'law_violation', COUNT(*) FROM db.main.law_violation UNION ALL SELECT 'reputation', COUNT(*) FROM db.main.reputation UNION ALL SELECT 'reputation_record', COUNT(*) FROM db.main.reputation_record UNION ALL SELECT 'social_memory', COUNT(*) FROM db.main.social_memory UNION ALL SELECT 'credit_transaction', COUNT(*) FROM db.main.credit_transaction UNION ALL SELECT 'economy_record', COUNT(*) FROM db.main.economy_record UNION ALL SELECT 'culture', COUNT(*) FROM db.main.culture UNION ALL SELECT 'institution', COUNT(*) FROM db.main.institution ORDER BY row_count DESC`
-  }
-};
-var ANALYTICS_SNAPSHOT_TABLES = [
-  "institution",
-  "governance",
-  "reputation",
-  "culture",
-  "economy",
-  "law",
-  "law_violation",
-  "coalition",
-  "social_memory",
-  "credit_transaction",
-  "economy_record",
-  "governance_record",
-  "reputation_record",
-  "reputation_sync_log"
-];
-function resolveDuckDbBinary() {
-  const candidates = [
-    path5.resolve(process.cwd(), "bin", "duckdb", "duckdb.exe"),
-    "C:/Users/yangx/Desktop/SoloForge/bin/duckdb/duckdb.exe"
-  ];
-  for (const c of candidates) {
-    if (fs5.existsSync(c)) return c;
-  }
-  return null;
-}
-function resolveAnalyticsSqlitePath() {
-  const candidates = [
-    path5.resolve(process.cwd(), "python", "data", "ai_society", "ai_society.db"),
-    "C:/Users/yangx/Desktop/SoloForge/python/data/ai_society/ai_society.db"
-  ];
-  for (const c of candidates) {
-    if (fs5.existsSync(c)) return c;
-  }
-  return null;
-}
-function runDuckDbQuery(sql, timeoutMs = 3e4) {
-  const bin = resolveDuckDbBinary();
-  if (!bin) return { ok: false, csv: "", stderr: "duckdb.exe not found", elapsedMs: 0 };
-  const sqlite = resolveAnalyticsSqlitePath();
-  if (!sqlite) return { ok: false, csv: "", stderr: "ai_society.db not found", elapsedMs: 0 };
-  const attach = sqlite.replace(/\\/g, "/");
-  const fullSql = `INSTALL sqlite; LOAD sqlite; ATTACH '${attach}' AS db (TYPE sqlite, READ_ONLY); ${sql}`;
-  const t0 = Date.now();
-  const proc = spawnSync(bin, ["-csv", "-c", fullSql], { encoding: "utf8", timeout: timeoutMs, windowsHide: true });
-  return { ok: proc.status === 0, csv: proc.stdout || "", stderr: proc.stderr || "", elapsedMs: Date.now() - t0 };
-}
-function parseCsv(csv) {
-  return csv.split("\n").filter((l) => l.length > 0).map((l) => l.split(","));
-}
-function handleAnalyticsHealth() {
-  const bin = resolveDuckDbBinary();
-  const sqlite = resolveAnalyticsSqlitePath();
-  const versionProc = bin ? spawnSync(bin, ["-version"], { encoding: "utf8", timeout: 5e3, windowsHide: true }) : null;
-  const version = versionProc?.status === 0 ? (versionProc.stdout || "").trim() : null;
-  return {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-    body: {
-      duckdb_available: !!bin,
-      duckdb_binary: bin,
-      duckdb_version: version,
-      sqlite_path: sqlite,
-      sqlite_exists: !!sqlite,
-      queries_defined: Object.keys(ANALYTICS_QUERIES),
-      snapshot_tables: ANALYTICS_SNAPSHOT_TABLES
-    }
-  };
-}
-function handleAnalyticsQueries() {
-  return {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-    body: { queries: Object.entries(ANALYTICS_QUERIES).map(([name, spec]) => ({ name, description: spec.description })) }
-  };
-}
-function handleAnalyticsRun(name) {
-  const spec = ANALYTICS_QUERIES[name];
-  if (!spec) return { status: 404, headers: { "Content-Type": "application/json" }, body: { error: `Unknown query: ${name}`, available: Object.keys(ANALYTICS_QUERIES) } };
-  const r = runDuckDbQuery(spec.sql);
-  if (!r.ok) return { status: 500, headers: { "Content-Type": "application/json" }, body: { error: "duckdb query failed", stderr: r.stderr, query: name } };
-  const rows = parseCsv(r.csv);
-  return {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-    body: { query_name: name, description: spec.description, row_count: Math.max(0, rows.length - 1), rows, elapsed_ms: r.elapsedMs }
-  };
-}
-function handleAnalyticsDirect(body) {
-  const rawSql = String(body?.sql || "").trim();
-  if (!rawSql) return { status: 400, headers: { "Content-Type": "application/json" }, body: { error: "sql is required (POST body: { sql: 'SELECT ...' })" } };
-  const upper = rawSql.toUpperCase().replace(/\s+/g, " ");
-  if (/\b(DROP|TRUNCATE)\b/.test(upper) || /\b(DELETE\s+FROM|UPDATE\s+\w+\s+SET)\b/.test(upper) && !upper.includes("WHERE")) {
-    return { status: 403, headers: { "Content-Type": "application/json" }, body: { error: "destructive statement rejected" } };
-  }
-  const sql = rawSql.replace(/\bCAST\s*\(/gi, "TRY_CAST(");
-  const r = runDuckDbQuery(sql);
-  if (!r.ok) return { status: 500, headers: { "Content-Type": "application/json" }, body: { error: "duckdb query failed", stderr: r.stderr, sql: rawSql, transformed_sql: sql } };
-  const rows = parseCsv(r.csv);
-  return {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-    body: { row_count: Math.max(0, rows.length - 1), rows, elapsed_ms: r.elapsedMs, cast_transformed: sql !== rawSql }
-  };
-}
-function handleAnalyticsSnapshot(body) {
-  const outPathRaw = body?.out_path || path5.resolve(process.cwd(), "python", "data", "ai_society", "analytics", "snapshot.duckdb");
-  const outPath = path5.resolve(outPathRaw);
-  const tables = Array.isArray(body?.tables) && body.tables.length > 0 ? body.tables : ANALYTICS_SNAPSHOT_TABLES;
-  const allowed = new Set(ANALYTICS_SNAPSHOT_TABLES);
-  for (const t of tables) {
-    if (!allowed.has(t)) return { status: 400, headers: { "Content-Type": "application/json" }, body: { error: `table not in whitelist: ${t}`, allowed: [...allowed] } };
-  }
-  fs5.mkdirSync(path5.dirname(outPath), { recursive: true });
-  if (fs5.existsSync(outPath)) fs5.unlinkSync(outPath);
-  const bin = resolveDuckDbBinary();
-  const sqlite = resolveAnalyticsSqlitePath();
-  if (!bin || !sqlite) return { status: 503, headers: { "Content-Type": "application/json" }, body: { error: "duckdb.exe or ai_society.db not available" } };
-  const attachSrc = sqlite.replace(/\\/g, "/");
-  const attachDst = outPath.replace(/\\/g, "/");
-  const prefix = `INSTALL sqlite; LOAD sqlite; ATTACH '${attachSrc}' AS src (TYPE sqlite, READ_ONLY); ATTACH '${attachDst}' AS dst; CREATE SCHEMA IF NOT EXISTS dst.main; `;
-  const t0 = Date.now();
-  const results = [];
-  for (const table of tables) {
-    const r1 = spawnSync(bin, ["-c", prefix + `CREATE OR REPLACE TABLE dst.main.${table} AS SELECT * FROM src.main.${table} WHERE 0`], { encoding: "utf8", timeout: 3e4, windowsHide: true });
-    if (r1.status !== 0) return { status: 500, headers: { "Content-Type": "application/json" }, body: { error: `schema copy failed for ${table}`, stderr: r1.stderr } };
-    const r2 = spawnSync(bin, ["-c", prefix + `INSERT INTO dst.main.${table} SELECT * FROM src.main.${table}`], { encoding: "utf8", timeout: 3e4, windowsHide: true });
-    if (r2.status !== 0) return { status: 500, headers: { "Content-Type": "application/json" }, body: { error: `data copy failed for ${table}`, stderr: r2.stderr } };
-    const r3 = spawnSync(bin, ["-csv", "-c", prefix + `SELECT COUNT(*) FROM dst.main.${table}`], { encoding: "utf8", timeout: 1e4, windowsHide: true });
-    const cnt = parseInt((r3.stdout || "").trim().split("\n").pop() || "0", 10) || 0;
-    results.push({ table, row_count: cnt });
-  }
-  const elapsedMs = Date.now() - t0;
-  const sizeBytes = fs5.existsSync(outPath) ? fs5.statSync(outPath).size : 0;
-  return {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-    body: { out_path: outPath, tables_exported: results, total_rows: results.reduce((s, r) => s + r.row_count, 0), size_bytes: sizeBytes, elapsed_ms: elapsedMs }
-  };
-}
-function handleAnalyticsParquet(body) {
-  const outDirRaw = body?.out_dir || path5.resolve(process.cwd(), "python", "data", "ai_society", "analytics", "parquet");
-  const outDir = path5.resolve(outDirRaw);
-  const tables = Array.isArray(body?.tables) && body.tables.length > 0 ? body.tables : ANALYTICS_SNAPSHOT_TABLES;
-  const allowed = new Set(ANALYTICS_SNAPSHOT_TABLES);
-  for (const t of tables) {
-    if (!allowed.has(t)) return { status: 400, headers: { "Content-Type": "application/json" }, body: { error: `table not in whitelist: ${t}`, allowed: [...allowed] } };
-  }
-  fs5.mkdirSync(outDir, { recursive: true });
-  const bin = resolveDuckDbBinary();
-  if (!bin) return { status: 503, headers: { "Content-Type": "application/json" }, body: { error: "duckdb.exe not available" } };
-  const sqlite = resolveAnalyticsSqlitePath();
-  if (!sqlite) return { status: 503, headers: { "Content-Type": "application/json" }, body: { error: "ai_society.db not available" } };
-  const attachSrc = sqlite.replace(/\\/g, "/");
-  const tmpDuckDb = path5.join(outDir, "_snapshot.duckdb");
-  if (fs5.existsSync(tmpDuckDb)) fs5.unlinkSync(tmpDuckDb);
-  const attachTmp = tmpDuckDb.replace(/\\/g, "/");
-  const prefix = `INSTALL sqlite; LOAD sqlite; ATTACH '${attachSrc}' AS src (TYPE sqlite, READ_ONLY); ATTACH '${attachTmp}' AS dst; `;
-  for (const table of tables) {
-    const r1 = spawnSync(bin, ["-c", prefix + `CREATE OR REPLACE TABLE dst.main.${table} AS SELECT * FROM src.main.${table}`], { encoding: "utf8", timeout: 3e4, windowsHide: true });
-    if (r1.status !== 0) return { status: 500, headers: { "Content-Type": "application/json" }, body: { error: `snapshot copy failed for ${table}`, stderr: r1.stderr } };
-  }
-  const files = [];
-  for (const table of tables) {
-    const parquetPath = path5.join(outDir, `${table}.parquet`);
-    const r = spawnSync(bin, ["-c", prefix + `COPY dst.main.${table} TO '${parquetPath.replace(/\\/g, "/")}' (FORMAT PARQUET)`], { encoding: "utf8", timeout: 3e4, windowsHide: true });
-    if (r.status !== 0) return { status: 500, headers: { "Content-Type": "application/json" }, body: { error: `parquet export failed for ${table}`, stderr: r.stderr } };
-    files.push({ table, path: parquetPath, size_bytes: fs5.existsSync(parquetPath) ? fs5.statSync(parquetPath).size : 0 });
-  }
-  try {
-    fs5.unlinkSync(tmpDuckDb);
-  } catch {
-  }
-  return { status: 200, headers: { "Content-Type": "application/json" }, body: { out_dir: outDir, files } };
 }
 
 // ../src/security/auditQuery.ts
@@ -117334,7 +118136,7 @@ async function verifyPassphrase(passphrase, blobStr) {
 function jsonResponse(status, body) {
   return { status, headers: { "Content-Type": "application/json" }, body };
 }
-var ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
+var ID_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
 function isValidId(id2) {
   return typeof id2 === "string" && ID_PATTERN.test(id2);
 }
@@ -117962,7 +118764,7 @@ var SoloForgeApiServer = class {
       if (reqPath === "/api/java-agent/api/chat/stream" && method === "POST") {
         const acceptHeader = String(req.headers["accept"] || "");
         if (acceptHeader.includes("text/event-stream")) {
-          await handleJavaAgentSSE(req, res, apiReq.body);
+          await handleJavaAgentSSE(req, res, apiReq.body, this.kernel);
           return;
         }
       }
@@ -118121,13 +118923,6 @@ var SoloForgeApiServer = class {
     if (reqPath === "/api/observation/start" && method === "POST") return handleObservationStart(sysDeps);
     if (reqPath === "/api/observation/stop" && method === "POST") return handleObservationStop(sysDeps);
     if (reqPath === "/api/observation/clear" && method === "POST") return handleObservationClear(sysDeps);
-    if (reqPath === "/api/analytics/health" && method === "GET") return handleAnalyticsHealth();
-    if (reqPath === "/api/analytics/queries" && method === "GET") return handleAnalyticsQueries();
-    const analyticsRunMatch = reqPath.match(/^\/api\/analytics\/run\/([A-Za-z0-9_-]{1,64})$/);
-    if (analyticsRunMatch && method === "GET") return handleAnalyticsRun(decodeURIComponent(analyticsRunMatch[1]));
-    if (reqPath === "/api/analytics/direct" && method === "POST") return handleAnalyticsDirect(req.body);
-    if (reqPath === "/api/analytics/snapshot" && method === "POST") return handleAnalyticsSnapshot(req.body);
-    if (reqPath === "/api/analytics/parquet" && method === "POST") return handleAnalyticsParquet(req.body);
     if (reqPath === "/api/llm/config" && method === "GET") return handleLlmConfig();
     if (reqPath === "/api/llm/health" && method === "GET") return handleLlmHealth(req);
     if (reqPath === "/api/terminal/run" && method === "POST") return handleTerminalRun(req.body, sysDeps);
@@ -118655,6 +119450,8 @@ init_logger();
 
 // ../src/core/agent/tools/agent-loop.ts
 init_logger();
+init_function_calling_client();
+init_tool_definitions();
 async function runAgentLoop(ctx, userTask) {
   const start = Date.now();
   const toolSteps = [];
@@ -118839,7 +119636,7 @@ init_logger();
 
 // ../src/core/agent/evolution/auto-training-trigger.ts
 init_logger();
-import { EventEmitter } from "events";
+import { EventEmitter as EventEmitter2 } from "events";
 var DEFAULT_TRIGGER_CONFIG = {
   batchSize: 20,
   cooldownMs: 5 * 60 * 1e3,
@@ -118848,7 +119645,7 @@ var DEFAULT_TRIGGER_CONFIG = {
   // 成功率下降 15%
   maxBufferSize: 200
 };
-var AutoTrainingTrigger = class extends EventEmitter {
+var AutoTrainingTrigger = class extends EventEmitter2 {
   agentId;
   config;
   traceBuffer = [];
@@ -119113,8 +119910,8 @@ var TrainingScheduler = class _TrainingScheduler {
     }));
     return new Promise((resolve2) => {
       try {
-        const net3 = __require("net");
-        const client = new net3.Socket();
+        const net4 = __require("net");
+        const client = new net4.Socket();
         let ackBuf = "";
         let done = false;
         const finish = (result) => {
@@ -119197,8 +119994,8 @@ var TrainingScheduler = class _TrainingScheduler {
   async queryTrainedPolicy(observation) {
     return new Promise((resolve2) => {
       try {
-        const net3 = __require("net");
-        const client = new net3.Socket();
+        const net4 = __require("net");
+        const client = new net4.Socket();
         let buf = "";
         let done = false;
         const finish = (r) => {
@@ -120054,6 +120851,105 @@ import crypto23 from "crypto";
 import { existsSync as existsSync3, mkdirSync as mkdirSync2 } from "fs";
 import { join as join3 } from "path";
 
+// ../src/core/court/llm-judge.ts
+init_function_calling_client();
+init_llmConfig();
+init_logger();
+var MODULE_NAME2 = "LLMJudge";
+async function judgeWorkerOutputs(outputs, task) {
+  const n = outputs.length;
+  if (n === 0) {
+    return { winnerIdx: 0, scores: [], reason: "empty" };
+  }
+  if (n === 1) {
+    return { winnerIdx: 0, scores: [10], reason: "single worker" };
+  }
+  try {
+    const cfg = getLLMProxyConfig();
+    const candidateList = outputs.map((r, i) => {
+      const text = r.output.startsWith("[WORKER_ERROR]") ? `[ERROR] ${r.output.slice(0, 200)}` : r.output.slice(0, 2e3);
+      return `--- Candidate ${i} ---
+${text}`;
+    }).join("\n\n");
+    const taskLine = task ? `Task: ${task.slice(0, 500)}
+
+` : "";
+    const messages = [
+      {
+        role: "system",
+        content: `You are an impartial judge evaluating multiple AI assistant responses.
+Score each candidate response from 0 to 10 based on:
+- Helpfulness and relevance to the task
+- Accuracy and factual correctness
+- Clarity, coherence, and completeness
+- Conciseness (avoid verbosity without value)
+
+Respond in EXACTLY this JSON format, nothing else:
+{"scores": [n0, n1, ...], "winner": <index>, "reason": "<brief>"}
+
+Penalize [ERROR] candidates heavily.`
+      },
+      {
+        role: "user",
+        content: `${taskLine}Candidates:
+${candidateList}`
+      }
+    ];
+    const llmResult = await callLLMWithTools({
+      messages,
+      tools: [],
+      model: cfg.defaultModel,
+      temperature: 0.2,
+      maxTokens: 1024,
+      maxRounds: 1
+    });
+    const rawOutput = llmResult.finalMessage.content ?? "";
+    const jsonMatch = rawOutput.match(/\{[\s\S]*?\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      const scores = Array.isArray(parsed.scores) ? parsed.scores.map((s) => Number(s) || 0) : [];
+      let winnerIdx = typeof parsed.winner === "number" ? parsed.winner : 0;
+      if (winnerIdx < 0 || winnerIdx >= n) winnerIdx = 0;
+      if (scores.length !== n) {
+        scores.length = 0;
+        for (let i = 0; i < n; i++) scores.push(0);
+        scores[winnerIdx] = 10;
+      } else {
+        let maxScore = -1;
+        for (let i = 0; i < n; i++) {
+          if (scores[i] > maxScore) {
+            maxScore = scores[i];
+            winnerIdx = i;
+          }
+        }
+      }
+      const reason = typeof parsed.reason === "string" ? parsed.reason : "LLM judge verdict";
+      logger.info(MODULE_NAME2, `Judge verdict: winnerIdx=${winnerIdx}, scores=${JSON.stringify(scores)}, reason=${reason}`);
+      return { winnerIdx, scores, reason };
+    }
+    logger.warn(MODULE_NAME2, `LLM returned no JSON, falling back to length heuristic`);
+    return lengthHeuristicFallback(outputs);
+  } catch (err) {
+    logger.warn(MODULE_NAME2, `LLM judge failed, falling back to length heuristic: ${err instanceof Error ? err.message : String(err)}`);
+    return lengthHeuristicFallback(outputs);
+  }
+}
+function lengthHeuristicFallback(outputs) {
+  const scores = [];
+  let winnerIdx = 0;
+  let maxLen = -1;
+  for (let i = 0; i < outputs.length; i++) {
+    const isError = outputs[i].output.startsWith("[WORKER_ERROR]");
+    const len = isError ? 0 : outputs[i].output.length;
+    scores.push(isError ? 0 : Math.min(10, Math.ceil(len / 200)));
+    if (len > maxLen) {
+      maxLen = len;
+      winnerIdx = i;
+    }
+  }
+  return { winnerIdx, scores, reason: "length heuristic fallback" };
+}
+
 // ../src/core/decision/rtr-racer-engine.ts
 var SoloForgeRTRRacerEngine = class {
   kernel;
@@ -120199,10 +121095,14 @@ var SoloForgeRTRRacerEngine = class {
         cacheHits: 0
       })))
     );
-    let winnerIdx = 0;
-    for (let i = 1; i < workerResults.length; i++) {
-      if (!workerResults[i].output.startsWith("[WORKER_ERROR]") && workerResults[i].output.length > workerResults[winnerIdx].output.length) {
-        winnerIdx = i;
+    const judgeVerdict = await judgeWorkerOutputs(workerResults, adaptiveContext?.taskHint);
+    let winnerIdx = judgeVerdict.winnerIdx;
+    if (winnerIdx < 0 || winnerIdx >= workerResults.length) {
+      winnerIdx = 0;
+      for (let i = 1; i < workerResults.length; i++) {
+        if (!workerResults[i].output.startsWith("[WORKER_ERROR]") && workerResults[i].output.length > workerResults[winnerIdx].output.length) {
+          winnerIdx = i;
+        }
       }
     }
     const winnerCandidate = workers[winnerIdx];
@@ -120210,11 +121110,11 @@ var SoloForgeRTRRacerEngine = class {
     return {
       winnerModelName: winnerCandidate.instance.modelName,
       output: winnerResult.output,
-      winnerScore: winnerCandidate.score,
+      winnerScore: judgeVerdict.scores[winnerIdx] ?? winnerCandidate.score,
       allOutputs: workers.map((w, i) => ({
         agentId: w.instance.modelName,
         output: workerResults[i].output,
-        score: w.score,
+        score: judgeVerdict.scores[i] ?? w.score,
         durationMs: workerResults[i].durationMs,
         provider: workerResults[i].provider,
         actualTokenUsage: workerResults[i].actualTokenUsage
@@ -120236,6 +121136,8 @@ var SoloForgeRTRRacerEngine = class {
 // ../src/core/agent/agent-decision-orchestrator.ts
 init_runtime_events();
 init_logger();
+init_function_calling_client();
+init_llmConfig();
 
 // ../src/core/agent/evolution/experience-cache.ts
 init_logger();
@@ -120720,7 +121622,11 @@ var AgentDecisionOrchestrator = class {
               actualTokenUsage: execResult.actualTokenUsage
             };
           },
-          req.adaptiveContext
+          // 注入 taskHint 给 LLM-as-judge, 让评分知道目标
+          {
+            ...req.adaptiveContext,
+            taskHint: prompt
+          }
         );
         const winnerAgentId = racerResult.winnerModelName;
         const winnerCandidate = candidates.find((c) => c.modelName === winnerAgentId) ?? candidates[0];
