@@ -225,6 +225,7 @@ export class AgentDecisionOrchestrator {
           durationMs: elapsed,
           provider: effectiveProvider?.model ?? 'unknown',
           actualTokenUsage: execResult.actualTokenUsage,
+          toolSteps: execResult.toolSteps,
         };
       },
       // 注入 taskHint 给 LLM-as-judge, 让评分知道目标
@@ -241,6 +242,8 @@ export class AgentDecisionOrchestrator {
 
     // 聚合所有 worker 的真实 token 消耗 (2026-07-09)
     const tokenUsage = this.aggregateTokenUsage(racerResult.allOutputs);
+    // 提取 winner 的 toolSteps (用于经验缓存)
+    const winnerOutputData = racerResult.allOutputs?.find(o => o.agentId === winnerAgentId);
 
     const result: AgentDispatchResult = {
       packetUuid,
@@ -252,6 +255,7 @@ export class AgentDecisionOrchestrator {
       candidateCount: candidates.length,
       durationMs: Date.now() - start,
       tokenUsage,
+      toolSteps: winnerOutputData?.toolSteps,
     };
 
     const tu = tokenUsage;
@@ -664,17 +668,23 @@ ${rec.finalAnswer.slice(0, 1500)}
       const winnerOutput = racerResult.allOutputs?.find(o => o.agentId === racerResult.winnerModelName);
       if (!winnerOutput) return;
 
-      // 工具序列: allOutputs 没有保存详细 toolSteps, 用 output 摘要代替
-      // (详细的 toolSteps 在 AgentLoopResult 里, 但没传递到 RACER 层)
-      // 这里用 output 的前 500 字符作为 "工具发现摘要"
-      const toolSteps = [{
-        tool: 'agent_loop',
-        args: prompt.slice(0, 100),
-        resultSummary: winnerOutput.output.slice(0, 500),
-      }];
+      // 工具序列: 优先使用 Agent Loop 传递的真实 toolSteps, 降级用 output 摘要
+      // AgentLoopResult.toolSteps: { round, tool, args, success }
+      // ExperienceRecord.toolSteps: { tool, args, resultSummary }
+      const rawSteps = (winnerOutput.toolSteps && winnerOutput.toolSteps.length > 0)
+        ? winnerOutput.toolSteps
+        : null;
+      const toolSteps = rawSteps
+        ? rawSteps.map(s => ({ tool: s.tool, args: s.args, resultSummary: '' }))
+        : [{
+            tool: 'agent_loop',
+            args: prompt.slice(0, 100),
+            resultSummary: winnerOutput.output.slice(0, 500),
+          }];
 
       this.experience.record({
         prompt,
+        originalPrompt: prompt.slice(0, 200),
         toolSteps,
         finalAnswer: racerResult.output,
         tokenCost: tokenUsage?.totalTokens ?? 0,

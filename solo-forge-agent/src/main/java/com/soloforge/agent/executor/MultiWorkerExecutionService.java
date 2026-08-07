@@ -766,21 +766,21 @@ public class MultiWorkerExecutionService {
 
             return switch (toolName) {
                 case "read_file" -> {
-                    String path = resolvePath(args.path("path").asText(), workspaceFolder);
+                    String path = resolvePath(args.path("file_path").asText(), workspaceFolder);
                     yield soloForgeTools.readFile(path);
                 }
                 case "write_file" -> {
-                    String path = resolvePath(args.path("path").asText(), workspaceFolder);
+                    String path = resolvePath(args.path("file_path").asText(), workspaceFolder);
                     String content = args.path("content").asText();
                     yield soloForgeTools.writeFile(path, content);
                 }
                 case "list_files" -> {
-                    String dirPath = resolvePath(args.path("dirPath").asText(), workspaceFolder);
+                    String dirPath = resolvePath(args.path("dir_path").asText(), workspaceFolder);
                     yield soloForgeTools.listFiles(dirPath);
                 }
                 case "search_code" -> {
                     String pattern = args.path("pattern").asText();
-                    String fileGlob = args.has("fileGlob") ? args.path("fileGlob").asText() : null;
+                    String fileGlob = args.has("glob") ? args.path("glob").asText() : null;
                     yield soloForgeTools.searchCode(pattern, fileGlob);
                 }
                 case "execute_cmd" -> {
@@ -789,8 +789,8 @@ public class MultiWorkerExecutionService {
                 }
                 case "canvas_push_ui" -> {
                     String sessionId = args.path("sessionId").asText();
-                    String dslJson = args.path("dslJson").asText();
-                    String language = args.path("language").asText("html");
+                    String dslJson = args.path("dsl").toString();
+                    String language = args.path("language").asText("typescript");
                     yield soloForgeTools.canvasPushUi(sessionId, dslJson, language);
                 }
                 // Remote/MCP tool: delegate to RemoteToolExecutor (frontend callback)

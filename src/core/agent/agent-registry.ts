@@ -100,6 +100,8 @@ export interface AgentDispatchResult {
   };
   /** 经验指纹 (仅 strategy='experience' 时有值, 供前端 👍/👎 反馈定位经验) */
   experienceFingerprint?: string;
+  /** Winner 的工具调用步骤 (用于经验缓存) */
+  toolSteps?: Array<{ round: number; tool: string; args: string; success: boolean }>;
 }
 
 /**
@@ -290,7 +292,7 @@ export class AgentRegistry {
       /** 并行 worker 的最大轮次 (降低并行 worker 的轮次以控制 token 消耗) */
       maxRounds?: number;
     },
-  ): Promise<{ output: string; actualTokenUsage?: AgentTokenUsage }> {
+  ): Promise<{ output: string; actualTokenUsage?: AgentTokenUsage; toolSteps?: Array<{ round: number; tool: string; args: string; success: boolean }> }> {
     const agent = this.agents.get(agentId);
     if (!agent) {
       throw new Error(`AGENT_NOT_FOUND: ${agentId}`);
@@ -354,6 +356,7 @@ export class AgentRegistry {
 
     let output: string;
     let tokenUsage: AgentTokenUsage | undefined;
+    let toolSteps: Array<{ round: number; tool: string; args: string; success: boolean }> | undefined;
     try {
       const result = await specialized.executeTask({
         taskId: packetUuid,
@@ -371,6 +374,7 @@ export class AgentRegistry {
       });
       output = result.answer ?? '';
       tokenUsage = result.actualTokenUsage;
+      toolSteps = result.toolSteps;
       const tu = result.actualTokenUsage;
       const tokenStr = tu ? ` tokens=${tu.totalTokens}(p=${tu.promptTokens} c=${tu.completionTokens}${tu.cachedTokens ? ` cached=${tu.cachedTokens}` : ''} calls=${tu.llmCallCount})` : '';
       logger.info(this.moduleName, `executeOnAgent [${agentId}] via LLM packet=${packetUuid} tools=${result.toolCallCount}${result.cacheHits ? ` cache=${result.cacheHits}` : ''}${tokenStr}`);
@@ -393,7 +397,7 @@ export class AgentRegistry {
       durationSimulatedMs: 0,
       timestamp: Date.now(),
     });
-    return { output, actualTokenUsage: tokenUsage };
+    return { output, actualTokenUsage: tokenUsage, toolSteps };
   }
 
   // ============================================================

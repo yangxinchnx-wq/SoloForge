@@ -771,6 +771,27 @@ function resolvePath(filePath: string): string {
   return path.resolve(PROJECT_ROOT, filePath);
 }
 
+// 简单 glob 匹配 (支持 *, **, ?)
+// 例: matchGlob('src/foo.ts', '*.ts') → true
+//     matchGlob('deep/nested/file.ts', '**' + '/' + '*.ts') → true
+//     matchGlob('foo.tsx', '*.ts') → false
+function matchGlob(name: string, pattern: string): boolean {
+  if (!pattern || pattern === '*') return true;
+  if (pattern.startsWith('**/')) {
+    const suffix = pattern.slice(3);
+    return matchGlob(name, suffix);
+  }
+  const regex = '^' + pattern
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*/g, '[^/]*')
+    .replace(/\?/g, '[^/]') + '$';
+  try {
+    return new RegExp(regex).test(name);
+  } catch {
+    return true; // 非法 pattern 时不做过滤
+  }
+}
+
 /**
  * 检查目标路径是否在工作区文件夹范围内
  * @returns true 如果路径在工作区内或没有工作区限制
@@ -906,6 +927,16 @@ export async function executeToolCall(request: ToolCallRequest): Promise<ToolCal
         const boundaryErr = checkWorkspaceBoundary(filePath, request.workspaceFolder);
         if (boundaryErr) {
           output = boundaryErr;
+          break;
+        }
+        // 危险文件防护: 阻止 LLM 覆盖敏感文件
+        const normalizedPath = path.normalize(filePath).replace(/\\/g, '/').toLowerCase();
+        const DANGEROUS_PATTERNS = [
+          /\.env$/, /\.env\.\w+$/, /\/\.git\//, /\.ssh\//, /credentials/i,
+          /secret/i, /private[_-]?key/i, /\.pem$/, /\.key$/, /id_rsa/,
+        ];
+        if (DANGEROUS_PATTERNS.some(p => p.test(normalizedPath))) {
+          output = `ERROR: write_file blocked: "${request.arguments.file_path}" matches a sensitive file pattern. Refusing to overwrite credentials, secrets, SSH keys, .env, or .git files.`;
           break;
         }
         await fs.mkdir(path.dirname(filePath), { recursive: true });
@@ -1068,10 +1099,12 @@ export async function executeToolCall(request: ToolCallRequest): Promise<ToolCal
         }
         const pattern = request.arguments.pattern ?? '*';
         const entries = await fs.readdir(dirPath, { withFileTypes: true });
-        output = entries
+        const filtered = entries
+          .filter(e => matchGlob(e.name, pattern))
           .slice(0, 100)
           .map(e => `${e.isDirectory() ? '📁' : '📄'} ${e.name}`)
           .join('\n');
+        output = filtered || '(无匹配文件)';
         break;
       }
 

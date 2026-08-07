@@ -257,8 +257,9 @@ export async function runAgentLoop(ctx: AgentExecutionContext, userTask: string)
             args: call.arguments,
             summary: toolResult.output?.slice(0, 500) ?? '',
           }, ctx.peerAgentIds);
-        } catch {
-          // CommBus 广播失败不影响主流程
+        } catch (broadcastErr: unknown) {
+          const msg = broadcastErr instanceof Error ? broadcastErr.message : String(broadcastErr);
+          logger.warn('AgentLoop', `[${ctx.agentId}] CommBus broadcast failed (non-fatal): ${msg}`);
         }
       }
 

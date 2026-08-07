@@ -135,6 +135,15 @@ export async function handleCanvasRelayPushUi(body: any): Promise<ApiResponse> {
   }
 
   // 1. 查端口 — 优先精确匹配 sessionId
+  // 清理过期端口 (超过 60 秒未心跳的视为过期, Electron 心跳间隔约 30s)
+  const STALE_THRESHOLD_MS = 60_000;
+  for (const [key, info] of canvasPortRegistry) {
+    if (Date.now() - info.registeredAt > STALE_THRESHOLD_MS) {
+      canvasPortRegistry.delete(key);
+      logger.info('canvas-relay', `cleaned stale port entry: sessionId=${key} port=${info.port} age=${Date.now() - info.registeredAt}ms`);
+    }
+  }
+
   let portInfo = canvasPortRegistry.get(sessionId);
   if (!portInfo) {
     // 降级: 取任意一个已注册的画布 (适用于单画布场景, 或 sessionId 不匹配时)
@@ -154,6 +163,7 @@ export async function handleCanvasRelayPushUi(body: any): Promise<ApiResponse> {
         success: false,
         error: 'no canvas process registered. Start a canvas in the Electron UI first.',
         hint: 'Electron 主进程需要在画布启动时调 POST /api/canvas/relay/register-port 注册端口',
+        retryable: true,
       },
     };
   }

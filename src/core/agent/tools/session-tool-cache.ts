@@ -20,6 +20,8 @@ import { logger } from '../../../core/logger';
 interface SessionCacheEntry {
   /** SHA256(chatId + toolName + JSON.stringify(args)) */
   key: string;
+  /** chatId (存储原始值，用于 clearByChatId 精确匹配) */
+  chatId: string;
   /** 工具名 */
   toolName: string;
   /** 参数哈希 SHA256(JSON.stringify(args)) */
@@ -130,6 +132,7 @@ class SessionToolCache {
 
     this.cache.set(key, {
       key,
+      chatId,
       toolName,
       argsHash,
       output,
@@ -144,11 +147,9 @@ class SessionToolCache {
    * @param chatId 会话 ID
    */
   clearByChatId(chatId: string): void {
-    const prefix = createHash('sha256').update(chatId).digest('hex').slice(0, 8);
     let cleared = 0;
     for (const [key, entry] of this.cache.entries()) {
-      // 通过 key 前缀匹配 chatId (buildKey 生成的 key 包含 chatId 的哈希)
-      if (key.startsWith(prefix) || entry.key.startsWith(prefix)) {
+      if (entry.chatId === chatId) {
         this.cache.delete(key);
         cleared++;
       }

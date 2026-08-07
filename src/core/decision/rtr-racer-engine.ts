@@ -50,6 +50,8 @@ export interface RacerFlowResult {
       cachedTokens: number;
       llmCallCount: number;
     };
+    /** Agent Loop 的工具调用步骤 (用于经验缓存) */
+    toolSteps?: Array<{ round: number; tool: string; args: string; success: boolean }>;
   }>;
   /** 实际并行度 */
   parallelism: number;
@@ -70,6 +72,8 @@ export interface WorkerExecResult {
     cachedTokens: number;
     llmCallCount: number;
   };
+  /** Agent Loop 的工具调用步骤 (用于经验缓存) */
+  toolSteps?: Array<{ round: number; tool: string; args: string; success: boolean }>;
 }
 
 export class SoloForgeRTRRacerEngine {
@@ -303,6 +307,7 @@ export class SoloForgeRTRRacerEngine {
         durationMs: workerResults[i].durationMs,
         provider: workerResults[i].provider,
         actualTokenUsage: workerResults[i].actualTokenUsage,
+        toolSteps: workerResults[i].toolSteps,
       })),
       parallelism: topN,
     };

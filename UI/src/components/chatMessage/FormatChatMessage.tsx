@@ -19,29 +19,59 @@ export interface FormatChatMessageProps {
 export const FormatChatMessage = React.memo(function FormatChatMessage({ content }: FormatChatMessageProps) {
   if (!content || !content.trim()) return null;
 
-  // Split by ``` to extract code blocks
-  const parts = content.split(/(```[\s\S]*?```)/g);
+  // 状态机分割: 逐行扫描,正确匹配 ``` 开闭,支持嵌套 ``` 内容
+  const parts: Array<{ type: 'text' | 'code'; content: string; lang?: string }> = [];
+  const lines = content.split('\n');
+  let inCodeBlock = false;
+  let codeLang = '';
+  let codeLines: string[] = [];
+  let textLines: string[] = [];
+
+  for (const line of lines) {
+    if (!inCodeBlock && line.trimStart().startsWith('```')) {
+      // 开始代码块: flush 文本
+      if (textLines.length > 0) {
+        parts.push({ type: 'text', content: textLines.join('\n') });
+        textLines = [];
+      }
+      inCodeBlock = true;
+      codeLang = line.trimStart().slice(3).trim();
+      codeLines = [];
+    } else if (inCodeBlock && line.trimStart().startsWith('```')) {
+      // 结束代码块
+      parts.push({ type: 'code', content: codeLines.join('\n'), lang: codeLang });
+      inCodeBlock = false;
+      codeLang = '';
+      codeLines = [];
+    } else if (inCodeBlock) {
+      codeLines.push(line);
+    } else {
+      textLines.push(line);
+    }
+  }
+  // 未闭合的代码块仍然输出 (流式场景可能未闭合)
+  if (inCodeBlock && codeLines.length > 0) {
+    parts.push({ type: 'code', content: codeLines.join('\n'), lang: codeLang });
+  }
+  if (textLines.length > 0) {
+    parts.push({ type: 'text', content: textLines.join('\n') });
+  }
 
   return (
     <div className="space-y-3.5 select-text w-full max-w-full overflow-hidden">
       {parts.map((part, index) => {
-        if (part.startsWith('```')) {
-          // It is a code block! Get language and code
-          const match = part.match(/```([a-zA-Z0-9+#-]*)\n([\s\S]*?)```/);
-          const lang = match ? match[1] : '';
-          const code = match ? match[2] : part.slice(3, -3);
-
+        if (part.type === 'code') {
           return (
             <div key={index}>
               <CollapsibleCodeBlock
-                fileName={lang ? `智脑生成文件 (.${lang})` : '智脑配置代码段'}
-                text={code.trim()}
+                fileName={part.lang ? `智脑生成文件 (.${part.lang})` : '智脑配置代码段'}
+                text={part.content.trim()}
               />
             </div>
           );
         } else {
           // Standard text! Let's format paragraphs and inline elements
-          const paragraphs = part.split('\n\n');
+          const paragraphs = part.content.split('\n\n');
           return paragraphs.map((para, pIdx) => {
             if (!para.trim()) return null;
 
