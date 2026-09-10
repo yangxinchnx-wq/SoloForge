@@ -7,11 +7,12 @@
     bin/ is excluded by .gitignore, so it never travels with Git.
     Run this on a fresh machine to re-download the components.
 
-    NOT included by default:
-      - python-3.13 (1.7 GB, ships torch/lancedb/llvmlite/scipy ...)
-        Reinstalling those via pip is slow and fragile. Copy it from the old machine.
-      - bin/data (592 MB)  -> runtime state (qdrant storage, duckdb, pids). Regenerated on first run.
-      - python-3.13.tar.gz (45 MB) -> leftover archive of the extracted runtime, safe to delete.
+    Default: Databases + Models.
+    Add -Component Python to also rebuild bin/python-3.13: it downloads the 3.13.14 installer
+    and reinstalls every package from scripts/requirements-bin.txt.
+    torch is pulled from the CPU index on purpose - the default PyPI wheel is the CUDA build
+    and would pull roughly 2.5 GB instead of 500 MB.
+    Never needed: bin/data (runtime state) and bin/python-3.13.tar.gz (leftover archive).
 
 .PARAMETER Component
     Which parts to rebuild: Databases, Models, Runtimes, All.
@@ -28,7 +29,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Databases', 'Models', 'Runtimes', 'All')]
+    [ValidateSet('Databases', 'Models', 'Runtimes', 'Python', 'All')]
     [string[]]$Component = @('Databases', 'Models'),
 
     [switch]$UseMirror,
@@ -53,6 +54,10 @@ $NodeVersion = '24.15.0'
 $JdkMajor = '23'
 $ModelRepo = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'
 $ModelDir = Join-Path $bin 'models/paraphrase-multilingual-MiniLM-L12-v2'
+$PythonVersion = '3.13.14'
+$TorchVersion = '2.12.1'
+$PyIndex = 'https://pypi.tuna.tsinghua.edu.cn/simple'
+$TorchCpuIndex = 'https://download.pytorch.org/whl/cpu'
 
 function Ensure-Dir {
     param([string]$Path)
@@ -204,11 +209,42 @@ function Install-Jdk {
     }
 }
 
+function Install-Python {
+    Write-Host "  Python $PythonVersion + AI Society packages" -ForegroundColor Cyan
+    $target = Join-Path $bin 'python-3.13'
+    $py = Join-Path $target 'python.exe'
+    if (Test-Path $py) { Write-Host '    already present, skipped'; return }
+
+    $installer = Join-Path $tmp 'python-installer.exe'
+    $url = "https://www.python.org/ftp/python/$PythonVersion/python-$PythonVersion-amd64.exe"
+    if (-not (Get-Remote $url $installer)) { Write-Host "    manual: $url"; return }
+
+    Write-Host '    running silent install (1-2 min)...'
+    & $installer /quiet InstallAllUsers=0 TargetDir=$target PrependPath=0 AssociateFiles=0 Include_launcher=0
+    for ($i = 0; $i -lt 90; $i++) {
+        if (Test-Path $py) { break }
+        Start-Sleep -Seconds 2
+    }
+    if (-not (Test-Path $py)) {
+        Write-Host '    python.exe not found, install may have failed' -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host '    installing packages (torch CPU build first, this is the slow part)...'
+    $env:HTTP_PROXY = ''; $env:HTTPS_PROXY = ''; $env:no_proxy = '*'
+    & $py -m pip install --upgrade pip -i $PyIndex
+    & $py -m pip install "torch==$TorchVersion" --index-url $TorchCpuIndex
+    $req = Join-Path $Root 'scripts/requirements-bin.txt'
+    if (Test-Path $req) { & $py -m pip install -r $req -i $PyIndex }
+    else { Write-Host "    missing $req" -ForegroundColor Yellow }
+    Write-Host '    done'
+}
+
 Ensure-Dir $bin
 Ensure-Dir $tmp
 Write-Host "Target: $bin" -ForegroundColor Green
 
-$set = if ($Component -contains 'All') { @('Databases', 'Models', 'Runtimes') } else { $Component }
+$set = if ($Component -contains 'All') { @('Databases', 'Models', 'Runtimes', 'Python') } else { $Component }
 
 if ($set -contains 'Databases') {
     Install-Surreal
@@ -222,12 +258,12 @@ if ($set -contains 'Runtimes') {
     Install-Node
     Install-Jdk
 }
+if ($set -contains 'Python') {
+    Install-Python
+}
 
 Write-Host ''
-Write-Host 'Remaining (copy from the old machine, do NOT re-download):' -ForegroundColor Green
-Write-Host '  bin/python-3.13/      1.7 GB  has torch/lancedb/scipy, pip reinstall is painful'
-Write-Host '  bin/models/           (if the download above was skipped)'
-Write-Host 'Regenerated automatically, no need to copy:'
-Write-Host '  bin/data/             592 MB  qdrant storage + duckdb + pids'
-Write-Host 'Safe to delete:'
-Write-Host '  bin/python-3.13.tar.gz  45 MB  leftover archive'
+Write-Host 'Nothing needs to be copied from the old machine.' -ForegroundColor Green
+Write-Host 'Not required on a new machine:'
+Write-Host '  bin/data/                592 MB  qdrant storage + duckdb + pids, regenerated at runtime'
+Write-Host '  bin/python-3.13.tar.gz    45 MB  leftover archive, safe to delete'
