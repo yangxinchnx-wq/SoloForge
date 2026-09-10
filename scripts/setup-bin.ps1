@@ -117,18 +117,20 @@ function Install-Garnet {
     $dest = Join-Path $bin 'garnet/portable/net10.0/GarnetServer.exe'
     if (Test-Path $dest) { Write-Host '    already present, skipped'; return }
     Ensure-Dir (Split-Path $dest)
-    $pkg = Join-Path $tmp 'garnet.zip'
     $candidates = @(
-        "Garnet.windows-x64.release.zip",
-        "Garnet.win-x64.release.zip"
+        'win-x64-based-readytorun.zip',
+        'Garnet.windows-x64.release.zip',
+        'Garnet.win-x64.release.zip'
     )
-    $ok = $false
+    $pkg = $null
     foreach ($asset in $candidates) {
+        $candidate = Join-Path $tmp $asset
         $url = "${ghPrefix}https://github.com/microsoft/garnet/releases/download/v$GarnetVersion/$asset"
-        if (Get-Remote $url $pkg) { $ok = $true; break }
+        if (Get-Remote $url $candidate) { $pkg = $candidate; break }
     }
-    if (-not $ok) {
+    if (-not $pkg) {
         Write-Host "    manual: https://github.com/microsoft/garnet/releases/tag/v$GarnetVersion"
+        Write-Host '    pick win-x64-based-readytorun.zip, unzip into bin\garnet\portable\'
         return
     }
     $out = Join-Path $tmp 'garnet'
