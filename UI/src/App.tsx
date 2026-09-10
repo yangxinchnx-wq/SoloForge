@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { LayoutProvider } from './context/LayoutContext';
+import { BootErrorBoundary } from './boot/BootErrorBoundary';
+import { RouteErrorDisplay } from './components/RouteErrorBoundary';
 import { usePreviewBridge } from './hooks/usePreviewBridge';
 import { useBroadcastSync } from './hooks/useBroadcastSync';
 import { useFileOperations } from './hooks/useFileOperations';
@@ -275,28 +277,30 @@ export default function App() {
     <LayoutProvider>
       <MemoryRouter initialEntries={[initialPath]}>
         <Suspense fallback={<AppFallback />}>
-          <Routes>
-            {/* 主工作区 — IDE 布局 (Header + ActivityBar + ChatPanel + 面板) */}
-            <Route path="/" element={
-              <MainLayout
-                handleFileChange={handleFileChange}
-                handleEditorChange={handleEditorChange}
-                handleNewFile={handleNewFile}
-                onOpenThemeCustomizer={onOpenThemeCustomizer}
-                onOpenSettingsModal={onOpenSettingsModal}
-                onOpenStatsModal={onOpenStatsModal}
-                modelProviderMap={modelProviderMap}
-              />
-            } />
-            {/* 弹出编辑器窗口 — 独立 chunk,主窗口不加载 */}
-            <Route path="/popout" element={
-              <PopoutLayout
-                handleFileChange={handleFileChange}
-                handleNewFile={handleNewFile}
-                handleEditorChange={handleEditorChange}
-              />
-            } />
-          </Routes>
+          <BootErrorBoundary code="G001" detail="App 路由壳渲染失败">
+            <Routes>
+              {/* 主工作区 — IDE 布局 (Header + ActivityBar + ChatPanel + 面板) */}
+              <Route path="/" errorElement={<RouteErrorDisplay />} element={
+                <MainLayout
+                  handleFileChange={handleFileChange}
+                  handleEditorChange={handleEditorChange}
+                  handleNewFile={handleNewFile}
+                  onOpenThemeCustomizer={onOpenThemeCustomizer}
+                  onOpenSettingsModal={onOpenSettingsModal}
+                  onOpenStatsModal={onOpenStatsModal}
+                  modelProviderMap={modelProviderMap}
+                />
+              } />
+              {/* 弹出编辑器窗口 — 独立 chunk,主窗口不加载 */}
+              <Route path="/popout" errorElement={<RouteErrorDisplay />} element={
+                <PopoutLayout
+                  handleFileChange={handleFileChange}
+                  handleNewFile={handleNewFile}
+                  handleEditorChange={handleEditorChange}
+                />
+              } />
+            </Routes>
+          </BootErrorBoundary>
         </Suspense>
       </MemoryRouter>
     </LayoutProvider>

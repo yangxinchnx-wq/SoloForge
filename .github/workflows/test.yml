@@ -20,6 +20,18 @@ jobs:
         run: npm ci
       - name: Run root vitest
         run: npm test
+      - name: Type check (root)
+        run: npx tsc --noEmit
+        continue-on-error: true
+      - name: Security audit
+        run: npm audit --audit-level=high
+        continue-on-error: true
+      - name: Upload package-lock.json
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-lock
+          path: package-lock.json
 
   test-ui:
     name: UI hook tests
@@ -35,9 +47,56 @@ jobs:
       - name: Install UI deps
         working-directory: UI
         run: npm ci
-      - name: Run UI vitest
+      - name: Run UI tests (ci:test)
         working-directory: UI
-        run: npx vitest run
+        run: npm run ci:test
+      - name: Lint (UI)
+        working-directory: UI
+        run: npm run lint
+        continue-on-error: true
+      - name: Build UI bundle (ci:build)
+        working-directory: UI
+        run: npm run ci:build
+
+  test-java:
+    name: Java agent build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup JDK 23
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '23'
+      - name: Build
+        working-directory: solo-forge-agent
+        run: mvn -B package
+      - name: Test
+        working-directory: solo-forge-agent
+        run: mvn -B test
+      - name: Build agent jar (ci:build:agent)
+        working-directory: UI
+        run: npm run ci:build:agent
+      - name: Upload agent jar
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: solo-forge-agent-jar
+          path: solo-forge-agent/target/solo-forge-agent-1.0.0.jar
+
+  test-rust:
+    name: Rust core build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        working-directory: rust_core
+        run: cargo build --release
+      - name: Test
+        working-directory: rust_core
+        run: cargo test
 
   test-python-3-13:
     name: Python 3.13 AI society tests

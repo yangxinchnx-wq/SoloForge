@@ -29,6 +29,7 @@ import { SuggestEnableView } from './streamViews';
 import { useChatStore, fallbackActiveSettings } from '../state/useChatStore';
 import { useAppStore } from '../state/appStore';
 import { useRenderTrace } from '../hooks/useRenderTrace';
+import { logger } from '../services/logger';
 
 // 4 个权限模式图标 (NormalIcon/PerformanceIcon/ExpertIcon/UltimateIcon) 已外移到
 // permissionModeIcons.tsx (2026-07-03 阶段3.1.B)
@@ -302,7 +303,7 @@ const ChatPanel = React.memo(function ChatPanel({
           }
         }
       })
-      .catch(() => {});
+      .catch((err) => logger.debug('ChatPanel', 'avatar list fetch ignored:', err));
 
     const applyAvatar = () => {
       const useCustom = localStorage.getItem('soloforge_user_use_custom_avatar') === 'true';
@@ -494,7 +495,7 @@ const ChatPanel = React.memo(function ChatPanel({
       setCopiedIndex(index);
       window.setTimeout(() => setCopiedIndex(prev => (prev === index ? null : prev)), 1500);
     } catch (e) {
-      console.error('[ChatPanel] 复制失败:', e);
+      logger.error('ChatPanel', '复制失败:', e);
     }
   };
 
@@ -553,14 +554,14 @@ const ChatPanel = React.memo(function ChatPanel({
 
         // 经济系统结果
         if (econData?.creditsAfter !== undefined) {
-          console.info(`[经济系统] ${positive ? '👍' : '👎'} agent=${agentId} 信用分: ${econData.creditsBefore} → ${econData.creditsAfter}`);
+          logger.info('ChatPanel', `[经济系统] ${positive ? '👍' : '👎'} agent=${agentId} 信用分: ${econData.creditsBefore} → ${econData.creditsAfter}`);
         }
 
         // 经验系统结果
         if (expData?.alive === false) {
-          console.info(`[经验失效] fingerprint=${expFp} 已因 👎 降权失效, 下次重新解决`);
+          logger.info('ChatPanel', `[经验失效] fingerprint=${expFp} 已因 👎 降权失效, 下次重新解决`);
         } else if (expData?.successRate !== undefined) {
-          console.info(`[经验${positive ? '强化' : '降权'}] fingerprint=${expFp} successRate=${expData.successRate.toFixed(2)}`);
+          logger.info('ChatPanel', `[经验${positive ? '强化' : '降权'}] fingerprint=${expFp} successRate=${expData.successRate.toFixed(2)}`);
         }
 
         if (!econData?.acknowledged && !expData?.acknowledged) {
@@ -570,10 +571,10 @@ const ChatPanel = React.memo(function ChatPanel({
         // ── 非经验路径: 只走 Java FeedbackController ──
         const econData = await econPromise;
         if (econData?.creditsAfter !== undefined) {
-          console.info(`[经济系统] ${positive ? '👍' : '👎'} agent=${agentId} 信用分: ${econData.creditsBefore} → ${econData.creditsAfter}`);
+          logger.info('ChatPanel', `[经济系统] ${positive ? '👍' : '👎'} agent=${agentId} 信用分: ${econData.creditsBefore} → ${econData.creditsAfter}`);
         }
         if (econData?.caseId) {
-          console.info(`[案例入库] ${agentId} caseId=${econData.caseId} positive=${positive}`);
+          logger.info('ChatPanel', `[案例入库] ${agentId} caseId=${econData.caseId} positive=${positive}`);
         }
         if (!econData?.acknowledged) {
           setFeedbackMap(prev => ({ ...prev, [index]: undefined }));

@@ -4,6 +4,10 @@
 // Description: 全系统统一点火发射台 - 冷启动微内核并激活中央编排时钟
 // ─────────────────────────────────────────────────────────────────
 
+// 🔒 环境变量验证 — 必须在所有其他 import 之前执行
+import { validateEnv } from './config';
+validateEnv();
+
 import { RuntimeKernel } from './kernel/runtime-kernel';
 import { RoleEvolutionEngine } from './core/society/role-evolution';
 import { CoalitionEngine } from './core/society/coalition';

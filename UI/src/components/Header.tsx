@@ -9,6 +9,7 @@ import {
 import { useThemedSurface } from './header-bar/themeColors';
 import { useAppStore } from '../state/appStore';
 import { useRenderTrace } from '../hooks/useRenderTrace';
+import { logger } from '../services/logger';
 
 interface HeaderProps {
   sidebarWidth?: number;
@@ -88,7 +89,7 @@ const Header = React.memo(function Header({
         }
       }
     } catch (e) {
-      console.error('Error loading dynamic models for header', e);
+      logger.error('Header', 'Error loading dynamic models for header:', e);
     }
     return [];
   };
@@ -142,7 +143,7 @@ const Header = React.memo(function Header({
         }
       }
     } catch (e) {
-      console.error('Error loading secondary models list', e);
+      logger.error('Header', 'Error loading secondary models list:', e);
     }
     return [];
   };

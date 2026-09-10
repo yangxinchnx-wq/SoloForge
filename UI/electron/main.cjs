@@ -51,9 +51,11 @@ let mainWindow = null;
  * 在生产模式下启动所有必要的后端服务 (分阶段, 确保依赖顺序)
  * 1. Garnet (6379) — 无依赖
  * 2. SurrealDB (8400) — 无依赖
- * 3. git-service (3002) — 无依赖
- * 4. RACER Core (3001) — 依赖 Garnet + SurrealDB
- * 5. UI Server (3000) — 依赖 RACER Core
+ * 3. Qdrant (6333) — 无依赖 (向量数据库)
+ * 4. git-service (3002) — 无依赖
+ * 5. RACER Core (3001) — 依赖 Garnet + SurrealDB + Qdrant
+ * 6. Java Agent (8770) — 依赖 RACER Core (聊天 SSE + Agent 管理)
+ * 7. UI Server (3000) — 依赖 RACER Core + Java Agent
  */
 async function startProductionServices() {
     if (isDev) return; // dev 模式下服务由 npm run dev 管理
@@ -61,11 +63,14 @@ async function startProductionServices() {
     const resourcesPath = process.resourcesPath || path.resolve(__dirname, '..');
     const appPath = app.getAppPath();
 
-    // 创建 RACER Core 需要的运行时目录
+    // 创建运行时目录 (RACER Core + Qdrant + Java Agent)
+    // Qdrant 存储目录 = resourcesPath/bin/data/qdrant (与 configs/qdrant.yaml 中 storage_path: ./bin/data/qdrant 一致)
     const runtimeDirs = [
       path.join(resourcesPath, 'data', 'soloforge_vault'),
       path.join(resourcesPath, 'data', 'jsonl', 'archive'),
       path.join(resourcesPath, 'data', 'soloforge_db'),
+      path.join(resourcesPath, 'data', 'ai_society'),
+      path.join(resourcesPath, 'bin', 'data', 'qdrant'),
       path.join(resourcesPath, 'logs'),
     ];
     for (const dir of runtimeDirs) {
@@ -118,7 +123,30 @@ async function startProductionServices() {
     console.warn('[services] SurrealDB not found at', surrealExe, '— persistence will fail');
   }
 
-  // ── 1c. 启动 git-service (3002) ──
+  // ── 1c. 启动 Qdrant (6333) — 向量数据库 ──
+  const qdrantExe = path.join(resourcesPath, 'bin', 'qdrant', 'qdrant.exe');
+  const qdrantCfg = path.join(resourcesPath, 'bin', 'configs', 'qdrant.yaml');
+  if (fs.existsSync(qdrantExe) && fs.existsSync(qdrantCfg)) {
+    console.log('[services] Starting Qdrant (6333)...');
+    // cwd 设为 resourcesPath, 这样 qdrant.yaml 中的 ./bin/data/qdrant 解析到 resourcesPath/bin/data/qdrant
+    // (该目录在 runtimeDirs 中已创建)
+    const qdrant = spawn(qdrantExe, [
+      '--config-path', qdrantCfg,
+    ], {
+      cwd: resourcesPath,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    qdrant.stdout?.on('data', (d) => process.stdout.write(`[qdrant] ${d}`));
+    qdrant.stderr?.on('data', (d) => process.stderr.write(`[qdrant] ${d}`));
+    qdrant.on('exit', (code) => console.warn(`[qdrant] exited with code ${code}`));
+    spawnedChildren.push(qdrant);
+    await waitForPort(6333, 10000).then(ok => console.log(ok ? '[services] ✓ Qdrant ready' : '[services] ✗ Qdrant timeout'));
+  } else {
+    console.warn('[services] Qdrant not found at', qdrantExe, '— vector search will be unavailable');
+  }
+
+  // ── 1d. 启动 git-service (3002) ──
   const gitExe = path.join(resourcesPath, 'git-service', 'git-service.exe');
   if (fs.existsSync(gitExe)) {
     const repoRoot = path.resolve(appPath, '..', '..');
@@ -136,7 +164,7 @@ async function startProductionServices() {
     console.warn('[services] git-service not found at', gitExe);
   }
 
-  // ── 阶段 2: 启动依赖 Garnet + SurrealDB 的 RACER Core (3001) ──
+  // ── 阶段 2: 启动依赖 Garnet + SurrealDB + Qdrant 的 RACER Core (3001) ──
   const coreEntry = path.join(resourcesPath, 'core', 'server.mjs');
   if (fs.existsSync(coreEntry)) {
     console.log('[services] Starting RACER Core (3001)...');
@@ -158,7 +186,38 @@ async function startProductionServices() {
     console.warn('[services] RACER Core not found at', coreEntry, '— LLM dispatch will fail (502)');
   }
 
-  // ── 阶段 3: 启动 UI Server (3000) ──
+  // ── 阶段 3: 启动 Java Agent (8770) — 聊天 SSE + Agent 管理 ──
+  const javaExe = path.join(resourcesPath, 'bin', 'jdk-23-mini', 'bin', 'java.exe');
+  const agentJar = path.join(resourcesPath, 'bin', 'solo-forge-agent.jar');
+  if (fs.existsSync(javaExe) && fs.existsSync(agentJar)) {
+    console.log('[services] Starting Java Agent (8770)...');
+    const javaEnv = { ...process.env };
+    delete javaEnv.ELECTRON_RUN_AS_NODE;
+    // 设置 JAVA_HOME 让 Java 能找到自身运行时
+    javaEnv.JAVA_HOME = path.join(resourcesPath, 'bin', 'jdk-23-mini');
+    // SQLite 数据库路径 (Agent 身份/训练历史/经验案例)
+    javaEnv.SOLOFORGE_SQLITE_URL = `jdbc:sqlite:${path.join(resourcesPath, 'data', 'ai_society', 'ai_society.db')}`;
+    const javaProc = spawn(javaExe, [
+      '-jar', agentJar,
+      '--server.port=8770',
+    ], {
+      cwd: path.join(resourcesPath, 'bin'),
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: javaEnv,
+      windowsHide: true,
+    });
+    javaProc.stdout?.on('data', (d) => process.stdout.write(`[java-agent] ${d}`));
+    javaProc.stderr?.on('data', (d) => process.stderr.write(`[java-agent] ${d}`));
+    javaProc.on('exit', (code) => console.warn(`[java-agent] exited with code ${code}`));
+    spawnedChildren.push(javaProc);
+    // 不等待端口就绪 — Java Agent 启动较慢 (Spring Boot 初始化 10-20s)
+    // UI Server 可以先启动, 前端在用户发起聊天时检测 Java Agent 可达性
+    console.log('[services] Java Agent starting in background (port 8770)...');
+  } else {
+    console.warn('[services] Java Agent not found (JDK:', fs.existsSync(javaExe), 'JAR:', fs.existsSync(agentJar), ') — chat will fail');
+  }
+
+  // ── 阶段 4: 启动 UI Server (3000) ──
   const uiServer = path.join(appPath, 'dist', 'server.mjs');
   if (fs.existsSync(uiServer)) {
     console.log('[services] Starting UI Server (3000)...');

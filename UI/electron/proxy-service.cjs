@@ -36,6 +36,8 @@ const BYPASS_DEFAULT = [
   'localhost:3001',    // RACER Core / Node.js 后端
   'localhost:3002',    // git-service (Go)
   'localhost:6379',    // Garnet (Redis 兼容缓存)
+  'localhost:6333',    // Qdrant (向量数据库 HTTP)
+  'localhost:6334',    // Qdrant (向量数据库 gRPC)
   'localhost:8400',    // SurrealDB (图数据库)
   'localhost:8765',    // MARL (预留: 外部独立进程，非 main.cjs 启动)
   'localhost:8766',    // MARL Reputation HTTP (预留: 外部独立进程)

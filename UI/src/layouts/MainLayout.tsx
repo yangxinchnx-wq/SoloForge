@@ -23,6 +23,7 @@ import { SidebarResizeHandle, HistoryResizeHandle, PreviewResizeHandle } from '.
 import { useLayoutState, useLayoutStatus } from '../context/LayoutContext';
 import { useAppStore } from '../state/appStore';
 import { useRenderTrace } from '../hooks/useRenderTrace';
+import { PanelErrorBoundary } from '../components/RouteErrorBoundary';
 
 // ── 面板 lazy 化 (2026-07-18) ──────────────────────────────
 // 每个 IDE 面板拆成独立 chunk,首屏只加载核心 (Header/ActivityBar/ChatPanel/StatusBar),
@@ -109,18 +110,22 @@ export const MainLayout = React.memo(function MainLayout({
             {activeTab === 'explorer' ? (
               <div className="flex-1 flex flex-col overflow-hidden">
                 <Suspense fallback={<PanelFallback />}>
-                  <FileExplorer
-                    setSelectedFile={handleFileChange}
-                    onNewFile={handleNewFile}
-                    onClose={() => setActiveTab('')}
-                    isFloatingEditorOpen={showFloatingEditor}
-                  />
+                  <PanelErrorBoundary panelName="FileExplorer">
+                    <FileExplorer
+                      setSelectedFile={handleFileChange}
+                      onNewFile={handleNewFile}
+                      onClose={() => setActiveTab('')}
+                      isFloatingEditorOpen={showFloatingEditor}
+                    />
+                  </PanelErrorBoundary>
                 </Suspense>
               </div>
             ) : activeTab === 'git' ? (
               <div className="flex-grow flex flex-col overflow-hidden">
                 <Suspense fallback={<PanelFallback />}>
-                  <GitPanel onClose={() => setActiveTab('')} />
+                  <PanelErrorBoundary panelName="GitPanel">
+                    <GitPanel onClose={() => setActiveTab('')} />
+                  </PanelErrorBoundary>
                 </Suspense>
               </div>
             ) : null}
@@ -128,9 +133,11 @@ export const MainLayout = React.memo(function MainLayout({
             {activeTab !== 'git' && showCodeEditor && (
               <div className={`${activeTab === 'explorer' ? 'h-[340px] border-t border-[var(--color-primary)]/50' : 'flex-1'} flex flex-col overflow-hidden bg-surface`}>
                 <Suspense fallback={<PanelFallback />}>
-                  <SourceCodeEditor
-                    setEditorContent={handleEditorChange}
-                  />
+                  <PanelErrorBoundary panelName="SourceCodeEditor">
+                    <SourceCodeEditor
+                      setEditorContent={handleEditorChange}
+                    />
+                  </PanelErrorBoundary>
                 </Suspense>
               </div>
             )}
@@ -152,12 +159,14 @@ export const MainLayout = React.memo(function MainLayout({
         >
           <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', flexShrink: 0, overflow: 'hidden' }}>
             <Suspense fallback={<PanelFallback />}>
-              <HistoryAndEditorPanel
-                isResizing={isResizingSidebar}
-                setEditorContent={handleEditorChange}
-                onClose={() => setShowHistory(false)}
-                width={sidebarWidth}
-              />
+              <PanelErrorBoundary panelName="HistoryAndEditorPanel">
+                <HistoryAndEditorPanel
+                  isResizing={isResizingSidebar}
+                  setEditorContent={handleEditorChange}
+                  onClose={() => setShowHistory(false)}
+                  width={sidebarWidth}
+                />
+              </PanelErrorBoundary>
             </Suspense>
           </div>
         </div>
@@ -166,16 +175,20 @@ export const MainLayout = React.memo(function MainLayout({
 
         {/* Column 4: Main Chat Workspace */}
         <div data-theme-region="chat-panel" className="flex-1 h-full min-w-0">
-          <ChatPanel
-            modelProviderMap={modelProviderMap}
-          />
+          <PanelErrorBoundary panelName="ChatPanel">
+            <ChatPanel
+              modelProviderMap={modelProviderMap}
+            />
+          </PanelErrorBoundary>
         </div>
 
         <PreviewResizeHandle />
 
         {/* Column 5: Preview Panel (lazy — 自包含, 自己调 bridge hook + 读 store + LayoutContext) */}
         <Suspense fallback={<PanelFallback />}>
-          <PreviewPanel />
+          <PanelErrorBoundary panelName="PreviewPanel">
+            <PreviewPanel />
+          </PanelErrorBoundary>
         </Suspense>
       </div>
 

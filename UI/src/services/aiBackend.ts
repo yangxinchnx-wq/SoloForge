@@ -1,4 +1,4 @@
-﻿﻿﻿﻿/**
+﻿﻿﻿/**
  * aiBackend — 统一 AI 流式后端接口
  *   dev (浏览器 / Vite dev server) → /api/java-agent/api/chat/stream (Java SSE)
  *                                  → Node.js(3000) 直连透传到 Java Spring AI Agent(8770)
@@ -19,6 +19,7 @@
  */
 
 import { StreamingLatencyTracker } from './perfMonitor';
+import { logger } from './logger';
 import { getDeviceConstraint, type CanvasDeviceInfo } from '../state/canvasDeviceStore';
 
 export type ChatStreamEvent =
@@ -343,7 +344,7 @@ function buildJavaRequestBody(req: ChatRequest): any {
   const settings = req.activeSettings || {};
 
   if (process.env.NODE_ENV === 'development') {
-    console.log('[aiBackend] buildJavaRequestBody: mainProvider=' +
+    logger.debug('aiBackend', 'buildJavaRequestBody: mainProvider=' +
       (req.mainProvider?.model || 'none') +
       ', subProviders=' + (req.subProviders?.length || 0));
   }
@@ -452,7 +453,7 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
     for (const line of lines) {
       // [DEBUG SSE] 打印前 30 行原始数据, 看 Java 后端实际返回了什么
       if (sseDebugLineCount < 30 && line.trim()) {
-        console.log(`[SSE DEBUG] line#${sseDebugLineCount}: ${line.slice(0, 200)}`);
+        logger.debug('aiBackend', `[SSE DEBUG] line#${sseDebugLineCount}:`, line.slice(0, 200));
         sseDebugLineCount++;
       }
       if (line.startsWith('event:')) {
@@ -481,7 +482,7 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
             }
           } catch (e) {
             // [DEBUG SSE] 不再静默吞错, 打印解析失败的信息
-            console.warn(`[SSE DEBUG] JSON.parse failed: event=${currentEvent}, data=${currentData.slice(0, 200)}, error=${e}`);
+            logger.warn('aiBackend', `[SSE DEBUG] JSON.parse failed: event=${currentEvent}, data=${currentData.slice(0, 200)}, error=${e}`);
           }
         }
         currentEvent = '';
@@ -510,7 +511,7 @@ async function executeJavaPath(req: ChatRequest, signal: AbortSignal, taskId: st
 
   // ★ 2026-07-11: 合成 done 事件
   if (!doneSent && !signal.aborted) {
-    console.log('[aiBackend] Java SSE 流结束, 后端未发 done 事件 → 合成 done');
+    logger.info('aiBackend', 'Java SSE 流结束, 后端未发 done 事件 → 合成 done');
     await onEvent({ kind: 'done', taskId });
   }
   // ★ 结束延迟追踪, emit LatencySample

@@ -16,7 +16,11 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "package": "npm run build && electron-builder build --win --x64 --config.electronDist=node_modules/electron/dist",
-    "package:dir": "npm run build && electron-builder build --win --x64 --dir --config.electronDist=node_modules/electron/dist"
+    "package:dir": "npm run build && electron-builder build --win --x64 --dir --config.electronDist=node_modules/electron/dist",
+    "pre-commit": "vitest run",
+    "ci:test": "vitest run --reporter=default",
+    "ci:build": "vite build",
+    "ci:build:agent": "cd ../solo-forge-agent && mvn -B package"
   },
   "build": {
     "appId": "com.soloforge.app",
@@ -73,6 +77,53 @@
       {
         "from": "../bin/surreal.exe",
         "to": "bin/surreal.exe"
+      },
+      {
+        "from": "../bin/jdk-23-mini",
+        "to": "bin/jdk-23-mini",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../bin/python-3.13",
+        "to": "bin/python-3.13",
+        "filter": [
+          "**/*",
+          "!**/*.pdb",
+          "!**/__pycache__/**",
+          "!include/**",
+          "!tcl/**",
+          "!share/**"
+        ]
+      },
+      {
+        "from": "../bin/qdrant",
+        "to": "bin/qdrant",
+        "filter": [
+          "**/*",
+          "!qdrant.zip.bak",
+          "!snapshots/**",
+          "!bin/data/**"
+        ]
+      },
+      {
+        "from": "../bin/models",
+        "to": "bin/models",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../bin/configs",
+        "to": "bin/configs",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "../solo-forge-agent/target/solo-forge-agent-1.0.0.jar",
+        "to": "bin/solo-forge-agent.jar"
       }
     ],
     "win": {

@@ -13,6 +13,8 @@
  */
 
 import { create } from 'zustand';
+import { logger } from '../services/logger';
+import { handleError } from '../services/errors';
 import { Code, Key, Brain, Database, CreditCard, HelpCircle } from '../utils/icons';
 import { AndroidIcon, WindowsIcon, HarmonyOSIcon, DefaultChatIcon } from '../components/brandIcons';
 import { sanitizeConversations } from '../utils/chatMessageSanitizer';
@@ -81,30 +83,29 @@ const CANVAS_PROBE_HTML = `<div style="padding:24px;background:#6366f1;border-ra
 </div>`;
 
 async function runCanvasProbe(chatSessionId: string): Promise<void> {
-  const tag = '[CANVAS_PROBE]';
-  console.log(`${tag} ═══════ 开始管线探针 ═══════`);
-  console.log(`${tag} chatSessionId=${chatSessionId}`);
+  logger.debug('CANVAS_PROBE', '═══════ 开始管线探针 ═══════');
+  logger.debug('CANVAS_PROBE', 'chatSessionId=', chatSessionId);
 
   // ── Stage 1: 代码块提取 ──
   const fakeText = '```html\n' + CANVAS_PROBE_HTML + '\n```';
   const block = extractCodeBlock(fakeText);
   if (!block) {
-    console.error(`${tag} ❌ Stage 1 FAIL: extractCodeBlock 未提取到代码块`);
+    logger.error('CANVAS_PROBE', '❌ Stage 1 FAIL: extractCodeBlock 未提取到代码块');
     return;
   }
-  console.log(`${tag} ✅ Stage 1 PASS: extractCodeBlock → lang=${block.lang}, codeLen=${block.code.length}`);
+  logger.debug('CANVAS_PROBE', `✅ Stage 1 PASS: extractCodeBlock → lang=${block.lang}, codeLen=${block.code.length}`);
 
   // ── Stage 2: 翻译 ──
   let ast;
   try {
     ast = translateCode(block.code, block.lang);
     if (!ast) {
-      console.error(`${tag} ❌ Stage 2 FAIL: translateCode 返回 null`);
+      logger.error('CANVAS_PROBE', '❌ Stage 2 FAIL: translateCode 返回 null');
       return;
     }
-    console.log(`${tag} ✅ Stage 2 PASS: translateCode → type=${(ast as any).type}, children=${(ast as any).children?.length || 0}`);
+    logger.debug('CANVAS_PROBE', `✅ Stage 2 PASS: translateCode → type=${(ast as any).type}, children=${(ast as any).children?.length || 0}`);
   } catch (err) {
-    console.error(`${tag} ❌ Stage 2 FAIL: translateCode 抛异常:`, err);
+    logger.error('CANVAS_PROBE', '❌ Stage 2 FAIL: translateCode 抛异常:', err);
     return;
   }
 
@@ -121,19 +122,19 @@ async function runCanvasProbe(chatSessionId: string): Promise<void> {
   previewStore.confirmPayload(chatSessionId, { language: 'html', framework: 'html', source_code: block.code, preview: { root: ast } } as any);
   const entry = previewStore.getEntry(chatSessionId);
   if (!entry?.payload) {
-    console.error(`${tag} ❌ Stage 3 FAIL: previewStreamStore 写入后 getEntry 返回空 payload`);
+    logger.error('CANVAS_PROBE', '❌ Stage 3 FAIL: previewStreamStore 写入后 getEntry 返回空 payload');
     return;
   }
-  console.log(`${tag} ✅ Stage 3 PASS: previewStreamStore payload confirmed, ast.type=${(entry.payload.preview?.root as any)?.type}`);
+  logger.debug('CANVAS_PROBE', `✅ Stage 3 PASS: previewStreamStore payload confirmed, ast.type=${(entry.payload.preview?.root as any)?.type}`);
 
   // ── Stage 5: 验证 PreviewPanel 能读到数据 ──
   const finalEntry = usePreviewStreamStore.getState().getEntry(chatSessionId);
   const finalAst = finalEntry?.payload?.preview?.root || finalEntry?.ast;
   if (finalAst) {
-    console.log(`${tag} ✅ Stage 5 PASS: previewStreamStore 最终状态有 AST, type=${(finalAst as any).type}`);
-    console.log(`${tag} ═══════ 探针完成: 管线畅通, PreviewPanel 应显示紫色卡片 ═══════`);
+    logger.debug('CANVAS_PROBE', `✅ Stage 5 PASS: previewStreamStore 最终状态有 AST, type=${(finalAst as any).type}`);
+    logger.debug('CANVAS_PROBE', '═══════ 探针完成: 管线畅通, PreviewPanel 应显示紫色卡片 ═══════');
   } else {
-    console.error(`${tag} ❌ Stage 5 FAIL: previewStreamStore 最终状态无 AST — PreviewPanel 读不到数据`);
+    logger.error('CANVAS_PROBE', '❌ Stage 5 FAIL: previewStreamStore 最终状态无 AST — PreviewPanel 读不到数据');
   }
 }
 // ════════════════════════════════════════════════════════════
@@ -378,7 +379,7 @@ function extractCodeBlock(text: string): { code: string; lang: string } | null {
     // ★ 2026-07-14: __json_dsl__ 需要过滤非画布工具调用 JSON (如 read_file)
     if (translatorLang === '__json_dsl__') {
       if (!isCanvasDslJson(code)) {
-        console.log('[extractCodeBlock] 跳过非画布 JSON 代码块, 前50字:', code.slice(0, 50));
+        logger.debug('extractCodeBlock', '跳过非画布 JSON 代码块, 前50字:', code.slice(0, 50));
         continue;
       }
       return { code, lang: '__json_dsl__' };
@@ -434,7 +435,7 @@ async function tryLocalTranslateAndPush(text: string, chatSessionId: string): Pr
   ps.confirmPayload(chatSessionId, { language: lang, framework: lang, source_code: code, preview: { root: ast } } as any);
   return true;
   } catch (err) {
-  console.warn('[tryLocalTranslateAndPush] translate failed:', (err as Error).message);
+  logger.warn('tryLocalTranslateAndPush', 'translate failed:', (err as Error).message);
   return false;
   }
 }
@@ -514,7 +515,7 @@ function schedulePersistToBackend(conversations: Record<string, ChatMessage[]>, 
     persistIdleHandle = null;
   }
   const w = window as any;
-  const doFlush = () => { try { fetch('/api/conversations', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversations, configs }) }).catch(() => {}); } catch {} };
+  const doFlush = () => { try { fetch('/api/conversations', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversations, configs }) }).catch((err) => logger.debug('useChatStore', 'persist fetch ignored:', err)); } catch {} };
   if (w.requestIdleCallback && w.cancelIdleCallback) { const handle = w.requestIdleCallback(doFlush, { timeout: 2000 }); persistIdleHandle = { cancel: () => w.cancelIdleCallback(handle) }; }
   else { persistIdleHandle = setTimeout(doFlush, 800); }
 }
@@ -599,7 +600,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
           let localPushed = pusherHandled;
           if (!pusherHandled) localPushed = await tryLocalTranslateAndPush(resumeAccumulated, ctx.activeChatId);
           if (!pusherHandled && !localPushed) { usePreviewStreamStore.getState().clearEntry(ctx.activeChatId); }
-          console.log('[useChatStore] resume done: pusherHandled=', pusherHandled, 'localPushed=', localPushed, 'resumeAccumulated.length=', resumeAccumulated.length);
+          logger.debug('useChatStore', 'resume done: pusherHandled=', pusherHandled, 'localPushed=', localPushed, 'resumeAccumulated.length=', resumeAccumulated.length);
           const pr = detectPreviewTrigger(resumeAccumulated, localPushed, detectPreviewFromResponse);
           const fdt = canvasPusher?.getDisplayText() ?? pr.cleanText;
           const cd = fdt.replace(/\s*<<<PREVIEW_NEEDED:\w+>>>\s*$/, '');
@@ -612,7 +613,8 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
     set({ activeChatHandle: { taskId: chatHandle.taskId, abort: () => { chatHandle.abort(); if (!streamFinalized) { streamFinalized = true; streamBridge.onDone(); } }, pause: () => { chatHandle.abort(); if (!streamFinalized) { streamFinalized = true; streamBridge.onPause(); } } } });
     } catch (err: any) {
       // ★ FIX: resumeChat 无 try/catch 时, ensureCanvasForChat/startChat 抛错会导致状态卡死
-      console.error('[resumeChat] error:', err);
+      logger.error('resumeChat', 'error:', err);
+      handleError(err, { context: 'useChatStore.resumeChat' });
       activeStreamContext = null;
       set({ isGenerating: false, isPaused: false, activeChatHandle: null, streamState: { ...emptyStreamState } });
       set((s) => { const cl = s.conversations[ctx.activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') lm.content = `${lm.content}\n\n\u274C **\u6062\u590d\u5931\u8d25**\uff1a${err?.message || String(err)}`; nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [ctx.activeChatId]: nl } }; });
@@ -666,7 +668,7 @@ export const useChatStore = create<ChatStoreState>((set, get) => ({
         set({ conversations: sanitized, configs: cfgs });
         if (JSON.stringify(sanitized) !== JSON.stringify(convos)) { schedulePersistToBackend(sanitized, cfgs); }
       }
-    } catch (e) { console.warn('[useChatStore] 从后端加载对话消息失败:', (e as Error).message); }
+    } catch (e) { logger.warn('useChatStore', '从后端加载对话消息失败:', (e as Error).message); }
   },
 
   handleUpdateActiveSettings: (updates) => {
@@ -841,7 +843,7 @@ const pr = detectPreviewTrigger(accumulatedText, localPushed, detectPreviewFromR
         case 'phase': { streamBridge.onPhase(evt); get().handlePhase(evt, get().conversations[activeChatId] || []); break; }
         // ★ 2026-07-20: 补齐 completeMessage + isGenerating:false, 与 handleSend/resumeChat 保持一致
         case 'error': { streamBridge.onError(evt.error); { const lmsg = uiMessageStore.getLastAssistantMessage(activeChatId); if (lmsg) uiMessageStore.completeMessage(activeChatId, lmsg.id, 'error'); } set({ isGenerating: false, isPaused: false, activeChatHandle: null, streamState: { ...emptyStreamState } }); break; }
-        case 'done': { streamBridge.onDone(); { const lmsg = uiMessageStore.getLastAssistantMessage(activeChatId); if (lmsg) uiMessageStore.completeMessage(activeChatId, lmsg.id, 'done'); } if (canvasPusher2) canvasPusher2.flush().catch(() => {}); set({ isGenerating: false }); break; }
+        case 'done': { streamBridge.onDone(); { const lmsg = uiMessageStore.getLastAssistantMessage(activeChatId); if (lmsg) uiMessageStore.completeMessage(activeChatId, lmsg.id, 'done'); } if (canvasPusher2) canvasPusher2.flush().catch((err) => handleError(err, { context: 'useChatStore.handleAcceptEnable.flush' })); set({ isGenerating: false }); break; }
         case 'text': { accText2 += evt.text; if (!canvasPusher2) canvasPusher2 = new IncrementalCanvasPusher(activeChatId); const { displayText, inCodeBlock } = canvasPusher2.feedChunk(evt.text); streamBridge.onText(evt.text); set((s) => { const cl = s.conversations[activeChatId] || []; if (cl.length === 0) return {}; const nl = [...cl]; const lm = { ...nl[nl.length - 1] }; if (lm.sender === 'assistant') { lm.content = displayText; lm.rawContent = accText2; } nl[nl.length - 1] = lm; return { conversations: { ...s.conversations, [activeChatId]: nl } }; }); break; }
       }
     });
@@ -860,7 +862,7 @@ const pr = detectPreviewTrigger(accumulatedText, localPushed, detectPreviewFromR
         case 'phase1_worker_done': next.workerOutputs = prev.workerOutputs.map(w => w.workerIdx === (evt as any).workerIdx ? { ...w, status: ((evt as any).content?.startsWith('\u26A0\uFE0F') ? 'error' : 'done') as 'error' | 'done', content: (evt as any).content ?? '' } as any : w); break;
         case 'phase1_worker_error': next.workerOutputs = prev.workerOutputs.map(w => w.workerIdx === (evt as any).workerIdx ? { ...w, status: 'error' as const, content: (evt as any).content ?? (evt as any).error ?? '' } as any : w); break;
         case 'phase2_judge': next.judgeChosen = (evt as any).chosen ?? []; next.judgeReasoning = ''; next.scores = (evt as any).score !== undefined ? [{ workerIdx: 0, score: (evt as any).score, reason: '', modelName: (evt as any).chosen?.[0] }] : prev.scores; break;
-        case 'phase2_judge_error': console.error('[orchestrator judge error]', (evt as any).error); break;
+        case 'phase2_judge_error': logger.error('orchestrator', 'judge error:', (evt as any).error); break;
         case 'phase3_deliver_start': break;
         case 'phase3_deliver_done': if ((evt as any).reply) next.deliver = (evt as any).reply; break;
         case 'tool_started': { const callId = (evt as any).toolCallId ?? `tc-${Date.now()}`; const bl = [...prev.toolCalls]; bl.push({ id: callId, kind: 'hashline.batch' as any, status: 'running' as any, total: 1, succeeded: 0, failedAt: undefined, errorCode: undefined, results: [{ tool: (evt as any).tool ?? 'unknown', args: (evt as any).args, started: true }], timestamp: (evt as any).ts ?? Date.now() } as any); next.toolCalls = bl; break; }
@@ -871,8 +873,8 @@ const pr = detectPreviewTrigger(accumulatedText, localPushed, detectPreviewFromR
         case 'score': next.scores = (evt as any).scores ?? []; break;
         case 'judge': next.judgeChosen = (evt as any).chosen ?? []; next.judgeReasoning = (evt as any).reasoning ?? ''; break;
         case 'audit': next.auditFindings = (evt as any).findings ?? []; break;
-        case 'warn': console.warn('[orchestrator warn]', (evt as any).msg); break;
-        case 'error': console.error('[orchestrator error]', (evt as any).msg); break; default: break;
+        case 'warn': logger.warn('orchestrator', (evt as any).msg); break;
+        case 'error': logger.error('orchestrator', (evt as any).msg); break; default: break;
       } return { streamState: next };
     });
   },

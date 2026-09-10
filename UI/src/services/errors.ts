@@ -16,7 +16,24 @@
  *   }
  */
 
+import { logger } from './logger';
+
 export type ErrorSeverity = 'info' | 'warn' | 'error' | 'fatal';
+
+/**
+ * Sentry 上报钩子接口 — Task 5 会实现具体逻辑
+ * 当前为空操作占位，handleError 会在 severity >= 'error' 时调用它
+ */
+export interface SentryReporter {
+  captureException: (err: Error, ctx: ErrorContext & { severity: ErrorSeverity }) => void;
+}
+
+let _sentryReporter: SentryReporter | null = null;
+
+/** 注册 Sentry 上报器（Task 5 实现） */
+export function registerSentryReporter(reporter: SentryReporter): void {
+  _sentryReporter = reporter;
+}
 
 export interface ErrorContext {
   /** 错误来源（函数名 / 模块名） */
@@ -110,14 +127,36 @@ export function handleError(err: unknown, ctx: ErrorContext = {}): void {
         ? 'warn'
         : 'error';
 
-  // 控制台输出（开发期）
-  const tag = `[${ctx.context ?? 'unknown'}]`;
+  // 统一日志输出（通过 logger 通道）
+  const tag = ctx.context ?? 'unknown';
   if (severity === 'fatal' || severity === 'error') {
-    // eslint-disable-next-line no-console
-    console.error(tag, err, ctx.metadata ?? {});
+    logger.error(tag, err, ctx.metadata ?? {});
   } else {
-    // eslint-disable-next-line no-console
-    console.warn(tag, err, ctx.metadata ?? {});
+    logger.warn(tag, err, ctx.metadata ?? {});
+  }
+
+  // severity >= 'error' 时自动弹 toast 通知用户
+  if (severity === 'error' || severity === 'fatal') {
+    try {
+      // 延迟导入避免循环依赖
+      const { useAppStore } = require('../state/appStore');
+      const errMsg = err instanceof Error ? err.message : String(err);
+      useAppStore.getState().setToastMsg(`❌ ${ctx.context ? ctx.context + ': ' : ''}${errMsg}`);
+    } catch {
+      // appStore 不可用时静默忽略
+    }
+  }
+
+  // Sentry 上报（severity >= 'error' 时触发）
+  if (_sentryReporter && (severity === 'error' || severity === 'fatal')) {
+    try {
+      _sentryReporter.captureException(
+        err instanceof Error ? err : new Error(String(err)),
+        { ...ctx, severity },
+      );
+    } catch {
+      // Sentry 上报失败不影响主流程
+    }
   }
 
   // 通知订阅者

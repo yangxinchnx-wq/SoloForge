@@ -43,6 +43,7 @@ import {
   type MaterialFinish,
   type Iphone15ThemeColors,
 } from '../services/canvas/modelThemes';
+import { logger } from '../services/logger';
 
 // ───────────────────────────── 常量 ─────────────────────────────
 
@@ -203,7 +204,7 @@ function AdaptiveModel({ modelUrl, dsl, theme, finish }: { modelUrl: string; dsl
     // 计算原始 boundingBox
     const rawBox = new THREE.Box3().setFromObject(group);
     if (rawBox.isEmpty()) {
-      console.error('[AdaptiveModel] boundingBox is EMPTY for', modelUrl);
+      logger.error('AdaptiveModel', 'boundingBox is EMPTY for', modelUrl);
       return;
     }
     const rawSize = new THREE.Vector3();
@@ -246,7 +247,7 @@ function AdaptiveModel({ modelUrl, dsl, theme, finish }: { modelUrl: string; dsl
       (controls as any).target.set(0, 0, 0);
     }
 
-    console.log('[AdaptiveModel] ready', {
+    logger.debug('AdaptiveModel', 'ready', {
       modelUrl,
       boxSize: `${boxSize.x.toFixed(3)} × ${boxSize.y.toFixed(3)} × ${boxSize.z.toFixed(3)}`,
       distance: distance.toFixed(3),
@@ -347,7 +348,7 @@ function ScreenOverlay({ scene, dsl, modelUrl }: { scene: THREE.Object3D; dsl: U
     try {
       textureRef.current = createDslTexture(effectiveDsl, TEX_WIDTH, TEX_HEIGHT, undefined, screenShape);
     } catch (err) {
-      console.error('[ScreenOverlay] createDslTexture failed, using white fallback:', err);
+      logger.error('ScreenOverlay', 'createDslTexture failed, using white fallback:', err);
       textureRef.current = createDslTexture(DEFAULT_WHITE, TEX_WIDTH, TEX_HEIGHT, undefined, screenShape);
     }
   }
@@ -357,7 +358,7 @@ function ScreenOverlay({ scene, dsl, modelUrl }: { scene: THREE.Object3D; dsl: U
     try {
       updateDslTexture(textureRef.current, effectiveDsl, TEX_WIDTH, TEX_HEIGHT, undefined, screenShape);
     } catch (err) {
-      console.error('[ScreenOverlay] updateDslTexture failed:', err);
+      logger.error('ScreenOverlay', 'updateDslTexture failed:', err);
     }
   }, [effectiveDsl, screenShape]);
 
@@ -933,7 +934,7 @@ class ModelErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBounda
   }
 
   componentDidCatch(error: unknown): void {
-    console.error('[CanvasStage3D] 模型加载失败!', {
+    logger.error('CanvasStage3D', '模型加载失败!', {
       modelUrl: this.props.modelUrl,
       error: error instanceof Error ? error.message : String(error),
     });
