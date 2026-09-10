@@ -160,3 +160,12 @@ UI/provider_probe_cache.json
 # Auth token (auto-generated at startup, do not commit)
 .soloforge-token
 UI/.soloforge-token
+
+# Agent workspace state (per-machine, never commit)
+.workbuddy/
+
+# Chrome test profile cache (94 MB, accidentally committed once)
+UI/.drag-test/
+
+# Temporary JSON dumps
+tmp-*.json
