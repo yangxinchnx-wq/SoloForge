@@ -32,7 +32,7 @@ const BYPASS_DEFAULT = [
   '*.local',
   '<local>',           // Chromium 内置: 所有不含 "." 的主机名
   // SoloForge 内部服务完整端口
-  'localhost:3000',    // UI Server (Express 前端)
+  'localhost:4000',    // UI Server (Express 前端)
   'localhost:3001',    // RACER Core / Node.js 后端
   'localhost:3002',    // git-service (Go)
   'localhost:6379',    // Garnet (Redis 兼容缓存)

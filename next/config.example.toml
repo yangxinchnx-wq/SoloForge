@@ -1,0 +1,21 @@
+# SoloForge Next — 配置文件
+# 复制为 config.toml 后按需修改
+# 注意: 存储为进程内实现 (无持久化, 重启清零) — 用户决策移除 SQLite
+
+[core]
+bin  = "./bin/soloforge-core.exe"   # 核心二进制路径 (supervisor 拉起)
+port = 7300                         # 唯一对外端口 (HTTP + WebSocket)
+repo = ".."                         # 被管理的 Git 仓库路径
+
+# 可选工作进程 (挂了自动重启, 离线不影响核心)
+[[workers]]
+name    = "advisor"
+command = "java -jar workers/advisor/agent-advisor.jar --server.port=8770"
+port    = 8770
+health  = "/actuator/health"
+
+# [[workers]]
+# name    = "marl"
+# command = "python workers/marl/server.py --port 8780"
+# port    = 8780
+# health  = "/health"

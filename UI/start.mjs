@@ -53,6 +53,21 @@ function startGarnet() {
   });
 }
 
+// ── 0.5. 补丁 electron.exe 任务栏图标 (幂等) ───────────────────
+// dev 模式下 Windows 任务栏图标取自 electron.exe 内嵌资源, 与窗口图标无关。
+// npm install 重装 electron 后补丁会丢失, 故每次启动前重新写入。
+const rceditExe = path.join(path.dirname(__dirname), "bin", "rcedit-x64.exe");
+const electronExe = path.join(__dirname, "node_modules", "electron", "dist", "electron.exe");
+const appIco = path.join(__dirname, "build", "icon", "icon.ico");
+if (process.platform === "win32" && fs.existsSync(rceditExe) && fs.existsSync(electronExe) && fs.existsSync(appIco)) {
+  try {
+    execSync(`"${rceditExe}" "${electronExe}" --set-icon "${appIco}"`, { stdio: "ignore" });
+    console.log("[start] electron.exe 任务栏图标补丁 OK (闪电)");
+  } catch (e) {
+    console.log("[start] rcedit 补丁跳过 (electron 可能未退出):", e.message);
+  }
+}
+
 // ── 1. 确保 git-service.exe 已编译 ────────────────────────────
 const gitExe = path.join(__dirname, "git-service", "git-service.exe");
 if (!fs.existsSync(gitExe)) {
@@ -179,12 +194,12 @@ function waitForPort(port, host = "127.0.0.1", timeoutMs = 30000) {
 }
 
 async function startElectron() {
-  console.log("[start] 等待 Node.js (port 3000) 就绪...");
-  const ready = await waitForPort(3000, "127.0.0.1", 30000);
+  console.log("[start] 等待 Node.js (port 4000) 就绪...");
+  const ready = await waitForPort(4000, "127.0.0.1", 30000);
   if (ready) {
     console.log("[start] ✅ Node.js 就绪, 启动 Electron 壳子...");
   } else {
-    console.error("[start] ✗ Node.js (port 3000) 30s 超时, 强制启动 Electron...");
+    console.error("[start] ✗ Node.js (port 4000) 30s 超时, 强制启动 Electron...");
   }
 
   // 用 launch.cjs 启动, 它会清除 ELECTRON_RUN_AS_NODE 等环境变量

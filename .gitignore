@@ -169,3 +169,9 @@ UI/.drag-test/
 
 # Temporary JSON dumps
 tmp-*.json
+
+# soloforge-next (Go 重写骨架)
+next/data/
+next/logs/
+next/bin/
+next/config.toml

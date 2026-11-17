@@ -136,7 +136,7 @@ public class SoloForgeTools {
                     try {
                         List<String> lines = Files.readAllLines(p, StandardCharsets.UTF_8);
                         for (int i = 0; i < lines.size() && matches.size() < maxResults; i++) {
-                            if (regex.matcher(lines[i]).find()) {
+                            if (regex.matcher(lines.get(i)).find()) {
                                 String rel = Paths.get("").toAbsolutePath().relativize(p).toString();
                                 matches.add(rel + ":" + (i + 1) + ": " + lines.get(i).trim());
                             }
@@ -146,6 +146,8 @@ public class SoloForgeTools {
                     }
                 }
             }
+        } catch (IOException e) {
+            // DirectoryStream close/iterate 异常忽略
         }
     }
 

@@ -37,7 +37,7 @@ localLLM.init();
 
 // dev 模式: Vite dev server (3000) + 外部独立后端
 // prod 模式: Electron 自动启动所有服务
-const DEV_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:3000';
+const DEV_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:4000';
 const BACKEND_URL = process.env.SOLOFORGE_BACKEND_URL || 'http://localhost:3001';
 
 let isDev = false;
@@ -430,6 +430,14 @@ function killProcessTree(child) {
 // ────────────────────────────────────────────
 // IPC handlers
 // ────────────────────────────────────────────
+// ── 手动最大化状态 (规避 DWM 尺寸 tooltip) ──────────────────────
+// 实测: frameless 窗口调用 maximize()/unmaximize() 时, Win11 DWM 会在窗口
+// 附近画白色 "宽 × 高" 尺寸框。改用 setBounds 模拟最大化 (纯 SetWindowPos
+// 路径, 无系统最大化语义), DWM 不标注。原生事件 (Win+Up 等) 仍可能发生,
+// 通过监听器同步 manualMaximized 标志保持状态一致。
+let manualMaximized = false;
+let savedBounds = null;
+
 function registerIpc() {
   // ★ 2026-07-16: 画布 IPC 全部注释掉 — 画布重构中
   //   恢复方法: 删除本行下方的 /* 和对应的 */ 注释
@@ -532,13 +540,14 @@ ipcMain.handle('window:minimize', () => {
 });
 
 ipcMain.handle('window:toggle-maximize', () => {
-if (!mainWindow || mainWindow.isDestroyed()) return false;
-if (mainWindow.isMaximized()) {
-mainWindow.unmaximize();
-} else {
-mainWindow.maximize();
-}
-return mainWindow.isMaximized();
+  // 原生最大化路径 (与 DSH 壳完全一致)
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  if (mainWindow.isMaximized()) {
+    mainWindow.unmaximize();
+  } else {
+    mainWindow.maximize();
+  }
+  return mainWindow.isMaximized();
 });
 
 ipcMain.handle('window:restore', () => {
@@ -551,11 +560,22 @@ else mainWindow.restore();
 ipcMain.handle('window:close', () => {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
 });
+ipcMain.handle('titlebar:overlay', (_e, opts) => {
+  // 渲染层主题切换时同步原生标题栏按钮区颜色 (透明色会触发 Win11 贴靠建议)
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  try {
+    mainWindow.setTitleBarOverlay({ color: opts.color, symbolColor: opts.symbolColor });
+    return true;
+  } catch (e) {
+    console.warn('[titlebar:overlay]', e?.message);
+    return false;
+  }
+});
 ipcMain.handle('window:is-maximized', () => {
-  return mainWindow ? mainWindow.isMaximized() : false;
+  return mainWindow ? (manualMaximized || mainWindow.isMaximized()) : false;
 });
 ipcMain.handle('window:maximize-state', (event) => {
-  const isMax = mainWindow ? mainWindow.isMaximized() : false;
+  const isMax = mainWindow ? (manualMaximized || mainWindow.isMaximized()) : false;
   event.sender.send('window:maximize-state-changed', isMax);
 });
 
@@ -836,6 +856,7 @@ public class WSet {
   [DllImport("kernel32.dll")] public static extern uint GetLastError();
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
   [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT lpPoint);
+  [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
   [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] public static extern IntPtr SetWindowLongPtr64(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
   [DllImport("user32.dll", EntryPoint = "SetWindowLongW")] public static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int dwNewLong);
   [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] public static extern IntPtr GetWindowLongPtr64(IntPtr hWnd, int nIndex);
@@ -919,6 +940,18 @@ while ($true) {
       $w = [int]$parts[4]
       $h = [int]$parts[5]
       [WSet]::SetWindowPos($hwnd, [IntPtr]::Zero, $x, $y, $w, $h, 0x0414) | Out-Null
+    } elseif ($cmd -eq 'SYSMAX') {
+      # WM_SYSCOMMAND(0x0112) + SC_MAXIMIZE(0xF030) — 与原生最大化按钮完全等效
+      [WSet]::SendMessage($hwnd, 0x0112, [IntPtr]0xF030, [IntPtr]::Zero) | Out-Null
+      [Console]::Out.WriteLine("OK SYSMAX hwnd=$hwnd")
+      [Console]::Out.Flush()
+      continue
+    } elseif ($cmd -eq 'SYSREST') {
+      # SC_RESTORE(0xF010) — 与原生还原按钮完全等效
+      [WSet]::SendMessage($hwnd, 0x0112, [IntPtr]0xF010, [IntPtr]::Zero) | Out-Null
+      [Console]::Out.WriteLine("OK SYSREST hwnd=$hwnd")
+      [Console]::Out.Flush()
+      continue
     } elseif ($cmd -eq 'DRAG_START') {
       # 参数: DRAG_START|hwnd|startWinX|startWinY|startMouseX|startMouseY
       # 用 $script: 作用域存参数, 确保后台线程闭包能安全访问
@@ -1128,23 +1161,25 @@ function psSetWindowPos(hwnd, x, y, w, h, flags) {
 }
 
 function createWindow() {
-  // 应用图标: 使用 build/icon/icon-666.png (256x256 高清版)
-  const iconPath = path.join(__dirname, '..', 'build', 'icon', 'icon-666.png');
+  // 应用图标: Windows 任务栏优先识别 .ico 多尺寸文件 (PNG 会被部分系统忽略回退到 electron.exe 默认图标)
+  const iconPath = path.join(__dirname, '..', 'build', 'icon', 'icon.ico');
   const appIcon = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : null;
+  console.log(`[electron] 图标加载: ${iconPath} 存在=${fs.existsSync(iconPath)} empty=${appIcon ? appIcon.isEmpty() : 'null'}`);
 
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
     show: false,
-    // titleBarStyle:'hidden' + titleBarOverlay → 原生 caption buttons, 无标题文字
-    //   overlay 让按钮图标颜色可控 (深色背景下默认白色图标看不见)
-    //   color: 透明背景 → Header 底色透出来
-    //   symbolColor: 浅灰图标 → 在深色背景上清晰可见
-    //   height: 52 → 和 Header 高度一致
+    // 窗口配置与 DSH 壳 (deepseek-harness, 本机验证无尺寸提示) 完全一致:
+    // titleBarStyle:'hidden' + titleBarOverlay 原生按钮 + 原生最大化/缩放
+    // (自绘按钮/EdgeResize/手动最大化方案均已回退, 见 git 历史)
     titleBarStyle: 'hidden',
+    // ★ overlay color 必须不透明: 透明时 Win11 会在最大化按钮下弹"贴靠布局
+    //   建议"白色尺寸提示 (实测)。颜色随应用主题动态更新 (titlebar:overlay
+    //   IPC, Header.tsx 同步), 初始值为浅色主题的标题栏实测色
     titleBarOverlay: {
-      color: 'rgba(5, 5, 5, 0)',
-      symbolColor: '#a8b0b8',
+      color: '#FAFAFA',
+      symbolColor: '#18181B',
       height: 52,
     },
     backgroundColor: '#050505',
@@ -1326,6 +1361,13 @@ if (process.platform === 'win32') {
 }
 
 // ── 主进程入口 ──
+// ★ Windows 任务栏图标机制 (实测结论): dev 模式下任务栏按 AUMID 分组取图标,
+//   WM_SETICON / BrowserWindow icon 均被忽略; 自定义 AUMID 必须有带同名属性
+//   的已安装快捷方式 (scripts/install-shortcut.ps1 创建) 才能显示自定义图标
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.soloforge.app');
+}
+
 app.whenReady().then(async () => {
   // ── 应用上次保存的代理配置 ──
   try { await proxyService.apply(proxyService.getConfig()); }
@@ -1422,12 +1464,12 @@ app.whenReady().then(async () => {
 
   // ── 生产模式: 等待 UI Server 就绪后再创建主窗口 ──
   if (!isDev) {
-    console.log('[electron] splash 显示中, 等待 UI Server (3000) 就绪...');
-    const ready = await waitForPort(3000, 30000);
+    console.log('[electron] splash 显示中, 等待 UI Server (4000) 就绪...');
+    const ready = await waitForPort(4000, 30000);
     if (ready) {
-      console.log('[electron] ✓ UI Server (3000) 就绪, 加载主窗口');
+      console.log('[electron] ✓ UI Server (4000) 就绪, 加载主窗口');
     } else {
-      console.error('[electron] ✗ UI Server (3000) 30s 超时, 强制加载');
+      console.error('[electron] ✗ UI Server (4000) 30s 超时, 强制加载');
     }
   }
 
@@ -1437,11 +1479,13 @@ app.whenReady().then(async () => {
 mainWindow.once('ready-to-show', () => {
   mainWindow.show();
 });
-// 原生 maximize/unmaximize 事件 → 通知渲染器更新按钮状态
+// 原生 maximize/unmaximize 事件 (Win+Up/任务栏等) → 同步手动标志 + 通知渲染器
 mainWindow.on('maximize', () => {
+  manualMaximized = true;
   mainWindow.webContents.send('window:maximize-state-changed', true);
 });
 mainWindow.on('unmaximize', () => {
+  manualMaximized = false;
   mainWindow.webContents.send('window:maximize-state-changed', false);
 });
   registerIpc();

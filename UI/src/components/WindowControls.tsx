@@ -76,7 +76,6 @@ export const WindowControls: React.FC = () => {
       <button
         type="button"
         aria-label="最小化"
-        title="最小化"
         onClick={onMinimize}
         style={btnBase}
         onMouseEnter={(e) => {
@@ -97,7 +96,6 @@ export const WindowControls: React.FC = () => {
       <button
         type="button"
         aria-label={isMaximized ? '还原' : '最大化'}
-        title={isMaximized ? '还原' : '最大化'}
         onClick={onToggleMaximize}
         style={btnBase}
         onMouseEnter={(e) => {
@@ -118,7 +116,6 @@ export const WindowControls: React.FC = () => {
       <button
         type="button"
         aria-label="关闭"
-        title="关闭"
         onClick={onClose}
         style={btnBase}
         onMouseEnter={(e) => {

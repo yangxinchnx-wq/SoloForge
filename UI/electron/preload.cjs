@@ -50,6 +50,8 @@ contextBridge.exposeInMainWorld('soloforge', {
     restore: () => ipcRenderer.invoke('window:restore'),
     close: () => ipcRenderer.invoke('window:close'),
     isMaximized: () => ipcRenderer.invoke('window:is-maximized'),
+    // 原生标题栏按钮区颜色同步 (透明色会触发 Win11 贴靠建议, 需不透明色)
+    setTitleBarOverlay: (opts) => ipcRenderer.invoke('titlebar:overlay', opts),
     onMaximizeStateChange: (callback) => {
       const handler = (_e, isMax) => callback(isMax);
       ipcRenderer.on('window:maximize-state-changed', handler);

@@ -206,5 +206,11 @@
     "typescript": "~5.8.2",
     "vite": "^8.1.0",
     "vitest": "^4.1.9"
+  },
+  "allowScripts": {
+    "electron-winstaller@5.4.0": true,
+    "esbuild@0.28.1": true,
+    "keytar@7.9.0": true,
+    "node-llama-cpp@3.19.0": true
   }
 }

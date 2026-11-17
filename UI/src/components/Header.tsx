@@ -36,6 +36,30 @@ const Header = React.memo(function Header({
   const [hasMainModelOpen, setHasMainModelOpen] = useState(false);
   const anyDropdownOpen = hasMainModelOpen || isSecModelSelectorOpen;
 
+  // ★ 原生标题栏按钮区颜色跟随主题: overlay 必须用不透明色 (透明会触发
+  //   Win11 贴靠建议"尺寸提示")。颜色直接读实际生效的 CSS 变量
+  //   (--color-bg / --color-on-surface), 不依赖主题预设的 isDark 标志;
+  //   延迟重试以确保 ThemeContext 先写入变量
+  useEffect(() => {
+    const sync = () => {
+      try {
+        const cs = getComputedStyle(document.documentElement);
+        const bg = (cs.getPropertyValue('--color-bg') || '').trim();
+        const onSurface = (cs.getPropertyValue('--color-on-surface') || '').trim();
+        if (bg && onSurface) {
+          (window as any).soloforge?.window?.setTitleBarOverlay?.({
+            color: bg,
+            symbolColor: onSurface,
+          });
+        }
+      } catch { /* 非 Electron 环境忽略 */ }
+    };
+    sync();
+    const t1 = setTimeout(sync, 120);
+    const t2 = setTimeout(sync, 600);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [isDark]);
+
   // ── 中心胶囊的左偏移(根据 sidebar 宽度 + 混合任务状态) ──────────────
   const leftPosition = useMemo(() => {
     const maxLeft = mixedTasks ? 'calc(100% - 700px)' : 'calc(100% - 540px)';
@@ -395,7 +419,7 @@ draggable
       </CentralControlPill>
 
       {/* ─── 右: 用户胶囊(主题色对齐) ────────── */}
-      {/* titleBarStyle:'hidden' → 原生 caption buttons 在右上角, 右侧 padding 留出空间 */}
+      {/* titleBarOverlay 原生 caption buttons 在右上角, 右侧 padding 留出空间 */}
       <div className="flex items-center shrink-0" style={{ height: '100%', position: 'relative', zIndex: 40, isolation: 'isolate', paddingRight: '138px' }}>
         {/* 用户胶囊: 头像下拉 + 名字下拉(主题色轮廓 + 微弱自发光) */}
         <UserBadgeSelector />

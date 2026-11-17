@@ -110,7 +110,7 @@ async function invokeBrowserUse(
   args: Record<string, any>,
   signal: AbortSignal
 ): Promise<{ success: boolean; output?: string; error?: string }> {
-  const BASE = `http://localhost:3000`;
+  const BASE = `http://localhost:4000`;
   try {
     // 健康检查
     const healthResp = await fetch(`${BASE}/api/browser-use/health`, { signal });
@@ -404,7 +404,7 @@ async function startServer() {
   // Vite HMR + Express + proxy 中间件等都会给 httpServer 添加 close/upgrade 事件监听器,
   // 默认限制 10 个不够用, 提高到 20 避免 MaxListenersExceededWarning
   httpServer.setMaxListeners(20);
-  const PORT = 3000;
+  const PORT = 4000;
 
   // Add JSON parsing middleware
   app.use(express.json({ limit: '10mb' }));
