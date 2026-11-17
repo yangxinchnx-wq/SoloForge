@@ -13,17 +13,13 @@ import (
 	"encoding/json"
 	"sync"
 	"sync/atomic"
-	"time"
+
+	"soloforge/next/internal/store"
 )
 
-// Event 进程内事件 (Seq 由 store.AppendEvent 落库后回填)
-type Event struct {
-	Seq     int64           `json:"seq"`
-	TS      int64           `json:"ts"`
-	Type    string          `json:"type"`
-	Source  string          `json:"source"`
-	Payload json.RawMessage `json:"payload,omitempty"`
-}
+// Event = store.Event (类型别名统一: Publish 携带完整事件含 Seq,
+// persist 持久化/重放才能拿到正确游标)
+type Event = store.Event
 
 // ── 事件总线 ────────────────────────────────────────────────────
 
@@ -60,9 +56,8 @@ func (b *EventBus) Unsubscribe(id int64) {
 	delete(b.subs, id)
 }
 
-// Publish 广播给所有订阅者; 返回事件副本 (供调用方落库/记录)
-func (b *EventBus) Publish(typ, source string, payload json.RawMessage) Event {
-	ev := Event{TS: time.Now().UnixMilli(), Type: typ, Source: source, Payload: payload}
+// Publish 广播完整事件 (含 Seq, 由 store.AppendEvent 返回); 返回入参
+func (b *EventBus) Publish(ev Event) Event {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	for _, s := range b.subs {

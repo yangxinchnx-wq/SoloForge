@@ -58,7 +58,7 @@ func New(st *store.Store, b *bus.EventBus, target ReputationTarget) *Service {
 func (s *Service) emit(ctx context.Context, typ string, payload map[string]any) {
 	raw, _ := json.Marshal(payload)
 	if ev, err := s.store.AppendEvent(ctx, typ, "law", raw); err == nil {
-		s.bus.Publish(ev.Type, ev.Source, ev.Payload)
+		s.bus.Publish(ev)
 	}
 }
 

@@ -95,6 +95,16 @@ func (s *Store) EventCount(_ context.Context) (int64, error) {
 	return int64(len(s.events)), nil
 }
 
+// Restore 恢复历史事件 (JSONL 重放用): seq 游标随最大 seq 前进
+func (s *Store) Restore(ev Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ev.Seq > s.seq {
+		s.seq = ev.Seq
+	}
+	s.events = append(s.events, ev)
+}
+
 // KVSet / KVGet 简单状态键值 (进程内)
 func (s *Store) KVSet(_ context.Context, k, v string) error {
 	s.mu.Lock()

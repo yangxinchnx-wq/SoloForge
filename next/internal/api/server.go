@@ -121,7 +121,7 @@ func (s *Server) handleCommands(w http.ResponseWriter, r *http.Request) {
 	payload, _ := json.Marshal(map[string]any{"command": req.Type, "result": result})
 	ev, err := s.Store.AppendEvent(r.Context(), "command.executed", req.Source, payload)
 	if err == nil {
-		s.Bus.Publish(ev.Type, ev.Source, ev.Payload)
+		s.Bus.Publish(ev)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "result": result, "seq": ev.Seq})
 }
@@ -199,7 +199,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				resp["result"] = result
 				payload, _ := json.Marshal(map[string]any{"command": msg.Command.Type})
 				if ev, err := s.Store.AppendEvent(r.Context(), "command.executed", "ws", payload); err == nil {
-					s.Bus.Publish(ev.Type, ev.Source, ev.Payload)
+					s.Bus.Publish(ev)
 				}
 			}
 			if err := s.writeWS(conn, resp); err != nil {

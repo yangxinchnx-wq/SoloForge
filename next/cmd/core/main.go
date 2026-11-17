@@ -18,9 +18,12 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
+
+	"soloforge/next/internal/persist"
 
 	"soloforge/next/internal/agents"
 	"soloforge/next/internal/api"
@@ -40,18 +43,29 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
-	// ── 存储 (进程内, 无持久化 — 用户决策移除 SQLite) ──
+	// ── 存储 (进程内) + JSONL 持久化 (无 SQL 的崩溃恢复) ──
 	st := store.New()
+	jsonlPath := filepath.Join("data", "events.jsonl")
+	if restored, err := persist.Load(jsonlPath, st); err != nil {
+		logger.Warn("JSONL 重放部分失败", "restored", restored, "err", err)
+	} else if restored > 0 {
+		logger.Info("JSONL 重放完成", "restored", restored)
+	}
 
 	// ── 总线 ──
 	evBus := bus.NewEventBus()
 	cmdBus := bus.NewCommandBus()
 	registerCommands(st, evBus, cmdBus, logger)
+	if _, err := persist.Attach(jsonlPath, evBus); err != nil {
+		logger.Warn("JSONL 持久化未接线", "err", err)
+	} else {
+		logger.Info("JSONL 持久化已接线", "path", jsonlPath)
+	}
 
 	// ── 启动事件 (落库即审计) ──
 	payload, _ := json.Marshal(map[string]any{"port": *port, "pid": os.Getpid()})
 	if ev, err := st.AppendEvent(context.Background(), "kernel.initialized", "core", payload); err == nil {
-		evBus.Publish(ev.Type, ev.Source, ev.Payload)
+		evBus.Publish(ev)
 	}
 
 	// ── HTTP/WS ──

@@ -250,6 +250,6 @@ func (s *Service) finish(c *Case, v *VerdictEnvelope) *VerdictEnvelope {
 func (s *Service) emit(ctx context.Context, typ string, payload map[string]any) {
 	raw, _ := json.Marshal(payload)
 	if ev, err := s.store.AppendEvent(ctx, typ, "court", raw); err == nil {
-		s.bus.Publish(ev.Type, ev.Source, ev.Payload)
+		s.bus.Publish(ev)
 	}
 }

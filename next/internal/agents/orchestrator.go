@@ -36,7 +36,7 @@ func NewOrchestrator(pool *Pool, st *store.Store, b *bus.EventBus, workers []Wor
 func (o *Orchestrator) emit(ctx context.Context, typ, source string, payload any) {
 	raw, _ := json.Marshal(payload)
 	if ev, err := o.store.AppendEvent(ctx, typ, source, raw); err == nil {
-		o.bus.Publish(ev.Type, ev.Source, ev.Payload)
+		o.bus.Publish(ev)
 	}
 }
 
