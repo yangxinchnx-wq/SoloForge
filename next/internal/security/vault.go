@@ -20,9 +20,11 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -263,4 +265,80 @@ func pbkdf2Key(pass string, salt []byte) []byte {
 		panic("security: PBKDF2 派生失败: " + err.Error())
 	}
 	return dk
+}
+
+// ── 导出 / 导入 (对齐 TS vaultExport.ts v1 格式) ────────────────
+// blob = hex( salt(16B) + nonce(12B) + AES-256-GCM(主口令=passphrase 派生) )
+// 明文载荷 = [{id, baseUrl, apiKey}...]; passphrase 错误 → GCM 认证失败
+
+type exportItem struct {
+	ID      string `json:"id"`
+	BaseURL string `json:"baseUrl"`
+	APIKey  string `json:"apiKey"`
+}
+
+// Export 用 passphrase 加密导出全部密钥 (hex blob)
+func (v *Vault) Export(passphrase string) (string, error) {
+	v.mu.Lock()
+	items := make([]exportItem, 0, len(v.keys))
+	for _, rec := range v.keys {
+		plain, err := v.open(rec.Nonce, rec.Cipher)
+		if err != nil {
+			v.mu.Unlock()
+			return "", err
+		}
+		items = append(items, exportItem{ID: rec.ID, BaseURL: rec.BaseURL, APIKey: plain})
+	}
+	v.mu.Unlock()
+	plain, _ := json.Marshal(items)
+
+	salt := randBytes(saltLen)
+	key := pbkdf2Key(passphrase, salt)
+	block, _ := aes.NewCipher(key)
+	gcm, _ := cipher.NewGCM(block)
+	nonce := randBytes(gcm.NonceSize())
+	blob := append(append(salt, nonce...), gcm.Seal(nil, nonce, plain, nil)...)
+	return hex.EncodeToString(blob), nil
+}
+
+// Import 用 passphrase 解密导入 (v1 blob; replace=true 清空后导入, 对齐 TS import)
+func (v *Vault) Import(passphrase, blob string, replace bool) (int, error) {
+	raw, err := hex.DecodeString(strings.TrimSpace(blob))
+	if err != nil {
+		return 0, fmt.Errorf("blob 非 hex: %w", err)
+	}
+	if len(raw) < saltLen+nonceLen+16 {
+		return 0, fmt.Errorf("blob 长度不足")
+	}
+	salt := raw[:saltLen]
+	nonce := raw[saltLen : saltLen+nonceLen]
+	ct := raw[saltLen+nonceLen:]
+	key := pbkdf2Key(passphrase, salt)
+	block, _ := aes.NewCipher(key)
+	gcm, _ := cipher.NewGCM(block)
+	plain, err := gcm.Open(nil, nonce, ct, nil)
+	if err != nil {
+		return 0, fmt.Errorf("passphrase 校验失败 (GCM 认证不过)")
+	}
+	var items []exportItem
+	if err := json.Unmarshal(plain, &items); err != nil {
+		return 0, fmt.Errorf("blob 载荷损坏: %w", err)
+	}
+
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if replace {
+		v.keys = make(map[string]*KeyRecord)
+	}
+	n := 0
+	for _, it := range items {
+		nonce2, ct2, err := v.seal(it.APIKey)
+		if err != nil {
+			return n, err
+		}
+		rec := &KeyRecord{ID: it.ID, BaseURL: it.BaseURL, Nonce: nonce2, Cipher: ct2, CreatedAt: time.Now().UnixMilli(), UpdatedAt: time.Now().UnixMilli()}
+		v.keys[rec.ID] = rec
+		n++
+	}
+	return n, nil
 }

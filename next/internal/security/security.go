@@ -115,6 +115,6 @@ func (s *Service) emit(ctx context.Context, action, route, method string, status
 	}
 	raw, _ := json.Marshal(payload)
 	if ev, err := s.store.AppendEvent(ctx, EventAuditRecorded, "security", raw); err == nil && busOn {
-		s.bus.Publish(ev.Type, ev.Source, ev.Payload)
+		s.bus.Publish(ev)
 	}
 }

@@ -32,7 +32,13 @@ import (
 	"soloforge/next/internal/decision"
 	githandler "soloforge/next/internal/gitsvc/handler"
 	"soloforge/next/internal/law"
+	"soloforge/next/internal/marl"
+	"soloforge/next/internal/metrics"
+	"soloforge/next/internal/security"
+	"soloforge/next/internal/society"
 	"soloforge/next/internal/store"
+	"soloforge/next/internal/toolsrelay"
+	"soloforge/next/internal/uiapi"
 )
 
 func main() {
@@ -75,6 +81,21 @@ func main() {
 	gsHandler := githandler.New(*repoPath)
 	gsHandler.RegisterRoutes(srv.Mux())
 
+	// ── 安全层 (vault/auth/audit, 阶段 2 迁入) ──
+	secSvc := security.New(st, evBus)
+	secSvc.Register(srv.Mux())
+	logger.Info("安全层就绪 (vault/auth/audit)")
+
+	// ── 工具路由 + 指标 (阶段 2 迁入) ──
+	relay := toolsrelay.NewWithPlaceholders()
+	relay.RegisterCommands(cmdBus)
+	metricsCollector := metrics.New()
+	srv.Mux().Handle("GET /metrics-prom", metricsCollector.Handler())
+
+	// ── UI 第二后端 (uiapi, 阶段 2 迁入; BaseDir = 仓库根/UI) ──
+	uiapi.New(filepath.Join(*repoPath, "UI"), st, logger).Register(srv.Mux())
+	logger.Info("UI 第二后端就绪 (providers/skills/resources/system-metrics)")
+
 	addr := fmt.Sprintf("127.0.0.1:%d", *port)
 
 	// ── Agent 运行时 (阶段 2 迁入) ──
@@ -108,6 +129,11 @@ func main() {
 	agents.RegisterRoutes(srv.Mux(), pool, orch)
 	logger.Info("Agent 运行时就绪", "agents", pool.Count(), "workers", len(workers))
 
+	// ── 社会域 (society, 阶段 2 迁入; 信誉级联目标 = agent 池) ──
+	socSvc := society.New(st, evBus, pool)
+	society.RegisterCommands(cmdBus, socSvc)
+	logger.Info("社会域就绪 (institutions/memory/culture/coalitions/governance/drift)")
+
 	// ── court / decision / law (阶段 2 迁入) ──
 	var judge court.Judge
 	if len(workers) > 0 {
@@ -116,6 +142,15 @@ func main() {
 	courtSvc := court.New(st, evBus, judge)
 	decSvc := decision.New(st, evBus)
 	lawSvc := law.New(st, evBus, pool)
+
+	// ── MARL 策略注入 (SOLOFORGE_MARL_ADDR=127.0.0.1:8765 时激活) ──
+	if marlAddr := os.Getenv("SOLOFORGE_MARL_ADDR"); marlAddr != "" {
+		client := marl.New(marlAddr)
+		decSvc.SetPolicy(func(ctx context.Context, obs []float64) (float64, error) {
+			return client.Bonus(ctx, obs)
+		})
+		logger.Info("MARL 策略已注入", "addr", marlAddr)
+	}
 
 	// CommandBus 注册 (语义对齐旧 src/kernel/command-bus.ts 命令名)
 	cmdBus.Register("EXECUTE_EVIDENTIARY_ARBITRATION", func(ctx context.Context, payload json.RawMessage) (any, error) {
