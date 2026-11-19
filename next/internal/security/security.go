@@ -114,9 +114,14 @@ func (s *Service) emit(ctx context.Context, action, route, method string, status
 		payload[k] = v
 	}
 	raw, _ := json.Marshal(payload)
-	if ev, err := s.store.AppendEvent(ctx, EventAuditRecorded, "security", raw); err == nil && busOn {
+	ev, err := s.store.AppendEvent(ctx, EventAuditRecorded, "security", raw)
+	if err == nil && busOn {
 		s.bus.Publish(ev)
 	}
+	// 外部 sink (stdout/file/http) 扇出 — audit.go dispatchExternal:
+	// 落库成功后正常投递; 落库失败时事件带 _storeAppendFailed 标记降级投递,
+	// 保证外部链路可见 (对齐 TS 写失败 → AUDIT_FALLBACK 兜底)。
+	s.dispatchExternal(payload, err == nil)
 }
 
 // BootstrapToken 启动引导 token (供 uiapi /api/auth/startup-token 桥接)

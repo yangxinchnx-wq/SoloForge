@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -266,6 +267,14 @@ func main() {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(res)
+	})
+	srv.Mux().HandleFunc("GET /api/decisions/history", func(w http.ResponseWriter, r *http.Request) {
+		limit := 20
+		if l, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && l > 0 && l <= 100 {
+			limit = l
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"routes": decSvc.Routes(limit)})
 	})
 	srv.Mux().HandleFunc("GET /api/law/violations", func(w http.ResponseWriter, r *http.Request) {
 		v := lawSvc.Violations()
