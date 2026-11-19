@@ -106,8 +106,11 @@ func main() {
 	srv.Mux().Handle("GET /metrics-prom", metricsCollector.Handler())
 
 	// ── UI 第二后端 (uiapi, 阶段 2 迁入; BaseDir = 仓库根/UI) ──
-	uiapi.New(filepath.Join(*repoPath, "UI"), st, logger).Register(srv.Mux())
-	logger.Info("UI 第二后端就绪 (providers/skills/resources/system-metrics)")
+	uiapiSvc := uiapi.New(filepath.Join(*repoPath, "UI"), st, logger)
+	uiapiSvc.SetBus(evBus)
+	uiapiSvc.SetTokenProvider(func() string { return secSvc.BootstrapToken() })
+	uiapiSvc.Register(srv.Mux())
+	logger.Info("UI 第二后端就绪 (providers/skills/resources/system-metrics/SSE)")
 
 	addr := fmt.Sprintf("127.0.0.1:%d", *port)
 

@@ -118,3 +118,6 @@ func (s *Service) emit(ctx context.Context, action, route, method string, status
 		s.bus.Publish(ev)
 	}
 }
+
+// BootstrapToken 启动引导 token (供 uiapi /api/auth/startup-token 桥接)
+func (s *Service) BootstrapToken() string { return s.auth.Token() }

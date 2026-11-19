@@ -24,19 +24,28 @@ import (
 	"sync"
 	"time"
 
+	"soloforge/next/internal/bus"
 	"soloforge/next/internal/store"
 )
 
 type Service struct {
 	baseDir string         // UI/ 目录 (providers_db.json 等所在)
 	store   *store.Store   // 事件落库 (可为 nil: 仅内存)
+	bus     *bus.EventBus  // SSE 事件流来源 (可为 nil)
 	logger  *slog.Logger
+	tokenFn func() string // startup token 提供者 (security 层注入)
 
 	mu           sync.Mutex
 	probeCache   map[string]map[string]any // providerId → 探测结果缓存
 	debugLines   []string
 	lastScanInfo map[string]any
 }
+
+// SetBus 注入事件总线 (SSE 流来源)
+func (s *Service) SetBus(b *bus.EventBus) { s.bus = b }
+
+// SetTokenProvider 注入 startup token 提供者 (security 层)
+func (s *Service) SetTokenProvider(fn func() string) { s.tokenFn = fn }
 
 // New 构造。baseDir 为空时默认 "UI/"。
 func New(baseDir string, st *store.Store, logger *slog.Logger) *Service {
@@ -78,8 +87,12 @@ func (s *Service) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/system-metrics", s.systemMetrics)
 	mux.HandleFunc("GET /api/tools/schemas", s.toolsSchemas)
 	mux.HandleFunc("POST /api/tools/invoke", s.toolsInvoke)
-	mux.HandleFunc("GET /api/auth/startup-token", s.authStub)
 	mux.HandleFunc("POST /api/debug-log", s.debugLog)
+
+	// ── server.ts 差集补齐 (阶段 2) ──
+	mux.HandleFunc("GET /api/events/stream", s.eventsStream)
+	mux.HandleFunc("GET /api/auth/startup-token", s.authStartupToken)
+	mux.HandleFunc("POST /api/channels/test", s.channelsTest)
 }
 
 // ── 文件工具 ────────────────────────────────────────────────────
