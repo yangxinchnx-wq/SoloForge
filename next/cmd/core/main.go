@@ -28,6 +28,7 @@ import (
 	"soloforge/next/internal/api"
 	"soloforge/next/internal/bus"
 	"soloforge/next/internal/court"
+	"soloforge/next/internal/data"
 	"soloforge/next/internal/decision"
 	githandler "soloforge/next/internal/gitsvc/handler"
 	"soloforge/next/internal/law"
@@ -158,6 +159,13 @@ func main() {
 	socSvc := society.New(st, evBus, pool)
 	society.RegisterCommands(cmdBus, socSvc)
 	logger.Info("社会域就绪 (institutions/memory/culture/coalitions/governance/drift)")
+
+	// ── data 层 (outbox/12 消费者/删除保护, 深度迁移) ──
+	dataSvc := data.New(st, evBus, nil) // nil deliver = 纯进程内部署 (外部 sink 接入后替换)
+	dataSvc.Start(context.Background())
+	data.RegisterCommands(cmdBus, st, dataSvc.Outbox, dataSvc.Registry(), dataSvc.Protection, dataSvc.Projections)
+	defer dataSvc.Stop()
+	logger.Info("data 层就绪 (outbox/12 消费者/删除保护)")
 
 	// ── court / decision / law (阶段 2 迁入) ──
 	var judge court.Judge
