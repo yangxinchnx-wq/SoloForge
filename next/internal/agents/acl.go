@@ -33,15 +33,15 @@ import (
 type ACLPerformative string
 
 const (
-	PerfInform   ACLPerformative = "INFORM"    // 通知信息
-	PerfRequest  ACLPerformative = "REQUEST"   // 请求执行
-	PerfPropose  ACLPerformative = "PROPOSE"   // 提议合作
-	PerfAccept   ACLPerformative = "ACCEPT"    // 接受提议
-	PerfReject   ACLPerformative = "REJECT"    // 拒绝提议
-	PerfQuery    ACLPerformative = "QUERY"     // 查询信息
-	PerfDelegate ACLPerformative = "DELEGATE"  // 委托任务
+	PerfInform    ACLPerformative = "INFORM"    // 通知信息
+	PerfRequest   ACLPerformative = "REQUEST"   // 请求执行
+	PerfPropose   ACLPerformative = "PROPOSE"   // 提议合作
+	PerfAccept    ACLPerformative = "ACCEPT"    // 接受提议
+	PerfReject    ACLPerformative = "REJECT"    // 拒绝提议
+	PerfQuery     ACLPerformative = "QUERY"     // 查询信息
+	PerfDelegate  ACLPerformative = "DELEGATE"  // 委托任务
 	PerfChallenge ACLPerformative = "CHALLENGE" // 挑战/质疑
-	PerfGossip   ACLPerformative = "GOSSIP"    // 闲谈传播声誉
+	PerfGossip    ACLPerformative = "GOSSIP"    // 闲谈传播声誉
 )
 
 // 协议名 (GOSSIP 消息固定携带, 对齐 TS 'gossip-reputation')
@@ -55,29 +55,29 @@ type ACLGossipPayload struct {
 
 // RelayEnvelope fiaacl.relay 跨进程中继信封 (protocol.md §1)
 type RelayEnvelope struct {
-	Type    string     `json:"type"`              // 固定 'fiaacl.relay'
-	Payload ACLMessage `json:"payload"`           // 完整 FIPA-ACL 消息
+	Type    string     `json:"type"`    // 固定 'fiaacl.relay'
+	Payload ACLMessage `json:"payload"` // 完整 FIPA-ACL 消息
 }
 
 // ACLMessage FIPA-ACL 标准消息 (字段名对齐 protocol.md §1)
 type ACLMessage struct {
-	Sender       string          `json:"sender"`                 // 发送者 Agent ID
-	Receiver     string          `json:"receiver"`               // 接收者 Agent ID
-	Performative ACLPerformative `json:"performative"`           // 述行语 (消息意图)
-	Content      any             `json:"content"`                // 消息内容
-	Ontology     string          `json:"ontology,omitempty"`     // 本体论 (语义上下文)
-	Protocol     string          `json:"protocol,omitempty"`     // 所属协议
-	MessageID    string          `json:"messageId"`              // 消息 ID
-	ReplyWith    string          `json:"replyWith,omitempty"`    // 回复目标 ID (TS 源码叫 replyTo)
-	Timestamp    int64           `json:"timestamp"`              // 毫秒时间戳
+	Sender       string          `json:"sender"`              // 发送者 Agent ID
+	Receiver     string          `json:"receiver"`            // 接收者 Agent ID
+	Performative ACLPerformative `json:"performative"`        // 述行语 (消息意图)
+	Content      any             `json:"content"`             // 消息内容
+	Ontology     string          `json:"ontology,omitempty"`  // 本体论 (语义上下文)
+	Protocol     string          `json:"protocol,omitempty"`  // 所属协议
+	MessageID    string          `json:"messageId"`           // 消息 ID
+	ReplyWith    string          `json:"replyWith,omitempty"` // 回复目标 ID (TS 源码叫 replyTo)
+	Timestamp    int64           `json:"timestamp"`           // 毫秒时间戳
 }
 
 // Inbox / 去重参数 (对齐 TS maxInboxSize=100, messageTTLms=30000, dedupeSetMaxSize=5000)
 const (
-	aclInboxMaxSize   = 100
-	aclMessageTTL     = 30 * time.Second
-	aclDedupeMaxSize  = 5000
-	aclEventName      = "agent.acl.message" // Go 侧扩展事件名 (protocol.md 未定义)
+	aclInboxMaxSize  = 100
+	aclMessageTTL    = 30 * time.Second
+	aclDedupeMaxSize = 5000
+	aclEventName     = "agent.acl.message" // Go 侧扩展事件名 (protocol.md 未定义)
 )
 
 // ACLBus Agent 通信总线
@@ -88,13 +88,13 @@ const (
 //  3. 支持 Gossip 协议传播间接声誉 (RepuNet)
 //  4. 消息有 TTL, 防止无限堆积
 type ACLBus struct {
-	mu       sync.RWMutex
-	inboxes  map[string][]ACLMessage
-	seenIDs  map[string]struct{} // 已发出/已接收的 messageId — 去重防回环
-	seenOrder []string           // 去重集合的插入序 (过半清除旧的一半)
-	msgSeq   atomic.Uint64       // messageId 序列源
-	store    *store.Store
-	bus      *bus.EventBus
+	mu        sync.RWMutex
+	inboxes   map[string][]ACLMessage
+	seenIDs   map[string]struct{} // 已发出/已接收的 messageId — 去重防回环
+	seenOrder []string            // 去重集合的插入序 (过半清除旧的一半)
+	msgSeq    atomic.Uint64       // messageId 序列源
+	store     *store.Store
+	bus       *bus.EventBus
 	// gossipObserver GOSSIP 观察钩子 (编排器接入信誉引擎, 间接声誉 → UpdateFromGossip)
 	gossipObserver func(msg ACLMessage)
 }

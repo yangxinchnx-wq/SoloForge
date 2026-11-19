@@ -18,6 +18,7 @@
 //   - 分值刻度 0..100 (对齐已有 agent.go / routes.go 语义), TS 为 0..1
 //   - 组件为三维 (TS 四维), integrity 并入 quality
 //   - 台账为进程内流水 (重启清零), 每笔同时经 events 表落库审计
+//
 // ─────────────────────────────────────────────────────────────────
 package agents
 
@@ -54,9 +55,9 @@ const (
 
 // Gossip 门槛参数 (对齐 TS: 置信度 < 0.3 丢弃, 缓冲 60s 有效期, 默认置信度 0.5)
 const (
-	gossipMinConfidence   = 0.3
-	gossipValidityWindow  = 60 * time.Second
-	gossipDefaultConf     = 0.5
+	gossipMinConfidence  = 0.3
+	gossipValidityWindow = 60 * time.Second
+	gossipDefaultConf    = 0.5
 )
 
 // ReputationState 信誉快照 — 含聚合分与各维度 (对齐 TS ReputationSnapshot)
@@ -79,8 +80,8 @@ type GossipEvaluation struct {
 
 // ReputationEntry 信誉台账流水 (每笔组件更新/惩罚/奖励各记一条)
 type ReputationEntry struct {
-	Seq       int64   `json:"seq"`       // 引擎内单调递增
-	TS        int64   `json:"ts"`        // 毫秒时间戳
+	Seq       int64   `json:"seq"` // 引擎内单调递增
+	TS        int64   `json:"ts"`  // 毫秒时间戳
 	AgentID   string  `json:"agentId"`
 	Kind      string  `json:"kind"`      // reward | penalty | direct | gossip | dispute
 	Dimension string  `json:"dimension"` // 被更新的维度
@@ -112,9 +113,9 @@ type ReputationEngine struct {
 // NewReputationEngine 构造引擎 (pool 同步目标, store/bus 事件落库广播)
 func NewReputationEngine(pool *Pool, st *store.Store, b *bus.EventBus) *ReputationEngine {
 	return &ReputationEngine{
-		pool:  pool,
-		store: st,
-		bus:   b,
+		pool:   pool,
+		store:  st,
+		bus:    b,
 		states: make(map[string]*ReputationState),
 	}
 }
@@ -169,26 +170,29 @@ func (e *ReputationEngine) Aggregate(entityID string) float64 {
 // UpdateFromDirectInteraction 直接交互驱动的信誉更新 (RepuNet 3.3.1)
 // delta 为点数 (0..100 刻度); version 非零时做 CAS 校验, 旧版本拒绝
 func (e *ReputationEngine) UpdateFromDirectInteraction(entityID, dimension string, delta float64, version int) *ReputationState {
-	return e.update(entityID, dimension, delta*directInteractionWeight, version, "direct", "")
+	return e.update(entityID, dimension, delta*directInteractionWeight, version, "direct", "", nil)
 }
 
 // UpdateFromGossip 间接闲谈驱动的信誉更新 (RepuNet 3.3.2)
 // 闲谈权重低于直接交互
 func (e *ReputationEngine) UpdateFromGossip(entityID, dimension string, delta float64) *ReputationState {
-	return e.update(entityID, dimension, delta*gossipInteractionWeight, 0, "gossip", "")
+	return e.update(entityID, dimension, delta*gossipInteractionWeight, 0, "gossip", "", nil)
 }
 
-// update 组件更新公共路径: CAS → 钳制更新 → 合成总分 → 台账 → 池同步
-func (e *ReputationEngine) update(entityID, dimension string, deltaPoints float64, version int, kind, reason string) *ReputationState {
+// update 组件更新公共路径: CAS → 钳制更新 → 合成总分 → 台账
+// (只动引擎组件与聚合分, 不改池总分 — 对齐 TS: 直接交互只更新引擎组件,
+// agent.reputationScore 仅由 penalize/reward 全额变更)
+// ledgerDelta 为 nil 时台账记聚合分变化, 否则记显式值 (惩罚/奖励用全额点数)
+func (e *ReputationEngine) update(entityID, dimension string, deltaPoints float64, version int, kind, reason string, ledgerDelta *float64) *ReputationState {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	st, ok := e.states[entityID]
 	if !ok {
 		e.mu.Unlock()
-		e.Register(entityID, nil)
+		e.Register(entityID, nil) // 未注册实体惰性建户 (内部自取锁)
 		e.mu.Lock()
 		st = e.states[entityID]
 	}
+	defer e.mu.Unlock()
 	// CAS: 版本号检查, 防止旧数据覆盖新数据 (对齐 TS)
 	if version != 0 && version < st.Version {
 		return st
@@ -201,38 +205,49 @@ func (e *ReputationEngine) update(entityID, dimension string, deltaPoints float6
 	st.Version++
 	st.LastUpdated = time.Now().UnixMilli()
 
+	delta := st.AggregateScore - old
+	if ledgerDelta != nil {
+		delta = *ledgerDelta
+	}
 	e.appendLedgerLocked(ReputationEntry{
 		TS:        st.LastUpdated,
 		AgentID:   entityID,
 		Kind:      kind,
 		Dimension: dim,
-		Delta:     st.AggregateScore - old,
+		Delta:     delta,
 		Reason:    reason,
 		NewScore:  st.AggregateScore,
 		Version:   st.Version,
 	})
-	e.syncPoolLocked(entityID, st)
+	e.syncPoolComponentsLocked(entityID, st)
 	return st
 }
 
 // ── 惩罚 / 奖励 (对齐 agent-registry.ts penalize/rewardReputation) ────
+//
+// TS 双轨语义: agent.reputationScore 全额增减; 引擎组件经直接交互权重 (×0.75)。
+// Go 侧: 池 Agent.ReputationScore = TS agent.reputationScore (全额),
+//        引擎组件 = TS MultiDimensionalReputation (加权)。
 
-// Penalize 惩罚信誉: 总分扣 deduction 点; reason 含 'fraud' → quality, 否则 reliability
+// Penalize 惩罚信誉: 池总分全额扣 deduction 点, 引擎组件按 ×0.75 更新;
+// reason 含 'fraud' → quality (TS integrity), 否则 reliability;
 // court_defeat 记一次败诉; 广播 agent.reputation.updated
 func (e *ReputationEngine) Penalize(ctx context.Context, agentID string, deduction float64, reason string) {
-	if st := e.update(agentID, e.dimensionForReason(reason), -deduction, 0, "penalty", reason); st != nil {
-		e.applyPoolCounters(agentID, false, reason)
-		e.emitReputationUpdated(ctx, agentID, -deduction, reason, st.AggregateScore, st.Version)
-	}
+	full := -deduction
+	st := e.update(agentID, e.dimensionForReason(reason), -deduction*directInteractionWeight, 0, "penalty", reason, &full)
+	newScore := e.adjustPoolScore(agentID, -deduction)
+	e.applyPoolCounters(agentID, false, reason)
+	e.emitReputationUpdated(ctx, agentID, -deduction, reason, newScore, st.Version)
 }
 
-// Reward 奖励信誉: 总分加 bonus 点; 奖励走 quality (TS integrity 映射)
-// court_victory 记一次胜诉; 广播 agent.reputation.updated
+// Reward 奖励信誉: 池总分全额加 bonus 点, 引擎 quality 组件按 ×0.75 更新
+// (TS 奖励走 integrity 维度); court_victory 记一次胜诉; 广播 agent.reputation.updated
 func (e *ReputationEngine) Reward(ctx context.Context, agentID string, bonus float64, reason string) {
-	if st := e.update(agentID, ReputationQuality, bonus, 0, "reward", reason); st != nil {
-		e.applyPoolCounters(agentID, true, reason)
-		e.emitReputationUpdated(ctx, agentID, bonus, reason, st.AggregateScore, st.Version)
-	}
+	full := bonus
+	st := e.update(agentID, ReputationQuality, bonus*directInteractionWeight, 0, "reward", reason, &full)
+	newScore := e.adjustPoolScore(agentID, bonus)
+	e.applyPoolCounters(agentID, true, reason)
+	e.emitReputationUpdated(ctx, agentID, bonus, reason, newScore, st.Version)
 }
 
 // dimensionForReason 根据原因选维度: fraud → quality (TS integrity), 否则 reliability
@@ -386,14 +401,27 @@ func (e *ReputationEngine) appendLedgerLocked(entry ReputationEntry) {
 	}
 }
 
-// syncPoolLocked 把引擎快照同步回 agent 池 (同包直访 pool 字段, 须持 e.mu)
-func (e *ReputationEngine) syncPoolLocked(entityID string, st *ReputationState) {
+// syncPoolComponentsLocked 把引擎组件同步回 agent 池快照
+// (同包直访 pool 字段, 须持 e.mu; 总分不动 — 见 Penalize/Reward)
+func (e *ReputationEngine) syncPoolComponentsLocked(entityID string, st *ReputationState) {
 	e.pool.mu.Lock()
 	if a, ok := e.pool.agents[entityID]; ok {
-		a.ReputationScore = clamp(st.AggregateScore, 0, 100)
 		a.ReputationComponents = st.Components
 	}
 	e.pool.mu.Unlock()
+}
+
+// adjustPoolScore 池总分全额增减 (对齐 TS agent.penalize/rewardReputation, 钳制 0..100)
+// 返回变更后的总分 (事件 newScore 载荷)
+func (e *ReputationEngine) adjustPoolScore(agentID string, delta float64) float64 {
+	e.pool.mu.Lock()
+	defer e.pool.mu.Unlock()
+	a, ok := e.pool.agents[agentID]
+	if !ok {
+		return 0
+	}
+	a.ReputationScore = clamp(a.ReputationScore+delta, 0, 100)
+	return a.ReputationScore
 }
 
 // applyPoolCounters 胜诉/败诉计数 (对齐 TS: court_victory→wins, court_defeat→losses)
@@ -409,11 +437,11 @@ func (e *ReputationEngine) applyPoolCounters(agentID string, win bool, reason st
 // emitReputationUpdated 广播信誉变更 (载荷对齐 TS RuntimeEvent.AgentReputationUpdated)
 func (e *ReputationEngine) emitReputationUpdated(ctx context.Context, agentID string, delta float64, reason string, newScore float64, version int) {
 	e.emit(ctx, "agent.reputation.updated", map[string]any{
-		"agentId":  agentID,
-		"delta":    delta,
-		"reason":   reason,
-		"newScore": newScore,
-		"version":  version,
+		"agentId":   agentID,
+		"delta":     delta,
+		"reason":    reason,
+		"newScore":  newScore,
+		"version":   version,
 		"timestamp": time.Now().UnixMilli(),
 	})
 }
