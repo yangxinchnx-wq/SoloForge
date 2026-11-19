@@ -48,5 +48,11 @@
     "ulid": "^3.0.2",
     "ws": "^8.21.0",
     "zod": "^4.4.3"
+  },
+  "allowScripts": {
+    "esbuild@0.28.0": true,
+    "keytar@7.9.0": true,
+    "node-llama-cpp@3.19.0": true,
+    "protobufjs@7.6.5": true
   }
 }
