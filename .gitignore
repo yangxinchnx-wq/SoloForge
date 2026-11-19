@@ -175,3 +175,6 @@ next/data/
 next/logs/
 next/bin/
 next/config.toml
+
+# Tauri 构建产物
+UI/src-tauri/target/

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SoloForge",
+  "version": "1.0.0",
+  "identifier": "com.soloforge.app",
+  "build": {
+    "devUrl": "http://localhost:4000",
+    "frontendDist": "http://localhost:4000"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "SoloForge",
+        "width": 1440,
+        "height": 900,
+        "url": "http://localhost:4000"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false
+  }
+}
