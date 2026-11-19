@@ -30,6 +30,7 @@ import (
 	"soloforge/next/internal/decision"
 	githandler "soloforge/next/internal/gitsvc/handler"
 	"soloforge/next/internal/law"
+	"soloforge/next/internal/kernel"
 	"soloforge/next/internal/marl"
 	"soloforge/next/internal/metrics"
 	"soloforge/next/internal/security"
@@ -55,6 +56,13 @@ func main() {
 	evBus := bus.NewEventBus()
 	cmdBus := bus.NewCommandBus()
 	registerCommands(st, evBus, cmdBus, logger)
+
+	// ── RuntimeKernel (深度迁移: 状态机/事务/配置/所有权) ──
+	kern := kernel.New(st, evBus)
+	kern.SetCommandBus(cmdBus)
+	txnMgr := kernel.NewTransactionManager(kern)
+	kern.SetTransactionManager(txnMgr)
+	defer kern.Shutdown(context.Background())
 
 	// SurrealDB 事件持久化: 启动重放 + 总线同步 (离线自动缓冲补写)
 	if url := os.Getenv("SOLOFORGE_SURREAL_URL"); url != "" {
