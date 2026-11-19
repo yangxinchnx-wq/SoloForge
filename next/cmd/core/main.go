@@ -23,8 +23,6 @@ import (
 	"syscall"
 	"time"
 
-	"soloforge/next/internal/persist"
-
 	"soloforge/next/internal/agents"
 	"soloforge/next/internal/api"
 	"soloforge/next/internal/bus"
@@ -37,6 +35,7 @@ import (
 	"soloforge/next/internal/security"
 	"soloforge/next/internal/society"
 	"soloforge/next/internal/store"
+	"soloforge/next/internal/surreal"
 	"soloforge/next/internal/toolsrelay"
 	"soloforge/next/internal/uiapi"
 )
@@ -49,23 +48,37 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
-	// ── 存储 (进程内) + JSONL 持久化 (无 SQL 的崩溃恢复) ──
+	// ── 存储 (进程内) + SurrealDB 持久化 (用户指定的数据库) ──
 	st := store.New()
-	jsonlPath := filepath.Join("data", "events.jsonl")
-	if restored, err := persist.Load(jsonlPath, st); err != nil {
-		logger.Warn("JSONL 重放部分失败", "restored", restored, "err", err)
-	} else if restored > 0 {
-		logger.Info("JSONL 重放完成", "restored", restored)
-	}
 
 	// ── 总线 ──
 	evBus := bus.NewEventBus()
 	cmdBus := bus.NewCommandBus()
 	registerCommands(st, evBus, cmdBus, logger)
-	if _, err := persist.Attach(jsonlPath, evBus); err != nil {
-		logger.Warn("JSONL 持久化未接线", "err", err)
+
+	// SurrealDB 事件持久化: 启动重放 + 总线同步 (离线自动缓冲补写)
+	if url := os.Getenv("SOLOFORGE_SURREAL_URL"); url != "" {
+		sdb := surreal.New(surreal.Config{
+			URL:  url,
+			NS:   envOr("SOLOFORGE_SURREAL_NS", "soloforge_core"),
+			DB:   envOr("SOLOFORGE_SURREAL_DB", "autonomous_network"),
+			User: envOr("SOLOFORGE_SURREAL_USER", "root"),
+			Pass: envOr("SOLOFORGE_SURREAL_PASS", "root"),
+		})
+		if evs, err := sdb.LoadEvents(context.Background(), 0); err == nil {
+			for _, ev := range evs {
+				st.Restore(ev)
+			}
+			logger.Info("SurrealDB 事件重放完成", "restored", len(evs))
+		} else {
+			logger.Warn("SurrealDB 事件重放失败 (启动后自动补写缓冲)", "err", err)
+		}
+		subID, events := evBus.Subscribe() // 订阅先于启动事件, 保证不漏
+		_ = subID
+		go sdb.SyncLoop(context.Background(), events)
+		logger.Info("SurrealDB 持久化已接线", "url", url)
 	} else {
-		logger.Info("JSONL 持久化已接线", "path", jsonlPath)
+		logger.Info("未设置 SOLOFORGE_SURREAL_URL, 纯内存存储 (重启清零)")
 	}
 
 	// ── 启动事件 (落库即审计) ──
@@ -155,8 +168,8 @@ func main() {
 	// CommandBus 注册 (语义对齐旧 src/kernel/command-bus.ts 命令名)
 	cmdBus.Register("EXECUTE_EVIDENTIARY_ARBITRATION", func(ctx context.Context, payload json.RawMessage) (any, error) {
 		var p struct {
-			TraceID string `json:"traceId"`
-			Claim   string `json:"claim"`
+			TraceID   string                `json:"traceId"`
+			Claim     string                `json:"claim"`
 			Arguments []court.ArgumentClaim `json:"arguments"`
 		}
 		if err := json.Unmarshal(payload, &p); err != nil {
@@ -207,9 +220,9 @@ func main() {
 	// court/decision/law HTTP 路由 (新架构新增, 供测试与 UI)
 	srv.Mux().HandleFunc("POST /api/court/arbitrate", func(w http.ResponseWriter, r *http.Request) {
 		var p struct {
-			TraceID   string                 `json:"traceId"`
-			Claim     string                 `json:"claim"`
-			Arguments []court.ArgumentClaim  `json:"arguments"`
+			TraceID   string                `json:"traceId"`
+			Claim     string                `json:"claim"`
+			Arguments []court.ArgumentClaim `json:"arguments"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 			http.Error(w, err.Error(), 400)
@@ -368,4 +381,12 @@ func (l llmJudge) Arbitrate(ctx context.Context, c *court.Case, args []court.Arg
 		return "", "", err
 	}
 	return strings.TrimSpace(out), out, nil
+}
+
+// envOr 环境变量缺省值
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }

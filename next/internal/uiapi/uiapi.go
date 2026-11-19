@@ -275,13 +275,21 @@ func (s *Service) modelDetail(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"found": false, "error": err.Error()})
 		return
 	}
-	models, _ := db["models"].([]any)
-	for _, m := range models {
-		if mm, ok := m.(map[string]any); ok {
-			if id, _ := mm["id"].(string); id == req.ModelID {
-				writeJSON(w, 200, map[string]any{"found": true, "model": mm})
-				return
+	// models 兼容两种形状: 数组或按 id 键控的 dict (实际文件为 dict)
+	switch models := db["models"].(type) {
+	case []any:
+		for _, m := range models {
+			if mm, ok := m.(map[string]any); ok {
+				if id, _ := mm["id"].(string); id == req.ModelID {
+					writeJSON(w, 200, map[string]any{"found": true, "model": mm})
+					return
+				}
 			}
+		}
+	case map[string]any:
+		if mm, ok := models[req.ModelID].(map[string]any); ok {
+			writeJSON(w, 200, map[string]any{"found": true, "model": mm})
+			return
 		}
 	}
 	writeJSON(w, 200, map[string]any{"found": false})
@@ -338,7 +346,11 @@ func (s *Service) modelDBStatus(w http.ResponseWriter, _ *http.Request) {
 	var db map[string]any
 	count := 0
 	if err := s.readJSON("model_context_db.json", &db); err == nil {
-		if models, ok := db["models"].([]any); ok {
+		// models 可能是数组或按 id 键控的 dict (实际文件为 dict, 244 条)
+		switch models := db["models"].(type) {
+		case []any:
+			count = len(models)
+		case map[string]any:
 			count = len(models)
 		}
 	}

@@ -43,12 +43,23 @@ type WorkerConfig struct {
 
 type Config struct {
 	Core    CoreConfig     `toml:"core"`
+	Surreal SurrealConfig  `toml:"surreal"`
 	Workers []WorkerConfig `toml:"workers"`
+}
+
+// SurrealConfig SurrealDB 持久层配置 (env 传给 core 的 surreal 持久化)
+type SurrealConfig struct {
+	URL  string `toml:"url"`
+	NS   string `toml:"ns"`
+	DB   string `toml:"db"`
+	User string `toml:"user"`
+	Pass string `toml:"pass"`
 }
 
 func loadConfig(path string) Config {
 	cfg := Config{
-		Core: CoreConfig{Bin: "./bin/soloforge-core.exe", Port: 7300, Repo: ".."},
+		Core:    CoreConfig{Bin: "./bin/soloforge-core.exe", Port: 7300, Repo: ".."},
+		Surreal: SurrealConfig{URL: "http://127.0.0.1:8400", NS: "soloforge_core", DB: "autonomous_network", User: "root", Pass: "root"},
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -113,6 +124,13 @@ func main() {
 					"SOLOFORGE_ADVISOR_URL=http://127.0.0.1:"+strconv.Itoa(w.Port)+"/api/chat/stream")
 			}
 		}
+		// SurrealDB 持久层 → core (surreal 包按 env 接线)
+		coreCmd.Env = append(os.Environ(),
+			"SOLOFORGE_SURREAL_URL="+cfg.Surreal.URL,
+			"SOLOFORGE_SURREAL_NS="+cfg.Surreal.NS,
+			"SOLOFORGE_SURREAL_DB="+cfg.Surreal.DB,
+			"SOLOFORGE_SURREAL_USER="+cfg.Surreal.User,
+			"SOLOFORGE_SURREAL_PASS="+cfg.Surreal.Pass)
 		coreCmd.Stdout = coreLog
 		coreCmd.Stderr = coreLog
 		if err := coreCmd.Start(); err != nil {
