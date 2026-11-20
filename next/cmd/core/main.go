@@ -111,7 +111,7 @@ func main() {
 	logger.Info("安全层就绪 (vault/auth/audit)")
 
 	// ── 工具路由 + 指标 (阶段 2 迁入) ──
-	relay := toolsrelay.NewWithPlaceholders()
+	relay := toolsrelay.NewWithBuiltins()
 	relay.RegisterCommands(cmdBus)
 	metricsCollector := metrics.New()
 	srv.Mux().Handle("GET /metrics-prom", metricsCollector.Handler())
