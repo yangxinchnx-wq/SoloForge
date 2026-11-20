@@ -39,6 +39,7 @@ package data
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"sync"
@@ -108,6 +109,18 @@ const entropyWeight = 0.3
 // 进程内存需封顶, 满员丢弃最旧)
 const maxTableRecords = 5000
 
+// maxIdemKeys 幂等键索引容量上限 (Go 增强: 防重放/重复分发导致重复落行;
+// 满员清除最早的一半)
+const maxIdemKeys = 50000
+
+// eventSnapshotCreated snapshot 事件名 (对齐 kernel.EventSnapshotCreated;
+// data 包不引 kernel, 以字面量对齐线格式)
+const eventSnapshotCreated = "snapshot.created"
+
+// MetricIPCFramesSent IPC 帧计数指标 (对齐 TS telemetry-aggregation 的
+// SnapshotCreated/domain=DistributedBroker 分支)
+const MetricIPCFramesSent = "soloforge_ipc_frames_sent_total"
+
 // ── Consumer 框架 ────────────────────────────────────────────────
 
 // Consumer 数据消费者 (对齐 TS initialize*Consumer 的订阅语义:
@@ -143,11 +156,14 @@ type ConsumerStat struct {
 
 // Projections 投影仓 — TS SurrealDB 温表的进程内等价物。
 // 表 = 追加式记录列表 (CREATE 语义); 另存 telemetry 聚合计数与熵代理值。
+// 幂等键索引 (批次 7 补齐): 表+幂等键 → 已落行标记, 重放/重复分发去重。
 type Projections struct {
 	mu       sync.Mutex
 	tables   map[string][]map[string]any
-	counters map[string]int64 // telemetry 指标计数 (soloforge_*)
-	entropy  float64          // soloforge_cluster_system_entropy (gauge)
+	counters map[string]int64    // telemetry 指标计数 (soloforge_*)
+	entropy  float64             // soloforge_cluster_system_entropy (gauge)
+	idemKeys map[string][]string // 表 → 幂等键插入序 (与行裁剪同步回收)
+	idemSet  map[string]struct{} // "表\x00幂等键" → 已落行
 }
 
 // NewProjections 构造投影仓
@@ -155,6 +171,8 @@ func NewProjections() *Projections {
 	return &Projections{
 		tables:   make(map[string][]map[string]any),
 		counters: make(map[string]int64),
+		idemKeys: make(map[string][]string),
+		idemSet:  make(map[string]struct{}),
 	}
 }
 
@@ -167,6 +185,54 @@ func (p *Projections) Insert(table string, rec map[string]any) {
 		rows = rows[len(rows)-maxTableRecords:]
 	}
 	p.tables[table] = rows
+}
+
+// InsertIdempotent 幂等追加 (批次 7 补齐: 幂等键计算)。
+// 同一 (表, 幂等键) 只落一行 — 重复调用返回 false (TS 的 SurrealDB CREATE
+// 每次生成新记录 ID 无幂等; Go 重放/重复分发语义下幂等键是正确性前提)。
+// 幂等键约定: 消费者以事件 seq (store 事件单调唯一) 计算 —
+// key = fmt.Sprintf("seq:%d", ev.Seq); 特殊来源可用业务键。
+// 行满员裁剪时同步回收对应幂等键。
+func (p *Projections) InsertIdempotent(table, idemKey string, rec map[string]any) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	composite := table + "\x00" + idemKey
+	if _, dup := p.idemSet[composite]; dup {
+		return false
+	}
+
+	rows := append(p.tables[table], rec)
+	trimmed := false
+	if len(rows) > maxTableRecords {
+		rows = rows[len(rows)-maxTableRecords:]
+		trimmed = true
+	}
+	p.tables[table] = rows
+	p.idemSet[composite] = struct{}{}
+	p.idemKeys[table] = append(p.idemKeys[table], composite)
+	if trimmed || len(p.idemKeys[table]) > maxIdemKeys {
+		// 回收: 保留与现存行数一致的最新键
+		keys := p.idemKeys[table]
+		keep := len(rows)
+		if keep > len(keys) {
+			keep = len(keys)
+		}
+		for _, old := range keys[:len(keys)-keep] {
+			delete(p.idemSet, old)
+		}
+		p.idemKeys[table] = keys[len(keys)-keep:]
+	}
+	return true
+}
+
+// idemKeyBySeq 幂等键计算细则: 事件 seq 为天然幂等键 (store 事件单调唯一)。
+func idemKeyBySeq(ev bus.Event) string {
+	return fmt.Sprintf("seq:%d", ev.Seq)
+}
+
+// insertOnce 消费者投影入口: 幂等追加 (重放/重复分发去重), 返回是否新落行
+func (p *Projections) insertOnce(ev bus.Event, table string, rec map[string]any) bool {
+	return p.InsertIdempotent(table, idemKeyBySeq(ev), rec)
 }
 
 // Table 取投影表快照 (升序副本; 不存在返回空表)
@@ -430,7 +496,7 @@ func consumerConsensusAudit(p *Projections) Consumer {
 			if !ok || tx.Domain != DomainConsensusEngine {
 				return nil
 			}
-			p.Insert(TableConsensusLedger, map[string]any{
+			p.insertOnce(ev, TableConsensusLedger, map[string]any{
 				"transaction_id":        tx.TxID,
 				"replicated_log_index":  tx.Version, // 对齐 TS logIndex = version
 				"kernel_version_seal":   tx.Version,
@@ -459,7 +525,7 @@ func consumerCourtAdjudication(p *Projections) Consumer {
 			switch tx.Domain {
 			case DomainConsensAgentCourt:
 				// 对齐 TS: verdict_id / status_seal / winner_signature / metric_score
-				p.Insert(TablePrimaryCourtVerdict, map[string]any{
+				p.insertOnce(ev, TablePrimaryCourtVerdict, map[string]any{
 					"transaction_id":    tx.TxID,
 					"verdict_id":        dstr(d, "verdict_id"),
 					"resolution_status": dstr(d, "status_seal"),
@@ -471,7 +537,7 @@ func consumerCourtAdjudication(p *Projections) Consumer {
 			case DomainLlmSupremeEscalation:
 				// 对齐 TS: supreme_verdict_id / ultimate_winner / evicted_loser /
 				// semantic_rationale / confidence
-				p.Insert(TableSupremeCourtVerdict, map[string]any{
+				p.insertOnce(ev, TableSupremeCourtVerdict, map[string]any{
 					"transaction_id":     tx.TxID,
 					"supreme_verdict_id": dstr(d, "supreme_verdict_id"),
 					"ultimate_winner":    dstr(d, "ultimate_winner"),
@@ -532,7 +598,7 @@ func consumerGovernorShadow(p *Projections) Consumer {
 			if ts == 0 {
 				ts = time.Now().UnixMilli() // 对齐 TS: data.committed_at || Date.now()
 			}
-			p.Insert(TableGovernorShadow, map[string]any{
+			p.insertOnce(ev, TableGovernorShadow, map[string]any{
 				"id":                 fmt.Sprintf("shadow_%s_%d", tx.TxID, time.Now().UnixMilli()),
 				"traceId":            dstr(d, "traceId"), // 对齐 TS: data.traceId || ''
 				"telemetry_snapshot": dany(d, "telemetry_snapshot"),
@@ -568,7 +634,7 @@ func consumerLawCompliance(p *Projections) Consumer {
 			d := tx.DataMap()
 			now := time.Now().UnixMilli()
 			if dstr(d, "violation_id") != "" && dstr(d, "law_name_seal") != "" {
-				p.Insert(TableLawViolation, map[string]any{
+				p.insertOnce(ev, TableLawViolation, map[string]any{
 					"transaction_id":      tx.TxID,
 					"violation_id":        dstr(d, "violation_id"),
 					"law_regime_name":     dstr(d, "law_name_seal"),
@@ -581,7 +647,7 @@ func consumerLawCompliance(p *Projections) Consumer {
 				return nil
 			}
 			if dstr(d, "execution_status") == "executed" {
-				p.Insert(TableLawExecution, map[string]any{
+				p.insertOnce(ev, TableLawExecution, map[string]any{
 					"transaction_id":         tx.TxID,
 					"violation_id":           dstr(d, "violation_id"),
 					"authorizer_signature":   dstr(d, "executor_signature"),
@@ -609,7 +675,7 @@ func consumerMigrationAudit(p *Projections) Consumer {
 				return nil
 			}
 			d := tx.DataMap()
-			p.Insert(TableMigrationHistory, map[string]any{
+			p.insertOnce(ev, TableMigrationHistory, map[string]any{
 				"transaction_id":          tx.TxID,
 				"migration_manifest_id":   dstr(d, "manifest_id"),
 				"eviction_reason_code":    dstr(d, "eviction_code"),
@@ -640,7 +706,7 @@ func consumerReputationAnalytics(p *Projections) Consumer {
 			d := tx.DataMap()
 			now := time.Now().UnixMilli()
 			if _, has := d["recalibrated_score"]; has { // 对齐 TS: !== undefined
-				p.Insert(TableReputationHistory, map[string]any{
+				p.insertOnce(ev, TableReputationHistory, map[string]any{
 					"transaction_id":      tx.TxID,
 					"reputation_id":       dstr(d, "reputation_block_id"),
 					"target_entity_id":    dstr(d, "target_entity"),
@@ -653,7 +719,7 @@ func consumerReputationAnalytics(p *Projections) Consumer {
 				return nil
 			}
 			if dnum(d, "points_deducted") != 0 { // 对齐 TS: data.points_deducted 真值
-				p.Insert(TablePenaltyLevy, map[string]any{
+				p.insertOnce(ev, TablePenaltyLevy, map[string]any{
 					"transaction_id":        tx.TxID,
 					"reputation_id":         dstr(d, "reputation_block_id"),
 					"target_entity_id":      dstr(d, "target_entity"),
@@ -681,7 +747,7 @@ func consumerSocialMemory(p *Projections) Consumer {
 				return nil
 			}
 			d := tx.DataMap()
-			p.Insert(TableSocialMemory, map[string]any{
+			p.insertOnce(ev, TableSocialMemory, map[string]any{
 				"transaction_id":      tx.TxID,
 				"memory_block_id":     dstr(d, "memory_id"),
 				"event_log":           dstr(d, "event_description"),
@@ -715,7 +781,7 @@ func consumerSocietyCulture(p *Projections) Consumer {
 			switch tx.Domain {
 			case DomainCoalitionEngine:
 				if dstr(d, "faction_name") != "" {
-					p.Insert(TableCoalitionRegistry, map[string]any{
+					p.insertOnce(ev, TableCoalitionRegistry, map[string]any{
 						"transaction_id": tx.TxID,
 						"coalition_id":   dstr(d, "coalition_id"),
 						"name":           dstr(d, "faction_name"),
@@ -727,7 +793,7 @@ func consumerSocietyCulture(p *Projections) Consumer {
 					return nil
 				}
 				if _, has := d["allocated_matrix"]; has {
-					p.Insert(TableCoalitionPayoutLedger, map[string]any{
+					p.insertOnce(ev, TableCoalitionPayoutLedger, map[string]any{
 						"transaction_id":    tx.TxID,
 						"coalition_id":      dstr(d, "coalition_id"),
 						"payout_matrix":     dany(d, "allocated_matrix"),
@@ -737,7 +803,7 @@ func consumerSocietyCulture(p *Projections) Consumer {
 					})
 				}
 			case DomainMemeticPropagation:
-				p.Insert(TableMemeticHistory, map[string]any{
+				p.insertOnce(ev, TableMemeticHistory, map[string]any{
 					"transaction_id":      tx.TxID,
 					"target_cluster_id":   dstr(d, "target_cluster"),
 					"meme_signature":      dstr(d, "meme_signature"),
@@ -770,7 +836,7 @@ func consumerSocietyEvolution(p *Projections) Consumer {
 			now := time.Now().UnixMilli()
 			switch tx.Domain {
 			case DomainRoleEvolution:
-				p.Insert(TableRegimeHistory, map[string]any{
+				p.insertOnce(ev, TableRegimeHistory, map[string]any{
 					"transaction_id":  tx.TxID,
 					"agent_id":        dstr(d, "agent_id"),
 					"previous_regime": dstr(d, "old_regime"),
@@ -780,7 +846,7 @@ func consumerSocietyEvolution(p *Projections) Consumer {
 					"recorded_at":     now,
 				})
 			case DomainTokenEconomy:
-				p.Insert(TableEconomicLedger, map[string]any{
+				p.insertOnce(ev, TableEconomicLedger, map[string]any{
 					"transaction_id":       tx.TxID,
 					"account_id":           dstr(d, "agent_id"),
 					"allocated_bonus_mint": dnum(d, "allocated_bonus"),
@@ -792,7 +858,7 @@ func consumerSocietyEvolution(p *Projections) Consumer {
 			case DomainCoalitionEngine:
 				// 对齐 TS: coalition_id 与 allocated_matrix 可同时落两张表
 				if dstr(d, "coalition_id") != "" {
-					p.Insert(TableCoalitionFormation, map[string]any{
+					p.insertOnce(ev, TableCoalitionFormation, map[string]any{
 						"transaction_id":     tx.TxID,
 						"coalition_id":       dstr(d, "coalition_id"),
 						"faction_name":       dstr(d, "faction_name"),
@@ -803,7 +869,7 @@ func consumerSocietyEvolution(p *Projections) Consumer {
 					})
 				}
 				if _, has := d["allocated_matrix"]; has {
-					p.Insert(TableCoalitionPayoutHistory, map[string]any{
+					p.insertOnce(ev, TableCoalitionPayoutHistory, map[string]any{
 						"transaction_id":     tx.TxID,
 						"coalition_id":       dstr(d, "coalition_id"),
 						"allocated_matrix":   dany(d, "allocated_matrix"),
@@ -838,7 +904,7 @@ func consumerSocietyGovernance(p *Projections) Consumer {
 				if dstr(d, "norm_name_seal") == "" {
 					return nil // 对齐 TS: 无 norm_name_seal 不落
 				}
-				p.Insert(TableInstitutionRegistry, map[string]any{
+				p.insertOnce(ev, TableInstitutionRegistry, map[string]any{
 					"transaction_id": tx.TxID,
 					"institution_id": dstr(d, "institution_id"),
 					"norm_title":     dstr(d, "norm_name_seal"),
@@ -849,7 +915,7 @@ func consumerSocietyGovernance(p *Projections) Consumer {
 				})
 			case DomainGovernancePolicy:
 				if dstr(d, "assessment_id") != "" {
-					p.Insert(TableGovernanceAssessment, map[string]any{
+					p.insertOnce(ev, TableGovernanceAssessment, map[string]any{
 						"transaction_id":    tx.TxID,
 						"assessment_id":     dstr(d, "assessment_id"),
 						"implicated_node":   dstr(d, "target_node"),
@@ -863,7 +929,7 @@ func consumerSocietyGovernance(p *Projections) Consumer {
 					return nil
 				}
 				if dstr(d, "triggered_action") != "" {
-					p.Insert(TableGovernanceAction, map[string]any{
+					p.insertOnce(ev, TableGovernanceAction, map[string]any{
 						"transaction_id":       tx.TxID,
 						"associated_policy":    dstr(d, "policy_id"),
 						"executed_action_type": dstr(d, "triggered_action"),
@@ -891,14 +957,29 @@ const (
 )
 
 // consumerTelemetryAggregation 11. 遥测聚合投影
-// (TS telemetry-aggregation-consumer.ts: 按域路由计数 + 系统熵启发式;
-// TS 还订阅 SnapshotCreated 统计 IPC 帧 — Go 侧进程内无 DistributedBroker,
-// 该分支省略, 见报告差异说明)
+// (TS telemetry-aggregation-consumer.ts: 按域路由计数 + 系统熵启发式 +
+// SnapshotCreated/domain=DistributedBroker → IPC 帧计数; Go 侧 broker.go
+// 广播的 snapshot 事件由此分支承接)
 func consumerTelemetryAggregation(p *Projections) Consumer {
 	return Consumer{
-		Name:       "telemetry-aggregation",
-		EventTypes: []string{EventTypeTransactionCommitted}, // 全部 committed 事务
+		Name: "telemetry-aggregation",
+		EventTypes: []string{
+			EventTypeTransactionCommitted, // 全部 committed 事务
+			eventSnapshotCreated,          // IPC 帧/快照计数 (批次 7 补齐)
+		},
 		Handle: func(ctx context.Context, ev bus.Event) error {
+			// SnapshotCreated 分支: domain=DistributedBroker → IPC 帧计数
+			// (对齐 TS kernel.eventBus.on(RuntimeEvent.SnapshotCreated))
+			if ev.Type == eventSnapshotCreated {
+				var m map[string]any
+				if json.Unmarshal(ev.Payload, &m) == nil {
+					if dstr(m, "domain") == "DistributedBroker" {
+						p.incr(MetricIPCFramesSent)
+					}
+				}
+				return nil
+			}
+
 			tx, ok := ParseTx(ev)
 			if !ok {
 				return nil
@@ -972,7 +1053,7 @@ func consumerEventLogAudit(p *Projections) Consumer {
 				version = tx.Version
 				traceID = tx.TraceID
 			}
-			p.Insert(TableEventLog, map[string]any{
+			p.insertOnce(ev, TableEventLog, map[string]any{
 				"traceId":   traceID,
 				"event":     ev.Type,
 				"domain":    domain,
