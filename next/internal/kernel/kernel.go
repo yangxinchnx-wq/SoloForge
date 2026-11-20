@@ -358,6 +358,11 @@ func (k *RuntimeKernel) TransactionManager() *TransactionManager {
 	return k.txMgr
 }
 
+// Bus 事件总线访问器 (外部域订阅事务事实/心跳事件用)
+func (k *RuntimeKernel) Bus() *bus.EventBus {
+	return k.bus
+}
+
 // SetTransactionManager 替换事务管理器 (对齐 TS bootstrapCoreLinkages 注入)
 func (k *RuntimeKernel) SetTransactionManager(tm *TransactionManager) {
 	k.mu.Lock()
