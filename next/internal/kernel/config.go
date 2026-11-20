@@ -9,6 +9,7 @@
 //     返回该节合并快照
 //   - Set 只写用户配置层, 永不污染默认表 (对齐 TS)
 //   - 线程安全: RWMutex (TS 单线程事件循环无此需求, Go 显式加锁)
+//
 // ─────────────────────────────────────────────────────────────────
 package kernel
 
@@ -20,21 +21,21 @@ import (
 // DEFAULT_CONFIG 内置默认表 (字段级对齐 TS config-center.ts DEFAULT_CONFIG)
 var DEFAULT_CONFIG = map[string]any{
 	// Governor 时钟
-	"governor.clock.tick_rate_ms":            50,
-	"governor.observability.http_port":       9090,
+	"governor.clock.tick_rate_ms":      50,
+	"governor.observability.http_port": 9090,
 
 	// IPC 网络设置
-	"governor.ipc.host":                      "127.0.0.1",
-	"governor.ipc.port":                      8765,
-	"governor.ipc.max_reconnect_attempts":    10,
-	"governor.ipc.reconnect_backoff_base":    1000,
+	"governor.ipc.host":                   "127.0.0.1",
+	"governor.ipc.port":                   8765,
+	"governor.ipc.max_reconnect_attempts": 10,
+	"governor.ipc.reconnect_backoff_base": 1000,
 
 	// Society 配置
-	"society.law.default_active_wal":                true,
-	"society.law.emergency_lockdown_cooldown":       5000,
-	"society.reputation.weight_error":               0.3,
-	"society.reputation.decay_rate":                 0.95,
-	"society.governance.effectiveness_threshold":    0.85,
+	"society.law.default_active_wal":             true,
+	"society.law.emergency_lockdown_cooldown":    5000,
+	"society.reputation.weight_error":            0.3,
+	"society.reputation.decay_rate":              0.95,
+	"society.governance.effectiveness_threshold": 0.85,
 
 	// 政府干预参数
 	"society.governance.tax_equilibrium_coefficient": 0.15, // 税收均衡系数
@@ -43,30 +44,30 @@ var DEFAULT_CONFIG = map[string]any{
 	"society.governance.auto_intervention_enabled":   true, // 自动干预开关
 
 	// 沙箱配置
-	"society.sandbox.cpu_critical_bar":         0.90,
-	"society.sandbox.heavyweight_byte_line":    10485760,
-	"society.sandbox.fallback_safe_slot_id":    "isolated_failover_slot_omega",
+	"society.sandbox.cpu_critical_bar":      0.90,
+	"society.sandbox.heavyweight_byte_line": 10485760,
+	"society.sandbox.fallback_safe_slot_id": "isolated_failover_slot_omega",
 
 	// 联盟 Shapley 值容差
-	"society.coalition.shapley_tolerance":        0.001,
-	"society.coalition.min_formation_threshold":  0.1,
+	"society.coalition.shapley_tolerance":       0.001,
+	"society.coalition.min_formation_threshold": 0.1,
 
 	// 制度信任阈值
 	"society.institution.trust_threshold_min": 0.6,
 	"society.institution.trust_threshold_max": 0.95,
 
 	// 角色演化
-	"society.evolution.role_cooldown_ticks":  100,
-	"society.evolution.promotion_threshold":  0.8,
-	"society.evolution.demotion_threshold":   0.3,
+	"society.evolution.role_cooldown_ticks": 100,
+	"society.evolution.promotion_threshold": 0.8,
+	"society.evolution.demotion_threshold":  0.3,
 
 	// 社会记忆
-	"society.memory.forgetting_curve_base":             0.05,
-	"society.memory.consolidation_interval_ticks":      50,
+	"society.memory.forgetting_curve_base":        0.05,
+	"society.memory.consolidation_interval_ticks": 50,
 
 	// Shadow Governor
-	"governor.shadow.enabled":     false,
-	"governor.shadow.server_url":  "http://127.0.0.1:8080",
+	"governor.shadow.enabled":    false,
+	"governor.shadow.server_url": "http://127.0.0.1:8080",
 
 	// Phase 7: 分布式 Raft 共识集群
 	"governor.cluster.local_node_id": "node_alpha_master",

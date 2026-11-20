@@ -10,11 +10,13 @@
 //   - rollback(commandId, cause): 清理该 commandId 的全部活跃事务,
 //     逐个发 TransactionRolledBack {txId, commandId, error}
 //   - drain(): 清空活跃表
+//
 // Go 增强 (TS 无):
 //   - 乐观锁: Begin 记录内核版本基线, Commit 校验 ExpectedVersion == 内核
 //     当前版本, 冲突则 ErrVersionConflict; 成功后内核 version 单调 +1
 //   - 事务超时: 默认 30s, 过期事务 Commit 时自动按回滚处理 (ErrTxExpired)
 //   - 事件纪律对齐 court.go: 先 store.AppendEvent 落库后 bus.Publish 广播
+//
 // ─────────────────────────────────────────────────────────────────
 package kernel
 
@@ -100,11 +102,11 @@ func (m *TransactionManager) Begin(commandID, domain string, data any) (*Transac
 }
 
 // Commit 提交事务 (对齐 TS commit + Go 增强校验):
-//   1. 事务必须存在 (否则 ErrTxNotFound, 对齐 TS 抛错)
-//   2. 超时检查: 过期 → 移出并按回滚广播, 返回 ErrTxExpired
-//   3. 乐观锁: ExpectedVersion != 内核当前版本 → 移出并广播回滚,
-//      返回 ErrVersionConflict (内核版本已被并发事务推进)
-//   4. 成功: 移出活跃表, 内核 version 单调 +1, 广播 TransactionCommitted
+//  1. 事务必须存在 (否则 ErrTxNotFound, 对齐 TS 抛错)
+//  2. 超时检查: 过期 → 移出并按回滚广播, 返回 ErrTxExpired
+//  3. 乐观锁: ExpectedVersion != 内核当前版本 → 移出并广播回滚,
+//     返回 ErrVersionConflict (内核版本已被并发事务推进)
+//  4. 成功: 移出活跃表, 内核 version 单调 +1, 广播 TransactionCommitted
 func (m *TransactionManager) Commit(ctx context.Context, txID string) error {
 	m.mu.Lock()
 	tx, ok := m.active[txID]

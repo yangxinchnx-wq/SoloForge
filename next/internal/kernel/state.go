@@ -3,14 +3,15 @@
 //
 // 语义对齐 (TS 两套实现合并为一张注册表):
 //   - runtime-kernel.ts 的 StateOwnershipRegistry:
-//       register(domain, keyPattern) + hasOwnership(domain, key) 通配符匹配
-//       ('*' → '.*' 正则, 与 TS replace(/\*/g,'.*') 行为一致)
+//     register(domain, keyPattern) + hasOwnership(domain, key) 通配符匹配
+//     ('*' → '.*' 正则, 与 TS replace(/\*/g,'.*') 行为一致)
 //   - state-ownership.ts 的 StateOwnerRegistry:
-//       registerDomain(domain) + verifyCommandOwnership(command) 宪法校验
-//       错误码 ERR_SF_OWNERSHIP: 域未注册 / 匿名调用者拒绝
-//       系统级调用者 (SYSTEM_MASTER_DAEMON/SYSTEM/BOOTSTRAP/SUPERVISOR) 放行
+//     registerDomain(domain) + verifyCommandOwnership(command) 宪法校验
+//     错误码 ERR_SF_OWNERSHIP: 域未注册 / 匿名调用者拒绝
+//     系统级调用者 (SYSTEM_MASTER_DAEMON/SYSTEM/BOOTSTRAP/SUPERVISOR) 放行
 //   - 预置域所有权对齐 TS RuntimeKernel.initializeDomainOwnership
 //     (JudicialCourt/AIRuntime/Governor/ShadowGovernor/DecisionEngine)
+//
 // ─────────────────────────────────────────────────────────────────
 package kernel
 
@@ -30,10 +31,10 @@ type ownershipPattern struct {
 
 // StateOwnership 状态所有权注册表 (域 → key 模式集合)
 type StateOwnership struct {
-	mu        sync.RWMutex
-	ownerships map[string][]ownershipPattern          // domain → 模式列表
-	domains    map[string]bool                        // 已注册域 (对齐 TS StateOwnerRegistry.domains)
-	systemCallers map[string]bool                    // 系统级调用者白名单
+	mu            sync.RWMutex
+	ownerships    map[string][]ownershipPattern // domain → 模式列表
+	domains       map[string]bool               // 已注册域 (对齐 TS StateOwnerRegistry.domains)
+	systemCallers map[string]bool               // 系统级调用者白名单
 }
 
 // NewStateOwnership 构造注册表并预置域所有权
@@ -137,9 +138,9 @@ func (so *StateOwnership) Patterns(domain string) []string {
 }
 
 // VerifyCommandOwnership 核心宪法校验 (对齐 TS verifyCommandOwnership):
-//   1. 域未注册 → ERR_SF_OWNERSHIP
-//   2. 系统级调用者 → 放行
-//   3. 匿名/空调用者 → ERR_SF_OWNERSHIP
+//  1. 域未注册 → ERR_SF_OWNERSHIP
+//  2. 系统级调用者 → 放行
+//  3. 匿名/空调用者 → ERR_SF_OWNERSHIP
 func (so *StateOwnership) VerifyCommandOwnership(domain, caller string) error {
 	so.mu.RLock()
 	defer so.mu.RUnlock()

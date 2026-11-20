@@ -14,6 +14,7 @@
 //     command.rejected (对齐 docs/protocol.md §6 RuntimeEvent)
 //   - 组件注册表: Register 重复注册报错, Start 正序启动, Shutdown 逆序停止
 //   - 预置域所有权 (state.go) 与配置中心 (config.go) 由构造器挂载
+//
 // Go 增强 (TS 无): 状态迁移合法性校验、ExecuteCommand 就绪态守卫
 // 事件纪律对齐 internal/court/court.go: 先 store.AppendEvent 落库后
 // bus.Publish 广播
@@ -87,10 +88,10 @@ type Component interface {
 
 // Command 命令信封 (对齐 docs/protocol.md §5: {id?, type, domain, caller, payload})
 type Command struct {
-	ID      string          `json:"id,omitempty"`   // 命令 ID (可选)
-	Type    string          `json:"type"`           // 命令名 (如 SYS_HEARTBEAT)
-	Domain  string          `json:"domain"`         // 执行域
-	Caller  string          `json:"caller"`         // 调用方
+	ID      string          `json:"id,omitempty"`      // 命令 ID (可选)
+	Type    string          `json:"type"`              // 命令名 (如 SYS_HEARTBEAT)
+	Domain  string          `json:"domain"`            // 执行域
+	Caller  string          `json:"caller"`            // 调用方
 	Payload json.RawMessage `json:"payload,omitempty"` // 任意 JSON 载荷
 }
 
@@ -98,23 +99,24 @@ type Command struct {
 
 // RuntimeKernel 统一真相内核
 type RuntimeKernel struct {
-	store *store.Store // 事件先落"库"
+	store *store.Store  // 事件先落"库"
 	bus   *bus.EventBus // 后广播
 
 	ID        string `json:"id"`        // 固定 kernel_sovereign_core (对齐 TS)
 	StartedAt int64  `json:"startedAt"` // 启动时间 (unix ms)
 
-	Config         *ConfigCenter          // 配置中心 (对齐 TS public configCenter)
-	StateOwnership *StateOwnership        // 状态所有权注册表 (对齐 TS stateOwnership)
+	Config         *ConfigCenter   // 配置中心 (对齐 TS public configCenter)
+	StateOwnership *StateOwnership // 状态所有权注册表 (对齐 TS stateOwnership)
 
 	mu         sync.RWMutex
 	state      RuntimeState
 	mode       RuntimeMode
-	version    int64                   // 内核版本 (事务乐观锁基准)
-	components map[string]Component    // 组件注册表
-	order      []string                // 注册顺序 (Shutdown 逆序停止)
-	cmdBus     *bus.CommandBus         // 命令总线 (bootstrap 挂载, 可为 nil)
-	txMgr      *TransactionManager     // 事务管理器 (构造时创建)
+	version    int64                // 内核版本 (事务乐观锁基准)
+	tick       int64                // 逻辑时钟 tick (TS kernel.currentTick; 见 runtime_events.go)
+	components map[string]Component // 组件注册表
+	order      []string             // 注册顺序 (Shutdown 逆序停止)
+	cmdBus     *bus.CommandBus      // 命令总线 (bootstrap 挂载, 可为 nil)
+	txMgr      *TransactionManager  // 事务管理器 (构造时创建)
 }
 
 // New 构造内核: 预置域所有权 (对齐 TS initializeDomainOwnership)、
