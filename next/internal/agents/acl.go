@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -70,6 +71,11 @@ type ACLMessage struct {
 	MessageID    string          `json:"messageId"`           // 消息 ID
 	ReplyWith    string          `json:"replyWith,omitempty"` // 回复目标 ID (TS 源码叫 replyTo)
 	Timestamp    int64           `json:"timestamp"`           // 毫秒时间戳
+
+	// ── 批次 4 补齐字段 (旧消息不含, JSON omitempty 保持线格式兼容) ──
+	Priority       int    `json:"priority,omitempty"`       // 消息优先级 (0=低 1=普通 2=紧急; 详见 acl_deep.go)
+	ConversationID string `json:"conversationId,omitempty"` // 会话 ID (会话上下文管理)
+	InReplyTo      string `json:"inReplyTo,omitempty"`      // 回复所针对的消息 ID
 }
 
 // Inbox / 去重参数 (对齐 TS maxInboxSize=100, messageTTLms=30000, dedupeSetMaxSize=5000)
@@ -97,15 +103,25 @@ type ACLBus struct {
 	bus       *bus.EventBus
 	// gossipObserver GOSSIP 观察钩子 (编排器接入信誉引擎, 间接声誉 → UpdateFromGossip)
 	gossipObserver func(msg ACLMessage)
+
+	// ── 批次 4 补齐状态 (会话上下文管理 + 协议协商握手, 细则见 acl_deep.go) ──
+	conversations map[string]*ACLConversation // 会话 ID → 会话上下文
+	convByMsg     map[string]string           // messageId → 会话 ID (InReplyTo 回溯)
+	pendingProps  map[string]*ACLProposal     // 提案 ID → 协议协商提案
+	negotiated    map[string]string           // "from\u0000to" → 已协商协议名
 }
 
 // NewACLBus 构造通信总线 (store/bus 为构造注入, 事件先落库后广播)
 func NewACLBus(st *store.Store, b *bus.EventBus) *ACLBus {
 	return &ACLBus{
-		inboxes: make(map[string][]ACLMessage),
-		seenIDs: make(map[string]struct{}),
-		store:   st,
-		bus:     b,
+		inboxes:       make(map[string][]ACLMessage),
+		seenIDs:       make(map[string]struct{}),
+		conversations: make(map[string]*ACLConversation),
+		convByMsg:     make(map[string]string),
+		pendingProps:  make(map[string]*ACLProposal),
+		negotiated:    make(map[string]string),
+		store:         st,
+		bus:           b,
 	}
 }
 
@@ -143,7 +159,8 @@ func (c *ACLBus) RegisteredAgents() []string {
 	return out
 }
 
-// Send 发送点对点消息 (补全 messageId/timestamp → 写 receiver inbox → 去重登记 → 落库广播)
+// Send 发送点对点消息 (补全 messageId/timestamp → 写 receiver inbox →
+// 会话上下文记账 → 去重登记 → 落库广播)
 func (c *ACLBus) Send(ctx context.Context, msg ACLMessage) ACLMessage {
 	full := msg
 	full.MessageID = c.newMessageID()
@@ -157,7 +174,9 @@ func (c *ACLBus) Send(ctx context.Context, msg ACLMessage) ACLMessage {
 	}
 	inbox = append(inbox, full)
 	c.inboxes[full.Receiver] = inbox
-	// 2. 登记 messageId (去重集合, 防跨进程回环)
+	// 2. 会话上下文记账 (ConversationID 已指定或 InReplyTo 回溯归属)
+	c.recordConversationLocked(full)
+	// 3. 登记 messageId (去重集合, 防跨进程回环)
 	c.trackSeenLocked(full.MessageID)
 	observer := c.gossipObserver
 	c.mu.Unlock()
@@ -166,7 +185,7 @@ func (c *ACLBus) Send(ctx context.Context, msg ACLMessage) ACLMessage {
 		observer(full)
 	}
 
-	// 3. 事件: 先落库后广播
+	// 4. 事件: 先落库后广播
 	c.emit(ctx, full)
 	return full
 }
@@ -199,7 +218,8 @@ func (c *ACLBus) Gossip(ctx context.Context, sender, aboutAgentID string, evalua
 	}
 }
 
-// Poll 轮询接收消息 (Agent 主循环调用): 取空 inbox 并过滤过期消息 (TTL 30s)
+// Poll 轮询接收消息 (Agent 主循环调用): 取空 inbox, 过滤过期消息 (TTL 30s),
+// 按优先级降序返回 (同级保持 FIFO, 对齐 acl_deep.go 的优先级队列语义)。
 func (c *ACLBus) Poll(agentID string) []ACLMessage {
 	c.mu.Lock()
 	messages := c.inboxes[agentID]
@@ -213,6 +233,7 @@ func (c *ACLBus) Poll(agentID string) []ACLMessage {
 			out = append(out, m)
 		}
 	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Priority > out[j].Priority })
 	return out
 }
 
