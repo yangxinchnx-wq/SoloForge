@@ -2,10 +2,11 @@
 // sse — SSEWorker: 通过 HTTP SSE 消费 Java Agent Advisor
 //
 // Advisor 自身已移除 TCP 8771, 改为 SSE 直出 (ChatStreamController):
-//   POST /api/chat/stream → text/event-stream
-//     event:phase  data:{"phase":"phase0_subtask",...}
-//     event:text   data:{"content":"..."}
-//     event:phase  data:{"phase":"phase3_deliver_done",...}
+//
+//	POST /api/chat/stream → text/event-stream
+//	  event:phase  data:{"phase":"phase0_subtask",...}
+//	  event:text   data:{"content":"..."}
+//	  event:phase  data:{"phase":"phase3_deliver_done",...}
 //
 // SSEWorker 逐行解析 SSE, 聚合内容, 返回最终文本。
 // 编排器的 phase 事件由 Orchestrator 自行广播 (避免双发)。

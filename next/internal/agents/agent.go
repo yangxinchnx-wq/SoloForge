@@ -14,25 +14,25 @@ import (
 
 // ReputationComponents 信誉构成 (对齐 TS ReputationComponents)
 type ReputationComponents struct {
-	Quality      float64 `json:"quality"`
-	Reliability  float64 `json:"reliability"`
+	Quality       float64 `json:"quality"`
+	Reliability   float64 `json:"reliability"`
 	Collaboration float64 `json:"collaboration"`
 }
 
 // Agent 单个智能体 (快照结构与旧版一致)
 type Agent struct {
-	AgentID            string               `json:"agentId"`
-	StrategyType       string               `json:"strategyType"`
-	Model              string               `json:"model,omitempty"`
-	ReputationScore    float64              `json:"reputationScore"`
+	AgentID              string               `json:"agentId"`
+	StrategyType         string               `json:"strategyType"`
+	Model                string               `json:"model,omitempty"`
+	ReputationScore      float64              `json:"reputationScore"`
 	ReputationComponents ReputationComponents `json:"reputationComponents"`
-	EvidenceCount      int                  `json:"evidenceCount"`
-	StakeBalance       float64              `json:"stakeBalance"`
-	TotalExecutions    int                  `json:"totalExecutions"`
-	TotalDisputes      int                  `json:"totalDisputes"`
-	TotalWins          int                  `json:"totalWins"`
-	TotalLosses        int                  `json:"totalLosses"`
-	CreatedAt          time.Time            `json:"createdAt"`
+	EvidenceCount        int                  `json:"evidenceCount"`
+	StakeBalance         float64              `json:"stakeBalance"`
+	TotalExecutions      int                  `json:"totalExecutions"`
+	TotalDisputes        int                  `json:"totalDisputes"`
+	TotalWins            int                  `json:"totalWins"`
+	TotalLosses          int                  `json:"totalLosses"`
+	CreatedAt            time.Time            `json:"createdAt"`
 }
 
 // Pool agent 池 (进程内, 阶段 2 后续版本持久化关键变更)
@@ -54,9 +54,9 @@ func (p *Pool) Register(agentID, strategyType, model string) *Agent {
 		return a
 	}
 	a := &Agent{
-		AgentID:      agentID,
-		StrategyType: strategyType,
-		Model:        model,
+		AgentID:         agentID,
+		StrategyType:    strategyType,
+		Model:           model,
 		ReputationScore: 100,
 		ReputationComponents: ReputationComponents{
 			Quality: 100, Reliability: 100, Collaboration: 100,
@@ -111,10 +111,18 @@ func (p *Pool) AdjustReputation(agentID string, delta float64) error {
 	return nil
 }
 
-func (p *Pool) RecordExecution(agentID string) error { return p.apply(agentID, func(a *Agent) { a.TotalExecutions++ }) }
-func (p *Pool) RecordDispute(agentID string) error   { return p.apply(agentID, func(a *Agent) { a.TotalDisputes++ }) }
-func (p *Pool) RecordWin(agentID string) error       { return p.apply(agentID, func(a *Agent) { a.TotalWins++ }) }
-func (p *Pool) RecordLoss(agentID string) error      { return p.apply(agentID, func(a *Agent) { a.TotalLosses++ }) }
+func (p *Pool) RecordExecution(agentID string) error {
+	return p.apply(agentID, func(a *Agent) { a.TotalExecutions++ })
+}
+func (p *Pool) RecordDispute(agentID string) error {
+	return p.apply(agentID, func(a *Agent) { a.TotalDisputes++ })
+}
+func (p *Pool) RecordWin(agentID string) error {
+	return p.apply(agentID, func(a *Agent) { a.TotalWins++ })
+}
+func (p *Pool) RecordLoss(agentID string) error {
+	return p.apply(agentID, func(a *Agent) { a.TotalLosses++ })
+}
 
 func (p *Pool) apply(agentID string, fn func(*Agent)) error {
 	p.mu.Lock()
