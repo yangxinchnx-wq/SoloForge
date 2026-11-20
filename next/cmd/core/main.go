@@ -100,6 +100,7 @@ func main() {
 
 	// ── HTTP/WS ──
 	srv := api.New(st, evBus, cmdBus, logger)
+	srv.Kernel = kern // 内核状态机守卫命令派发 (深度迁移)
 
 	// git 服务并入 (原独立进程 3002 → 进程内路由): 先挂路由再包装中间件
 	gsHandler := githandler.New(*repoPath)

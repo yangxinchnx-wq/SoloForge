@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"soloforge/next/internal/bus"
+	"soloforge/next/internal/kernel"
 	"soloforge/next/internal/store"
 )
 
@@ -28,6 +29,7 @@ type Server struct {
 	Store    *store.Store
 	Bus      *bus.EventBus
 	Commands *bus.CommandBus
+	Kernel   *kernel.RuntimeKernel // 可空: 设置后命令经内核状态机守卫+事务管理
 	mux      *http.ServeMux
 	start    time.Time
 	logger   *slog.Logger
@@ -112,6 +114,29 @@ func (s *Server) handleCommands(w http.ResponseWriter, r *http.Request) {
 	if req.Source == "" {
 		req.Source = "http"
 	}
+	// ★ kernel 接线: 内核存在时命令经状态机守卫+事务管理 (深度迁移)
+	if s.Kernel != nil {
+		kernCmd := kernel.Command{
+			Type:    req.Type,
+			Domain:  "api",
+			Caller:  req.Source,
+			Payload: req.Payload,
+		}
+		result, err := s.Kernel.ExecuteCommand(r.Context(), kernCmd)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		// 落 command.executed 事件
+		payload, _ := json.Marshal(map[string]any{"command": req.Type, "result": result})
+		ev, err := s.Store.AppendEvent(r.Context(), "command.executed", req.Source, payload)
+		if err == nil {
+			s.Bus.Publish(ev)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "result": result, "seq": ev.Seq})
+		return
+	}
+	// 无 kernel 时走直连路径 (兼容)
 	result, err := s.Commands.Dispatch(r.Context(), bus.Command{Type: req.Type, Payload: req.Payload})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
