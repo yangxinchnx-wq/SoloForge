@@ -66,6 +66,10 @@ export class BrowserUseMcpClient extends EventEmitter {
 
   constructor(private readonly pythonPath: string, private readonly cwd: string) {
     super();
+    // Windows: cwd 含反斜杠时 libuv spawn 报 ENOENT (实测) — 归一化为正斜杠
+    this.cwd = cwd.replace(/\\/g, '/');
+    // 防未监听 'error' 事件导致进程崩溃 (外部监听者仍会收到)
+    this.on('error', () => {});
   }
 
   /**

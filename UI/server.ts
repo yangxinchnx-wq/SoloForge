@@ -110,7 +110,7 @@ async function invokeBrowserUse(
   args: Record<string, any>,
   signal: AbortSignal
 ): Promise<{ success: boolean; output?: string; error?: string }> {
-  const BASE = `http://localhost:4000`;
+  const BASE = `http://127.0.0.1:7300`; // Go 核心 compat 层的 browser-use 路由 (旧自引用会导致挂起)
   try {
     // 健康检查
     const healthResp = await fetch(`${BASE}/api/browser-use/health`, { signal });
@@ -556,7 +556,7 @@ async function startServer() {
   //   /api/browser-use/stream/:id     — SSE 步进流
   //   /api/browser-use/health         — 探活
   // ============================================================
-  const repoRootSrv = path.resolve(__dirname_srv, "..", "..");
+  const repoRootSrv = path.resolve(__dirname_srv, ".."); // SoloForge 仓库根 (UI 的上一级)
   registerBrowserUseRoutes(app, repoRootSrv);
 
   // ============================================================
