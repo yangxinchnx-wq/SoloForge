@@ -55,6 +55,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"regexp"
 	"sort"
@@ -350,6 +351,7 @@ type SkillEntry struct {
 	Domain      string  `json:"domain"`      // 领域 (agentId 前缀)
 	Pattern     string  `json:"pattern"`     // 经验描述
 	Confidence  float64 `json:"confidence"`  // 0-1 置信度
+	Tier        int     `json:"tier"`        // 技能层级 0=候选 1=已验证 2=核心 (晋升/降级细则见 evolution_deep.go)
 	UsageCount  int     `json:"usageCount"`  // 被引用次数
 	SuccessRate float64 `json:"successRate"` // 使用成功率
 	CreatedAt   int64   `json:"createdAt"`
@@ -412,7 +414,12 @@ func (l *SkillLibrary) QueryAll(limit int) []SkillEntry {
 	return out
 }
 
-// RecordUsage 记录技能被使用 (滑动窗口更新成功率, 对齐 TS ×0.9 + success×0.1)
+// RecordUsage 记录技能被使用。
+// 滑动窗口成功率对齐 TS (×0.9 + success×0.1); 晋升/降级/失效为批次 3
+// 补齐的深度行为 (TS skill-library 只声明未实现), 阈值细则见 evolution_deep.go:
+//   - 晋升: 使用 ≥5 次且成功率 ≥0.8 → 层级 +1, 置信度 +0.2 (上限 1.0)
+//   - 降级: 成功率 <0.4 → 层级 -1, 置信度 ×0.6
+//   - 失效: 成功率 <0.2 → 移除 (与经验降级失效同源的"越用越错"防护)
 func (l *SkillLibrary) RecordUsage(skillID string, success bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -427,6 +434,25 @@ func (l *SkillLibrary) RecordUsage(skillID string, success bool) {
 		delta = 0.1
 	}
 	skill.SuccessRate = skill.SuccessRate*0.9 + delta
+
+	switch {
+	case skill.Tier < skillTierCore &&
+		skill.UsageCount >= skillPromoteMinUsage &&
+		skill.SuccessRate >= skillPromoteMinRate:
+		// 晋升
+		skill.Tier++
+		skill.Confidence = math.Min(1, skill.Confidence+skillPromoteConfidenceStep)
+	case skill.Tier > skillTierCandidate && skill.SuccessRate < skillDemoteRate:
+		// 降级
+		skill.Tier--
+		skill.Confidence *= skillDemoteConfidenceFactor
+	}
+
+	if skill.SuccessRate < skillInvalidRate {
+		// 失效移除 (自动衰减终极形态)
+		delete(l.skills, skillID)
+		return
+	}
 	l.skills[skillID] = skill
 }
 
@@ -1575,6 +1601,9 @@ func NewEvolutionPipeline(client EvolutionClient, st *store.Store, b *bus.EventB
 	subID, ch := b.Subscribe()
 	p.busSubID = subID
 	go p.watchReputation(ch)
+
+	// 周期清扫: 超龄经验 (>30 天, 对齐 TS load 衰减) + 陈旧技能衰减 (>7 天)
+	go p.janitor()
 	return p
 }
 
