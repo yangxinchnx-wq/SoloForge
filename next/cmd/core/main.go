@@ -26,6 +26,7 @@ import (
 
 	"soloforge/next/internal/agents"
 	"soloforge/next/internal/api"
+	"soloforge/next/internal/compat"
 	"soloforge/next/internal/bus"
 	"soloforge/next/internal/court"
 	"soloforge/next/internal/data"
@@ -154,6 +155,15 @@ func main() {
 	orch := agents.NewOrchestrator(pool, st, evBus, workers)
 	agents.RegisterRoutes(srv.Mux(), pool, orch)
 	logger.Info("Agent 运行时就绪", "agents", pool.Count(), "workers", len(workers))
+
+	// ── 旧代理路径兼容层 (browser-use/feedback/names/training/llm-stream/test) ──
+	compat.Register(srv.Mux(), compat.Deps{
+		Pool:  pool,
+		Relay: relay,
+		Store: st,
+		Bus:   evBus,
+	})
+	logger.Info("兼容层就绪 (browser-use/feedback/names/training/test)")
 
 	// ── 社会域 (society, 阶段 2 迁入; 信誉级联目标 = agent 池) ──
 	socSvc := society.New(st, evBus, pool)
