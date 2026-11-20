@@ -101,6 +101,15 @@ func (m *TransactionManager) Begin(commandID, domain string, data any) (*Transac
 	return tx, nil
 }
 
+// AttachPayload 附加事务载荷 (对齐 TS tx.payload = {...}; 提交时随事件广播)
+func (m *TransactionManager) AttachPayload(txID string, data any) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if tx, ok := m.active[txID]; ok {
+		tx.Data = data
+	}
+}
+
 // Commit 提交事务 (对齐 TS commit + Go 增强校验):
 //  1. 事务必须存在 (否则 ErrTxNotFound, 对齐 TS 抛错)
 //  2. 超时检查: 过期 → 移出并按回滚广播, 返回 ErrTxExpired
