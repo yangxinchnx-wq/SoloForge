@@ -31,6 +31,7 @@ import (
 	"soloforge/next/internal/court"
 	"soloforge/next/internal/data"
 	"soloforge/next/internal/decision"
+	"soloforge/next/internal/economy"
 	githandler "soloforge/next/internal/gitsvc/handler"
 	"soloforge/next/internal/law"
 	"soloforge/next/internal/kernel"
@@ -188,13 +189,30 @@ func main() {
 	lawSvc := law.New(st, evBus, pool)
 
 	// ── MARL 策略注入 (SOLOFORGE_MARL_ADDR=127.0.0.1:8765 时激活) ──
+	var marlClient *marl.Client
 	if marlAddr := os.Getenv("SOLOFORGE_MARL_ADDR"); marlAddr != "" {
-		client := marl.New(marlAddr)
+		marlClient = marl.New(marlAddr)
 		decSvc.SetPolicy(func(ctx context.Context, obs []float64) (float64, error) {
-			return client.Bonus(ctx, obs)
+			return marlClient.Bonus(ctx, obs)
 		})
 		logger.Info("MARL 策略已注入", "addr", marlAddr)
 	}
+
+	// ── 深度迁移模块装配 (批次 1-9): 经济/沙箱/共识/编排器/进化管线 ──
+	// 经 kernel.Component 生命周期注册, kern.Start 统一拉起 → 状态机
+	// BOOTING→INITIALIZING→READY (HTTP 命令派发的状态机守卫自此生效)
+	// (占位: 组件在下方逐个 Register; 见 wiringDeepModules)
+	shutdownFns := wiringDeepModules(kern, st, evBus, cmdBus, metricsCollector, marlClient, logger)
+	defer func() {
+		for i := len(shutdownFns) - 1; i >= 0; i-- {
+			shutdownFns[i]()
+		}
+	}()
+	if err := kern.Start(context.Background()); err != nil {
+		logger.Error("内核启动失败", "err", err)
+		os.Exit(4)
+	}
+	logger.Info("内核 READY (深度迁移模块已装配)", "components", kern.Components())
 
 	// CommandBus 注册 (语义对齐旧 src/kernel/command-bus.ts 命令名)
 	cmdBus.Register("EXECUTE_EVIDENTIARY_ARBITRATION", func(ctx context.Context, payload json.RawMessage) (any, error) {
@@ -428,4 +446,123 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// ── 深度迁移模块装配 (批次 1-9 接线) ─────────────────────────────
+//
+// wiringDeepModules 把批次 1-9 迁入的模块挂进内核生命周期:
+//
+//	经济引擎     economy.TokenEconomyEngine (DISTRIBUTE_ROLE_ALLOCATION_REWARD)
+//	沙箱引擎     kernel.SandboxMigrationEngine (MIGRATE_SANDBOX_CONTEXT)
+//	Raft 共识     kernel.RaftConsensusNode (单节点自动晋升 / SOLOFORGE_RAFT_PEERS 多节点)
+//	IPC broker    kernel.DistributedProtocolBroker (SOLOFORGE_MARL_ADDR 时连接)
+//	时钟编排器    kernel.ClusterRuntimeOrchestrator (50ms tick + 遥测推流 + 沙箱钩子)
+//	进化管线      agents.EvolutionPipeline (训练调度/经验/技能/信誉触发)
+//
+// 返回逆序关机函数列表 (defer 消费)。
+func wiringDeepModules(kern *kernel.RuntimeKernel, st *store.Store, evBus *bus.EventBus,
+	cmdBus *bus.CommandBus, mc *metrics.Collector, marlClient *marl.Client, logger *slog.Logger) []func() {
+
+	var shutdowns []func()
+	ctx := context.Background()
+
+	// ── 经济引擎 (批次 8) ──
+	eco, err := economy.NewTokenEconomyEngine(kern)
+	if err == nil {
+		eco.Metrics = mc
+		if err := eco.Start(ctx); err != nil {
+			logger.Warn("经济引擎启动失败 (继续运行)", "err", err)
+		} else {
+			shutdowns = append(shutdowns, func() { _ = eco.Stop(ctx) })
+			logger.Info("经济引擎就绪 (DISTRIBUTE_ROLE_ALLOCATION_REWARD)")
+		}
+	}
+
+	// ── 沙箱隔离与热迁移 (批次 6) ──
+	sandboxEng, err := kernel.NewSandboxMigrationEngine(kern)
+	if err == nil {
+		sandboxEng.Metrics = mc
+		if err := sandboxEng.Start(ctx); err != nil {
+			logger.Warn("沙箱引擎启动失败 (继续运行)", "err", err)
+		} else {
+			shutdowns = append(shutdowns, func() { sandboxEng.ClearSandboxRegistry() })
+			logger.Info("沙箱引擎就绪 (MIGRATE_SANDBOX_CONTEXT)")
+		}
+	}
+
+	// ── Raft 共识节点 (批次 5; 单节点自动晋升 LEADER) ──
+	raftNode, err := kernel.NewRaftConsensusNode(kern, "node-local")
+	if err == nil {
+		raftNode.Metrics = mc
+		if peers := os.Getenv("SOLOFORGE_RAFT_PEERS"); peers != "" {
+			kern.Config.Set("governor.cluster.peers_nodes", splitCSV(peers))
+		}
+		if err := raftNode.Boot(ctx); err != nil {
+			logger.Warn("Raft 共识启动失败 (继续运行)", "err", err)
+		} else {
+			shutdowns = append(shutdowns, raftNode.Evict)
+			logger.Info("Raft 共识节点就绪", "role", raftNode.Role(), "term", raftNode.Term())
+		}
+	}
+
+	// ── IPC broker + 时钟编排器 (批次 5; 依赖 MARL 服务) ──
+	var sandboxHook kernel.SandboxHook
+	if sandboxEng != nil {
+		sandboxHook = func(c context.Context, tick int64, traceID string, cpu float64) {
+			sandboxEng.UpdateHostLoadFactorTelemetry(c, traceID, cpu)
+		}
+	}
+	if marlClient != nil {
+		broker, err := kernel.NewDistributedProtocolBroker(kern)
+		if err == nil {
+			broker.Metrics = mc
+			// 非阻塞连接 (MARL 离线时指数退避重连, 超限 → 分裂脑兜底事件)
+			go func() {
+				if err := broker.ConnectMARLServiceGateway(ctx); err != nil {
+					logger.Warn("MARL IPC 首连失败 (后台自动重连)", "err", err)
+				}
+			}()
+			shutdowns = append(shutdowns, broker.ShutdownBroker)
+
+			orch, err := kernel.NewClusterRuntimeOrchestrator(kern, broker)
+			if err == nil {
+				orch.Metrics = mc
+				orch.SetSandboxHook(sandboxHook) // TS 子防线 2: 沙箱压力遥测
+				if err := orch.Start(ctx); err != nil {
+					logger.Warn("时钟编排器启动失败 (继续运行)", "err", err)
+				} else {
+					shutdowns = append(shutdowns, func() { _ = orch.Stop(ctx) })
+					logger.Info("时钟编排器就绪 (50ms tick + 遥测推流 + /metrics-prom)")
+				}
+			}
+		}
+	} else {
+		logger.Info("未配置 SOLOFORGE_MARL_ADDR, IPC broker/时钟编排器未启用")
+	}
+
+	// ── 进化管线 (批次 3; 训练调度/经验缓存/技能库/信誉触发) ──
+	var evoClient agents.EvolutionClient
+	if marlClient != nil {
+		evoClient = agents.NewMARLEvolutionClient(marlClient, envOr("SOLOFORGE_MARL_ADDR", "127.0.0.1:8765"))
+	}
+	evoPipeline := agents.NewEvolutionPipeline(evoClient, st, evBus)
+	shutdowns = append(shutdowns, func() { evoPipeline.Shutdown() })
+	// 种子 Agent 注册训练触发器 (与上方 agent 池种子一致)
+	for _, id := range []string{"agent_architect", "agent_coder", "agent_reviewer"} {
+		evoPipeline.RegisterAgent(id, strings.TrimPrefix(id, "agent_"))
+	}
+	logger.Info("进化管线就绪 (训练调度/经验缓存/技能库/信誉阈值触发)")
+
+	return shutdowns
+}
+
+// splitCSV 逗号分隔 → 字符串切片
+func splitCSV(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
