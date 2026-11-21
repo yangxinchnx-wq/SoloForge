@@ -38,7 +38,7 @@ localLLM.init();
 // dev 模式: Vite dev server (3000) + 外部独立后端
 // prod 模式: Electron 自动启动所有服务
 const DEV_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:4000';
-const BACKEND_URL = process.env.SOLOFORGE_BACKEND_URL || 'http://localhost:3001';
+const BACKEND_URL = process.env.SOLOFORGE_BACKEND_URL || 'http://127.0.0.1:7300';
 
 let isDev = false;
 let mainWindow = null;
@@ -164,26 +164,10 @@ async function startProductionServices() {
     console.warn('[services] git-service not found at', gitExe);
   }
 
-  // ── 阶段 2: 启动依赖 Garnet + SurrealDB + Qdrant 的 RACER Core (3001) ──
-  const coreEntry = path.join(resourcesPath, 'core', 'server.mjs');
-  if (fs.existsSync(coreEntry)) {
-    console.log('[services] Starting RACER Core (3001)...');
-    const coreEnv = { ...process.env };
-    delete coreEnv.ELECTRON_RUN_AS_NODE;
-    // cwd 设为 resourcesPath, 这样 RACER Core 的 process.cwd() 能找到 bin/scheduler.exe
-    const coreProc = spawn(process.execPath, [coreEntry], {
-      cwd: resourcesPath,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: coreEnv,
-      windowsHide: true,
-    });
-    coreProc.stdout?.on('data', (d) => process.stdout.write(`[core] ${d}`));
-    coreProc.stderr?.on('data', (d) => process.stderr.write(`[core] ${d}`));
-    coreProc.on('exit', (code) => console.warn(`[core] exited with code ${code}`));
-    spawnedChildren.push(coreProc);
-    await waitForPort(3001, 15000).then(ok => console.log(ok ? '[services] ✓ RACER Core ready' : '[services] ✗ RACER Core timeout'));
-  } else {
-    console.warn('[services] RACER Core not found at', coreEntry, '— LLM dispatch will fail (502)');
+  // ── 旧 RACER Core (3001) 已退役 — Go 核心 (7300) 由 supervisor 拉起,
+  //    Electron 不再管理核心进程 (见 安装清单.md 新架构启动方式) ──
+  if (process.env.SOLOFORGE_WAIT_CORE === '1') {
+    await waitForPort(7300, 15000).then(ok => console.log(ok ? '[services] ✓ Go core ready' : '[services] ✗ Go core timeout'));
   }
 
   // ── 阶段 3: 启动 Java Agent (8770) — 聊天 SSE + Agent 管理 ──

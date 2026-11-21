@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"soloforge/next/internal/bus"
+	"soloforge/next/internal/llm"
 	"soloforge/next/internal/security"
 	"soloforge/next/internal/store"
 )
@@ -100,6 +101,39 @@ func (s *Service) Register(mux *http.ServeMux) {
 
 	// ── LLM 直连流式代理 (旧 TS 核心退役前置迁移) ──
 	s.registerLLMProxy(mux)
+
+	// ── 模型能力库同步 (旧核 /api/capabilities/save 迁移; server.ts
+	//    model-probe 探测后回写, 走 internal/llm 探针持久化) ──
+	mux.HandleFunc("POST /api/capabilities/save", s.capabilitiesSave)
+}
+
+// capabilitiesSave 保存模型探针结果 (对齐旧核同路径; body: {modelId, capabilities})
+func (s *Service) capabilitiesSave(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ModelID      string `json:"modelId"`
+		Capabilities struct {
+			SupportsTools     *bool  `json:"supportsTools"`
+			SupportsVision    *bool  `json:"supportsVision"`
+			SupportsJSON      *bool  `json:"supportsJson"`
+			SupportsStreaming *bool  `json:"supportsStreaming"`
+			ContextWindow     *int64 `json:"contextWindow"`
+			MaxOutput         *int64 `json:"maxOutput"`
+		} `json:"capabilities"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ModelID == "" {
+		http.Error(w, "body 需为 {modelId, capabilities}", 400)
+		return
+	}
+	llm.SaveProbeResult(req.ModelID, llm.ProbeResult{
+		SupportsTools:     req.Capabilities.SupportsTools,
+		SupportsVision:    req.Capabilities.SupportsVision,
+		SupportsJson:      req.Capabilities.SupportsJSON,
+		SupportsStreaming: req.Capabilities.SupportsStreaming,
+		ContextWindow:     req.Capabilities.ContextWindow,
+		MaxOutput:         req.Capabilities.MaxOutput,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "modelId": req.ModelID})
 }
 
 // ── 文件工具 ────────────────────────────────────────────────────

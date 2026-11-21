@@ -1,5 +1,9 @@
 # SoloForge
 
+> ⚡ **2026-11 重大变更: 旧 TS 微内核已退役** (`git tag pre-retirement-ts` 可查历史)。
+> 当前架构: **Go 单二进制核心** (`next/`) + Electron UI (`UI/`) + Java Advisor (`advisor/`) + Python MARL (`python/`)。
+> 启动方式见 [安装清单.md](./安装清单.md) 新架构章节。下方原 README 描述的是已退役的 TS 架构, 仅作历史参考。
+
 AI 多智能体自治系统核心框架。基于微内核架构，集成嵌入式数据库、Rust 高性能调度器与 Python 多智能体强化学习（MARL）引擎，构建决策-仲裁-执行-审计完整闭环。
 
 ## 架构概览

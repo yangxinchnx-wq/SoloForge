@@ -2,7 +2,7 @@
  * BackendProxyProvider.ts — 前端 LLM provider，调用后端 /api/llm/stream 代理
  *
  * 与 OpenAICompatibleProvider 接口完全一致，可直接塞到 LLMClient。
- * 关键差异：API key 不在前端，永远走 3001 后端中转。
+ * 关键差异：API key 不在前端，永远走后端中转 (Go 核心 7300)。
  *
  * 协议：
  *   POST { apiBase }/api/llm/stream
@@ -25,7 +25,7 @@ import type {
 import { parseSseFromStream } from '../../utils/sseStream';
 
 export interface BackendProxyConfig extends LLMProviderConfig {
-  /** 后端 API base URL，默认 http://localhost:3001 */
+  /** 后端 API base URL，默认 http://127.0.0.1:7300 (Go 核心) */
   apiBase?: string;
   /** 后端 token（如果后端配了 SOLOFORGE_LLM_API_TOKEN） */
   token?: string;
@@ -42,7 +42,7 @@ export class BackendProxyProvider implements LLMProvider {
   private config: Required<Pick<BackendProxyConfig, 'apiBase' | 'defaultModel' | 'timeoutMs'>> & BackendProxyConfig;
 
   constructor(config: BackendProxyConfig) {
-    const apiBase = (config.apiBase ?? 'http://localhost:3001').replace(/\/$/, '');
+    const apiBase = (config.apiBase ?? 'http://127.0.0.1:7300').replace(/\/$/, '');
     this.config = {
       apiBase,
       timeoutMs: 60_000,

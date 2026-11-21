@@ -7,7 +7,6 @@ import dotenv from "dotenv";
 import fs from "fs";
 import { Worker } from "worker_threads";
 import { createProxyMiddleware, fixRequestBody } from "http-proxy-middleware";
-import { registerBrowserUseRoutes } from "../src/core/browser-use/routes";
 import { bootstrapCanvasSessionLayer } from "./src/server/bootstrap/canvas";
 import { registerChatSessionRoutes, flushChatStore } from "./src/server/routes/chatSession";
 import { registerConversationRoutes, flushConversationStore } from "./src/server/routes/conversationRoutes";
@@ -22,9 +21,10 @@ import { initAuthToken, getStartupToken } from "./src/server/middleware/auth";
 // Load Environment variables
 dotenv.config();
 
-// SoloForge 原后端地址（src/index.ts），所有业务 API 经此代理
-const BACKEND_URL = process.env.SOLOFORGE_BACKEND_URL || "http://localhost:3001";
-// Java Agent 直连地址 (SSE 流式聊天直连 8770, 绕过 3001 避免缓冲)
+// SoloForge 后端地址 — 旧 TS 核心 (3001) 已退役, 统一指向 Go 核心 (7300)
+// (兼容 SOLOFORGE_BACKEND_URL 环境变量覆盖)
+const BACKEND_URL = process.env.SOLOFORGE_BACKEND_URL || "http://127.0.0.1:7300";
+// Java Agent 直连地址 (SSE 流式聊天直连 8770; /api/java-agent/* 亦剥前缀直发)
 const JAVA_AGENT_URL = process.env.JAVA_AGENT_URL || "http://localhost:8770";
 
 // ============================================================
@@ -549,15 +549,10 @@ async function startServer() {
 
   // ============================================================
   // Browser-Use API (高层 LLM 任务编排, 走 Obscura CDP)
-  //   /api/browser-use/run            — 提交任务
-  //   /api/browser-use/tasks          — 列表
-  //   /api/browser-use/state/:id      — 状态
-  //   /api/browser-use/{pause,resume,cancel}/:id
-  //   /api/browser-use/stream/:id     — SSE 步进流
-  //   /api/browser-use/health         — 探活
+  //   /api/browser-use/* — 由 Go 核心 compat 层服务 (MCP 会话编排),
+  //     经下方 backendApiPrefixes 的 '/api/browser-use' 前缀代理到 7300
+  //   (旧 TS registerBrowserUseRoutes 已随根 src/ 退役)
   // ============================================================
-  const repoRootSrv = path.resolve(__dirname_srv, ".."); // SoloForge 仓库根 (UI 的上一级)
-  registerBrowserUseRoutes(app, repoRootSrv);
 
   // ============================================================
   // ★ Java Agent SSE 流式直连: /api/java-agent/api/chat/stream → 8770
@@ -611,13 +606,13 @@ async function startServer() {
   console.log(`[proxy] Java Agent SSE /api/java-agent/api/chat/stream → ${JAVA_AGENT_URL}/api/chat/stream (pathFilter, 无超时)`);
 
   // ============================================================
-  // ★ Java Agent 专用转发: /api/java-agent/* → 3001 → 8770
-  //   LLM 调用可能需要 60-90 秒,使用 120s 超时
+  // ★ Java Agent 专用转发: /api/java-agent/* → 8770 (剥前缀直发,
+  //   语义对齐旧 src handleJavaAgentProxy; LLM 调用可能 60-90s, 110s 超时)
   //   使用 fetch 手动转发 (避免 HPM 在高错误率环境下的连接挂死)
   // ============================================================
   app.use("/api/java-agent", async (req, res) => {
     const javaPath = req.url; // 相对路径, 如 /api/chat/send
-    const targetUrl = BACKEND_URL + "/api/java-agent" + javaPath;
+    const targetUrl = JAVA_AGENT_URL + javaPath;
     console.log(`[java-agent-fwd] ${req.method} ${javaPath} -> ${targetUrl}`);
 
     try {
@@ -699,7 +694,7 @@ async function startServer() {
         proxyRes.headers["x-accel-buffering"] = "no";
       },
       error: (err, _req, res) => {
-        console.error("[proxy→3001] SSE error:", err.message);
+        console.error("[proxy→backend] SSE error:", err.message);
         if (res && 'writeHead' in res) {
           try {
             (res as any).writeHead(502, { "Content-Type": "application/json" });
@@ -743,7 +738,7 @@ async function startServer() {
     timeout: 0 as any,
   });
 
-  // WebSocket（3001 同端口复用 /ws）
+  // WebSocket（Go 核心 7300 同端口复用 /ws）
   const backendWsProxy = createProxyMiddleware({
     target: BACKEND_URL.replace(/^http/, "ws"),
     ws: true,
@@ -765,13 +760,13 @@ async function startServer() {
         }
       },
       error: (err, _req, res) => {
-        console.error("[proxy→3001] error:", err.message);
+        console.error("[proxy→backend] error:", err.message);
         if (res && 'writeHead' in res) {
           try {
             (res as any).writeHead(502, { "Content-Type": "application/json" });
             (res as any).end(JSON.stringify({
               success: false,
-              error: `后端 3001 不可达: ${err.message}`,
+              error: `后端核心不可达: ${err.message}`,
               backend: BACKEND_URL,
             }));
           } catch { /* response already sent */ }
@@ -1548,9 +1543,9 @@ async function startServer() {
     result.success = true;
     result.latency = Date.now() - t0;
 
-    // ── 同步到后端能力库 ──
+    // ── 同步到后端能力库 (Go 核心: internal/llm 探针持久化) ──
     try {
-      await fetch(`http://localhost:3001/api/capabilities/save`, {
+      await fetch(`${BACKEND_URL}/api/capabilities/save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2115,7 +2110,9 @@ async function startServer() {
     '/api/names',     // 用户名称自定义 (双击胶囊名称 → 写入 names.txt [CUSTOM] 槽位)
     // '/api/java-agent' 已由上方专用代理处理 (120s 超时)
     '/api/feedback',   // 经验案例库反馈 (经 3001 代理到 Java Agent 8770)
-    '/api/canvas',     // 画布中转端点 (relay/push-ui, relay/register-port, relay/unregister-port)
+    '/api/canvas',     // 画布: 本地 canvasSession 注册的路径本地处理,
+                       // relay/{register,unregister,push-ui} 未本地注册 → 代理到 Go 核心
+    '/api/browser-use', // 浏览器任务编排 (Go compat: MCP 会话 orchestrator, 全路由含 :id)
   ];
   for (const p of backendApiPrefixes) {
     // 关键：用 pathFilter 精确过滤，且不修改 req.url（HPM 默认行为会改写为相对路径）
@@ -2134,13 +2131,13 @@ async function startServer() {
           }
         },
         error: (err, _req, res) => {
-          console.error("[proxy→3001] error:", err.message);
+          console.error("[proxy→backend] error:", err.message);
           if (res && 'writeHead' in res) {
             try {
               (res as any).writeHead(502, { "Content-Type": "application/json" });
               (res as any).end(JSON.stringify({
                 success: false,
-                error: `后端 3001 不可达: ${err.message}`,
+                error: `后端核心不可达: ${err.message}`,
                 backend: BACKEND_URL,
               }));
             } catch { /* response already sent */ }

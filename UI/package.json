@@ -10,8 +10,7 @@
     "dev": "node start.mjs",
     "dev:server": "tsx server.ts",
     "dev:electron": "node electron/launch.cjs .",
-    "build": "npm run build:core && vite build && esbuild server.ts --bundle --platform=node --format=esm --packages=bundle --sourcemap --outfile=dist/server.mjs --banner:js=\"import _module from 'module';const require=_module.createRequire(import.meta.url);\"",
-    "build:core": "esbuild ../src/index.ts --bundle --platform=node --format=esm --packages=bundle --sourcemap --outfile=resources/core/server.mjs --banner:js=\"import _module from 'module';const require=_module.createRequire(import.meta.url);\"",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=esm --packages=bundle --sourcemap --outfile=dist/server.mjs --banner:js=\"import _module from 'module';const require=_module.createRequire(import.meta.url);\"",
     "start": "node dist/server.mjs",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
@@ -49,13 +48,6 @@
         ]
       },
       {
-        "from": "resources/core",
-        "to": "core",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
         "from": "../bin/garnet/portable/net10.0",
         "to": "garnet",
         "filter": [
@@ -69,10 +61,6 @@
           "git-service.exe",
           "**/*.dll"
         ]
-      },
-      {
-        "from": "../bin/scheduler.exe",
-        "to": "bin/scheduler.exe"
       },
       {
         "from": "../bin/surreal.exe",
