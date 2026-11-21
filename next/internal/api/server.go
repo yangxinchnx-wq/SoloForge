@@ -2,12 +2,14 @@
 // api — 对外唯一入口: HTTP + WebSocket (端口 7300)
 //
 // 路由 (Go 1.22 ServeMux 方法模式):
-//   GET  /health              健康探针 (supervisor 判定 READY 的依据)
-//   GET  /api/kernel/status   内核状态 (uptime/事件总数/订阅者/丢帧)
-//   GET  /api/events/list     事件重放 (after 游标 + limit)
-//   POST /api/commands        命令派发 (CommandBus)
-//   GET  /metrics             简易文本指标
-//   GET  /ws                  WebSocket: 下行事件流 + 上行命令
+//
+//	GET  /health              健康探针 (supervisor 判定 READY 的依据)
+//	GET  /api/kernel/status   内核状态 (uptime/事件总数/订阅者/丢帧)
+//	GET  /api/events/list     事件重放 (after 游标 + limit)
+//	POST /api/commands        命令派发 (CommandBus)
+//	GET  /metrics             简易文本指标
+//	GET  /ws                  WebSocket: 下行事件流 + 上行命令
+//
 // ─────────────────────────────────────────────────────────────────
 package api
 
@@ -114,30 +116,8 @@ func (s *Server) handleCommands(w http.ResponseWriter, r *http.Request) {
 	if req.Source == "" {
 		req.Source = "http"
 	}
-	// ★ kernel 接线: 内核存在时命令经状态机守卫+事务管理 (深度迁移)
-	if s.Kernel != nil {
-		kernCmd := kernel.Command{
-			Type:    req.Type,
-			Domain:  "api",
-			Caller:  req.Source,
-			Payload: req.Payload,
-		}
-		result, err := s.Kernel.ExecuteCommand(r.Context(), kernCmd)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-			return
-		}
-		// 落 command.executed 事件
-		payload, _ := json.Marshal(map[string]any{"command": req.Type, "result": result})
-		ev, err := s.Store.AppendEvent(r.Context(), "command.executed", req.Source, payload)
-		if err == nil {
-			s.Bus.Publish(ev)
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "result": result, "seq": ev.Seq})
-		return
-	}
-	// 无 kernel 时走直连路径 (兼容)
-	result, err := s.Commands.Dispatch(r.Context(), bus.Command{Type: req.Type, Payload: req.Payload})
+	// ★ kernel 接线: 命令派发统一入口 (状态机守卫+事务管理; WS 分支同源)
+	result, err := s.dispatchCommand(r.Context(), req.Source, bus.Command{Type: req.Type, Payload: req.Payload})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -149,6 +129,22 @@ func (s *Server) handleCommands(w http.ResponseWriter, r *http.Request) {
 		s.Bus.Publish(ev)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "result": result, "seq": ev.Seq})
+}
+
+// dispatchCommand 命令派发统一入口 (修复已知问题: WS 上行命令此前绕过
+// kernel 状态机守卫, 与 HTTP 路径不一致)。
+// 内核存在时经 ExecuteCommand 守卫 (READY/DEGRADED 才接受, 派发失败转
+// {accepted:false} 结果不上抛); 无内核时直连命令总线 (兼容)。
+func (s *Server) dispatchCommand(ctx context.Context, source string, cmd bus.Command) (any, error) {
+	if s.Kernel != nil {
+		return s.Kernel.ExecuteCommand(ctx, kernel.Command{
+			Type:    cmd.Type,
+			Domain:  "api",
+			Caller:  source,
+			Payload: cmd.Payload,
+		})
+	}
+	return s.Commands.Dispatch(ctx, cmd)
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
@@ -201,8 +197,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var msg struct {
-			Type    string          `json:"type"`
-			Command *bus.Command    `json:"command"`
+			Type    string       `json:"type"`
+			Command *bus.Command `json:"command"`
 		}
 		if err := json.Unmarshal(raw, &msg); err != nil {
 			s.writeWS(conn, map[string]any{"type": "error", "error": "bad json"})
@@ -216,7 +212,13 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				s.writeWS(conn, map[string]any{"type": "error", "error": "missing command"})
 				continue
 			}
-			result, err := s.Commands.Dispatch(r.Context(), *msg.Command)
+			// ★ 与 HTTP 路径同源: 经 dispatchCommand 统一走 kernel 状态机
+			// 守卫+事务管理 (修复 WS 绕过守卫的已知问题)
+			source := "ws"
+			if r.RemoteAddr != "" {
+				source = "ws:" + r.RemoteAddr
+			}
+			result, err := s.dispatchCommand(r.Context(), source, *msg.Command)
 			resp := map[string]any{"type": "command_result", "command": msg.Command.Type}
 			if err != nil {
 				resp["error"] = err.Error()
@@ -244,11 +246,9 @@ func (s *Server) writeWS(conn *wsConn, v any) error {
 // ── 工具 ────────────────────────────────────────────────────────
 
 func (s *Server) lastSeqSafe() int64 {
-	count, err := s.Store.EventCount(context.Background())
-	if err != nil {
-		return 0
-	}
-	return count // 骨架阶段: AUTOINCREMENT 与 count 一致 (无删除)
+	// 修复已知问题: 原用 EventCount (行数) 近似 seq, 事件表有删除时会
+	// 失真; 改用 store 的单调 seq 游标本体 (AppendEvent/Restore 推进)
+	return s.Store.LastSeq()
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

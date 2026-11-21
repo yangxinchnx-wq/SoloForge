@@ -88,11 +88,20 @@ func (s *Store) EventsByType(typ string, limit int) []Event {
 	return out
 }
 
-// EventCount 事件总数 (观测/对账用)
+// EventCount 事件总数 (观测/对账用; 行数 ≠ 最大 seq, 有删除时两者背离)
 func (s *Store) EventCount(_ context.Context) (int64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return int64(len(s.events)), nil
+}
+
+// LastSeq 当前最大事件 seq (修复已知问题: lastSeqSafe 此前用 EventCount
+// 近似 seq — EventCount 是行数, 事件表有删除/裁剪时会失真; s.seq 是
+// AppendEvent/Restore 推进的单调游标本体, 与行数无关)
+func (s *Store) LastSeq() int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.seq
 }
 
 // Restore 恢复历史事件 (JSONL 重放用): seq 游标随最大 seq 前进
