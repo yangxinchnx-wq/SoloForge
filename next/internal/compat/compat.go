@@ -24,6 +24,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"soloforge/next/internal/agents"
@@ -202,6 +203,8 @@ func registerBrowserUseRoutes(mux *http.ServeMux, d Deps) {
 
 	// GET /api/browser-use/stream/{id} — SSE 步进流
 	// (对齐 TS streamTask: 首发缓存 state → 订阅步进 → final/error 结算 → 心跳保活 15s)
+	// 并发纪律: 步进回调 (MCP 通知 goroutine) 与心跳 goroutine 都会写 w,
+	// 用 writeMu 串行化, 防止交错写破坏 SSE 帧边界
 	mux.HandleFunc("GET /api/browser-use/stream/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
 		flusher, ok := w.(http.Flusher)
@@ -215,7 +218,14 @@ func registerBrowserUseRoutes(mux *http.ServeMux, d Deps) {
 		w.Header().Set("X-Accel-Buffering", "no")
 		w.WriteHeader(http.StatusOK)
 
+		var writeMu sync.Mutex
+		closed := false
 		sendSSE := func(event string, data any) {
+			writeMu.Lock()
+			defer writeMu.Unlock()
+			if closed {
+				return
+			}
 			b, _ := json.Marshal(data)
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
 			flusher.Flush()
@@ -257,11 +267,18 @@ func registerBrowserUseRoutes(mux *http.ServeMux, d Deps) {
 					return
 				case <-r.Context().Done():
 					unsub()
+					writeMu.Lock()
+					closed = true
+					writeMu.Unlock()
 					close(done)
 					return
 				case <-heartbeat.C:
-					fmt.Fprint(w, ":heartbeat\n\n")
-					flusher.Flush()
+					writeMu.Lock()
+					if !closed {
+						fmt.Fprint(w, ":heartbeat\n\n")
+						flusher.Flush()
+					}
+					writeMu.Unlock()
 				}
 			}
 		}()
