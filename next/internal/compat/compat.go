@@ -1,17 +1,19 @@
 // ─────────────────────────────────────────────────────────────────
-// compat — 旧 UI/server.ts 代理路径的兼容层 (断裂路径修复)
+// compat — 旧 UI/server.ts 路径的兼容层 (旧 TS 核心退役迁移)
 //
-// 背景: 旧 TS RACER (3001) 退役后, server.ts 代理到 3001 的路径全部
-// ECONNREFUSED (curl 000)。本包在 Go 核心 (7300) 提供这些路径的骨架
-// 响应, 让 UI 功能不再静默断裂:
+// 本包在 Go 核心 (7300) 承接旧链路径, 让 UI 前端无感切换:
 //
-//	/api/browser-use/*   → toolsrelay 分发 (占位执行器)
+//	/api/canvas/relay/*  → 画布中转服务端 (canvasrelay.go, Electron
+//	                        注册端口 / Agent push-ui; 旧实现根 src/)
+//	/api/browser-use/*   → BUOrchestrator (MCP 会话 + 任务镜像 + 步进
+//	                        SSE, 对齐旧 server.ts orchestrator)
 //	/api/agents/experience/feedback → agent 反馈 (事件落库+信誉)
 //	/api/names/update    → 自定义命名 (kv)
-//	/api/training/fetch-url → URL 抓取 (骨架)
-//	/api/llm/stream      → 501 (本地 LLM 走 Electron IPC, 非 HTTP)
+//	/api/training/fetch-url → URL 抓取
 //	/api/test            → 测试端点
 //
+// 注: /api/llm/stream 的 501 桩已移除 — uiapi 提供真实流式代理
+// (llmproxy.go); 同路径重复注册会使 http.ServeMux panic。
 // ─────────────────────────────────────────────────────────────────
 package compat
 
@@ -21,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"soloforge/next/internal/agents"
@@ -35,51 +38,20 @@ type Deps struct {
 	Relay *toolsrelay.Relay
 	Store *store.Store
 	Bus   *bus.EventBus
+	// Orch browser-use MCP 编排器 (nil 时用默认单例装配)
+	Orch *toolsrelay.BUOrchestrator
 }
 
 // Register 注册全部兼容路由
 func Register(mux *http.ServeMux, d Deps) {
-	// ── browser-use (9 路径 → toolsrelay) ──
-	mux.HandleFunc("GET /api/browser-use/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{
-			"ok": true, "service": "browser-use",
-			"note": "执行器占位 (Tauri 阶段接入真实 Browser-Use)",
-		})
-	})
-	mux.HandleFunc("POST /api/browser-use/run", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Task string          `json:"task"`
-			Tool string          `json:"tool"`
-			Args json.RawMessage `json:"args"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Task == "" {
-			writeJSON(w, 400, map[string]any{"error": "body 需为 {task, tool?, args?}"})
-			return
-		}
-		tool := req.Tool
-		if tool == "" {
-			tool = "browser-use.run"
-		}
-		result, err := d.Relay.Dispatch(r.Context(), tool, req.Args)
-		if err != nil {
-			writeJSON(w, 500, map[string]any{"error": err.Error()})
-			return
-		}
-		writeJSON(w, 200, map[string]any{"ok": true, "task": req.Task, "result": result})
-	})
-	mux.HandleFunc("GET /api/browser-use/tasks", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{"tasks": []any{}})
-	})
-	// 其余 browser-use 子路径: 状态机骨架 (统一响应)
-	for _, sub := range []string{"cancel", "pause", "resume", "state", "stream"} {
-		path := "/api/browser-use/" + sub
-		mux.HandleFunc("GET "+path, func(w http.ResponseWriter, r *http.Request) {
-			writeJSON(w, 200, map[string]any{"ok": true, "status": "骨架响应 (占位执行器)"})
-		})
-		mux.HandleFunc("POST "+path, func(w http.ResponseWriter, r *http.Request) {
-			writeJSON(w, 200, map[string]any{"ok": true, "status": "骨架响应 (占位执行器)"})
-		})
-	}
+	// ── canvas relay 服务端 (旧 src/server/routes-canvas.ts 迁移) ──
+	mux.HandleFunc("GET /api/canvas/relay/ports", toolsrelay.RelayHandlePorts)
+	mux.HandleFunc("POST /api/canvas/relay/register-port", toolsrelay.RelayHandleRegister)
+	mux.HandleFunc("POST /api/canvas/relay/unregister-port", toolsrelay.RelayHandleUnregister)
+	mux.HandleFunc("POST /api/canvas/relay/push-ui", toolsrelay.RelayHandlePushUI)
+
+	// ── browser-use 全路由 (orchestrator 语义对齐 TS) ──
+	registerBrowserUseRoutes(mux, d)
 
 	// ── agent 经验反馈 ──
 	mux.HandleFunc("POST /api/agents/experience/feedback", func(w http.ResponseWriter, r *http.Request) {
@@ -134,7 +106,7 @@ func Register(mux *http.ServeMux, d Deps) {
 		writeJSON(w, 200, map[string]any{"ok": true, "key": key, "name": req.Name})
 	})
 
-	// ── 训练数据 URL 抓取 (骨架) ──
+	// ── 训练数据 URL 抓取 ──
 	mux.HandleFunc("POST /api/training/fetch-url", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			URL string `json:"url"`
@@ -158,16 +130,148 @@ func Register(mux *http.ServeMux, d Deps) {
 		})
 	})
 
-	// ── 本地 LLM 流式 (Electron IPC 域, 非 HTTP — 明确 501) ──
-	mux.HandleFunc("POST /api/llm/stream", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusNotImplemented, map[string]any{
-			"error": "本地 LLM 流式走 Electron IPC (local-llm:chat), 不经 HTTP",
-		})
-	})
-
 	// ── 测试端点 ──
 	mux.HandleFunc("GET /api/test", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"ok": true, "service": "soloforge-core", "time": time.Now().UnixMilli()})
+	})
+}
+
+// ── browser-use 全路由 (对齐 TS orchestrator.ts) ────────────────
+
+func registerBrowserUseRoutes(mux *http.ServeMux, d Deps) {
+	orch := d.Orch
+	if orch == nil {
+		orch = toolsrelay.NewBUOrchestrator(
+			toolsrelay.DefaultBUMcpSession,
+			toolsrelay.DefaultBUTaskStore,
+			toolsrelay.DefaultBUStepBus)
+	}
+
+	// GET /api/browser-use/health — MCP 就绪探活 (对齐 TS ensureReady)
+	mux.HandleFunc("GET /api/browser-use/health", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+		defer cancel()
+		if _, err := orch.Session.ListTools(ctx); err != nil {
+			writeJSON(w, 200, map[string]any{"success": false, "ready": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"success": true, "ready": true})
+	})
+
+	// POST /api/browser-use/run — 提交任务 (对齐 TS runTask)
+	mux.HandleFunc("POST /api/browser-use/run", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Task string `json:"task"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Task) == "" {
+			writeJSON(w, 400, map[string]any{"success": false, "error": "task is required"})
+			return
+		}
+		rec, err := orch.RunTask(r.Context(), req.Task)
+		if err != nil {
+			writeJSON(w, 500, map[string]any{"success": false, "error": err.Error()})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"success": true, "task": rec})
+	})
+
+	// GET /api/browser-use/state/{id} — 终态回缓存, 未终态拉 MCP
+	mux.HandleFunc("GET /api/browser-use/state/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		task, ok := orch.GetTaskState(r.Context(), id)
+		if !ok {
+			writeJSON(w, 404, map[string]any{"success": false, "error": "task not found"})
+			return
+		}
+		writeJSON(w, 200, map[string]any{"success": true, "task": task})
+	})
+
+	// POST /api/browser-use/{cancel,pause,resume}/{id}
+	mux.HandleFunc("POST /api/browser-use/cancel/{id}", func(w http.ResponseWriter, r *http.Request) {
+		ok := orch.CancelTask(r.Context(), r.PathValue("id"))
+		writeJSON(w, 200, map[string]any{"success": true, "cancelled": ok})
+	})
+	mux.HandleFunc("POST /api/browser-use/pause/{id}", func(w http.ResponseWriter, r *http.Request) {
+		ok := orch.PauseTask(r.Context(), r.PathValue("id"))
+		writeJSON(w, 200, map[string]any{"success": true, "paused": ok})
+	})
+	mux.HandleFunc("POST /api/browser-use/resume/{id}", func(w http.ResponseWriter, r *http.Request) {
+		ok := orch.ResumeTask(r.Context(), r.PathValue("id"))
+		writeJSON(w, 200, map[string]any{"success": true, "resumed": ok})
+	})
+
+	// GET /api/browser-use/stream/{id} — SSE 步进流
+	// (对齐 TS streamTask: 首发缓存 state → 订阅步进 → final/error 结算 → 心跳保活 15s)
+	mux.HandleFunc("GET /api/browser-use/stream/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			writeJSON(w, 500, map[string]any{"error": "streaming unsupported"})
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache, no-transform")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+		w.WriteHeader(http.StatusOK)
+
+		sendSSE := func(event string, data any) {
+			b, _ := json.Marshal(data)
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
+			flusher.Flush()
+		}
+
+		// 缓存状态首发 (对齐 TS: if cached → sseSend('state', cached))
+		if cached, ok := orch.Tasks.GetTask(id); ok {
+			sendSSE("state", cached)
+		}
+
+		// 步进订阅: final/error → 结算并推 state; 全部步进推 step
+		unsub := orch.Steps.SubscribeTask(id, func(step toolsrelay.ReactStep) {
+			switch step.Kind {
+			case "final":
+				orch.Tasks.PatchTask(id, toolsrelay.TaskRecord{Status: toolsrelay.TaskSuccess, Result: step.Content})
+				if t, ok := orch.Tasks.GetTask(id); ok {
+					sendSSE("state", t)
+				}
+			case "error":
+				orch.Tasks.PatchTask(id, toolsrelay.TaskRecord{Status: toolsrelay.TaskError, Error: step.Content})
+				if t, ok := orch.Tasks.GetTask(id); ok {
+					sendSSE("state", t)
+				}
+			}
+			if cur, ok := orch.Tasks.GetTask(id); ok && step.StepIndex > cur.CurrentStep {
+				orch.Tasks.PatchTask(id, toolsrelay.TaskRecord{CurrentStep: step.StepIndex})
+			}
+			sendSSE("step", step)
+		})
+
+		// 心跳保活 + 客户端断开清理 (对齐 TS req.on('close') → cleanup)
+		heartbeat := time.NewTicker(15 * time.Second)
+		done := make(chan struct{})
+		go func() {
+			defer heartbeat.Stop()
+			for {
+				select {
+				case <-done:
+					return
+				case <-r.Context().Done():
+					unsub()
+					close(done)
+					return
+				case <-heartbeat.C:
+					fmt.Fprint(w, ":heartbeat\n\n")
+					flusher.Flush()
+				}
+			}
+		}()
+		<-r.Context().Done() // 连接关闭即返回
+		unsub()
+	})
+
+	// GET /api/browser-use/tasks — 任务镜像列表 (对齐 TS listLocalTasks)
+	mux.HandleFunc("GET /api/browser-use/tasks", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, 200, map[string]any{"success": true, "tasks": orch.Tasks.ListTasks()})
 	})
 }
 
@@ -177,6 +281,3 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(v)
 }
-
-var _ = fmt.Sprintf // fmt 引用占位 (browser-use 路径未来扩展)
-var _ = io.Discard  // io 引用占位

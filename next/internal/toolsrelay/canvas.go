@@ -1,14 +1,15 @@
 // ─────────────────────────────────────────────────────────────────
 // canvas.go — 画布工具 (从 TS tool-definitions.ts 画布分支迁移)
 //
-// 语义对齐 TS: 画布工具经 HTTP 转发到 UI 进程 (跨进程), UI 端再路由到
-// SessionStore / Flutter 画布。UI 基址取环境变量 SOLOFORGE_UI_BASE_URL,
-// 默认 http://localhost:3000 (对齐 TS UI_BASE_URL):
+// 语义对齐 TS: 画布工具分两条链路 (旧 TS 核心退役后):
 //
-//	canvas_push_ui → POST {UI}/api/canvas/relay/push-ui (直接推 Universal AST,
-//	                  链路: Agent tool_call → relay push-ui → Flutter /render)
-//	solo_canvas_*  → POST {UI}/api/canvas/tools/invoke
-//	                 (带 X-Requester-Chat-Session-Id 头, 用于 ACL)
+//	canvas_push_ui → 进程内直调 RelayPushUI (relay 服务端已迁入本包
+//	                  canvasrelay.go; 链路: Agent tool_call → 查端口表 →
+//	                  Flutter /render)
+//	solo_canvas_*  → POST {UI}/api/canvas/tools/invoke (UI 进程 4000 的
+//	                  canvasSession 层, 带 X-Requester-Chat-Session-Id
+//	                  头用于 ACL; UI 基址取 SOLOFORGE_UI_BASE_URL,
+//	                  默认 http://127.0.0.1:4000 新拓扑对齐 UI server)
 //
 // 与 TS 一样"友好错误, 不抛异常": 失败一律返回内联消息字符串
 // ("Error: ..." 或 "OK"), 不作为 Go error 抛出。
@@ -26,12 +27,13 @@ import (
 	"strings"
 )
 
-// uiBaseURL UI 进程基址 (对齐 TS: process.env.SOLOFORGE_UI_BASE_URL || localhost:3000)
+// uiBaseURL UI 进程基址 (canvasSession 层宿主; 对齐 TS 环境变量
+// SOLOFORGE_UI_BASE_URL, 默认改为新拓扑的 UI server 4000)
 func uiBaseURL() string {
 	if v := os.Getenv("SOLOFORGE_UI_BASE_URL"); v != "" {
 		return strings.TrimRight(v, "/")
 	}
-	return "http://localhost:3000"
+	return "http://127.0.0.1:4000"
 }
 
 // numOrUndefined 数值字段格式化: 缺失时输出 "undefined"
@@ -91,15 +93,11 @@ func toolCanvasPushUI(ctx context.Context, req ToolRequest) (any, error) {
 		language = "typescript"
 	}
 
-	url := uiBaseURL() + "/api/canvas/relay/push-ui"
-	var data map[string]any
-	status, err := postUIJSON(ctx, url,
-		map[string]any{"sessionId": sessionID, "dsl": dsl, "language": language},
-		&data, nil)
-	if err != nil {
-		return toolResult(req.Name, false, "", fmt.Sprintf(
-			"Error: failed to reach canvas relay (%s): %v", uiBaseURL(), err)), nil
-	}
+	// 旧 TS 核心退役: relay 服务端已迁入本包 (canvasrelay.go), 进程内
+	// 直调, 不再 HTTP 回环到 UI 进程
+	status, data := RelayPushUI(ctx, map[string]any{
+		"sessionId": sessionID, "dsl": dsl, "language": language,
+	})
 	success, _ := data["success"].(bool)
 	if status < 200 || status >= 300 || !success {
 		msg, _ := data["error"].(string)

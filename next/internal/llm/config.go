@@ -152,3 +152,16 @@ func IsReady() bool {
 	c := GetConfig()
 	return c.APIKey != "" && c.BaseURL != "" && c.DefaultModel != ""
 }
+
+// DescribeConfig 脱敏配置描述 (不含 key, 对齐 TS describeLLMProxyConfig;
+// 供 /api/llm/config 与错误响应使用)
+func DescribeConfig() map[string]any {
+	c := GetConfig()
+	return map[string]any{
+		"provider":      c.Provider,
+		"baseUrl":       c.BaseURL,
+		"defaultModel":  c.DefaultModel,
+		"ready":         IsReady(),
+		"tokenRequired": c.APIToken != "",
+	}
+}

@@ -122,8 +122,9 @@ func main() {
 	uiapiSvc := uiapi.New(filepath.Join(*repoPath, "UI"), st, logger)
 	uiapiSvc.SetBus(evBus)
 	uiapiSvc.SetTokenProvider(func() string { return secSvc.BootstrapToken() })
+	uiapiSvc.SetVault(secSvc.Vault()) // LLM 代理 providerId 分支取 key (旧核退役前置)
 	uiapiSvc.Register(srv.Mux())
-	logger.Info("UI 第二后端就绪 (providers/skills/resources/system-metrics/SSE)")
+	logger.Info("UI 第二后端就绪 (providers/skills/resources/system-metrics/SSE/llm-proxy)")
 
 	addr := fmt.Sprintf("127.0.0.1:%d", *port)
 

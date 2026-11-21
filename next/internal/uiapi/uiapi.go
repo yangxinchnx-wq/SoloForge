@@ -5,8 +5,10 @@
 // skills 1 / resources 2 / system-metrics 1 / tools 2 / auth 1 / debug-log 1)
 //
 // 文件依赖: BaseDir (默认 UI/ 目录) 下的
-//   providers_db.json / model_context_db.json / resources/skills/manifest.json /
-//   resources/<type>/manifest.json / custom_rules 文件
+//
+//	providers_db.json / model_context_db.json / resources/skills/manifest.json /
+//	resources/<type>/manifest.json / custom_rules 文件
+//
 // 事件: 配置变更/模型扫描经 store 落库 (providers.config.updated 等)
 // ─────────────────────────────────────────────────────────────────
 package uiapi
@@ -25,15 +27,17 @@ import (
 	"time"
 
 	"soloforge/next/internal/bus"
+	"soloforge/next/internal/security"
 	"soloforge/next/internal/store"
 )
 
 type Service struct {
-	baseDir string         // UI/ 目录 (providers_db.json 等所在)
-	store   *store.Store   // 事件落库 (可为 nil: 仅内存)
-	bus     *bus.EventBus  // SSE 事件流来源 (可为 nil)
+	baseDir string        // UI/ 目录 (providers_db.json 等所在)
+	store   *store.Store  // 事件落库 (可为 nil: 仅内存)
+	bus     *bus.EventBus // SSE 事件流来源 (可为 nil)
 	logger  *slog.Logger
-	tokenFn func() string // startup token 提供者 (security 层注入)
+	tokenFn func() string   // startup token 提供者 (security 层注入)
+	vault   *security.Vault // 金库 (llmproxy providerId 分支; SetVault 注入)
 
 	mu           sync.Mutex
 	probeCache   map[string]map[string]any // providerId → 探测结果缓存
@@ -93,6 +97,9 @@ func (s *Service) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/events/stream", s.eventsStream)
 	mux.HandleFunc("GET /api/auth/startup-token", s.authStartupToken)
 	mux.HandleFunc("POST /api/channels/test", s.channelsTest)
+
+	// ── LLM 直连流式代理 (旧 TS 核心退役前置迁移) ──
+	s.registerLLMProxy(mux)
 }
 
 // ── 文件工具 ────────────────────────────────────────────────────
@@ -250,8 +257,8 @@ func (s *Service) modelProbe(w http.ResponseWriter, r *http.Request) {
 		prompt = "ping"
 	}
 	body, _ := json.Marshal(map[string]any{
-		"model": req.Model,
-		"messages": []map[string]string{{"role": "user", "content": prompt}},
+		"model":      req.Model,
+		"messages":   []map[string]string{{"role": "user", "content": prompt}},
 		"max_tokens": 8,
 	})
 	client := &http.Client{Timeout: 30 * time.Second}
