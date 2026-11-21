@@ -1,18 +1,22 @@
 // ─────────────────────────────────────────────────────────────────
 // token — HTTP 认证中间件 (Bootstrap token + Bearer token 验证)
 // (从 TS src/security/auth.ts 的 evaluateRequest / evaluateRequestAsync /
-//  Principal / ROLE_BY_ROUTE 迁移)
+//
+//	Principal / ROLE_BY_ROUTE 迁移)
 //
 // 标准: OWASP Node.js Security Cheat Sheet (常数时间比对) + RFC 6750
 // (Bearer Token Usage: 401 + WWW-Authenticate)。
 //
 // 认证顺序 (对齐 TS evaluateRequest):
-//   OPTIONS 预检放行 → 公开路径 → 回环信任 (SOLOFORGE_TRUST_LOOPBACK≠0)
-//   → Bearer header / ?token= 查询参数 (引导 token 或 SOLOFORGE_API_TOKENS)
-//   → 全部未命中 → 401 {error, reason}
+//
+//	OPTIONS 预检放行 → 公开路径 → 回环信任 (SOLOFORGE_TRUST_LOOPBACK≠0)
+//	→ Bearer header / ?token= 查询参数 (引导 token 或 SOLOFORGE_API_TOKENS)
+//	→ 全部未命中 → 401 {error, reason}
+//
 // 放行后注入租户上下文 (对齐 TS addTenantContext):
-//   租户格式非法 → 403 invalid_tenant_id; Bindings 校验不过 → 403
-//   cross_tenant_access; 否则 ActiveTenantID = 显式租户或 PickDefaultTenant。
+//
+//	租户格式非法 → 403 invalid_tenant_id; Bindings 校验不过 → 403
+//	cross_tenant_access; 否则 ActiveTenantID = 显式租户或 PickDefaultTenant。
 //
 // 与 TS 的差异:
 //   - TS 引导凭证来自 env SOLOFORGE_API_TOKENS / vault tokenStore;
@@ -21,6 +25,7 @@
 //     (inGrace/轮换家族语义随 tokenStore 不迁移)。
 //   - TS 匹配到 token 后实际不再比对路由角色 (仅用于 401 reason 文案),
 //     Go 保持同一行为; 另提供 RequireAdmin 严格守卫供敏感路由显式加挂。
+//
 // ─────────────────────────────────────────────────────────────────
 package security
 
@@ -33,6 +38,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ── 角色与主体 ──────────────────────────────────────────────────
@@ -49,9 +55,9 @@ const (
 
 // Principal 请求主体 (对齐 TS auth.ts Principal)
 type Principal struct {
-	ID             string   `json:"id"`                 // bootstrap | token | loopback | anonymous
-	Role           Role     `json:"role"`               // admin | operator | agent | public
-	Source         string   `json:"source"`             // bootstrap | bearer | env-token | loopback | anonymous
+	ID             string   `json:"id"`                  // bootstrap | token | loopback | anonymous
+	Role           Role     `json:"role"`                // admin | operator | agent | public
+	Source         string   `json:"source"`              // bootstrap | bearer | env-token | loopback | anonymous
 	TenantIDs      []string `json:"tenantIds,omitempty"` // 允许租户; nil = 全通 (对齐 TS 缺省 ['*'])
 	ActiveTenantID string   `json:"activeTenantId,omitempty"`
 	Kid            string   `json:"kid,omitempty"` // 凭证标识 (供审计)
@@ -250,6 +256,26 @@ func (s *Service) Authenticate(r *http.Request) (Principal, int, string) {
 		if matched {
 			p := Principal{ID: "token", Role: RoleOperator, Source: source, Kid: "token"}
 			return s.withTenantContext(r, p, 0, "")
+		}
+		// 3c) token 轮换族 v2 (keychain 高级特性迁移): 复用检测三态
+		//   active → operator; rotating+宽限内 → operator (网络重试容忍);
+		//   rotating+宽限过 → reuse_detected → 整族吊销 + 401;
+		//   revoked → 401; 不在族中 → 落到步骤 4 拒绝 (对齐 TS auth.ts)
+		if s.tokens != nil {
+			decision := s.tokens.CheckReuse(candidate, time.Now())
+			switch decision.Decision {
+			case ReuseAllow, ReuseAllowInGrace:
+				p := Principal{ID: "token:" + decision.Record.KID, Role: RoleOperator,
+					Source: source, Kid: decision.Record.KID}
+				return s.withTenantContext(r, p, 0, "")
+			case ReuseDetected:
+				revoked := s.tokens.HandleReuseDetected(decision.Record, time.Now())
+				return Principal{}, http.StatusUnauthorized,
+					fmt.Sprintf("token_reuse_detected (family revoked, %d tokens)", revoked)
+			case ReuseRevoked:
+				return Principal{}, http.StatusUnauthorized, "token_revoked"
+			}
+			// unknown (不在族中) → 步骤 4
 		}
 	}
 

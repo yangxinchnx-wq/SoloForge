@@ -3,12 +3,15 @@
 //
 // 与旧版差异: 旧版明文交 OS 钥匙串 (keytar), 新架构无外部凭据库,
 // 采用进程内 map, apiKey 只以 AES-256-GCM 密文存放:
-//   主密钥 = PBKDF2-SHA256(SOLOFORGE_VAULT_MASTER | 进程随机32B, 固定盐, 200k 迭代)
-//   单条   = AES-256-GCM(主密钥, 12B 随机 nonce) → nonce + 密文(尾部 16B tag)
+//
+//	主密钥 = PBKDF2-SHA256(SOLOFORGE_VAULT_MASTER | 进程随机32B, 固定盐, 200k 迭代)
+//	单条   = AES-256-GCM(主密钥, 12B 随机 nonce) → nonce + 密文(尾部 16B tag)
 //
 // reveal (明文揭示) 必须通过 vault passphrase 门禁:
-//   门禁口令以 PBKDF2-SHA256(200k) hash + 16B 盐存内存, 常数时间比对,
-//   每次校验 ~100ms 顺带抑制暴力枚举。首次"带 passphrase 的写入"即注册口令。
+//
+//	门禁口令以 PBKDF2-SHA256(200k) hash + 16B 盐存内存, 常数时间比对,
+//	每次校验 ~100ms 顺带抑制暴力枚举。首次"带 passphrase 的写入"即注册口令。
+//
 // ─────────────────────────────────────────────────────────────────
 package security
 

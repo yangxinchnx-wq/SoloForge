@@ -2,28 +2,30 @@
 // audit — 审计事件完整结构 + 外部 sink 扇出 (stdout / file / http / noop)
 //
 // 迁移自 TS src/security/:
-//   AuditEvent        ← auth.ts AuditEvent (含 [key:string]:any 扩展签名)
-//   Sink              ← auditSinkBase.ts AuditSinkV2 契约
-//   sinkBase          ← AbstractAuditSink (队列/统计/AUDIT_FALLBACK 兜底)
-//   SinkStdout        ← auditSinkConcrete.ts StdoutAuditSink (tag=AUDIT)
-//   SinkFile          ← FileAuditSink (JSONL 追加 + rotateBytes 轮转)
-//   SinkHTTP          ← HttpAuditSink (POST + 指数退避重试)
-//   SinkNoop          ← NoopAuditSink
-//   NewSinkFromConfig ← auditSinkFactory.ts buildSinkFromConfig
+//
+//	AuditEvent        ← auth.ts AuditEvent (含 [key:string]:any 扩展签名)
+//	Sink              ← auditSinkBase.ts AuditSinkV2 契约
+//	sinkBase          ← AbstractAuditSink (队列/统计/AUDIT_FALLBACK 兜底)
+//	SinkStdout        ← auditSinkConcrete.ts StdoutAuditSink (tag=AUDIT)
+//	SinkFile          ← FileAuditSink (JSONL 追加 + rotateBytes 轮转)
+//	SinkHTTP          ← HttpAuditSink (POST + 指数退避重试)
+//	SinkNoop          ← NoopAuditSink
+//	NewSinkFromConfig ← auditSinkFactory.ts buildSinkFromConfig
 //
 // 对齐 docs/protocol.md:
-//   §2 Kafka 审计链路 — 发送失败降级 stdout JSON 行 (AUDIT_FALLBACK)。
-//      Kafka sink 本体不迁移: kafkajs 是外部依赖, 且 §13 已定
-//      "events 表即审计 (Kafka 移除)"; 远端转发 (SIEM webhook) 需求
-//      由 SinkHTTP 覆盖。auditChangeFeed.ts 的 SurrealDB 轮询同样不迁移
-//      (无 SurrealDB): emit 落 store 后经 bus 广播即变更流。
-//   §12.1 routes-vault — 审计事件字段 action/route/method/status/tenantId
+//
+//	§2 Kafka 审计链路 — 发送失败降级 stdout JSON 行 (AUDIT_FALLBACK)。
+//	   Kafka sink 本体不迁移: kafkajs 是外部依赖, 且 §13 已定
+//	   "events 表即审计 (Kafka 移除)"; 远端转发 (SIEM webhook) 需求
+//	   由 SinkHTTP 覆盖。auditChangeFeed.ts 的 SurrealDB 轮询同样不迁移
+//	   (无 SurrealDB): emit 落 store 后经 bus 广播即变更流。
+//	§12.1 routes-vault — 审计事件字段 action/route/method/status/tenantId
 //
 // 关键不变量 (对齐 auditSinkBase.ts 头注释, 跨所有 sink):
-//   1. Deliver 永不阻塞/panic — 队列满 FIFO 丢最旧 (上限 10000, 不 OOM)
-//   2. 写失败 → stdout tag=AUDIT_FALLBACK 兜底行 (_sink + _fallbackReason)
-//   3. Close 尽力排空队列, 超时 (5s) 即放弃
-//   4. 每个 sink 独立 goroutine 消费有界队列, 任一 sink 故障不影响其他
+//  1. Deliver 永不阻塞/panic — 队列满 FIFO 丢最旧 (上限 10000, 不 OOM)
+//  2. 写失败 → stdout tag=AUDIT_FALLBACK 兜底行 (_sink + _fallbackReason)
+//  3. Close 尽力排空队列, 超时 (5s) 即放弃
+//  4. 每个 sink 独立 goroutine 消费有界队列, 任一 sink 故障不影响其他
 //
 // 与 security.go emit 的关系: emit 先落 store (memory sink) 后广播 bus,
 // 末尾经 dispatchExternal 把同一事件扇出给本文件挂载的外部 sink —
@@ -73,17 +75,17 @@ const (
 // extra 字段 (providerId / sensitive / deleted 等) 经 Extra 平铺到顶层 JSON,
 // 对齐 TS 索引签名 [key: string]: any 与 {...ev} 展开语义。
 type AuditEvent struct {
-	ID         string     `json:"id"`                    // aud_<UnixNano>
-	Timestamp  int64      `json:"timestamp"`             // 毫秒时间戳
-	Action     string     `json:"action"`                // vault.key.created / auth.denied ...
-	Route      string     `json:"route,omitempty"`       // 请求路径
-	Method     string     `json:"method,omitempty"`      // HTTP 方法
-	Status     int        `json:"status,omitempty"`      // 响应状态码
+	ID         string     `json:"id"`                      // aud_<UnixNano>
+	Timestamp  int64      `json:"timestamp"`               // 毫秒时间戳
+	Action     string     `json:"action"`                  // vault.key.created / auth.denied ...
+	Route      string     `json:"route,omitempty"`         // 请求路径
+	Method     string     `json:"method,omitempty"`        // HTTP 方法
+	Status     int        `json:"status,omitempty"`        // 响应状态码
 	RemoteAddr string     `json:"remoteAddress,omitempty"` // 建议传 hashPii 脱敏值
 	UserAgent  string     `json:"userAgent,omitempty"`
-	Reason     string     `json:"reason,omitempty"`      // 拒绝/失败原因
-	Principal  *Principal `json:"principal,omitempty"`   // 请求主体 (token.go)
-	TenantID   string     `json:"tenantId,omitempty"`    // 租户 (protocol.md §2 Kafka key)
+	Reason     string     `json:"reason,omitempty"`    // 拒绝/失败原因
+	Principal  *Principal `json:"principal,omitempty"` // 请求主体 (token.go)
+	TenantID   string     `json:"tenantId,omitempty"`  // 租户 (protocol.md §2 Kafka key)
 	// Extra 扩展字段 — Marshal 时平铺到顶层, 可覆盖同名字段 (对齐 TS 展开后键覆盖语义)
 	Extra map[string]any `json:"-"`
 }
@@ -301,13 +303,13 @@ func (b *sinkBase) Deliver(ev AuditEvent) {
 // Stats 运行统计 (对齐 TS getStats 字段)
 func (b *sinkBase) Stats() map[string]any {
 	return map[string]any{
-		"name":        b.name,
-		"received":    b.received.Load(),
-		"written":     b.written.Load(),
-		"dropped":     b.dropped.Load(),
+		"name":         b.name,
+		"received":     b.received.Load(),
+		"written":      b.written.Load(),
+		"dropped":      b.dropped.Load(),
 		"failedWrites": b.failedWrites.Load(),
-		"fallback":    b.fallback.Load(),
-		"queueSize":   len(b.queue),
+		"fallback":     b.fallback.Load(),
+		"queueSize":    len(b.queue),
 	}
 }
 
@@ -633,12 +635,12 @@ func (sn *SinkNoop) writeOne(AuditEvent) error { return nil }
 // SinkConfigEntry sink 配置项 (对齐 TS SinkConfigEntry 联合类型的公共字段)。
 // kafka / surreal 需外部依赖, 不迁移 (见文件头差异说明)。
 type SinkConfigEntry struct {
-	Type        string            `json:"type"`                 // stdout | file | http | noop
-	Mirror      *bool             `json:"mirror,omitempty"`     // stdout: 是否镜像输出 (默认 true)
-	Path        string            `json:"path,omitempty"`       // file
+	Type        string            `json:"type"`                  // stdout | file | http | noop
+	Mirror      *bool             `json:"mirror,omitempty"`      // stdout: 是否镜像输出 (默认 true)
+	Path        string            `json:"path,omitempty"`        // file
 	RotateBytes int64             `json:"rotateBytes,omitempty"` // file
-	URL         string            `json:"url,omitempty"`        // http
-	Headers     map[string]string `json:"headers,omitempty"`    // http
+	URL         string            `json:"url,omitempty"`         // http
+	Headers     map[string]string `json:"headers,omitempty"`     // http
 }
 
 // NewSinkFromConfig 从配置构建 sink (对齐 TS buildSinkFromConfig;

@@ -1,10 +1,12 @@
 // ─────────────────────────────────────────────────────────────────
 // routes — 安全层 HTTP 路由 (15 条, 对齐 docs/protocol.md §12.1)
-//   vault: GET/POST /api/vault/keys, GET/PUT/DELETE /api/vault/keys/{id},
-//          GET /api/vault/keys/{id}/reveal, POST /api/vault/keys/{id}/verify,
-//          POST /api/vault/export|import|verify-passphrase
-//   auth : GET /api/auth/bootstrap
-//   audit: GET /api/audit/list|stats|sinks, POST /api/audit/sinks/config
+//
+//	vault: GET/POST /api/vault/keys, GET/PUT/DELETE /api/vault/keys/{id},
+//	       GET /api/vault/keys/{id}/reveal, POST /api/vault/keys/{id}/verify,
+//	       POST /api/vault/export|import|verify-passphrase
+//	auth : GET /api/auth/bootstrap
+//	audit: GET /api/audit/list|stats|sinks, POST /api/audit/sinks/config
+//
 // ─────────────────────────────────────────────────────────────────
 package security
 
@@ -170,6 +172,44 @@ func (s *Service) Register(mux *http.ServeMux) {
 			"tenant":   s.tenant.DefaultTenant,
 		})
 	})
+
+	// ── token 轮换族 v2 (keychain 高级特性; 管理面, RequireAdmin 守卫) ──
+	// GET /api/auth/tokens — 非 revoked kid 清单 (审计/调试)
+	mux.Handle("GET /api/auth/tokens", RequireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var kids []TokenKidInfo
+		if s.tokens != nil {
+			kids = s.tokens.ListActiveKids()
+		}
+		if kids == nil {
+			kids = []TokenKidInfo{}
+		}
+		writeJSON(w, 200, map[string]any{"success": true, "kids": kids})
+	})))
+	// POST /api/auth/tokens/rotate — 手动轮换 (body: {parentKid}; 轮换链建立)
+	mux.Handle("POST /api/auth/tokens/rotate", RequireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.tokens == nil {
+			writeJSON(w, 501, map[string]any{"success": false, "error": "token store 未启用"})
+			return
+		}
+		var req struct {
+			ParentKID string `json:"parentKid"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ParentKID == "" {
+			writeJSON(w, 400, map[string]any{"success": false, "error": "body 需为 {parentKid}"})
+			return
+		}
+		rec, err := s.tokens.CreateToken(CreateTokenOptions{ParentKID: req.ParentKID, Source: TokenSourceManual})
+		if err != nil {
+			writeJSON(w, 400, map[string]any{"success": false, "error": err.Error()})
+			return
+		}
+		s.emit(r.Context(), "token.rotation.manual", "/api/auth/tokens/rotate", "POST", 200, map[string]any{
+			"parentKid": req.ParentKID, "newKid": rec.KID, "familyId": rec.FamilyID,
+		})
+		// 返回脱敏 (不含 token 明文)
+		writeJSON(w, 200, map[string]any{"success": true, "newKid": rec.KID,
+			"familyId": rec.FamilyID, "expiresAt": rec.ExpiresAt})
+	})))
 
 	// ── audit ──
 	mux.HandleFunc("GET /api/audit/list", func(w http.ResponseWriter, r *http.Request) {

@@ -3,17 +3,19 @@
 // (从 TS src/security/tenantContext.ts 迁移)
 //
 // 语义对齐:
-//   IsValidTenantID    ← isValidTenantId (^[A-Za-z0-9_-]{1,64}$)
-//   ExtractTenantID    ← extractTenantId (路径前缀优先于 header)
-//   CheckTenantAccess  ← checkTenantAccess (wildcard / explicit / 跨租户拒绝)
-//   ParseBindings      ← parseBindings ('kid1:t1,kid2:t1+t2,kid3:*')
-//   PickDefaultTenant  ← pickDefaultTenant
+//
+//	IsValidTenantID    ← isValidTenantId (^[A-Za-z0-9_-]{1,64}$)
+//	ExtractTenantID    ← extractTenantId (路径前缀优先于 header)
+//	CheckTenantAccess  ← checkTenantAccess (wildcard / explicit / 跨租户拒绝)
+//	ParseBindings      ← parseBindings ('kid1:t1,kid2:t1+t2,kid3:*')
+//	PickDefaultTenant  ← pickDefaultTenant
 //
 // 配置来源 (security.go Service.tenant, 对齐 TS TenantContextConfig):
-//   HeaderName    租户头, 默认 X-Tenant-Id
-//   PathPrefix    路径前缀式租户, 默认 /api/t/
-//   DefaultTenant 缺省租户, 默认 _default
-//   Bindings      主体 → 允许租户列表 (TS bindings[kid]), 见 CheckTenantBinding
+//
+//	HeaderName    租户头, 默认 X-Tenant-Id
+//	PathPrefix    路径前缀式租户, 默认 /api/t/
+//	DefaultTenant 缺省租户, 默认 _default
+//	Bindings      主体 → 允许租户列表 (TS bindings[kid]), 见 CheckTenantBinding
 //
 // 对齐 docs/protocol.md §2: Kafka 审计消息 key = tenantId|'_default',
 // 故每个审计事件必须带确定的租户归属。

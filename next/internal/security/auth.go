@@ -1,7 +1,9 @@
 // ─────────────────────────────────────────────────────────────────
 // auth — 认证引导 token + 租户配置 + 审计 sink 状态
 // (补齐 security.go 引用的三个类型; 语义对齐 TS auth.ts / tenantContext.ts /
-//  auditSinkFactory.ts)
+//
+//	auditSinkFactory.ts)
+//
 // ─────────────────────────────────────────────────────────────────
 package security
 

@@ -3,11 +3,12 @@
 // (从 TS src/server/routes-vault.ts + src/security/ 迁移)
 //
 // 覆盖 docs/protocol.md §12.1 routes-vault + audit + auth 全部 15 条:
-//   vault: GET/POST /api/vault/keys, GET/PUT/DELETE /api/vault/keys/{id},
-//          GET /api/vault/keys/{id}/reveal, POST /api/vault/keys/{id}/verify,
-//          POST /api/vault/export|import|verify-passphrase
-//   auth : GET /api/auth/bootstrap (启动 token, crypto/rand 32B, 内存有效)
-//   audit: GET /api/audit/list|stats|sinks, POST /api/audit/sinks/config
+//
+//	vault: GET/POST /api/vault/keys, GET/PUT/DELETE /api/vault/keys/{id},
+//	       GET /api/vault/keys/{id}/reveal, POST /api/vault/keys/{id}/verify,
+//	       POST /api/vault/export|import|verify-passphrase
+//	auth : GET /api/auth/bootstrap (启动 token, crypto/rand 32B, 内存有效)
+//	audit: GET /api/audit/list|stats|sinks, POST /api/audit/sinks/config
 //
 // 存储纪律: 项目无 SQLite — 密钥库/审计/配置全部进程内 (重启清零)。
 // 密钥值落"库"前经 AES-256-GCM 加密, 主密钥 PBKDF2-SHA256(200k) 派生;
@@ -53,8 +54,9 @@ type Service struct {
 	store *store.Store
 	bus   *bus.EventBus
 
-	vault *Vault     // 密钥库 (AES-GCM 密文 map)
-	auth  *Bootstrap // 启动 token
+	vault  *Vault      // 密钥库 (AES-GCM 密文 map)
+	auth   *Bootstrap  // 启动 token
+	tokens *TokenStore // token 轮换族 v2 (keychain 高级特性; SetTokens 注入)
 
 	mu     sync.Mutex
 	tenant TenantConfig          // 多租户上下文配置 (POST /api/audit/sinks/config 可改)
@@ -84,6 +86,23 @@ func New(st *store.Store, b *bus.EventBus) *Service {
 
 // Vault 密钥库句柄 (供其他包内部解析密钥, 如 llm proxy)
 func (s *Service) Vault() *Vault { return s.vault }
+
+// SetTokens 注入 token 轮换族存储 (main.go 装配; nil = 未启用 kid 体系)
+func (s *Service) SetTokens(ts *TokenStore) { s.tokens = ts }
+
+// Tokens token 轮换族存储句柄
+func (s *Service) Tokens() *TokenStore { return s.tokens }
+
+// StartTokenRotation 创建并启动 token 轮换 worker (审计走 s.emit 纪律)。
+// 返回句柄供 main.go Shutdown 时 Stop。
+func (s *Service) StartTokenRotation() *TokenRotationService {
+	svc := NewTokenRotationService(s.tokens)
+	svc.SetAuditSink(func(event string, payload map[string]any) {
+		s.emit(context.Background(), event, "token.rotation", "-", 0, payload)
+	})
+	svc.Start()
+	return svc
+}
 
 // ── 审计事件 ────────────────────────────────────────────────────
 

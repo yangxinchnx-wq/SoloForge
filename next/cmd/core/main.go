@@ -107,10 +107,16 @@ func main() {
 	gsHandler := githandler.New(*repoPath)
 	gsHandler.RegisterRoutes(srv.Mux())
 
-	// ── 安全层 (vault/auth/audit, 阶段 2 迁入) ──
+	// ── 安全层 (vault/auth/audit + token 轮换族 v2, 阶段 2 迁入) ──
 	secSvc := security.New(st, evBus)
 	secSvc.Register(srv.Mux())
-	logger.Info("安全层就绪 (vault/auth/audit)")
+	tokenStore := security.NewTokenStore(secSvc.Vault())
+	tokenStore.Init()
+	secSvc.SetTokens(tokenStore)
+	tokenRotation := secSvc.StartTokenRotation()
+	// 关机时停轮换 worker (逆序: 先于 shutdownFns 的组件停止)
+	defer tokenRotation.Stop()
+	logger.Info("安全层就绪 (vault/auth/audit/token-rotation)")
 
 	// ── 工具路由 + 指标 (阶段 2 迁入) ──
 	relay := toolsrelay.NewWithBuiltins()
